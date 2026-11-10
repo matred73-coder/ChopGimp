@@ -1,0 +1,1144 @@
+# GIMP shortcutsrc — Photoshop CC keyboard shortcuts mapped to GIMP actions
+# Generated for PhotoGIMP Pro
+(file-version 1)
+
+# =============================================================================
+# TOOLS — Single key shortcuts (Photoshop standard tool keys)
+# =============================================================================
+
+# V — Move Tool
+(action "tools-move" "v")
+
+# M — Rectangular Marquee (selection)
+(action "tools-rect-select" "m")
+
+# Shift+M — Elliptical Marquee
+(action "tools-ellipse-select" "<Shift>m")
+
+# L — Lasso (free select)
+(action "tools-free-select" "l")
+
+# W — Magic Wand (fuzzy select)
+(action "tools-fuzzy-select" "w")
+
+# Shift+W — Select by Color
+(action "tools-by-color-select" "<Shift>w")
+
+# C — Crop
+(action "tools-crop" "c")
+
+# I — Eyedropper (color picker)
+(action "tools-color-picker" "i")
+
+# B — Paintbrush
+(action "tools-paintbrush" "b")
+
+# S — Clone Stamp
+(action "tools-clone" "s")
+
+# Shift+S — Perspective Clone
+(action "tools-perspective-clone" "<Shift>s")
+
+# E — Eraser
+(action "tools-eraser" "e")
+
+# G — Bucket Fill (paint bucket)
+(action "tools-bucket-fill" "g")
+
+# Shift+G — Gradient (was under G in PS)
+(action "tools-gradient" "<Shift>g")
+
+# T — Text
+(action "tools-text" "t")
+
+# P — Pen (Paths/Vector)
+(action "tools-vector" "p")
+
+# U — Measure (ruler in PS)
+(action "tools-measure" "u")
+
+# O — Dodge/Burn
+(action "tools-dodge-burn" "o")
+
+# Shift+O — Smudge (cycles with dodge/burn in PS)
+(action "tools-smudge" "<Shift>o")
+
+# R — Rotate
+(action "tools-rotate" "r")
+
+# Shift+R — Shear
+(action "tools-shear" "<Shift>r")
+
+# H — Flip (PS hand tool, but flip is more useful)
+(action "tools-flip" "h")
+
+# J — Heal
+(action "tools-heal" "j")
+
+# N — Pencil (hard brush in PS)
+(action "tools-pencil" "n")
+
+# A — Align (PS: path selection)
+(action "tools-align" "a")
+
+# Z — Zoom
+(action "tools-zoom" "z")
+
+# K — Gradient (PS slice, remapped to gradient)
+(action "tools-gradient" "k")
+
+# Q — Quick Mask toggle
+(action "quick-mask-toggle" "q")
+
+# Shift+T — Scale
+(action "tools-scale" "<Shift>t")
+
+# Shift+C — Perspective
+(action "tools-perspective" "<Shift>c")
+
+# Shift+F — Foreground Select
+(action "tools-foreground-select" "<Shift>f")
+
+# Shift+I — Scissors (magnetic lasso equivalent)
+(action "tools-iscissors" "<Shift>i")
+
+# Shift+E — Convolve (sharpen/blur tool)
+(action "tools-convolve" "<Shift>e")
+
+# Shift+B — MyPaint Brush
+(action "tools-mypaint-brush" "<Shift>b")
+
+# Y — Airbrush
+(action "tools-airbrush" "y")
+
+# Shift+U — Unified Transform
+(action "tools-unified-transform" "<Shift>u")
+
+# Shift+L — Warp Transform
+(action "tools-warp" "<Shift>l")
+
+# Shift+J — Ink
+(action "tools-ink" "<Shift>j")
+
+# Shift+H — Handle Transform
+(action "tools-handle-transform" "<Shift>h")
+
+# Shift+N — Cage Transform
+(action "tools-cage" "<Shift>n")
+
+# =============================================================================
+# COLOR SHORTCUTS
+# =============================================================================
+
+# X — Swap foreground/background colors
+(action "context-colors-swap" "x")
+
+# D — Reset to default colors (black/white)
+(action "context-colors-default" "d")
+
+# =============================================================================
+# FILE OPERATIONS
+# =============================================================================
+
+# Ctrl+N — New Image
+(action "image-new" "<Primary>n")
+
+# Ctrl+O — Open
+(action "file-open" "<Primary>o")
+
+# Ctrl+Alt+O — Open as Layers
+(action "file-open-as-layers" "<Primary><Alt>o")
+
+# Ctrl+S — Save (overwrite)
+(action "file-overwrite" "<Primary>s")
+
+# Ctrl+Shift+S — Save As
+(action "file-save-as" "<Primary><Shift>s")
+
+# Ctrl+Shift+Alt+S — Export As (Save for Web)
+(action "file-export-as" "<Primary><Shift><Alt>s")
+
+# Ctrl+Shift+E — Export (quick export)
+(action "file-export" "<Primary><Shift>e")
+
+# Ctrl+W — Close
+(action "view-close" "<Primary>w")
+
+# Ctrl+Shift+Alt+W — Close All
+(action "file-close-all" "<Primary><Shift><Alt>w")
+
+# Ctrl+Q — Quit
+(action "file-quit" "<Primary>q")
+
+# Ctrl+P — Print
+(action "file-print-gtk" "<Primary>p")
+
+# Ctrl+Shift+Alt+O — Open Location
+(action "file-open-location" "<Primary><Shift><Alt>o")
+
+# Ctrl+1 through Ctrl+0 — Recent files (Ctrl+Alt+1..0 to not conflict with zoom)
+(action "file-open-recent-01" "<Primary><Alt>1")
+(action "file-open-recent-02" "<Primary><Alt>2")
+(action "file-open-recent-03" "<Primary><Alt>3")
+(action "file-open-recent-04" "<Primary><Alt>4")
+(action "file-open-recent-05" "<Primary><Alt>5")
+(action "file-open-recent-06" "<Primary><Alt>6")
+(action "file-open-recent-07" "<Primary><Alt>7")
+(action "file-open-recent-08" "<Primary><Alt>8")
+(action "file-open-recent-09" "<Primary><Alt>9")
+(action "file-open-recent-10" "<Primary><Alt>0")
+
+# Ctrl+Shift+R — Revert
+(action "file-revert" "<Primary><Shift>r")
+
+# =============================================================================
+# EDIT OPERATIONS
+# =============================================================================
+
+# Ctrl+Z — Undo
+(action "edit-undo" "<Primary>z")
+
+# Ctrl+Shift+Z — Redo
+(action "edit-redo" "<Primary><Shift>z")
+
+# Ctrl+Y — Strong Redo (alternative)
+(action "edit-strong-redo" "<Primary>y")
+
+# Ctrl+X — Cut
+(action "edit-cut" "<Primary>x")
+
+# Ctrl+C — Copy
+(action "edit-copy" "<Primary>c")
+
+# Ctrl+V — Paste
+(action "edit-paste" "<Primary>v")
+
+# Ctrl+Shift+V — Paste in Place
+(action "edit-paste-in-place" "<Primary><Shift>v")
+
+# Ctrl+Alt+V — Paste as New Image
+(action "edit-paste-as-new-image" "<Primary><Alt>v")
+
+# Ctrl+Shift+C — Copy Visible (Copy Merged)
+(action "edit-copy-visible" "<Primary><Shift>c")
+
+# Delete — Clear
+(action "edit-clear" "Delete")
+
+# BackSpace — Clear (alternative)
+(action "edit-clear" "BackSpace")
+
+# Ctrl+Shift+X — Crop to Selection
+(action "image-crop-to-selection" "<Primary><Shift>x")
+
+# Shift+BackSpace — Fill foreground
+(action "edit-fill-fg" "<Shift>BackSpace")
+
+# Ctrl+BackSpace — Fill background
+(action "edit-fill-bg" "<Primary>BackSpace")
+
+# Ctrl+Shift+BackSpace — Fill pattern
+(action "edit-fill-pattern" "<Primary><Shift>BackSpace")
+
+# Ctrl+T — Unified Transform (Free Transform)
+(action "tools-unified-transform" "<Primary>t")
+
+# Ctrl+Shift+T — Rotate Arbitrary (Transform Again)
+(action "tools-rotate-arbitrary" "<Primary><Shift>t")
+
+# =============================================================================
+# SELECTION
+# =============================================================================
+
+# Ctrl+A — Select All
+(action "select-all" "<Primary>a")
+
+# Ctrl+D — Select None (Deselect)
+(action "select-none" "<Primary>d")
+
+# Ctrl+Shift+I — Invert Selection
+(action "select-invert" "<Primary><Shift>i")
+
+# Ctrl+Shift+D — Float Selection (PS: Reselect)
+(action "select-copy-float" "<Primary><Shift>d")
+
+# Shift+F6 — Feather Selection
+(action "select-feather" "<Shift>F6")
+
+# Ctrl+Alt+D — Feather Selection (alternative)
+(action "select-feather" "<Primary><Alt>d")
+
+# Alt+S — Shrink Selection
+(action "select-shrink" "<Alt>s")
+
+# Alt+G — Grow Selection
+(action "select-grow" "<Alt>g")
+
+# Alt+B — Border Selection
+(action "select-border" "<Alt>b")
+
+# Alt+R — Sharpen Selection
+(action "select-sharpen" "<Alt>r")
+
+# Ctrl+Shift+F — Fill Selection
+(action "select-fill" "<Primary><Shift>f")
+
+# Alt+Ctrl+A — Select Flood (contiguous region)
+(action "select-flood" "<Alt><Primary>a")
+
+# Ctrl+Shift+P — Save Selection to Channel
+(action "select-save" "<Primary><Shift>p")
+
+# Shift+F5 — Stroke Selection
+(action "select-stroke" "<Shift>F5")
+
+# =============================================================================
+# LAYERS
+# =============================================================================
+
+# Ctrl+J — Duplicate Layer (PS: Layer via Copy)
+(action "layers-duplicate" "<Primary>j")
+
+# Ctrl+Shift+N — New Layer
+(action "layers-new" "<Primary><Shift>n")
+
+# Ctrl+Shift+Alt+N — New Layer (last values)
+(action "layers-new-last-values" "<Primary><Shift><Alt>n")
+
+# Ctrl+E — Merge Down
+(action "layers-merge-down" "<Primary>e")
+
+# Ctrl+Shift+Alt+E — Flatten Image
+(action "layers-flatten-image" "<Primary><Shift><Alt>e")
+
+# Ctrl+G — New Layer Group (Group Layers)
+(action "layers-new-group" "<Primary>g")
+
+# Ctrl+bracketright — Raise Layer
+(action "layers-raise" "<Primary>bracketright")
+
+# Ctrl+bracketleft — Lower Layer
+(action "layers-lower" "<Primary>bracketleft")
+
+# Ctrl+Shift+bracketright — Raise Layer to Top
+(action "layers-raise-to-top" "<Primary><Shift>bracketright")
+
+# Ctrl+Shift+bracketleft — Lower Layer to Bottom
+(action "layers-lower-to-bottom" "<Primary><Shift>bracketleft")
+
+# Page_Down — Select Next Layer
+(action "layers-select-next" "Page_Down")
+
+# Page_Up — Select Previous Layer
+(action "layers-select-previous" "Page_Up")
+
+# Alt+bracketright — Select Next Layer (alternative)
+(action "layers-select-next" "<Alt>bracketright")
+
+# Alt+bracketleft — Select Previous Layer (alternative)
+(action "layers-select-previous" "<Alt>bracketleft")
+
+# Home — Select Top Layer
+(action "layers-select-top" "Home")
+
+# End — Select Bottom Layer
+(action "layers-select-bottom" "End")
+
+# Ctrl+Shift+Alt+F — Flatten Next (select flattened next)
+(action "layers-select-flattened-next" "<Primary><Shift><Alt>f")
+
+# Ctrl+Shift+Alt+B — Flatten Previous (select flattened previous)
+(action "layers-select-flattened-previous" "<Primary><Shift><Alt>b")
+
+# Ctrl+Shift+M — Merge Visible Layers
+(action "layers-merge-layers" "<Primary><Shift>m")
+
+# Ctrl+Alt+E — Merge Group
+(action "layers-merge-group" "<Primary><Alt>e")
+
+# Alt+Shift+N — New from Visible
+(action "layers-new-from-visible" "<Alt><Shift>n")
+
+# Ctrl+Shift+J — Crop Layer to Selection
+(action "layers-crop-to-selection" "<Primary><Shift>j")
+
+# Ctrl+Shift+Alt+C — Crop Layer to Content (auto-crop)
+(action "layers-crop-to-content" "<Primary><Shift><Alt>c")
+
+# Ctrl+Shift+Alt+R — Resize Layer to Image
+(action "layers-resize-to-image" "<Primary><Shift><Alt>r")
+
+# Alt+Shift+A — Add Alpha Channel
+(action "layers-alpha-add" "<Alt><Shift>a")
+
+# Ctrl+Shift+Alt+A — Alpha to Selection
+(action "layers-alpha-selection-replace" "<Primary><Shift><Alt>a")
+
+# Alt+Shift+M — Add Layer Mask
+(action "layers-mask-add" "<Alt><Shift>m")
+
+# Alt+Shift+D — Delete Layer Mask
+(action "layers-mask-delete" "<Alt><Shift>d")
+
+# Alt+Shift+E — Apply Layer Mask
+(action "layers-mask-apply" "<Alt><Shift>e")
+
+# Alt+Shift+S — Show Layer Mask
+(action "layers-mask-show" "<Alt><Shift>s")
+
+# Alt+Shift+BackSpace — Edit Layer Mask
+(action "layers-mask-edit" "<Alt><Shift>BackSpace")
+
+# Ctrl+Shift+Delete — Delete Layer
+(action "layers-delete" "<Primary><Shift>Delete")
+
+# Alt+Shift+T — Edit Layer Attributes
+(action "layers-edit-attributes" "<Alt><Shift>t")
+
+# Ctrl+Alt+G — Anchor floating layer
+(action "layers-anchor" "<Primary><Alt>g")
+
+# =============================================================================
+# LAYER OPACITY (1-0 keys for 10%-100%)
+# =============================================================================
+
+(action "layers-opacity-set" "1")
+(action "layers-opacity-set" "2")
+(action "layers-opacity-set" "3")
+(action "layers-opacity-set" "4")
+(action "layers-opacity-set" "5")
+(action "layers-opacity-set" "6")
+(action "layers-opacity-set" "7")
+(action "layers-opacity-set" "8")
+(action "layers-opacity-set" "9")
+(action "layers-opacity-set" "0")
+
+# Shift+plus — Increase Layer Opacity
+(action "layers-opacity-increase" "<Shift>plus")
+
+# Shift+minus — Decrease Layer Opacity
+(action "layers-opacity-decrease" "<Shift>minus")
+
+# =============================================================================
+# LAYER BLEND MODES (Photoshop cycling)
+# =============================================================================
+
+# Alt+Shift+Up — Next blend mode
+(action "layers-mode-next" "<Alt><Shift>Up")
+
+# Alt+Shift+Down — Previous blend mode
+(action "layers-mode-previous" "<Alt><Shift>Down")
+
+# =============================================================================
+# VIEW
+# =============================================================================
+
+# Ctrl+0 — Fit Image in Window (Fit on Screen)
+(action "view-zoom-fit-in" "<Primary>0")
+
+# Ctrl+1 — Zoom 100% (Actual Pixels)
+(action "view-zoom-1-1" "<Primary>1")
+
+# Ctrl+2 — Zoom 200%
+(action "view-zoom-2-1" "<Primary>2")
+
+# Ctrl+3 — Zoom 400%
+(action "view-zoom-4-1" "<Primary>3")
+
+# Ctrl+4 — Zoom 800%
+(action "view-zoom-8-1" "<Primary>4")
+
+# Ctrl+5 — Zoom 1600%
+(action "view-zoom-16-1" "<Primary>5")
+
+# Ctrl+plus — Zoom In
+(action "view-zoom-in" "<Primary>plus")
+
+# Ctrl+minus — Zoom Out
+(action "view-zoom-out" "<Primary>minus")
+
+# Ctrl+equal — Zoom In (alternative for keyboards without numpad)
+(action "view-zoom-in" "<Primary>equal")
+
+# Ctrl+Shift+plus — Zoom In (skip)
+(action "view-zoom-in-skip" "<Primary><Shift>plus")
+
+# Ctrl+Shift+minus — Zoom Out (skip)
+(action "view-zoom-out-skip" "<Primary><Shift>minus")
+
+# Ctrl+Shift+J — Zoom to Fill Window
+(action "view-zoom-fill" "<Primary><Shift>j")
+
+# Ctrl+Shift+Alt+0 — Zoom to Selection
+(action "view-zoom-selection" "<Primary><Shift><Alt>0")
+
+# Ctrl+Alt+0 — Shrink Wrap Window
+(action "view-shrink-wrap" "<Primary><Alt>minus")
+
+# F11 — Fullscreen
+(action "view-fullscreen" "F11")
+
+# F — Fullscreen (PS style)
+(action "view-fullscreen" "f")
+
+# Tab — Hide/Show Docks (toggle panels)
+(action "windows-hide-docks" "Tab")
+
+# Ctrl+R — Show/Hide Rulers
+(action "view-show-rulers" "<Primary>r")
+
+# Ctrl+H — Show/Hide Selection (marching ants)
+(action "view-show-selection" "<Primary>h")
+
+# Ctrl+apostrophe — Show/Hide Grid
+(action "view-show-grid" "<Primary>apostrophe")
+
+# Ctrl+semicolon — Show/Hide Guides
+(action "view-show-guides" "<Primary>semicolon")
+
+# Ctrl+Shift+semicolon — Snap to Guides
+(action "view-snap-to-guides" "<Primary><Shift>semicolon")
+
+# Alt+Ctrl+semicolon — Snap to Grid
+(action "view-snap-to-grid" "<Alt><Primary>semicolon")
+
+# Ctrl+Shift+apostrophe — Snap to Canvas
+(action "view-snap-to-canvas" "<Primary><Shift>apostrophe")
+
+# Ctrl+Alt+F — Show All (show beyond canvas)
+(action "view-show-all" "<Primary><Alt>f")
+
+# Ctrl+Shift+H — Show Layer Boundary
+(action "view-show-layer-boundary" "<Primary><Shift>h")
+
+# Ctrl+Alt+H — Show Canvas Boundary
+(action "view-show-canvas-boundary" "<Primary><Alt>h")
+
+# Ctrl+Shift+G — Show Statusbar
+(action "view-show-statusbar" "<Primary><Shift>g")
+
+# Ctrl+Shift+L — Show Scrollbars
+(action "view-show-scrollbars" "<Primary><Shift>l")
+
+# Ctrl+Shift+Alt+G — Show Menubar
+(action "view-show-menubar" "<Primary><Shift><Alt>g")
+
+# =============================================================================
+# VIEW — Navigation & Scrolling
+# =============================================================================
+
+# Ctrl+Shift+W — Navigation Window
+(action "view-navigation-window" "<Primary><Shift>w")
+
+# View New (duplicate view)
+(action "view-new" "<Alt><Shift>v")
+
+# View scrolling
+(action "view-scroll-center" "<Shift>Home")
+
+# =============================================================================
+# VIEW — Rotation
+# =============================================================================
+
+# Alt+R — Rotate 15 degrees clockwise (PS: arbitrary rotate)
+(action "view-rotate-15" "<Alt><Primary>Right")
+
+# Alt+L — Rotate 15 degrees counter-clockwise
+(action "view-rotate-345" "<Alt><Primary>Left")
+
+# Alt+0 — Reset view rotation
+(action "view-rotate-reset" "<Alt>0")
+
+# Ctrl+Alt+R — Reset view (rotation + flip)
+(action "view-reset" "<Primary><Alt>r")
+
+# =============================================================================
+# VIEW — Flip
+# =============================================================================
+
+# Alt+Ctrl+H — Flip view horizontally
+(action "view-flip-horizontally" "<Alt><Primary>h")
+
+# Alt+Ctrl+V — Flip view vertically
+(action "view-flip-vertically" "<Alt><Primary>v")
+
+# Alt+Ctrl+F — Flip reset
+(action "view-flip-reset" "<Primary><Shift><Alt>h")
+
+# =============================================================================
+# IMAGE
+# =============================================================================
+
+# Ctrl+I — Invert Colors (PS style)
+(action "filters-invert-perceptual" "<Primary>i")
+
+# Alt+Ctrl+I — Image Scale (Image Size)
+(action "image-scale" "<Alt><Primary>i")
+
+# Alt+Ctrl+C — Canvas Size
+(action "image-resize" "<Alt><Primary>c")
+
+# Ctrl+Shift+Alt+I — Image Properties
+(action "image-properties" "<Primary><Shift><Alt>i")
+
+# Ctrl+Alt+J — Duplicate Image
+(action "image-duplicate" "<Primary><Alt>j")
+
+# Alt+Shift+Ctrl+F — Flatten Image
+(action "image-flatten" "<Primary><Shift><Alt>f")
+
+# Ctrl+Shift+Alt+T — Resize to Layers
+(action "image-resize-to-layers" "<Primary><Shift><Alt>t")
+
+# Image rotation
+(action "image-rotate-90" "<Primary><Alt>bracketright")
+(action "image-rotate-270" "<Primary><Alt>bracketleft")
+(action "image-rotate-180" "<Primary><Alt><Shift>bracketright")
+
+# Image flip
+(action "image-flip-horizontal" "<Primary><Alt>F9")
+(action "image-flip-vertical" "<Primary><Alt>F10")
+
+# Image crop to content (auto-crop)
+(action "image-crop-to-content" "<Primary><Alt>x")
+
+# Image print size
+(action "image-print-size" "<Primary><Alt>p")
+
+# =============================================================================
+# IMAGE — Color Mode Conversion
+# =============================================================================
+
+(action "image-convert-rgb" "<Alt><Shift>r")
+(action "image-convert-grayscale" "<Alt><Shift>g")
+(action "image-convert-indexed" "<Alt><Shift>i")
+
+# =============================================================================
+# IMAGE — Color Profiles
+# =============================================================================
+
+(action "image-color-profile-assign" "<Alt><Shift>p")
+(action "image-color-profile-convert" "<Alt><Shift>c")
+
+# =============================================================================
+# FILTERS — Color Adjustments (Photoshop Image > Adjustments equivalents)
+# =============================================================================
+
+# Ctrl+L — Levels
+(action "filters-levels" "<Primary>l")
+
+# Ctrl+M — Curves
+(action "filters-curves" "<Primary>m")
+
+# Ctrl+U — Hue/Saturation
+(action "filters-hue-saturation" "<Primary>u")
+
+# Ctrl+B — Color Balance
+(action "filters-color-balance" "<Primary>b")
+
+# Ctrl+Shift+U — Desaturate
+(action "filters-desaturate" "<Primary><Shift>u")
+
+# Ctrl+Shift+B — Brightness/Contrast
+(action "filters-brightness-contrast" "<Primary><Shift>b")
+
+# Ctrl+Alt+L — Auto Levels (Levels Stretch)
+(action "drawable-levels-stretch" "<Primary><Alt>l")
+
+# Ctrl+Shift+L — Auto Contrast (Equalize)
+(action "drawable-equalize" "<Primary><Shift><Alt>l")
+
+# Ctrl+Alt+U — Colorize
+(action "filters-colorize" "<Primary><Alt>u")
+
+# Ctrl+Alt+B — Color Temperature
+(action "filters-color-temperature" "<Primary><Alt>b")
+
+# Alt+Shift+Ctrl+L — Threshold
+(action "filters-threshold" "<Alt><Shift><Primary>l")
+
+# Ctrl+Alt+M — Channel Mixer
+(action "filters-channel-mixer" "<Primary><Alt>m")
+
+# Ctrl+Shift+Alt+M — Mono Mixer
+(action "filters-mono-mixer" "<Primary><Shift><Alt>m")
+
+# Ctrl+Alt+K — Posterize
+(action "filters-posterize" "<Primary><Alt>k")
+
+# Ctrl+Alt+T — Color to Alpha
+(action "filters-color-to-alpha" "<Primary><Alt>t")
+
+# Ctrl+Shift+Alt+U — Saturation (separate)
+(action "filters-saturation" "<Primary><Shift><Alt>u")
+
+# Alt+Shift+H — Hue/Chroma
+(action "filters-hue-chroma" "<Alt><Shift>h")
+
+# Ctrl+Alt+Shift+E — Exposure
+(action "filters-exposure" "<Primary><Alt><Shift>e")
+
+# Alt+Ctrl+Shift+B — Shadows/Highlights
+(action "filters-shadows-highlights" "<Alt><Primary><Shift>b")
+
+# Ctrl+Shift+Alt+D — Invert Linear
+(action "filters-invert-linear" "<Primary><Shift><Alt>d")
+
+# Alt+Ctrl+Shift+V — Invert Value
+(action "filters-invert-value" "<Alt><Primary><Shift>v")
+
+# =============================================================================
+# FILTERS — Repeat & Show
+# =============================================================================
+
+# Ctrl+F — Repeat Last Filter
+(action "filters-repeat" "<Primary>f")
+
+# Ctrl+Shift+F — Reshow Last Filter Dialog
+(action "filters-reshow" "<Primary><Shift>f")
+
+# =============================================================================
+# FILTERS — Blur
+# =============================================================================
+
+(action "filters-gaussian-blur" "<Primary><Alt>g")
+(action "filters-motion-blur-linear" "<Primary><Alt>F1")
+(action "filters-motion-blur-circular" "<Primary><Alt>F2")
+(action "filters-motion-blur-zoom" "<Primary><Alt>F3")
+(action "filters-focus-blur" "<Primary><Alt>F4")
+(action "filters-lens-blur" "<Primary><Alt>F5")
+(action "filters-median-blur" "<Primary><Alt>F6")
+(action "filters-mean-curvature-blur" "<Primary><Alt>F7")
+(action "filters-variable-blur" "<Primary><Alt>F8")
+
+# =============================================================================
+# FILTERS — Sharpen
+# =============================================================================
+
+(action "filters-unsharp-mask" "<Primary><Shift>F1")
+(action "filters-high-pass" "<Primary><Shift>F2")
+
+# =============================================================================
+# FILTERS — Distort
+# =============================================================================
+
+(action "filters-spherize" "<Primary><Shift>F3")
+(action "filters-whirl-pinch" "<Primary><Shift>F4")
+(action "filters-ripple" "<Primary><Shift>F5")
+(action "filters-waves" "<Primary><Shift>F6")
+(action "filters-lens-distortion" "<Primary><Shift>F7")
+(action "filters-polar-coordinates" "<Primary><Shift>F8")
+(action "filters-displace" "<Primary><Shift>F9")
+(action "filters-fractal-trace" "<Primary><Shift>F10")
+(action "filters-kaleidoscope" "<Primary><Shift>F11")
+(action "filters-little-planet" "<Primary><Shift>F12")
+(action "filters-shift" "<Primary><Alt><Shift>F1")
+(action "filters-emboss" "<Primary><Alt><Shift>F2")
+
+# =============================================================================
+# FILTERS — Noise
+# =============================================================================
+
+(action "filters-noise-hsv" "<Primary><Alt><Shift>F3")
+(action "filters-noise-hurl" "<Primary><Alt><Shift>F4")
+(action "filters-noise-pick" "<Primary><Alt><Shift>F5")
+(action "filters-noise-slur" "<Primary><Alt><Shift>F6")
+(action "filters-noise-reduction" "<Primary><Alt><Shift>F7")
+(action "filters-noise-spread" "<Primary><Alt><Shift>F8")
+
+# =============================================================================
+# FILTERS — Edge Detect
+# =============================================================================
+
+(action "filters-edge" "<Primary><Alt><Shift>F9")
+(action "filters-edge-laplace" "<Primary><Alt><Shift>F10")
+(action "filters-edge-neon" "<Primary><Alt><Shift>F11")
+(action "filters-edge-sobel" "<Primary><Alt><Shift>F12")
+(action "filters-difference-of-gaussians" "<Alt>F1")
+
+# =============================================================================
+# FILTERS — Enhance
+# =============================================================================
+
+(action "filters-antialias" "<Alt>F2")
+(action "filters-noise-reduction" "<Alt>F3")
+(action "filters-red-eye-removal" "<Alt>F4")
+
+# =============================================================================
+# FILTERS — Light and Shadow
+# =============================================================================
+
+(action "filters-bloom" "<Alt>F5")
+(action "filters-lens-flare" "<Alt>F6")
+(action "filters-vignette" "<Alt>F7")
+(action "filters-dropshadow" "<Alt>F8")
+(action "filters-long-shadow" "<Alt>F9")
+(action "filters-softglow" "<Alt>F10")
+
+# =============================================================================
+# FILTERS — Render
+# =============================================================================
+
+(action "filters-plasma" "<Alt>F11")
+(action "filters-noise-solid" "<Alt>F12")
+
+# =============================================================================
+# FILTERS — Misc
+# =============================================================================
+
+(action "filters-offset" "<Primary><Shift><Alt>o")
+(action "filters-semi-flatten" "<Alt><Shift>f")
+(action "filters-color-enhance" "<Alt><Shift>e")
+(action "filters-stretch-contrast" "<Alt><Shift>l")
+(action "filters-sepia" "<Alt><Shift>F1")
+(action "filters-cartoon" "<Alt><Shift>F2")
+(action "filters-photocopy" "<Alt><Shift>F3")
+(action "filters-oilify" "<Alt><Shift>F4")
+(action "filters-pixelize" "<Alt><Shift>F5")
+(action "filters-cubism" "<Alt><Shift>F6")
+(action "filters-mosaic" "<Alt><Shift>F7")
+(action "filters-tile-seamless" "<Alt><Shift>F8")
+(action "filters-apply-canvas" "<Alt><Shift>F9")
+(action "filters-bump-map" "<Alt><Shift>F10")
+(action "filters-normal-map" "<Alt><Shift>F11")
+(action "filters-newsprint" "<Alt><Shift>F12")
+
+# =============================================================================
+# BRUSH CONTROLS
+# =============================================================================
+
+# [ — Decrease Brush Size
+(action "context-brush-radius-decrease" "bracketleft")
+
+# ] — Increase Brush Size
+(action "context-brush-radius-increase" "bracketright")
+
+# { — Decrease Brush Hardness
+(action "context-brush-hardness-decrease-skip" "braceleft")
+
+# } — Increase Brush Hardness
+(action "context-brush-hardness-increase-skip" "braceright")
+
+# Shift+[ — Decrease Brush Size (less)
+(action "context-brush-radius-decrease-less" "<Shift>bracketleft")
+
+# Shift+] — Increase Brush Size (less)
+(action "context-brush-radius-increase-less" "<Shift>bracketright")
+
+# Alt+[ — Decrease Brush Angle
+(action "context-brush-angle-decrease" "<Alt>bracketleft")
+
+# Alt+] — Increase Brush Angle
+(action "context-brush-angle-increase" "<Alt>bracketright")
+
+# < — Decrease Brush Spacing
+(action "context-brush-spacing-decrease" "less")
+
+# > — Increase Brush Spacing
+(action "context-brush-spacing-increase" "greater")
+
+# =============================================================================
+# OPACITY & PAINT MODE
+# =============================================================================
+
+# Context opacity
+(action "context-opacity-increase" "greater")
+(action "context-opacity-decrease" "less")
+(action "context-opacity-increase-skip" "<Shift>greater")
+(action "context-opacity-decrease-skip" "<Shift>less")
+
+# =============================================================================
+# TOOL OPTIONS — Size, Opacity, etc.
+# =============================================================================
+
+# Ctrl+[ — Decrease Tool Size
+(action "tools-size-decrease" "<Primary>bracketleft")
+
+# Ctrl+] — Increase Tool Size
+(action "tools-size-increase" "<Primary>bracketright")
+
+# =============================================================================
+# DRAWABLE OPERATIONS
+# =============================================================================
+
+# Ctrl+Shift+F9 — Flip Drawable Horizontal
+(action "drawable-flip-horizontal" "<Primary><Shift>F9")
+
+# Ctrl+Shift+F10 — Flip Drawable Vertical
+(action "drawable-flip-vertical" "<Primary><Shift>F10")
+
+# Drawable rotations
+(action "drawable-rotate-90" "<Primary>F9")
+(action "drawable-rotate-180" "<Primary>F10")
+(action "drawable-rotate-270" "<Primary>F11")
+
+# =============================================================================
+# WINDOWS / DIALOGS (Photoshop Window menu equivalents)
+# =============================================================================
+
+# F7 — Layers Dialog
+(action "dialogs-layers" "F7")
+
+# F5 — Brushes Dialog (Brush Presets)
+(action "dialogs-brushes" "F5")
+
+# F6 — Colors Dialog
+(action "dialogs-colors" "F6")
+
+# F8 — Tool Options
+(action "dialogs-tool-options" "F8")
+
+# F9 — Paths (Vectors) Dialog
+(action "dialogs-vectors" "F9")
+
+# F10 — Channels Dialog
+(action "dialogs-channels" "F10")
+
+# F12 — Undo History
+(action "dialogs-undo-history" "F12")
+
+# Ctrl+F7 — Gradients Dialog
+(action "dialogs-gradients" "<Primary>F7")
+
+# Ctrl+F5 — Patterns Dialog
+(action "dialogs-patterns" "<Primary>F5")
+
+# Ctrl+F6 — Palettes Dialog
+(action "dialogs-palettes" "<Primary>F6")
+
+# Ctrl+F8 — Fonts Dialog
+(action "dialogs-fonts" "<Primary>F8")
+
+# Ctrl+F9 — Buffers Dialog
+(action "dialogs-buffers" "<Primary>F9")
+
+# Ctrl+F10 — Histogram Dialog
+(action "dialogs-histogram" "<Primary>F10")
+
+# Ctrl+F11 — Images Dialog
+(action "dialogs-images" "<Primary>F11")
+
+# Ctrl+F12 — Document History
+(action "dialogs-document-history" "<Primary>F12")
+
+# Ctrl+Shift+Alt+P — Preferences
+(action "dialogs-preferences" "<Primary><Shift><Alt>p")
+
+# Alt+Shift+K — Keyboard Shortcuts
+(action "dialogs-keyboard-shortcuts" "<Alt><Shift>k")
+
+# Shift+F7 — Dynamics Dialog
+(action "dialogs-dynamics" "<Shift>F7")
+
+# Shift+F8 — MyPaint Brushes Dialog
+(action "dialogs-mypaint-brushes" "<Shift>F8")
+
+# Shift+F9 — Tool Presets Dialog
+(action "dialogs-tool-presets" "<Shift>F9")
+
+# Shift+F10 — Templates Dialog
+(action "dialogs-templates" "<Shift>F10")
+
+# Shift+F11 — Error Console
+(action "dialogs-error-console" "<Shift>F11")
+
+# Shift+F12 — Dashboard
+(action "dialogs-dashboard" "<Shift>F12")
+
+# Alt+Shift+F — Device Status
+(action "dialogs-device-status" "<Alt>d")
+
+# Ctrl+Alt+Shift+K — Navigation Dialog
+(action "dialogs-navigation" "<Primary><Alt><Shift>k")
+
+# Alt+N — Sample Points Dialog
+(action "dialogs-sample-points" "<Alt>n")
+
+# Alt+Shift+X — Symmetry Dialog
+(action "dialogs-symmetry" "<Alt><Shift>x")
+
+# Ctrl+Alt+Shift+D — Action Search
+(action "dialogs-action-search" "<Primary><Alt><Shift>d")
+
+# Single Window Mode toggle
+(action "windows-use-single-window-mode" "<Primary><Alt>w")
+
+# Show Tabs toggle
+(action "windows-show-tabs" "<Primary><Alt>Tab")
+
+# Next Display
+(action "windows-show-display-next" "<Primary>Tab")
+
+# Previous Display
+(action "windows-show-display-previous" "<Primary><Shift>Tab")
+
+# Toolbox toggle
+(action "dialogs-toolbox" "<Primary><Alt>t")
+
+# =============================================================================
+# COLOR MANAGEMENT
+# =============================================================================
+
+(action "view-color-management-enable" "<Alt><Shift>F2")
+(action "view-color-management-softproof" "<Alt><Shift>F3")
+(action "view-display-filters" "<Alt><Shift>F4")
+
+# =============================================================================
+# QUICK MASK
+# =============================================================================
+
+(action "quick-mask-toggle" "<Shift>q")
+(action "quick-mask-invert-on" "<Primary><Shift>q")
+
+# =============================================================================
+# HELP
+# =============================================================================
+
+# F1 — Help
+(action "help-help" "F1")
+
+# Shift+F1 — Context Help
+(action "help-context-help" "<Shift>F1")
+
+# =============================================================================
+# PLUG-INS — Common Operations
+# =============================================================================
+
+# Screenshot
+(action "plug-in-screenshot" "<Alt>Print")
+
+# Metadata
+(action "plug-in-metadata-viewer" "<Alt><Shift>F5")
+(action "plug-in-metadata-editor" "<Alt><Shift>F6")
+
+# Wavelet Decompose (useful for retouching like PS Frequency Separation)
+(action "plug-in-wavelet-decompose" "<Primary><Alt><Shift>w")
+
+# Align Layers
+(action "plug-in-align-layers" "<Primary><Alt>a")
+
+# Guillotine (slice)
+(action "plug-in-guillotine" "<Primary><Alt><Shift>g")
+
+# Autocrop (Zealous Crop)
+(action "plug-in-zealouscrop" "<Primary><Alt><Shift>x")
+
+# Script-Fu Console
+(action "plug-in-script-fu-console" "<Alt><Shift>F7")
+
+# Python-Fu Console
+(action "python-fu-console" "<Alt><Shift>F8")
+
+# =============================================================================
+# SCRIPT-FU — Common Scripts
+# =============================================================================
+
+# Drop Shadow (PS Layer Style equivalent)
+(action "script-fu-drop-shadow" "<Primary><Alt>s")
+
+# Round Corners
+(action "script-fu-round-corners" "<Primary><Alt><Shift>r")
+
+# Reverse Layers
+(action "script-fu-reverse-layers" "<Primary><Alt><Shift>l")
+
+# =============================================================================
+# PATHS (Pen Tool operations)
+# =============================================================================
+
+(action "paths-new" "<Primary><Alt>n")
+(action "paths-duplicate" "<Primary><Alt>d")
+(action "paths-delete" "<Primary><Alt>Delete")
+(action "paths-raise" "<Primary><Alt>Page_Up")
+(action "paths-lower" "<Primary><Alt>Page_Down")
+(action "paths-raise-to-top" "<Primary><Alt>Home")
+(action "paths-lower-to-bottom" "<Primary><Alt>End")
+(action "paths-selection-from-paths" "<Primary>Return")
+(action "paths-selection-to-path" "<Primary><Alt>Return")
+(action "paths-stroke" "<Primary><Alt><Shift>Return")
+(action "paths-fill" "<Primary><Alt>Return")
+(action "paths-import" "<Primary><Alt><Shift>i")
+(action "paths-export" "<Primary><Alt><Shift>p")
+(action "paths-edit" "<Primary><Alt>e")
+(action "paths-visible" "<Primary><Alt><Shift>v")
+(action "paths-copy" "<Primary><Alt><Shift>c")
+(action "paths-paste" "<Primary><Alt><Shift>v")
+
+# =============================================================================
+# CHANNELS
+# =============================================================================
+
+(action "channels-new" "<Primary><Shift>F1")
+(action "channels-duplicate" "<Primary><Shift>F2")
+(action "channels-delete" "<Primary><Shift>F3")
+(action "channels-raise" "<Primary><Shift>F4")
+(action "channels-lower" "<Primary><Shift>F5")
+(action "channels-selection-replace" "<Primary><Shift>F6")
+(action "channels-selection-add" "<Primary><Shift>F7")
+(action "channels-selection-subtract" "<Primary><Shift>F8")
+(action "channels-selection-intersect" "<Primary><Shift>F12")
+
+# =============================================================================
+# CONTEXT — Brush Shape
+# =============================================================================
+
+(action "context-brush-shape-circle" "<Primary><Alt>c")
+(action "context-brush-shape-square" "<Primary><Alt>q")
+(action "context-brush-shape-diamond" "<Primary><Alt><Shift>q")
+
+# =============================================================================
+# CONTEXT — Tool & Brush Selection Cycling
+# =============================================================================
+
+(action "context-tool-select-next" "<Primary><Alt>Right")
+(action "context-tool-select-previous" "<Primary><Alt>Left")
+(action "context-brush-select-next" "<Primary><Alt>Down")
+(action "context-brush-select-previous" "<Primary><Alt>Up")
+(action "context-pattern-select-next" "<Primary><Shift>Down")
+(action "context-pattern-select-previous" "<Primary><Shift>Up")
+(action "context-gradient-select-next" "<Primary><Shift>Right")
+(action "context-gradient-select-previous" "<Primary><Shift>Left")
+(action "context-font-select-next" "<Alt><Shift>Down")
+(action "context-font-select-previous" "<Alt><Shift>Up")
+(action "context-palette-select-next" "<Alt><Shift>Right")
+(action "context-palette-select-previous" "<Alt><Shift>Left")
+
+# =============================================================================
+# CONTEXT — Paint Mode Cycling
+# =============================================================================
+
+(action "context-paint-mode-next" "<Alt>Right")
+(action "context-paint-mode-previous" "<Alt>Left")
+
+# =============================================================================
+# DOT FOR DOT & SNAPPING
+# =============================================================================
+
+(action "view-dot-for-dot" "<Alt><Shift>d")
+(action "view-snap-to-bbox" "<Primary><Shift>semicolon")
+(action "view-snap-to-vectors" "<Primary><Alt>semicolon")
+
+# =============================================================================
+# CONFIGURE GRID
+# =============================================================================
+
+(action "image-configure-grid" "<Primary><Alt>apostrophe")
+
+# =============================================================================
+# GUIDES — Script-Fu helpers
+# =============================================================================
+
+(action "script-fu-guide-new" "<Primary><Alt><Shift>semicolon")
+(action "script-fu-guides-remove" "<Primary><Alt><Shift>apostrophe")
+(action "script-fu-guides-from-selection" "<Primary><Alt><Shift>g")
+
+# =============================================================================
+# GIMP — About and Debug
+# =============================================================================
+
+(action "dialogs-about" "<Primary><Alt><Shift>a")
+(action "dialogs-welcome" "<Primary><Alt><Shift>w")
+
+# =============================================================================
+# END OF SHORTCUTSRC
+# =============================================================================

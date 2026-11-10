@@ -1,0 +1,21 @@
+# GIMP tool preset file
+
+(icon-name "gimp-tool-paintbrush")
+(name "Hard Round Brush")
+(tool-options "GimpPaintOptions"
+    (tool "gimp-paintbrush-tool")
+    (foreground (color-rgb 0.000000 0.000000 0.000000))
+    (brush "2. Hardness 100")
+    (dynamics "Pressure Opacity")
+    (brush-size 20.000000)
+    (application-mode constant)
+    (hard yes))
+(use-fg-bg no)
+(use-brush yes)
+(use-dynamics yes)
+(use-gradient no)
+(use-pattern no)
+(use-palette no)
+(use-font no)
+
+# end of GIMP tool preset file

@@ -1,0 +1,44 @@
+GIMP Palette
+Name: Skin Tones
+Columns: 6
+#
+255 224 189	Fair Light
+255 205 148	Fair
+254 195 133	Fair Medium
+240 184 120	Light
+235 172 105	Light Medium
+224 163  95	Medium Light
+210 148  82	Medium
+195 133  68	Medium Tan
+180 118  55	Tan
+165 103  42	Medium Brown
+140  85  30	Brown
+115  65  18	Dark Brown
+ 90  50  10	Deep Brown
+ 70  38   5	Very Dark
+ 55  28   3	Espresso
+242 214 181	Peach Light
+230 195 157	Peach
+217 177 134	Peach Dark
+204 159 112	Sand Light
+191 141  91	Sand
+178 124  71	Sand Dark
+165 107  52	Caramel Light
+152  90  34	Caramel
+139  74  18	Caramel Dark
+255 233 210	Highlight Fair
+255 213 170	Highlight Medium
+230 180 130	Highlight Tan
+200 150 100	Highlight Brown
+170 120  70	Highlight Dark
+245 210 180	Blush Fair
+235 190 155	Blush Medium
+220 170 130	Blush Tan
+200 145 100	Blush Brown
+180 120  75	Blush Dark
+225 190 175	Shadow Fair
+210 170 150	Shadow Medium
+190 145 120	Shadow Tan
+165 120  90	Shadow Brown
+140  95  65	Shadow Dark
+115  70  40	Shadow Very Dark

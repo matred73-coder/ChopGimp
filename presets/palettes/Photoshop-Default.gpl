@@ -1,0 +1,104 @@
+GIMP Palette
+Name: Photoshop Default
+Columns: 12
+#
+253   0   2	Red
+253 125   0	Orange
+255 253   0	Yellow
+  0 128   1	Green
+  0   0 255	Blue
+ 74  23 110	Purple
+255 255 255	White
+228 228 228	Light Gray 1
+199 199 199	Light Gray 2
+173 173 173	Mid Gray 1
+147 147 147	Mid Gray 2
+122 122 122	Mid Gray 3
+ 97  97  97	Dark Gray 1
+ 73  73  73	Dark Gray 2
+ 49  49  49	Dark Gray 3
+  0   0   0	Black
+ 48   0   0	Dk Maroon
+ 97   0   0	Maroon 1
+146   0   0	Maroon 2
+194   0   0	Red Dk
+253   0   0	Red
+255  78  78	Red Lt
+ 48  24   0	Dk Brown
+ 97  48   0	Brown 1
+146  73   0	Brown 2
+194  97   0	Orange Dk
+253 122   0	Orange
+255 158  78	Orange Lt
+ 48  48   0	Dk Olive
+ 97  97   0	Olive 1
+146 146   0	Olive 2
+194 194   0	Yellow Dk
+253 253   0	Yellow
+255 255  78	Yellow Lt
+  0  48   0	Dk Forest
+  0  97   0	Forest 1
+  0 146   0	Forest 2
+  0 194   0	Green Dk
+  0 253   0	Green
+ 78 255  78	Green Lt
+  0  48  48	Dk Teal
+  0  97  97	Teal 1
+  0 146 146	Teal 2
+  0 194 194	Cyan Dk
+  0 253 253	Cyan
+ 78 255 255	Cyan Lt
+  0   0  48	Dk Navy
+  0   0  97	Navy 1
+  0   0 146	Navy 2
+  0   0 194	Blue Dk
+  0   0 253	Blue
+ 78  78 255	Blue Lt
+ 48   0  48	Dk Purple
+ 97   0  97	Purple 1
+146   0 146	Purple 2
+194   0 194	Magenta Dk
+253   0 253	Magenta
+255  78 255	Magenta Lt
+ 98  24  24	Brown Red Dk
+146  48  48	Brown Red
+194  73  73	Rose Dk
+255  97  97	Rose
+255 146 146	Rose Lt
+255 194 194	Pink Lt
+ 98  73  24	Brown Dk
+146  97  48	Brown
+194 146  73	Gold Dk
+255 170  97	Gold
+255 194 146	Peach
+255 219 194	Peach Lt
+ 98  98  24	Olive Dk 2
+146 146  48	Olive 3
+194 194  73	Khaki Dk
+255 255  97	Yellow Lt 2
+255 255 146	Cream
+255 255 194	Cream Lt
+ 24  98  24	Forest Dk 2
+ 48 146  48	Forest 3
+ 73 194  73	Green Lt Dk
+ 97 255  97	Green Lt 2
+146 255 146	Green Pastel
+194 255 194	Green Pastel Lt
+ 24  98  98	Teal Dk 2
+ 48 146 146	Teal 3
+ 73 194 194	Cyan Dk 2
+ 97 255 255	Cyan Lt 2
+146 255 255	Cyan Pastel
+194 255 255	Cyan Pastel Lt
+ 24  24  98	Navy Dk 2
+ 48  48 146	Navy 3
+ 73  73 194	Blue Dk 2
+ 97  97 255	Blue Lt 2
+146 146 255	Blue Pastel
+194 194 255	Blue Pastel Lt
+ 98  24  98	Purple Dk 2
+146  48 146	Purple 3
+194  73 194	Magenta Dk 2
+255  97 255	Magenta Lt 2
+255 146 255	Magenta Pastel
+255 194 255	Magenta Pastel Lt

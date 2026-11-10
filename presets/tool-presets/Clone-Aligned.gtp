@@ -1,0 +1,22 @@
+# GIMP tool preset file
+
+(icon-name "gimp-tool-clone")
+(name "Clone Aligned")
+(tool-options "GimpCloneOptions"
+    (tool "gimp-clone-tool")
+    (foreground (color-rgb 0.000000 0.000000 0.000000))
+    (brush "2. Hardness 050")
+    (dynamics "Pressure Opacity")
+    (brush-size 80.000000)
+    (clone-type image-clone)
+    (sample-merged yes)
+    (alignment aligned))
+(use-fg-bg no)
+(use-brush yes)
+(use-dynamics yes)
+(use-gradient no)
+(use-pattern no)
+(use-palette no)
+(use-font no)
+
+# end of GIMP tool preset file

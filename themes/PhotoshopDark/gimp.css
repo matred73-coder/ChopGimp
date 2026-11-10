@@ -1,0 +1,35 @@
+/* ============================================================
+ * PhotoGIMP Pro — Thème Adobe Dark MINIMAL
+ * ============================================================
+ * Seules les couleurs sont modifiées.
+ * Aucun override de widget, padding, border, hover, transition.
+ * Tout le reste est géré par le thème dark natif de GIMP.
+ * ============================================================ */
+
+/* Couleurs Photoshop CC appliquées au thème dark natif */
+@define-color fg-color               #E0E0E0;
+@define-color dimmed-fg-color        #A0A0A0;
+@define-color disabled-fg-color      #787878;
+@define-color disabled-button-color  #5A5A5A;
+
+@define-color bg-color               #535353;
+@define-color hover-color            #5A5A5A;
+@define-color widget-bg-color        #404040;
+@define-color selected-color         #2D2D2D;
+
+@define-color extreme-bg-color       #333333;
+@define-color extreme-selected-color #2D2D2D;
+
+@define-color border-color           #1A1A1A;
+@define-color strong-border-color    #3D3D3D;
+@define-color stronger-border-color  #4A4A4A;
+@define-color edge-border-color      #1A1A1A;
+
+@define-color scrollbar-slider-color #8B8B8B;
+@define-color scrollbar-trough-color #6B6B6B;
+
+@define-color ruler-color            #535353;
+
+/* Accent bleu Photoshop pour la sélection */
+@define-color selected-bg-color      #2680EB;
+@define-color selected-fg-color      #FFFFFF;

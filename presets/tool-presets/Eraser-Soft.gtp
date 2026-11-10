@@ -1,0 +1,20 @@
+# GIMP tool preset file
+
+(icon-name "gimp-tool-eraser")
+(name "Eraser Soft")
+(tool-options "GimpEraserOptions"
+    (tool "gimp-eraser-tool")
+    (brush "2. Hardness 025")
+    (dynamics "Pressure Opacity")
+    (brush-size 50.000000)
+    (hard no)
+    (anti-erase no))
+(use-fg-bg no)
+(use-brush yes)
+(use-dynamics yes)
+(use-gradient no)
+(use-pattern no)
+(use-palette no)
+(use-font no)
+
+# end of GIMP tool preset file
