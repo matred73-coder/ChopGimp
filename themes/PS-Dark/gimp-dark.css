@@ -1,0 +1,63 @@
+/* ═══════════════════════════════════════════════════════════════
+ * PS-Dark — PhotoGIMP Pro v2
+ * Thème GIMP 3.2 inspiré de l'interface Photoshop 2024-2026 (sombre).
+ *
+ * Structure :
+ *   gimp-dark.css   → palette (ce fichier)
+ *   common-dark.css → styles sombres de base (repris du thème Default GIMP 3.2.8)
+ *   common.css      → styles communs de base (repris du thème Default GIMP 3.2.8)
+ *   ps-overrides.css→ surcouche « Photoshop » (densité, onglets, outils, menus…)
+ *
+ * Debug : Fichier > Débogage > Démarrer GtkInspector (ou Ctrl+Maj+I)
+ * ═══════════════════════════════════════════════════════════════ */
+
+/* ── Palette de référence (gris sombres + accent bleu) ──────────
+ *   #1E1E1E  fond de document / zones les plus sombres
+ *   #252525  champs de saisie
+ *   #262626  barre de menus, en-têtes d'onglets inactifs, règles
+ *   #2B2B2B  listes (calques, couches…)
+ *   #323232  panneaux
+ *   #3E3E3E  survol
+ *   #4A4A4A  sélection (outil actif, calque actif)
+ *   #5A5A5A  bordures de boutons
+ *   #DCDCDC  texte      #A8A8A8 texte secondaire
+ *   #378EF0  accent bleu (focus, cases cochées, survol menus)
+ * ──────────────────────────────────────────────────────────── */
+
+@define-color ps-accent              #378EF0;
+@define-color ps-accent-hover        #4B9CF5;
+@define-color ps-accent-pressed      #2680EB;
+@define-color ps-canvas              #1E1E1E;
+@define-color ps-field               #252525;
+@define-color ps-chrome              #262626;
+@define-color ps-list                #2B2B2B;
+@define-color ps-button-border       #5A5A5A;
+@define-color ps-white               #FFFFFF;
+
+/* Variables attendues par common.css / common-dark.css */
+@define-color fg-color               #DCDCDC;
+@define-color bg-color               #323232;
+@define-color border-color           #1A1A1A;
+
+@define-color dimmed-fg-color        #A8A8A8;
+@define-color disabled-fg-color      #7A7A7A;
+@define-color disabled-button-color  #5A5A5A;
+
+@define-color hover-color            #3E3E3E;
+@define-color widget-bg-color        #252525;
+@define-color selected-color         #4A4A4A;
+
+@define-color extreme-bg-color       #2B2B2B;
+@define-color extreme-selected-color #4A4A4A;
+
+@define-color strong-border-color    #262626;
+@define-color stronger-border-color  #4A4A4A;
+@define-color edge-border-color      #1A1A1A;
+
+@define-color scrollbar-slider-color #5A5A5A;
+@define-color scrollbar-trough-color transparent;
+
+@define-color ruler-color            rgba(0,0,0,0.25);
+
+@import url("common-dark.css");
+@import url("ps-overrides.css");
