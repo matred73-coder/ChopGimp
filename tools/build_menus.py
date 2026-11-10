@@ -4,10 +4,10 @@ PhotoGIMP Pro v2 — génère la barre de menus « Photoshop » à partir des me
 de GIMP installé (aucun élément GIMP n'est supprimé, seulement réorganisé).
 
 Ordre Photoshop :
-  Fichier · Édition · Image · Calque · Texte · Sélection · Filtre ·
-  Affichage · Fenêtre · Aide
-- Le menu « Couleurs » de GIMP devient « Image > Réglages ».
-- Le menu « Outils » de GIMP devient « Fenêtre > Outils ».
+  Fichier · Édition · Image · Couleurs · Calque · Texte · Sélection ·
+  Filtres · Affichage · Fenêtres · Aide
+- Nouveau sous-menu « Image > Réglages » (réglages essentiels, comme Photoshop).
+- Le menu « Outils » de GIMP passe dans « Fenêtres > Outils ».
 - Nouveau menu « Texte ».
 
 GIMP lit ces menus via la variable GIMP_TESTING_MENUS_PATH (posée par le
@@ -63,10 +63,30 @@ def insert_before_close(block, extra):
     return block[:-1] + extra + block[-1:]
 
 
-reglages = ["      <section>"] + as_submenu(get["_Colors"], "_Réglages", "    ") + ["      </section>"]
-outils = ["      <section>"] + as_submenu(get["_Tools"], "_Outils", "    ") + ["      </section>"]
+# IMPORTANT : les menus de 1er niveau gardent leur libellé GIMP d'origine
+# (traduit à l'affichage : Fichier, Édition…). Les plug-ins s'y accrochent
+# par ce nom (« <Image>/Filters/… ») : le renommer crée des menus en double.
+# « Couleurs » reste donc un menu de 1er niveau (beaucoup de plug-ins y
+# vont) ; « Image > Réglages » en reprend l'essentiel, comme Photoshop.
+REGLAGES = [
+    ["filters-brightness-contrast", "filters-levels", "filters-curves", "filters-exposure"],
+    ["filters-hue-saturation", "filters-color-balance", "filters-mono-mixer",
+     "filters-channel-mixer", "filters-color-temperature", "filters-colorize"],
+    ["filters-invert-perceptual", "filters-posterize", "filters-threshold"],
+    ["filters-shadows-highlights", "filters-desaturate"],
+]
+reglages = ["      <section>", "        <submenu>",
+            '          <attribute name="label" translatable="no">_Réglages</attribute>']
+for sec in REGLAGES:
+    reglages.append("          <section>")
+    reglages += ['            <item><attribute name="action">app.%s</attribute></item>' % a for a in sec]
+    reglages.append("          </section>")
+reglages += ["        </submenu>", "      </section>"]
 
-image = insert_before_close(get["_Image"], reglages)
+# « Outils » imbriqué dans Fenêtre (libellé d'origine conservé → traduit)
+outils = ["      <section>"] + ["  " + l for l in get["_Tools"]] + ["      </section>"]
+
+image = get["_Image"][:2] + reglages + get["_Image"][2:]
 fenetre = insert_before_close(get["_Windows"], outils)
 
 texte = """    <submenu>
@@ -82,23 +102,18 @@ texte = """    <submenu>
     </submenu>""".split("\n")
 
 
-def relabel(block, label):
-    b = list(block)
-    b[1] = '      <attribute name="label" translatable="no">%s</attribute>' % label
-    return b
-
-
 order = [
-    relabel(get["_File"], "_Fichier"),
-    relabel(get["_Edit"], "É_dition"),
-    relabel(image, "_Image"),
-    relabel(get["_Layer"], "_Calque"),
+    get["_File"],
+    get["_Edit"],
+    image,
+    get["_Colors"],
+    get["_Layer"],
     texte,
-    relabel(get["_Select"], "_Sélection"),
-    relabel(get["Filte_rs"], "Filt_re"),
-    relabel(get["_View"], "_Affichage"),
-    relabel(fenetre, "Fe_nêtre"),
-    relabel(get["_Help"], "Ai_de"),
+    get["_Select"],
+    get["Filte_rs"],
+    get["_View"],
+    fenetre,
+    get["_Help"],
 ]
 
 out = list(head)

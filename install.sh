@@ -19,6 +19,8 @@ GIMP_CFG="$HOME/.config/GIMP/3.2"
 PG_DIR="$GIMP_CFG/photogimp"
 BACKUPS="$HOME/.config/GIMP/photogimp-backups"
 SNAP_GIMP="/snap/gimp/current/usr/share/gimp/3.0"
+# Dossier d'icônes vu par GTK dans le Snap ($XDG_DATA_HOME/icons) — voir install_icons
+SNAP_ICONS="$HOME/snap/gimp/current/.local/share/icons"
 APPS="$HOME/.local/share/applications"
 BIN="$HOME/.local/bin"
 
@@ -58,6 +60,7 @@ uninstall() {
     rm -rf "$GIMP_CFG"
     tar xzf "$BACKUPS/$orig" -C "$HOME/.config/GIMP"
     rm -f "$APPS/gimp_gimp.desktop" "$BIN/photogimp"
+    rm -rf "$SNAP_ICONS/PS-Line"
     update-desktop-database "$APPS" >/dev/null 2>&1 || true
     step "Configuration d'origine restaurée ($orig). Lanceur PhotoGIMP retiré."
 }
@@ -82,6 +85,12 @@ install_icons() {
     sed -i -e 's/^Name=.*/Name=PS-Line/' \
            -e 's/^Comment=.*/Comment=PhotoGIMP Pro — icônes style Photoshop (originales)/' \
            -e '/^Hidden=/d' "$dst/index.theme"
+    # GIMP ne communique pas à GTK le dossier des jeux d'icônes utilisateur au
+    # démarrage (seul le nom du thème est transmis) : sans cette copie dans le
+    # chemin de recherche GTK du Snap, toutes les icônes apparaissent manquantes.
+    mkdir -p "$SNAP_ICONS"
+    rm -rf "$SNAP_ICONS/PS-Line"
+    cp -r "$dst" "$SNAP_ICONS/PS-Line"
     step "Icônes PS-Line ($(ls "$SRC/icons/PS-Line/overlay/scalable/apps" | grep -c -- '-symbolic.svg') icônes redessinées)"
 }
 

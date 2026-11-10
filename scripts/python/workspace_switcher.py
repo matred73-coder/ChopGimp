@@ -310,7 +310,7 @@ class WorkspaceSwitcher(Gimp.PlugIn):
     def do_create_procedure(self, name):
         Gegl.init(None)
 
-        menu_base = "<Image>/Fenetres/Espaces de travail"
+        menu_base = "<Image>/Windows/Espaces de travail"
 
         if name == 'python-fu-save-workspace':
             procedure = Gimp.ImageProcedure.new(self, name,
