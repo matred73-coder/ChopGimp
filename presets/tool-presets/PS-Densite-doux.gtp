@@ -1,0 +1,20 @@
+# GIMP tool preset file — PhotoGIMP Pro
+
+(icon-name "gimp-tool-dodge")
+(name "Densité − / + (doux)")
+(tool-options "GimpDodgeBurnOptions"
+    (tool "gimp-dodge-burn-tool")
+    (brush "2. Hardness 025")
+    (dynamics-enabled no)
+    (brush-size 80.0)
+    (opacity 0.50)
+)
+(use-fg-bg no)
+(use-brush yes)
+(use-dynamics yes)
+(use-gradient no)
+(use-pattern no)
+(use-palette no)
+(use-font no)
+
+# end of GIMP tool preset file

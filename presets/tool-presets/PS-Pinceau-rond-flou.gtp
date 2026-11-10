@@ -1,15 +1,15 @@
-# GIMP tool preset file
+# GIMP tool preset file — PhotoGIMP Pro
 
 (icon-name "gimp-tool-paintbrush")
-(name "Soft Round Brush")
+(name "Pinceau rond flou")
 (tool-options "GimpPaintOptions"
     (tool "gimp-paintbrush-tool")
-    (foreground (color-rgb 0.000000 0.000000 0.000000))
     (brush "2. Hardness 025")
-    (dynamics "Pressure Opacity")
-    (brush-size 40.000000)
-    (application-mode constant)
-    (hard no))
+    (dynamics "Pressure Size")
+    (dynamics-enabled yes)
+    (brush-size 60.0)
+    (opacity 1.00)
+)
 (use-fg-bg no)
 (use-brush yes)
 (use-dynamics yes)

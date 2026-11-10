@@ -119,7 +119,9 @@ PS_MAP = [
     ("Calque", "layers-new-group",         [P + "g"],        "Grouper les calques"),
     ("Calque", "layers-merge-down",        [P + "e"],        "Fusionner avec le calque inférieur"),
     ("Calque", "image-merge-layers",       [P + S + "e"],    "Fusionner les calques visibles"),
-    ("Calque", "image-flatten",            [P + S + A + "e"], "Aplatir l'image"),
+    ("Calque", "photogimp-stamp-visible",  [P + S + A + "e"], "Fusionner sur un nouveau calque (tampon visible)"),
+    ("Calque", "photogimp-clipping-toggle", [P + A + "g"],   "Créer / annuler le masque d'écrêtage"),
+    ("Calque", "layers-new-last-values",   [P + S + A + "n"], "Nouveau calque sans boîte de dialogue"),
     ("Calque", "layers-raise",             [P + "bracketright"], "Premier plan d'un niveau"),
     ("Calque", "layers-lower",             [P + "bracketleft"],  "Arrière-plan d'un niveau"),
     ("Calque", "layers-raise-to-top",      [P + S + "bracketright"], "Premier plan"),
@@ -179,7 +181,7 @@ def main():
 
     # 1. actions valides
     for _, act, _, _ in PS_MAP:
-        if act not in defaults:
+        if act not in defaults and not act.startswith("photogimp-"):
             errors.append("action inconnue de GIMP 3.2.8 : %s" % act)
 
     # 2. aucune touche attribuée deux fois dans PS_MAP

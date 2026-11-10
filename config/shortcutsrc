@@ -186,8 +186,12 @@
 (action "layers-merge-down" "<Primary>e")
 # Fusionner les calques visibles
 (action "image-merge-layers" "<Primary><Shift>e")
-# Aplatir l'image
-(action "image-flatten" "<Primary><Shift><Alt>e")
+# Fusionner sur un nouveau calque (tampon visible)
+(action "photogimp-stamp-visible" "<Primary><Shift><Alt>e")
+# Créer / annuler le masque d'écrêtage
+(action "photogimp-clipping-toggle" "<Primary><Alt>g")
+# Nouveau calque sans boîte de dialogue
+(action "layers-new-last-values" "<Primary><Shift><Alt>n")
 # Premier plan d'un niveau
 (action "layers-raise" "<Primary>bracketright")
 # Arrière-plan d'un niveau

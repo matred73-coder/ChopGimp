@@ -112,6 +112,11 @@ view = """    (show-menubar yes)
     (show-guides yes)
     (show-grid no)
     (show-sample-points yes)
+    (snap-to-guides yes)
+    (snap-to-grid no)
+    (snap-to-canvas yes)
+    (snap-to-bbox yes)
+    (snap-to-equidistance yes)
     (padding-mode custom)
     (padding-color (color-rgb 0.118 0.118 0.118))
     (padding-in-show-all no)"""
@@ -122,7 +127,16 @@ simple = {
     "toolbox-image-area": "no", "toolbox-groups": "yes",
     "layer-preview-size": "medium", "show-tool-tips": "yes",
 }
-blocks = {"default-view": view, "default-fullscreen-view": view}
+image = """    (width 1920)
+    (height 1080)
+    (unit pixels)
+    (xresolution 72)
+    (yresolution 72)
+    (resolution-unit inches)
+    (image-type rgb)
+    (precision u8-non-linear)
+    (fill-type white)"""
+blocks = {"default-view": view, "default-fullscreen-view": view, "default-image": image}
 
 def drop(s, key):
     """Supprime une entrée « (key …) » de premier niveau, même sur plusieurs lignes."""
@@ -154,7 +168,7 @@ else:
     s += "\n" + add
 open(p, "w").write(s)
 EOF
-    step "gimprc (thème, icônes, boîte à outils, fond de travail #1E1E1E)"
+    step "gimprc (thème, icônes, boîte à outils, fond #1E1E1E, magnétisme, document par défaut)"
 }
 
 install_layout() {
@@ -186,6 +200,67 @@ src, dst, geom = sys.argv[1:4]
 open(dst, "w").write(open(src).read().replace("@GEOMETRY@", geom))
 EOF
     step "Boîte à outils, panneaux « Essentiel » et raccourcis Photoshop"
+}
+
+install_documents() {
+    python3 -I "$SRC/tools/build_documents.py" >/dev/null
+    cp "$SRC/config/templaterc" "$GIMP_CFG/templaterc"
+    mkdir -p "$GIMP_CFG/tool-presets" "$GIMP_CFG/palettes"
+    # anciens préréglages v1 (anglais) remplacés par les PS-*.gtp
+    rm -f "$GIMP_CFG/tool-presets/"{Clone-Aligned,Eraser-Hard,Eraser-Soft,Hard-Round-Brush,Healing-Brush,Soft-Round-Brush}.gtp
+    rm -f "$GIMP_CFG/tool-presets/"PS-*.gtp
+    cp "$SRC/presets/tool-presets/"*.gtp "$GIMP_CFG/tool-presets/"
+    cp "$SRC/presets/palettes/"*.gpl "$GIMP_CFG/palettes/"
+    step "Modèles « Nouveau document » ($(grep -c '^(GimpTemplate' "$SRC/config/templaterc")), préréglages d'outils, nuanciers"
+}
+
+install_tools() {
+    python3 -I "$SRC/tools/tool_options.py" "$GIMP_CFG/tool-options" >/dev/null
+    # Molette façon Photoshop : Alt+molette = zoom, Ctrl+molette = défilement horizontal
+    python3 -I - "$GIMP_CFG/controllerrc" <<'PYEOF'
+import re, sys
+p = sys.argv[1]
+try:
+    s = open(p).read()
+except FileNotFoundError:
+    sys.exit(0)
+ps = {"scroll-up-alt": "view-zoom-in", "scroll-down-alt": "view-zoom-out",
+      "scroll-up-primary": "view-scroll-left", "scroll-down-primary": "view-scroll-right"}
+m = re.search(r'\(GimpControllerInfo "Main Mouse Wheel".*?\(mapping(.*?)\)\)\n', s, re.S)
+if m:
+    body = m.group(1)
+    for k in ps:
+        body = re.sub(r'\n\s*\(map "%s" "[^"]*"\)' % re.escape(k), "", body)
+    body += "".join('\n        (map "%s" "%s")' % kv for kv in ps.items())
+    s = s[:m.start(1)] + body + s[m.end(1):]
+    open(p, "w").write(s)
+PYEOF
+    step "Outils façon Photoshop (déplacement, recadrage, Ctrl+T, baguette, texte…) + molette"
+}
+
+# Plug-ins v1 désactivés (voir data/audit-plugins-v1.json) : remplacés par
+# photogimp_ps, ou cassés sous GIMP 3.2. Déplacés (pas supprimés) dans
+# photogimp/plug-ins-desactives/ — réversible.
+PLUGINS_OFF="adjustment_layers clipping_mask layer_styles nde_effects
+content_fill spot_healing bitmap_trace color_range_select depth_blur dodge_burn_setup
+focus_stacking frequency_separation gradient_presets hdr_merge histogram_live
+luminosity_masks lut_loader pathfinder pattern_stamp properties_info refine_mask
+select_and_mask shape_library shortcut_overlay smart_recents smart_sharpen split_toning
+vanishing_point vector_mask vector_shapes vector_stroke welcome_screen
+quick_effects text_effects layer_comps color_palette_gen"
+
+install_plugins() {
+    local off="$PG_DIR/plug-ins-desactives" n=0
+    mkdir -p "$off" "$GIMP_CFG/plug-ins"
+    for p in $PLUGINS_OFF; do
+        if [ -d "$GIMP_CFG/plug-ins/$p" ]; then
+            rm -rf "$off/$p"; mv "$GIMP_CFG/plug-ins/$p" "$off/"; n=$((n+1))
+        fi
+    done
+    rm -rf "$GIMP_CFG/plug-ins/photogimp_ps"
+    cp -r "$SRC/plug-ins/photogimp_ps" "$GIMP_CFG/plug-ins/"
+    chmod +x "$GIMP_CFG/plug-ins/photogimp_ps/photogimp_ps.py"
+    step "Plug-in photogimp_ps (écrêtage, styles, calques de réglage) ; $n plug-ins v1 désactivés"
 }
 
 install_menus_launcher() {
@@ -229,6 +304,9 @@ install_theme
 install_icons
 merge_gimprc
 install_layout
+install_documents
+install_tools
+install_plugins
 install_menus_launcher
 
 echo -e "\n${G}Terminé.${N} Lancez « PhotoGIMP Pro » depuis le menu des applications"

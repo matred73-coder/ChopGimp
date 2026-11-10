@@ -1,16 +1,15 @@
-# GIMP tool preset file
+# GIMP tool preset file — PhotoGIMP Pro
 
 (icon-name "gimp-tool-clone")
-(name "Clone Aligned")
+(name "Tampon de duplication (aligné)")
 (tool-options "GimpCloneOptions"
     (tool "gimp-clone-tool")
-    (foreground (color-rgb 0.000000 0.000000 0.000000))
     (brush "2. Hardness 050")
-    (dynamics "Pressure Opacity")
-    (brush-size 80.000000)
-    (clone-type image-clone)
-    (sample-merged yes)
-    (alignment aligned))
+    (dynamics-enabled no)
+    (brush-size 50.0)
+    (opacity 1.00)
+    (align-mode aligned)
+)
 (use-fg-bg no)
 (use-brush yes)
 (use-dynamics yes)

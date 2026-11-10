@@ -1,14 +1,14 @@
-# GIMP tool preset file
+# GIMP tool preset file — PhotoGIMP Pro
 
 (icon-name "gimp-tool-eraser")
-(name "Eraser Hard")
+(name "Gomme ronde dure")
 (tool-options "GimpEraserOptions"
     (tool "gimp-eraser-tool")
     (brush "2. Hardness 100")
-    (dynamics "Pressure Opacity")
-    (brush-size 30.000000)
-    (hard yes)
-    (anti-erase no))
+    (dynamics-enabled no)
+    (brush-size 40.0)
+    (opacity 1.00)
+)
 (use-fg-bg no)
 (use-brush yes)
 (use-dynamics yes)
