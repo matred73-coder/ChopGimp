@@ -29,7 +29,7 @@ step() { echo -e "${G}[✓]${N} $1"; }
 warn() { echo -e "${Y}[!]${N} $1"; }
 die()  { echo -e "${R}[✗]${N} $1"; exit 1; }
 
-gimp_running() { pgrep -f "/snap/gimp/.*/usr/bin/gimp" >/dev/null 2>&1; }
+gimp_running() { pgrep -x gimp >/dev/null 2>&1 || pgrep -x gimp-3.2 >/dev/null 2>&1; }
 
 backup() {
     mkdir -p "$BACKUPS"

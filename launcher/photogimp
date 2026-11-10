@@ -13,6 +13,17 @@ STAMP="$PG_DIR/menus.stamp"
 SRC_MENUS="/snap/gimp/current/usr/share/gimp/3.0/menus"
 GIMP_BIN="/snap/bin/gimp"
 
+# Lancé depuis une autre application Snap (ex. terminal de VS Code), on hérite
+# de son environnement GTK : ses décodeurs d'images (sans SVG) font disparaître
+# toutes les icônes. On restaure les valeurs d'origine et on retire le reste.
+for v in $(env | sed -n 's/^\([A-Za-z_][A-Za-z0-9_]*\)_VSCODE_SNAP_ORIG=.*/\1/p'); do
+    orig="${v}_VSCODE_SNAP_ORIG"
+    if [ -n "${!orig}" ]; then export "$v=${!orig}"; else unset "$v"; fi
+    unset "$orig"
+done
+unset GDK_PIXBUF_MODULE_FILE GDK_PIXBUF_MODULEDIR GTK_PATH GTK_EXE_PREFIX \
+      GTK_IM_MODULE_FILE GIO_MODULE_DIR LOCPATH GSETTINGS_SCHEMA_DIR
+
 current="$(readlink -f /snap/gimp/current 2>/dev/null)"
 
 if [ -d "$SRC_MENUS" ] && [ "$(cat "$STAMP" 2>/dev/null)" != "$current" ]; then
