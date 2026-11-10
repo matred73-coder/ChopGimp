@@ -1,269 +1,227 @@
 #!/bin/bash
 # ═══════════════════════════════════════════════════════════════
-# PhotoGIMP Pro — Installation Script
-# Transforme GIMP en environnement Photoshop-like complet
+# PhotoGIMP Pro v2 — installeur (GIMP 3.2 Snap)
+#
+#   ./install.sh               installe / met à jour
+#   ./install.sh --uninstall   restaure la configuration GIMP d'origine
+#   ./install.sh --status      affiche l'état de l'installation
+#
+# Installe : thème PS-Dark, icônes PS-Line, boîte à outils et panneaux
+# façon Photoshop, raccourcis Photoshop, barre de menus Photoshop
+# (via le lanceur « PhotoGIMP Pro »).
+# Ne touche pas aux plug-ins, brosses, polices, préférences de performance.
 # ═══════════════════════════════════════════════════════════════
+set -euo pipefail
 
-set -e
+SRC="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+VERSION="$(cat "$SRC/VERSION")"
+GIMP_CFG="$HOME/.config/GIMP/3.2"
+PG_DIR="$GIMP_CFG/photogimp"
+BACKUPS="$HOME/.config/GIMP/photogimp-backups"
+SNAP_GIMP="/snap/gimp/current/usr/share/gimp/3.0"
+APPS="$HOME/.local/share/applications"
+BIN="$HOME/.local/bin"
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-BACKUP_SUFFIX="backup-$(date +%Y%m%d-%H%M%S)"
+G='\033[0;32m'; Y='\033[1;33m'; R='\033[0;31m'; B='\033[0;34m'; N='\033[0m'
+step() { echo -e "${G}[✓]${N} $1"; }
+warn() { echo -e "${Y}[!]${N} $1"; }
+die()  { echo -e "${R}[✗]${N} $1"; exit 1; }
 
-# Couleurs
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-BLUE='\033[0;34m'
-NC='\033[0m'
+gimp_running() { pgrep -f "/snap/gimp/.*/usr/bin/gimp" >/dev/null 2>&1; }
 
-print_header() {
-    echo -e "\n${BLUE}═══════════════════════════════════════════════${NC}"
-    echo -e "${BLUE}  PhotoGIMP Pro — Installateur${NC}"
-    echo -e "${BLUE}═══════════════════════════════════════════════${NC}\n"
+backup() {
+    mkdir -p "$BACKUPS"
+    local ts; ts="$(date +%Y%m%d-%H%M%S)"
+    local name="3.2-$ts.tar.gz"
+    # La toute première sauvegarde (config sans PhotoGIMP v2) est marquée « origine »
+    if [ ! -f "$BACKUPS/ORIGINE" ]; then
+        name="3.2-origine-$ts.tar.gz"
+        echo "$name" > "$BACKUPS/ORIGINE"
+    fi
+    tar czf "$BACKUPS/$name" -C "$HOME/.config/GIMP" 3.2
+    step "Sauvegarde de la configuration : $BACKUPS/$name"
 }
 
-print_step() {
-    echo -e "${GREEN}[✓]${NC} $1"
+status() {
+    echo -e "${B}PhotoGIMP Pro${N} — source v$VERSION"
+    echo "  Installé      : $(cat "$PG_DIR/VERSION" 2>/dev/null || echo non)"
+    echo "  GIMP Snap     : $(readlink -f /snap/gimp/current 2>/dev/null || echo absent)"
+    echo "  Menus générés : $(cat "$PG_DIR/menus.stamp" 2>/dev/null || echo 'au prochain lancement')"
+    echo "  Sauvegarde d'origine : $(cat "$BACKUPS/ORIGINE" 2>/dev/null || echo aucune)"
 }
 
-print_warn() {
-    echo -e "${YELLOW}[!]${NC} $1"
+uninstall() {
+    gimp_running && die "Fermez GIMP avant de désinstaller."
+    local orig; orig="$(cat "$BACKUPS/ORIGINE" 2>/dev/null || true)"
+    [ -n "$orig" ] && [ -f "$BACKUPS/$orig" ] || die "Aucune sauvegarde d'origine trouvée dans $BACKUPS"
+    backup
+    rm -rf "$GIMP_CFG"
+    tar xzf "$BACKUPS/$orig" -C "$HOME/.config/GIMP"
+    rm -f "$APPS/gimp_gimp.desktop" "$BIN/photogimp"
+    update-desktop-database "$APPS" >/dev/null 2>&1 || true
+    step "Configuration d'origine restaurée ($orig). Lanceur PhotoGIMP retiré."
 }
 
-print_error() {
-    echo -e "${RED}[✗]${NC} $1"
+install_theme() {
+    rm -rf "$GIMP_CFG/themes/PS-Dark"
+    mkdir -p "$GIMP_CFG/themes"
+    cp -r "$SRC/themes/PS-Dark" "$GIMP_CFG/themes/"
+    printf '/* PhotoGIMP Pro v2 : surcharge utilisateur. Le style est dans themes/PS-Dark. */\n' > "$GIMP_CFG/gimp.css"
+    step "Thème PS-Dark"
 }
 
-# Détection des versions GIMP installées
-detect_gimp_versions() {
-    local versions=()
-
-    # Config utilisateur standard
-    for dir in "$HOME/.config/GIMP"/*/; do
-        if [ -d "$dir" ]; then
-            ver=$(basename "$dir")
-            # Exclure les backups
-            if [[ ! "$ver" == *backup* ]]; then
-                versions+=("$ver")
-            fi
-        fi
-    done
-
-    # Flatpak
-    local flatpak_config="$HOME/.var/app/org.gimp.GIMP/config/GIMP"
-    if [ -d "$flatpak_config" ]; then
-        for dir in "$flatpak_config"/*/; do
-            if [ -d "$dir" ]; then
-                ver=$(basename "$dir")
-                if [[ ! "$ver" == *backup* ]]; then
-                    versions+=("flatpak:$ver")
-                fi
-            fi
-        done
-    fi
-
-    echo "${versions[@]}"
+install_icons() {
+    local dst="$GIMP_CFG/icons/PS-Line"
+    rm -rf "$dst"; mkdir -p "$GIMP_CFG/icons"
+    # Base complète = icônes Default de GIMP (aucune icône manquante)…
+    cp -r "$SNAP_GIMP/icons/Default" "$dst"
+    chmod -R u+w "$dst"
+    # …puis surcouche des icônes PS-Line originales.
+    python3 -I "$SRC/icons/build_icons.py" >/dev/null
+    cp -r "$SRC/icons/PS-Line/overlay/." "$dst/"
+    sed -i -e 's/^Name=.*/Name=PS-Line/' \
+           -e 's/^Comment=.*/Comment=PhotoGIMP Pro — icônes style Photoshop (originales)/' \
+           -e '/^Hidden=/d' "$dst/index.theme"
+    step "Icônes PS-Line ($(ls "$SRC/icons/PS-Line/overlay/scalable/apps" | grep -c -- '-symbolic.svg') icônes redessinées)"
 }
 
-# Backup d'une version GIMP
-backup_version() {
-    local config_dir="$1"
-    local backup_dir="${config_dir}-${BACKUP_SUFFIX}"
+merge_gimprc() {
+    python3 -I - "$GIMP_CFG/gimprc" <<'EOF'
+import re, sys
+p = sys.argv[1]
+try:
+    s = open(p).read()
+except FileNotFoundError:
+    s = "# GIMP gimprc\n\n# end of gimprc\n"
+view = """    (show-menubar yes)
+    (show-statusbar yes)
+    (show-rulers yes)
+    (show-scrollbars yes)
+    (show-selection yes)
+    (show-layer-boundary no)
+    (show-canvas-boundary no)
+    (show-guides yes)
+    (show-grid no)
+    (show-sample-points yes)
+    (padding-mode custom)
+    (padding-color (color-rgb 0.118 0.118 0.118))
+    (padding-in-show-all no)"""
+simple = {
+    "theme": '"PS-Dark"', "theme-color-scheme": "dark",
+    "icon-theme": '"PS-Line"', "prefer-symbolic-icons": "yes",
+    "toolbox-wilber": "no", "toolbox-color-area": "yes", "toolbox-foo-area": "no",
+    "toolbox-image-area": "no", "toolbox-groups": "yes",
+    "layer-preview-size": "medium", "show-tool-tips": "yes",
+}
+blocks = {"default-view": view, "default-fullscreen-view": view}
 
-    if [ -d "$config_dir" ]; then
-        cp -r "$config_dir" "$backup_dir"
-        print_step "Backup: $backup_dir"
-    fi
+def drop(s, key):
+    """Supprime une entrée « (key …) » de premier niveau, même sur plusieurs lignes."""
+    pat = re.compile(r"^\(%s[ \n]" % re.escape(key), re.M)
+    m = pat.search(s)
+    while m:
+        depth, j = 0, m.start()
+        while True:
+            c = s[j]
+            depth += (c == "(") - (c == ")")
+            j += 1
+            if depth == 0:
+                break
+        if j < len(s) and s[j] == "\n":
+            j += 1
+        s = s[:m.start()] + s[j:]
+        m = pat.search(s)
+    return s
+
+for k in list(simple) + list(blocks):
+    s = drop(s, k)
+s = re.sub(r"# PhotoGIMP Pro v2[^\n]*\n", "", s)
+add = "# PhotoGIMP Pro v2 — apparence\n"
+add += "".join("(%s %s)\n" % kv for kv in simple.items())
+add += "".join("(%s\n%s)\n" % (k, v) for k, v in blocks.items())
+if "# end of gimprc" in s:
+    s = s.replace("# end of gimprc", add + "\n# end of gimprc")
+else:
+    s += "\n" + add
+open(p, "w").write(s)
+EOF
+    step "gimprc (thème, icônes, boîte à outils, fond de travail #1E1E1E)"
 }
 
-# Installation pour une version GIMP donnée
-install_for_version() {
-    local config_dir="$1"
-    local version="$2"
-    local gimp_data_dir="$3"  # Pour les menus (si accessible)
+install_layout() {
+    python3 -I "$SRC/tools/build_layout.py" >/dev/null
+    python3 -I "$SRC/tools/build_shortcuts.py" >/dev/null
+    cp "$SRC/config/toolrc" "$GIMP_CFG/toolrc"
+    cp "$SRC/config/shortcutsrc" "$GIMP_CFG/shortcutsrc"
+    # sessionrc : on garde la position / taille / écran de la fenêtre principale actuelle
+    local geom
+    geom="$(python3 -I - "$GIMP_CFG/sessionrc" <<'EOF'
+import re, sys
+try:
+    s = open(sys.argv[1]).read()
+except FileNotFoundError:
+    s = ""
+m = re.search(r'\(factory-entry "gimp-single-image-window"\)(.*?)\(open-on-exit\)', s, re.S)
+g = []
+if m:
+    for k in ("position", "size", "monitor"):
+        mm = re.search(r"\(%s [^)]*\)" % k, m.group(1))
+        if mm:
+            g.append(mm.group(0))
+print("\n    ".join(g) if g else "(position 0 0)\n    (size 1920 1080)")
+EOF
+)"
+    python3 -I - "$SRC/config/sessionrc" "$GIMP_CFG/sessionrc" "$geom" <<'EOF'
+import sys
+src, dst, geom = sys.argv[1:4]
+open(dst, "w").write(open(src).read().replace("@GEOMETRY@", geom))
+EOF
+    step "Boîte à outils, panneaux « Essentiel » et raccourcis Photoshop"
+}
 
-    echo -e "\n${BLUE}--- Installation pour GIMP $version ---${NC}\n"
-
-    # 1. Backup
-    backup_version "$config_dir"
-
-    # 2. Raccourcis
-    cp "$SCRIPT_DIR/config/shortcutsrc" "$config_dir/shortcutsrc"
-    print_step "Raccourcis Photoshop installés (shortcutsrc)"
-
-    # 3. Préférences
-    cp "$SCRIPT_DIR/config/gimprc" "$config_dir/gimprc"
-    print_step "Préférences optimisées installées (gimprc)"
-
-    # 4. Templates
-    cp "$SCRIPT_DIR/config/templaterc" "$config_dir/templaterc"
-    print_step "Templates (social media, print, web, vidéo) installés"
-
-    # 5. Thème CSS
-    cp "$SCRIPT_DIR/themes/PhotoshopDark/gimp.css" "$config_dir/gimp.css"
-    # Créer le theme.css qui pointe vers le thème dark + nos overrides
-    cat > "$config_dir/theme.css" << 'THEME_EOF'
-/* PhotoGIMP Pro — Adobe Dark Theme */
-/* Auto-generated by PhotoGIMP Pro installer */
-
-@import url("file:///usr/share/gimp/3.0/themes/Default/gimp-dark.css");
-@import url("gimp.css");
-
-* { -gtk-icon-style: symbolic; }
-
-/* prefer-dark-theme */
-THEME_EOF
-
-    # Version Snap : chemin différent pour le thème
-    if command -v snap &> /dev/null && snap list gimp &> /dev/null 2>&1; then
-        local snap_theme_path
-        snap_theme_path=$(find /snap/gimp -name "gimp-dark.css" 2>/dev/null | sort -V | tail -1)
-        if [ -n "$snap_theme_path" ]; then
-            cat > "$config_dir/theme.css" << SNAP_THEME_EOF
-/* PhotoGIMP Pro — Adobe Dark Theme (Snap) */
-@import url("file://$snap_theme_path");
-@import url("gimp.css");
-
-* { -gtk-icon-style: symbolic; }
-
-/* prefer-dark-theme */
-SNAP_THEME_EOF
-        fi
-    fi
-
-    # Version Flatpak : chemin différent
-    if [[ "$config_dir" == *".var/app"* ]]; then
-        cat > "$config_dir/theme.css" << 'FLAT_THEME_EOF'
-/* PhotoGIMP Pro — Adobe Dark Theme (Flatpak) */
-@import url("file:///app/share/gimp/3.0/themes/Default/gimp-dark.css");
-@import url("gimp.css");
-
-* { -gtk-icon-style: symbolic; }
-
-/* prefer-dark-theme */
-FLAT_THEME_EOF
-    fi
-
-    print_step "Thème Adobe Dark installé"
-
-    # 6. Scripts Python
-    local plug_in_dir="$config_dir/plug-ins"
-    mkdir -p "$plug_in_dir"
-
-    for script in "$SCRIPT_DIR/scripts/python/"*.py; do
-        if [ -f "$script" ]; then
-            local script_name
-            script_name=$(basename "$script" .py)
-            local target_dir="$plug_in_dir/$script_name"
-            mkdir -p "$target_dir"
-            cp "$script" "$target_dir/$script_name.py"
-            chmod +x "$target_dir/$script_name.py"
-        fi
-    done
-    print_step "Scripts Python installés ($(ls "$SCRIPT_DIR/scripts/python/"*.py 2>/dev/null | wc -l) plugins)"
-
-    # 7. Palettes
-    local palettes_dir="$config_dir/palettes"
-    mkdir -p "$palettes_dir"
-    if [ -d "$SCRIPT_DIR/presets/palettes" ]; then
-        cp "$SCRIPT_DIR/presets/palettes/"*.gpl "$palettes_dir/" 2>/dev/null || true
-        print_step "Palettes installées ($(ls "$SCRIPT_DIR/presets/palettes/"*.gpl 2>/dev/null | wc -l) palettes)"
-    fi
-
-    # 8. Tool presets
-    local presets_dir="$config_dir/tool-presets"
-    mkdir -p "$presets_dir"
-    if [ -d "$SCRIPT_DIR/presets/tool-presets" ]; then
-        cp "$SCRIPT_DIR/presets/tool-presets/"*.gtp "$presets_dir/" 2>/dev/null || true
-        print_step "Tool presets installés ($(ls "$SCRIPT_DIR/presets/tool-presets/"*.gtp 2>/dev/null | wc -l) presets)"
-    fi
-
-    # 9. Menus (si on a accès en écriture)
-    if [ -n "$gimp_data_dir" ] && [ -w "$gimp_data_dir/menus/" ]; then
-        cp "$SCRIPT_DIR/menus/image-menu.ui" "$gimp_data_dir/menus/image-menu.ui"
-        print_step "Menus Photoshop installés"
+install_menus_launcher() {
+    mkdir -p "$PG_DIR" "$APPS" "$BIN"
+    cp "$SRC/tools/build_menus.py" "$PG_DIR/build_menus.py"
+    rm -rf "$PG_DIR/menus" "$PG_DIR/menus.stamp"
+    if python3 -I "$PG_DIR/build_menus.py" "$SNAP_GIMP/menus" "$PG_DIR/menus" >/dev/null; then
+        readlink -f /snap/gimp/current > "$PG_DIR/menus.stamp"
     else
-        print_warn "Menus : GIMP installé en lecture seule (snap/flatpak/système)"
-        print_warn "Les menus Photoshop nécessitent une installation manuelle."
-        print_warn "Fichier source : $SCRIPT_DIR/menus/image-menu.ui"
+        warn "Menus Photoshop non générés (GIMP démarrera avec ses menus d'origine)"
     fi
-
-    print_step "GIMP $version configuré avec succès !"
+    install -m 755 "$SRC/launcher/photogimp" "$BIN/photogimp"
+    # Remplace l'entrée GIMP du menu des applications (même nom de fichier que
+    # celle du Snap : la version utilisateur est prioritaire) → tout lancement
+    # de GIMP (dock, « Ouvrir avec ») passe par le lanceur PhotoGIMP Pro.
+    sed -e "s#^Exec=.*#Exec=$BIN/photogimp %U#" \
+        -e 's#^Name=.*#Name=PhotoGIMP Pro#' \
+        -e '/^Name\[/d' \
+        -e 's#^Comment=.*#Comment=GIMP avec interface façon Photoshop#' \
+        -e '/^Comment\[/d' \
+        /var/lib/snapd/desktop/applications/gimp_gimp.desktop > "$APPS/gimp_gimp.desktop"
+    update-desktop-database "$APPS" >/dev/null 2>&1 || true
+    echo "$VERSION" > "$PG_DIR/VERSION"
+    step "Barre de menus Photoshop + lanceur « PhotoGIMP Pro » ($BIN/photogimp)"
 }
 
-# ═══════════════════════════════════════════════════════════════
-# Main
-# ═══════════════════════════════════════════════════════════════
+case "${1:-}" in
+    --uninstall) uninstall; exit 0 ;;
+    --status)    status; exit 0 ;;
+    ""|--install) ;;
+    *) die "Option inconnue : $1 (voir l'en-tête du script)" ;;
+esac
 
-print_header
+echo -e "\n${B}═══ PhotoGIMP Pro v$VERSION — installation ═══${N}\n"
+[ -d "$SNAP_GIMP" ] || die "GIMP Snap introuvable ($SNAP_GIMP). Installez : sudo snap install gimp"
+[ -d "$GIMP_CFG" ] || die "Lancez GIMP une première fois pour créer $GIMP_CFG"
+gimp_running && die "Fermez GIMP avant d'installer (il réécrit sa configuration à la fermeture)."
 
-# Détection
-versions=($(detect_gimp_versions))
+backup
+install_theme
+install_icons
+merge_gimprc
+install_layout
+install_menus_launcher
 
-if [ ${#versions[@]} -eq 0 ]; then
-    print_error "Aucune installation GIMP détectée dans ~/.config/GIMP/"
-    print_warn "Lancez GIMP au moins une fois puis relancez ce script."
-    exit 1
-fi
-
-echo "Versions GIMP détectées :"
-for v in "${versions[@]}"; do
-    echo "  - $v"
-done
-
-# Demander confirmation
-echo ""
-read -p "Installer PhotoGIMP Pro pour toutes ces versions ? [O/n] " confirm
-confirm=${confirm:-O}
-
-if [[ ! "$confirm" =~ ^[OoYy]$ ]]; then
-    echo "Installation annulée."
-    exit 0
-fi
-
-# Installation pour chaque version
-for v in "${versions[@]}"; do
-    if [[ "$v" == flatpak:* ]]; then
-        ver="${v#flatpak:}"
-        config_dir="$HOME/.var/app/org.gimp.GIMP/config/GIMP/$ver"
-        install_for_version "$config_dir" "$ver (Flatpak)" ""
-    else
-        config_dir="$HOME/.config/GIMP/$v"
-
-        # Chercher le data dir pour les menus
-        gimp_data_dir=""
-        if [ -d "/usr/share/gimp/3.0" ]; then
-            gimp_data_dir="/usr/share/gimp/3.0"
-        fi
-
-        install_for_version "$config_dir" "$v" "$gimp_data_dir"
-    fi
-done
-
-# Résumé final
-echo -e "\n${BLUE}═══════════════════════════════════════════════${NC}"
-echo -e "${GREEN}  PhotoGIMP Pro installé avec succès !${NC}"
-echo -e "${BLUE}═══════════════════════════════════════════════${NC}"
-echo ""
-echo "Inclus :"
-echo "  ✓ Raccourcis Photoshop complets (~300+ mappings)"
-echo "  ✓ Thème Adobe Dark (CSS)"
-echo "  ✓ Préférences optimisées (undo 60, cache 4GB)"
-echo "  ✓ Templates (web, social media, print, vidéo)"
-echo "  ✓ Palettes (Material Design, Pastel, Web-Safe, Skin Tones, Photoshop)"
-echo "  ✓ Tool presets (Soft/Hard Round, Eraser, Clone, Heal)"
-echo "  ✓ Plugins Python (Auto Adjustments, Batch Export, Quick Effects,"
-echo "    Content Fill, Layer Styles, Smart Sharpen)"
-echo ""
-echo "Lancez GIMP pour vérifier l'installation."
-echo ""
-echo -e "${YELLOW}Pour restaurer la config originale :${NC}"
-for v in "${versions[@]}"; do
-    if [[ "$v" == flatpak:* ]]; then
-        ver="${v#flatpak:}"
-        echo "  cp -r ~/.var/app/org.gimp.GIMP/config/GIMP/${ver}-${BACKUP_SUFFIX} ~/.var/app/org.gimp.GIMP/config/GIMP/$ver"
-    else
-        echo "  cp -r ~/.config/GIMP/${v}-${BACKUP_SUFFIX} ~/.config/GIMP/$v"
-    fi
-done
-echo ""
+echo -e "\n${G}Terminé.${N} Lancez « PhotoGIMP Pro » depuis le menu des applications"
+echo "ou avec la commande : photogimp"
+echo "Retour à la configuration d'origine : ./install.sh --uninstall"

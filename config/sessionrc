@@ -1,82 +1,77 @@
-# GIMP sessionrc
-#
-# PhotoGIMP Pro — Optimized Photoshop-like workspace layout
-# Single-window mode with thin toolbox left, panels right, canvas maximized.
-#
-# This file takes session-specific info (that is info, you want to keep
-# between two GIMP sessions).  You are not supposed to edit it manually, but
-# of course you can do.  The sessionrc will be entirely rewritten every time
-# you quit GIMP.  If this file isn't found, defaults are used.
+# GIMP sessionrc — PhotoGIMP Pro v2 (espace de travail « Essentiel »)
+# Généré par tools/build_layout.py. L'installeur conserve la position/taille
+# de votre fenêtre principale ; GIMP réécrit ce fichier à chaque fermeture.
 
 (session-info "toplevel"
-    (factory-entry "gimp-empty-image-window")
-    (position 0 0)
-    (size 1920 1080))
-(session-info "toplevel"
     (factory-entry "gimp-single-image-window")
-    (position 0 0)
-    (size 1920 1080)
+    @GEOMETRY@
     (open-on-exit)
     (aux-info
-        (left-docks-width "58")
-        (right-docks-width "350")
-        (maximized "no"))
+        (left-docks-width "46")
+        (right-docks-width "330")
+        (maximized "yes"))
     (gimp-toolbox
         (side left))
     (gimp-dock
         (side right)
         (book
             (current-page 0)
-            (dockable "gimp-layer-list"
-                (tab-style icon)
-                (preview-size 48)
-                (aux-info
-                    (show-button-bar "true")))
-            (dockable "gimp-channel-list"
-                (tab-style icon)
-                (preview-size 48)
-                (aux-info
-                    (show-button-bar "true")))
-            (dockable "gimp-path-list"
-                (tab-style icon)
-                (preview-size 48)
-                (aux-info
-                    (show-button-bar "true"))))
-        (book
-            (position 340)
-            (current-page 0)
-            (dockable "gimp-tool-options"
-                (locked)
-                (tab-style icon)
-                (aux-info
-                    (show-button-bar "true"))))
-        (book
-            (position 600)
-            (current-page 0)
-            (dockable "gimp-brush-grid"
-                (tab-style icon)
-                (aux-info
-                    (show-button-bar "true")))
             (dockable "gimp-color-editor"
-                (tab-style icon)
+                (tab-style automatic)
                 (aux-info
                     (show-button-bar "true")))
-            (dockable "gimp-pattern-grid"
-                (tab-style icon)
+            (dockable "gimp-palette-editor"
+                (tab-style automatic)
                 (aux-info
                     (show-button-bar "true")))
             (dockable "gimp-gradient-list"
-                (tab-style icon)
+                (tab-style automatic)
+                (aux-info
+                    (show-button-bar "true")))
+            (dockable "gimp-pattern-grid"
+                (tab-style automatic)
+                (aux-info
+                    (show-button-bar "true"))))
+        (book
+            (position 250)
+            (current-page 0)
+            (dockable "gimp-tool-options"
+                (locked)
+                (tab-style automatic)
+                (aux-info
+                    (show-button-bar "true")))
+            (dockable "gimp-undo-history"
+                (tab-style automatic)
+                (aux-info
+                    (show-button-bar "true")))
+            (dockable "gimp-brush-grid"
+                (tab-style automatic)
+                (aux-info
+                    (show-button-bar "true")))
+            (dockable "gimp-cursor-view"
+                (tab-style automatic)
+                (aux-info
+                    (show-button-bar "true")
+                    (frame-1-mode "pixel")
+                    (frame-2-mode "rgb-percent"))))
+        (book
+            (position 330)
+            (current-page 0)
+            (dockable "gimp-layer-list"
+                (tab-style name)
+                (preview-size 32)
+                (aux-info
+                    (show-button-bar "true")))
+            (dockable "gimp-channel-list"
+                (tab-style name)
+                (preview-size 32)
+                (aux-info
+                    (show-button-bar "true")))
+            (dockable "gimp-path-list"
+                (tab-style name)
+                (preview-size 32)
                 (aux-info
                     (show-button-bar "true"))))))
-(session-info "toplevel"
-    (factory-entry "gimp-file-open-dialog")
-    (position 200 100)
-    (size 900 600))
-(session-info "toplevel"
-    (factory-entry "gimp-file-export-dialog")
-    (position 200 100)
-    (size 900 600))
 
 (hide-docks no)
 (single-window-mode yes)

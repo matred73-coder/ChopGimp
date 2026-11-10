@@ -1,0 +1,31 @@
+#!/bin/bash
+# ═══════════════════════════════════════════════════════════════
+# PhotoGIMP Pro v2 — lanceur
+# Lance GIMP (Snap) avec la barre de menus « Photoshop ».
+# Si GIMP a été mis à jour, les menus sont régénérés à partir des
+# nouveaux menus GIMP ; en cas d'échec, GIMP démarre avec ses menus
+# d'origine (jamais de plantage dû aux menus).
+# ═══════════════════════════════════════════════════════════════
+
+PG_DIR="$HOME/.config/GIMP/3.2/photogimp"
+MENUS="$PG_DIR/menus"
+STAMP="$PG_DIR/menus.stamp"
+SRC_MENUS="/snap/gimp/current/usr/share/gimp/3.0/menus"
+GIMP_BIN="/snap/bin/gimp"
+
+current="$(readlink -f /snap/gimp/current 2>/dev/null)"
+
+if [ -d "$SRC_MENUS" ] && [ "$(cat "$STAMP" 2>/dev/null)" != "$current" ]; then
+    rm -rf "$MENUS.tmp"
+    if python3 -I "$PG_DIR/build_menus.py" "$SRC_MENUS" "$MENUS.tmp" >/dev/null 2>"$PG_DIR/menus.log"; then
+        rm -rf "$MENUS" && mv "$MENUS.tmp" "$MENUS" && echo "$current" > "$STAMP"
+    else
+        rm -rf "$MENUS.tmp" "$MENUS" "$STAMP"
+    fi
+fi
+
+if [ -f "$MENUS/image-menu.ui" ]; then
+    export GIMP_TESTING_MENUS_PATH="$MENUS"
+fi
+
+exec "$GIMP_BIN" "$@"
