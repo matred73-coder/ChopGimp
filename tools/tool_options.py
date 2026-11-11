@@ -49,8 +49,8 @@ OPTIONS = {
     "gimp-text-tool": {"font-size-unit": "points", "font-size": "24.0", "antialias": "yes",
                        "use-editor": "no", "show-on-canvas": "yes"},
     # Tampon (S) / Correcteur (J) : « Aligné » comme Photoshop
-    "gimp-clone-tool": {"align-mode": "aligned"},
-    "gimp-heal-tool": {"align-mode": "aligned"},
+    "gimp-clone-tool": {"align-mode": "yes"},
+    "gimp-heal-tool": {"align-mode": "yes"},
     # Zoom (Z) : ne redimensionne pas la fenêtre
     "gimp-zoom-tool": {"auto-resize": "no"},
 }

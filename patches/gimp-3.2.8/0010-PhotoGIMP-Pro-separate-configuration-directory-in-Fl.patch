@@ -1,0 +1,44 @@
+From 8d76cb359ecd8a9fc6773b2fa18094d9f2b8af51 Mon Sep 17 00:00:00 2001
+From: ChopGimp <mathieu.redon@proton.me>
+Date: Wed, 11 Nov 2026 17:15:40 +0100
+Subject: [PATCH 10/10] PhotoGIMP Pro: separate configuration directory in
+ Flatpak
+
+Upstream GIMP's Flatpak shares the host ~/.config/GIMP; PhotoGIMP Pro uses
+the sandbox config dir so it never alters an existing GIMP setup.
+---
+ libgimpbase/gimpenv.c | 18 +++++++-----------
+ 1 file changed, 7 insertions(+), 11 deletions(-)
+
+diff --git a/libgimpbase/gimpenv.c b/libgimpbase/gimpenv.c
+index c8ea273..3eeb53d 100644
+--- a/libgimpbase/gimpenv.c
++++ b/libgimpbase/gimpenv.c
+@@ -366,17 +366,13 @@ gimp_directory (void)
+ 
+       if (g_file_test ("/.flatpak-info", G_FILE_TEST_EXISTS))
+         {                       /* Linux flatpak version */
+-          const gchar *host_xdg_config_home = g_getenv ("HOST_XDG_CONFIG_HOME");
+-
+-          if (host_xdg_config_home == NULL)
+-            gimp_dir =  g_build_filename (g_get_home_dir (),
+-                                          ".config",
+-                                          GIMPDIR, GIMP_USER_VERSION,
+-                                          NULL);
+-          else
+-            gimp_dir =  g_build_filename (host_xdg_config_home,
+-                                          GIMPDIR, GIMP_USER_VERSION,
+-                                          NULL);
++          /* PhotoGIMP Pro: keep a configuration separate from any GIMP
++           * installed on the host (~/.var/app/<app-id>/config/GIMP/), so
++           * that both can be used side by side without interfering.
++           */
++          gimp_dir =  g_build_filename (g_get_user_config_dir (),
++                                        GIMPDIR, GIMP_USER_VERSION,
++                                        NULL);
+         }
+ 
+       snap_path = g_getenv ("SNAP");
+-- 
+2.53.0
+

@@ -78,5 +78,20 @@ if [ -f "$DESK" ]; then
            "$DESK"
 fi
 
+# 9. Métadonnées AppStream : nom affiché dans les logithèques et « flatpak list »
+for META in "$DEST"/share/metainfo/*.xml; do
+    [ -f "$META" ] || continue
+    python3 - "$META" <<'PYEOF'
+import re, sys
+p = sys.argv[1]
+s = open(p, encoding="utf-8").read()
+s = re.sub(r"<name>[^<]*</name>", "<name>PhotoGIMP Pro</name>", s, count=1)
+s = re.sub(r'\s*<name xml:lang="[^"]*">[^<]*</name>', "", s)
+s = re.sub(r"<summary>[^<]*</summary>", "<summary>GIMP avec interface et gestes façon Photoshop</summary>", s, count=1)
+s = re.sub(r'\s*<summary xml:lang="[^"]*">[^<]*</summary>', "", s)
+open(p, "w", encoding="utf-8").write(s)
+PYEOF
+done
+
 rm -rf "$TMP"
 echo "== PhotoGIMP Pro : données installées"

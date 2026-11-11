@@ -132,7 +132,7 @@ OPT_CLASS = {"gimp-paintbrush-tool": "GimpPaintOptions", "gimp-pencil-tool": "Gi
 def preset(name, tool, icon, brush, size, opacity, dyn):
     extra = ""
     if tool == "gimp-clone-tool":
-        extra = "    (align-mode aligned)\n"
+        extra = "    (align-mode yes)\n"
     if dyn:
         dyn_lines = '    (dynamics "%s")\n    (dynamics-enabled yes)\n' % dyn
     else:
