@@ -1,7 +1,7 @@
 From cba30c32ca6d24556d6618cc1d12bc87bd675a4c Mon Sep 17 00:00:00 2001
 From: ChopGimp <mathieu.redon@proton.me>
 Date: Wed, 11 Nov 2026 18:15:15 +0100
-Subject: [PATCH 12/18] PhotoGIMP Pro: French labels for new strings, fix %% in
+Subject: [PATCH 12/20] PhotoGIMP Pro: French labels for new strings, fix %% in
  opacity action labels
 
 ---

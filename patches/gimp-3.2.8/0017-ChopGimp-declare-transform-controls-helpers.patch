@@ -1,7 +1,7 @@
 From 0d66a7c2038c4d84874a90f05360e6623bd419fe Mon Sep 17 00:00:00 2001
 From: ChopGimp <mathieu.redon@proton.me>
 Date: Wed, 11 Nov 2026 19:31:29 +0100
-Subject: [PATCH 17/18] ChopGimp: declare transform controls helpers
+Subject: [PATCH 17/20] ChopGimp: declare transform controls helpers
 
 ---
  app/tools/gimpmovetool.c | 6 ++++++

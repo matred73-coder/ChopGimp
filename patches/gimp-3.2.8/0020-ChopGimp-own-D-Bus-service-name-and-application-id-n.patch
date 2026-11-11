@@ -1,0 +1,40 @@
+From 5af01518c39375d597565e139d4fb9da2d5ef549 Mon Sep 17 00:00:00 2001
+From: ChopGimp <mathieu.redon@proton.me>
+Date: Wed, 11 Nov 2026 20:00:52 +0100
+Subject: [PATCH 20/20] ChopGimp: own D-Bus service name and application id (no
+ conflict with GIMP)
+
+---
+ app/gimpcoreapp.h         | 2 +-
+ app/gui/gimpdbusservice.h | 2 +-
+ 2 files changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/app/gimpcoreapp.h b/app/gimpcoreapp.h
+index f120289..bf78a81 100644
+--- a/app/gimpcoreapp.h
++++ b/app/gimpcoreapp.h
+@@ -17,7 +17,7 @@
+ #pragma once
+ 
+ 
+-#define GIMP_APPLICATION_ID "org.gimp.GIMP"
++#define GIMP_APPLICATION_ID "org.cen_na.ChopGimp"   /* ChopGimp */
+ 
+ enum
+ {
+diff --git a/app/gui/gimpdbusservice.h b/app/gui/gimpdbusservice.h
+index a289133..4fcf3d0 100644
+--- a/app/gui/gimpdbusservice.h
++++ b/app/gui/gimpdbusservice.h
+@@ -27,7 +27,7 @@
+ /* service name and path should really be org.gimp.GIMP and
+  * /org/gimp/GIMP and only the interface be called UI.
+  */
+-#define GIMP_DBUS_SERVICE_NAME   "org.gimp.GIMP.UI"
++#define GIMP_DBUS_SERVICE_NAME   "org.cen_na.ChopGimp.UI"   /* ChopGimp */
+ #define GIMP_DBUS_SERVICE_PATH   "/org/gimp/GIMP/UI"
+ #define GIMP_DBUS_INTERFACE_NAME "org.gimp.GIMP.UI"
+ #define GIMP_DBUS_INTERFACE_PATH "/org/gimp/GIMP/UI"
+-- 
+2.53.0
+
