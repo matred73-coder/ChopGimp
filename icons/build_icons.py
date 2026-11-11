@@ -606,6 +606,30 @@ def _adjustment():
     return s
 
 
+def _stylus():
+    # Stylet en diagonale (pointe en bas à gauche)
+    body = [(-1.4, -7.0), (1.4, -7.0), (1.4, 3.0), (0, 6.0), (-1.4, 3.0)]
+    return polygon([(10.5 + x, 6.5 + y) for x, y in rotate(body, 0, 0, 45)])
+
+
+@icon("chopgimp-pressure-size")
+def _pressure_size():
+    # Stylet + deux disques de tailles différentes (pression → taille)
+    return _stylus() + circle(3.0, 13.2, 1.1) + circle(6.6, 12.6, 2.0)
+
+
+@icon("chopgimp-pressure-opacity")
+def _pressure_opacity():
+    # Stylet + damier (pression → opacité)
+    s = _stylus()
+    for i in range(3):
+        for j in range(3):
+            if (i + j) % 2 == 0:
+                s += rect(0.8 + i * 2.2, 9.6 + j * 2.2, 2.2, 2.2)
+    s += rect_outline(0.8, 9.6, 6.6, 6.6, 0.6, op="0.6")
+    return s
+
+
 def main():
     os.makedirs(OUT, exist_ok=True)
     for name, fn in sorted(ICONS.items()):

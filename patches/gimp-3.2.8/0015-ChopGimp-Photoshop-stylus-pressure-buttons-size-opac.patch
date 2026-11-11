@@ -1,0 +1,223 @@
+From 54960ffc589d3cb048f2fb80f6cb77f2e5bb1ddb Mon Sep 17 00:00:00 2001
+From: ChopGimp <mathieu.redon@proton.me>
+Date: Wed, 11 Nov 2026 19:14:29 +0100
+Subject: [PATCH 15/15] ChopGimp: Photoshop stylus pressure buttons (size /
+ opacity) in the options bar
+
+---
+ app/display/gimpoptionsbar.c | 170 ++++++++++++++++++++++++++++++++++-
+ 1 file changed, 169 insertions(+), 1 deletion(-)
+
+diff --git a/app/display/gimpoptionsbar.c b/app/display/gimpoptionsbar.c
+index f846ee1..ffa3541 100644
+--- a/app/display/gimpoptionsbar.c
++++ b/app/display/gimpoptionsbar.c
+@@ -38,6 +38,9 @@
+ 
+ #include "core/gimp.h"
+ #include "core/gimpcontext.h"
++#include "core/gimpcontainer.h"
++#include "core/gimpdatafactory.h"
++#include "core/gimpdynamics.h"
+ #include "core/gimptoolinfo.h"
+ #include "core/gimpviewable.h"
+ 
+@@ -72,7 +75,7 @@ typedef struct
+ 
+ static const BarSpec bar_specs[] =
+ {
+-  { "gimp-paintbrush-tool",        { PAINT_COMMON, "dynamics-enabled", NULL } },
++  { "gimp-paintbrush-tool",        { PAINT_COMMON, NULL } },
+   { "gimp-pencil-tool",            { PAINT_COMMON, NULL } },
+   { "gimp-airbrush-tool",          { PAINT_COMMON, "flow", "rate", NULL } },
+   { "gimp-eraser-tool",            { "brush", "brush-size", "brush-hardness", "opacity", "hard", NULL } },
+@@ -278,6 +281,140 @@ gimp_options_bar_widget (GObject     *options,
+   return NULL;
+ }
+ 
++
++/*  Photoshop's two stylus buttons: « always use pressure for size » and
++ *  « always use pressure for opacity ». They map to GIMP dynamics:
++ *  none = dynamics off, size = "Pressure Size", opacity = "Pressure
++ *  Opacity", both = "Pression taille + opacité" (shipped by ChopGimp).
++ */
++#define DYN_SIZE    "Pressure Size"
++#define DYN_OPACITY "Pressure Opacity"
++#define DYN_BOTH    "Pression taille + opacité"
++
++typedef struct
++{
++  GObject   *options;
++  GtkWidget *size;
++  GtkWidget *opacity;
++  gboolean   updating;
++} PressureUI;
++
++static void
++pressure_sync (PressureUI *ui)
++{
++  GimpDynamics *dyn;
++  const gchar  *name = "";
++  gboolean      enabled;
++
++  if (! ui || ! ui->size || ! ui->opacity)
++    return;
++
++  g_object_get (ui->options, "dynamics-enabled", &enabled, NULL);
++  dyn = gimp_context_get_dynamics (GIMP_CONTEXT (ui->options));
++  if (dyn)
++    name = gimp_object_get_name (dyn);
++
++  ui->updating = TRUE;
++  gtk_toggle_button_set_active (GTK_TOGGLE_BUTTON (ui->size),
++                                enabled && (! strcmp (name, DYN_SIZE) ||
++                                            ! strcmp (name, DYN_BOTH)));
++  gtk_toggle_button_set_active (GTK_TOGGLE_BUTTON (ui->opacity),
++                                enabled && (! strcmp (name, DYN_OPACITY) ||
++                                            ! strcmp (name, DYN_BOTH)));
++  ui->updating = FALSE;
++}
++
++static void
++pressure_notify (GObject    *options,
++                 GParamSpec *pspec,
++                 GtkWidget  *button)
++{
++  pressure_sync (g_object_get_data (G_OBJECT (button), "pressure-ui"));
++}
++
++static void
++pressure_dynamics_changed (GimpContext  *context,
++                           GimpDynamics *dynamics,
++                           GtkWidget    *button)
++{
++  pressure_sync (g_object_get_data (G_OBJECT (button), "pressure-ui"));
++}
++
++static void
++pressure_toggled (GtkToggleButton *button,
++                  PressureUI      *ui)
++{
++  gboolean     size, opacity;
++  const gchar *name;
++
++  if (ui->updating || ! ui->size || ! ui->opacity)
++    return;
++
++  size    = gtk_toggle_button_get_active (GTK_TOGGLE_BUTTON (ui->size));
++  opacity = gtk_toggle_button_get_active (GTK_TOGGLE_BUTTON (ui->opacity));
++
++  if (! size && ! opacity)
++    {
++      g_object_set (ui->options, "dynamics-enabled", FALSE, NULL);
++      return;
++    }
++
++  name = (size && opacity) ? DYN_BOTH : (size ? DYN_SIZE : DYN_OPACITY);
++
++  {
++    Gimp          *gimp = GIMP_CONTEXT (ui->options)->gimp;
++    GimpContainer *container;
++    GimpObject    *dyn;
++
++    container = gimp_data_factory_get_container (gimp->dynamics_factory);
++    dyn       = gimp_container_get_child_by_name (container, name);
++
++    if (dyn)
++      gimp_context_set_dynamics (GIMP_CONTEXT (ui->options), GIMP_DYNAMICS (dyn));
++  }
++
++  g_object_set (ui->options, "dynamics-enabled", TRUE, NULL);
++}
++
++static GtkWidget *
++pressure_button (PressureUI  *ui,
++                 const gchar *icon,
++                 const gchar *tooltip)
++{
++  GtkWidget *b = gtk_toggle_button_new ();
++
++  gtk_container_add (GTK_CONTAINER (b),
++                     gtk_image_new_from_icon_name (icon, GTK_ICON_SIZE_SMALL_TOOLBAR));
++  gtk_widget_show_all (b);
++  gtk_button_set_relief (GTK_BUTTON (b), GTK_RELIEF_NONE);
++  gimp_help_set_help_data (b, tooltip, NULL);
++  g_object_set_data (G_OBJECT (b), "pressure-ui", ui);
++  g_signal_connect (b, "toggled", G_CALLBACK (pressure_toggled), ui);
++  g_signal_connect_object (ui->options, "notify::dynamics-enabled",
++                           G_CALLBACK (pressure_notify), b, 0);
++  g_signal_connect_object (ui->options, "dynamics-changed",
++                           G_CALLBACK (pressure_dynamics_changed), b, 0);
++  return b;
++}
++
++static void
++pressure_ui_free (PressureUI *ui)
++{
++  g_free (ui);
++}
++
++static void
++pressure_widget_destroyed (GtkWidget  *widget,
++                           PressureUI *ui)
++{
++  g_object_set_data (G_OBJECT (widget), "pressure-ui", NULL);
++
++  if (widget == ui->size)
++    ui->size = NULL;
++  if (widget == ui->opacity)
++    ui->opacity = NULL;
++}
++
+ static void
+ gimp_options_bar_tool_changed (GimpContext  *context,
+                                GimpToolInfo *tool_info,
+@@ -321,6 +458,16 @@ gimp_options_bar_tool_changed (GimpContext  *context,
+ 
+       gimp_options_bar_pack (box, gtk_separator_new (GTK_ORIENTATION_VERTICAL));
+ 
++      PressureUI *pressure = NULL;
++
++      if (g_object_class_find_property (G_OBJECT_GET_CLASS (options), "dynamics-enabled"))
++        {
++          pressure = g_new0 (PressureUI, 1);
++          pressure->options = options;
++          g_object_set_data_full (G_OBJECT (box), "pressure-ui", pressure,
++                                  (GDestroyNotify) pressure_ui_free);
++        }
++
+       for (i = 0; spec->props[i]; i++)
+         {
+           gboolean   packed = FALSE;
+@@ -330,7 +477,28 @@ gimp_options_bar_tool_changed (GimpContext  *context,
+ 
+           if (w && ! packed)
+             gimp_options_bar_pack (box, w);
++
++          /*  Photoshop: stylus buttons next to opacity and size  */
++          if (pressure && ! strcmp (spec->props[i], "opacity"))
++            {
++              pressure->opacity = pressure_button (pressure, "chopgimp-pressure-opacity",
++                                                   _("Toujours utiliser la pression pour l'opacité"));
++              g_signal_connect (pressure->opacity, "destroy",
++                                G_CALLBACK (pressure_widget_destroyed), pressure);
++              gimp_options_bar_pack (box, pressure->opacity);
++            }
++          else if (pressure && ! strcmp (spec->props[i], "brush-size"))
++            {
++              pressure->size = pressure_button (pressure, "chopgimp-pressure-size",
++                                                _("Toujours utiliser la pression pour la taille"));
++              g_signal_connect (pressure->size, "destroy",
++                                G_CALLBACK (pressure_widget_destroyed), pressure);
++              gimp_options_bar_pack (box, pressure->size);
++            }
+         }
++
++      if (pressure)
++        pressure_sync (pressure);
+     }
+ }
+ 
+-- 
+2.53.0
+

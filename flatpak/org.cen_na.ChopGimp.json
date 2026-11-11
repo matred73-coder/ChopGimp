@@ -825,7 +825,8 @@
                         "../patches/gimp-3.2.8/0011-PhotoGIMP-Pro-no-migration-of-another-GIMP-s-configu.patch",
                         "../patches/gimp-3.2.8/0012-PhotoGIMP-Pro-French-labels-for-new-strings-fix-in-o.patch",
                         "../patches/gimp-3.2.8/0013-ChopGimp-product-name-and-badge-instead-of-Wilber-in.patch",
-                        "../patches/gimp-3.2.8/0014-ChopGimp-click-on-the-active-tool-group-opens-its-to.patch"
+                        "../patches/gimp-3.2.8/0014-ChopGimp-click-on-the-active-tool-group-opens-its-to.patch",
+                        "../patches/gimp-3.2.8/0015-ChopGimp-Photoshop-stylus-pressure-buttons-size-opac.patch"
                     ]
                 }
             ],

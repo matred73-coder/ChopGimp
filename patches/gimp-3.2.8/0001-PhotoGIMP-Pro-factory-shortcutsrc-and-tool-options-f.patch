@@ -1,7 +1,7 @@
 From 54da5415dab245d4bec77f811dee50a9fb405096 Mon Sep 17 00:00:00 2001
 From: ChopGimp <mathieu.redon@proton.me>
 Date: Wed, 11 Nov 2026 12:45:31 +0100
-Subject: [PATCH 01/14] PhotoGIMP Pro: factory shortcutsrc and tool-options
+Subject: [PATCH 01/15] PhotoGIMP Pro: factory shortcutsrc and tool-options
  from sysconf dir
 
 When the user has no personal shortcutsrc or no saved options for a tool,

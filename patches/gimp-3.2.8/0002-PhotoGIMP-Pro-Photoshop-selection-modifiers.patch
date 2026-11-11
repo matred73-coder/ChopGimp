@@ -1,7 +1,7 @@
 From 18a4f8978c8864fc320b7cd3d4d4664363a8b81d Mon Sep 17 00:00:00 2001
 From: ChopGimp <mathieu.redon@proton.me>
 Date: Wed, 11 Nov 2026 12:47:12 +0100
-Subject: [PATCH 02/14] PhotoGIMP Pro: Photoshop selection modifiers
+Subject: [PATCH 02/15] PhotoGIMP Pro: Photoshop selection modifiers
 
 Shift = add, Alt = subtract, Shift+Alt = intersect, Ctrl+drag inside the
 selection = move pixels, Ctrl+Alt+drag = move a copy, plain drag inside the

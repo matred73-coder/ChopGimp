@@ -51,6 +51,18 @@ cp "$SRC/config/shortcutsrc" "$ETC/shortcutsrc"          # lu grâce au patch 00
 python3 "$SRC/tools/wheel_ps.py" "$ETC/controllerrc"
 python3 "$SRC/tools/tool_options.py" "$ETC/tool-options"  # lu grâce au patch 0001
 
+# 5b. Dynamique « Pression taille + opacité » (bouton stylet double de
+#     Photoshop) : dérivée de « Pressure Opacity » + pression sur la taille
+python3 - "$DATA/dynamics/Basic/Pressure-Opacity.gdyn" "$DATA/dynamics/Basic/Pression-taille-opacite.gdyn" <<'PYEOF'
+import re, sys
+s = open(sys.argv[1]).read()
+s = s.replace('(name "Pressure Opacity")', '(name "Pression taille + opacité")', 1)
+i = s.index("(size-output")
+j = s.index("(use-pressure no)", i)
+s = s[:j] + "(use-pressure yes)" + s[j + len("(use-pressure no)"):]
+open(sys.argv[2], "w").write(s)
+PYEOF
+
 # 6. Préréglages d'outils et nuanciers
 mkdir -p "$DATA/tool-presets/PhotoGIMP" "$DATA/palettes"
 cp "$SRC/presets/tool-presets/"*.gtp "$DATA/tool-presets/PhotoGIMP/"
