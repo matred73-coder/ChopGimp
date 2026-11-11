@@ -34,3 +34,4 @@ quick_effects
 text_effects
 layer_comps
 color_palette_gen
+workspace_switcher

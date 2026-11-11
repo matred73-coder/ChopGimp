@@ -271,7 +271,7 @@ install_menus_launcher() {
     # celle du Snap : la version utilisateur est prioritaire) → tout lancement
     # de GIMP (dock, « Ouvrir avec ») passe par le lanceur PhotoGIMP Pro.
     sed -e "s#^Exec=.*#Exec=$BIN/photogimp %U#" \
-        -e 's#^Name=.*#Name=PhotoGIMP Pro#' \
+        -e 's#^Name=.*#Name=PhotoGIMP Pro (v2, GIMP Snap)#' \
         -e '/^Name\[/d' \
         -e 's#^Comment=.*#Comment=GIMP avec interface façon Photoshop#' \
         -e '/^Comment\[/d' \

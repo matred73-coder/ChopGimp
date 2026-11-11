@@ -63,7 +63,7 @@ for name, w, h in [("Web courant 1366×768", 1366, 768), ("Web grand 1920×1080"
 # Mobile
 for name, w, h in [("iPhone 15 1179×2556", 1179, 2556), ("iPhone 15 Pro Max 1290×2796", 1290, 2796),
                    ("Android 1080×1920", 1080, 1920), ("Android 1440×3120", 1440, 3120),
-                   ("iPad 1640×2360", 1640, 2360), ("iPad Pro 12,9\" 2048×2732", 2048, 2732)]:
+                   ("iPad 1640×2360", 1640, 2360), ("iPad Pro 12,9 pouces 2048×2732", 2048, 2732)]:
     add("Mobile", name, w, h)
 
 # Vidéo

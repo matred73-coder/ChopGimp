@@ -409,7 +409,7 @@
     (fill-type white)
     (comment "")
     (filename ""))
-(GimpTemplate "Mobile — iPad Pro 12,9" 2048×2732"
+(GimpTemplate "Mobile — iPad Pro 12,9 pouces 2048×2732"
     (width 2048)
     (height 2732)
     (unit pixels)

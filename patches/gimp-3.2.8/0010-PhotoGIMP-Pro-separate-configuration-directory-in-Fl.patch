@@ -1,7 +1,7 @@
 From 8d76cb359ecd8a9fc6773b2fa18094d9f2b8af51 Mon Sep 17 00:00:00 2001
 From: ChopGimp <mathieu.redon@proton.me>
 Date: Wed, 11 Nov 2026 17:15:40 +0100
-Subject: [PATCH 10/10] PhotoGIMP Pro: separate configuration directory in
+Subject: [PATCH 10/11] PhotoGIMP Pro: separate configuration directory in
  Flatpak
 
 Upstream GIMP's Flatpak shares the host ~/.config/GIMP; PhotoGIMP Pro uses

@@ -1,0 +1,37 @@
+From 33a218a0c38bffc61e19a47f59afcc8d93c70af1 Mon Sep 17 00:00:00 2001
+From: ChopGimp <mathieu.redon@proton.me>
+Date: Wed, 11 Nov 2026 17:27:30 +0100
+Subject: [PATCH 11/11] PhotoGIMP Pro: no migration of another GIMP's
+ configuration in Flatpak
+
+---
+ app/core/gimp-user-install.c | 10 +++++++++-
+ 1 file changed, 9 insertions(+), 1 deletion(-)
+
+diff --git a/app/core/gimp-user-install.c b/app/core/gimp-user-install.c
+index 67f7250..2da39a0 100644
+--- a/app/core/gimp-user-install.c
++++ b/app/core/gimp-user-install.c
+@@ -287,10 +287,18 @@ static gboolean
+ user_install_detect_old (GimpUserInstall *install,
+                          const gchar     *gimp_dir)
+ {
+-  gchar    *dir     = g_strconcat (gimp_dir, "ZZZ", NULL);
++  gchar    *dir;
+   gchar    *version;
+   gboolean  migrate = FALSE;
+ 
++  /*  PhotoGIMP Pro: the Flatpak always starts from its factory
++   *  (Photoshop-like) settings, never from another GIMP's configuration.
++   */
++  if (g_file_test ("/.flatpak-info", G_FILE_TEST_EXISTS))
++    return FALSE;
++
++  dir = g_strconcat (gimp_dir, "ZZZ", NULL);
++
+   version = strstr (dir, GIMP_APP_VERSION);
+ 
+   if (version)
+-- 
+2.53.0
+

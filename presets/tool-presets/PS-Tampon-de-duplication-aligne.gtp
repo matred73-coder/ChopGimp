@@ -8,7 +8,7 @@
     (dynamics-enabled no)
     (brush-size 50.0)
     (opacity 1.00)
-    (align-mode aligned)
+    (align-mode yes)
 )
 (use-fg-bg no)
 (use-brush yes)

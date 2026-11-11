@@ -821,7 +821,8 @@
                         "../patches/gimp-3.2.8/0007-PhotoGIMP-Pro-fx-and-adjustment-layer-buttons-in-the.patch",
                         "../patches/gimp-3.2.8/0008-PhotoGIMP-Pro-number-keys-set-paint-tool-or-layer-op.patch",
                         "../patches/gimp-3.2.8/0009-PhotoGIMP-Pro-Photoshop-like-horizontal-tool-options.patch",
-                        "../patches/gimp-3.2.8/0010-PhotoGIMP-Pro-separate-configuration-directory-in-Fl.patch"
+                        "../patches/gimp-3.2.8/0010-PhotoGIMP-Pro-separate-configuration-directory-in-Fl.patch",
+                        "../patches/gimp-3.2.8/0011-PhotoGIMP-Pro-no-migration-of-another-GIMP-s-configu.patch"
                     ]
                 }
             ],
