@@ -1,0 +1,126 @@
+From 7b70ed57f2547ea38087e211d3f1d66b6dd3eda4 Mon Sep 17 00:00:00 2001
+From: ChopGimp <mathieu.redon@proton.me>
+Date: Wed, 11 Nov 2026 19:51:30 +0100
+Subject: [PATCH 18/18] =?UTF-8?q?ChopGimp:=20options=20bar=20for=20the=20p?=
+ =?UTF-8?q?ath=20tool=20=E2=80=94=20fill=20and=20stroke=20(enable,=20color?=
+ =?UTF-8?q?,=20width),=20create=20vector=20layer?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+---
+ app/display/gimpoptionsbar.c | 70 +++++++++++++++++++++++++++++++-----
+ 1 file changed, 61 insertions(+), 9 deletions(-)
+
+diff --git a/app/display/gimpoptionsbar.c b/app/display/gimpoptionsbar.c
+index ffa3541..e83bf68 100644
+--- a/app/display/gimpoptionsbar.c
++++ b/app/display/gimpoptionsbar.c
+@@ -118,7 +118,10 @@ static const BarSpec bar_specs[] =
+                                      "sample-merged", "antialias", NULL } },
+   { "gimp-color-picker-tool",      { "sample-average", "average-radius", "pick-target", "sample-merged", NULL } },
+   { "gimp-zoom-tool",              { "zoom-type", "auto-resize", NULL } },
+-  { "gimp-path-tool",              { "vectors-edit-mode", "vectors-polygonal", NULL } },
++  { "gimp-path-tool",              { "path-edit-mode", "path-polygonal",
++                                     "enable-fill", "fill-foreground",
++                                     "enable-stroke", "stroke-foreground", "stroke-width",
++                                     "@vector-layer", NULL } },
+ };
+ 
+ 
+@@ -170,6 +173,26 @@ gimp_options_bar_pack_labeled (GtkWidget   *box,
+   gimp_options_bar_pack (box, hbox);
+ }
+ 
++/*  ChopGimp: Photoshop-like labels for some properties of the bar  */
++static const gchar *
++gimp_options_bar_label (const gchar *prop)
++{
++  if (! strcmp (prop, "enable-fill"))   return _("Fond");
++  if (! strcmp (prop, "enable-stroke")) return _("Contour");
++  if (! strcmp (prop, "stroke-width"))  return _("Épaisseur");
++  return NULL;
++}
++
++static void
++gimp_options_bar_vector_layer_clicked (GtkWidget *button,
++                                       GObject   *options)
++{
++  Gimp          *gimp    = GIMP_CONTEXT (options)->gimp;
++  GimpUIManager *manager = menus_get_image_manager_singleton (gimp);
++
++  gimp_ui_manager_activate_action (manager, "paths", "paths-to-vector-layer");
++}
++
+ /*  Build one compact widget for @prop of @options, or NULL  */
+ static GtkWidget *
+ gimp_options_bar_widget (GObject     *options,
+@@ -198,28 +221,57 @@ gimp_options_bar_widget (GObject     *options,
+                                        "gimp-gradient-editor",
+                                        _("Edit this gradient"));
+ 
++  if (! strcmp (prop, "@vector-layer"))
++    {
++      w = gtk_button_new_with_label (_("Créer un calque vectoriel"));
++      gimp_help_set_help_data (w, _("Transforme le chemin tracé en forme vectorielle "
++                                    "modifiable (fond et contour)"), NULL);
++      g_signal_connect (w, "clicked",
++                        G_CALLBACK (gimp_options_bar_vector_layer_clicked), options);
++      return w;
++    }
++
+   pspec = g_object_class_find_property (G_OBJECT_GET_CLASS (options), prop);
+ 
+   if (! pspec)
+     return NULL;
+ 
+-  if (! strcmp (prop, "paint-mode"))
++  if (GEGL_IS_PARAM_SPEC_COLOR (pspec))
+     {
+-      w = gimp_prop_layer_mode_box_new (options, prop,
+-                                        GIMP_LAYER_MODE_CONTEXT_PAINT);
+-      gimp_layer_mode_box_set_label (GIMP_LAYER_MODE_BOX (w), _("Mode"));
++      const gchar *title = g_param_spec_get_nick (pspec);
++
++      w = gimp_prop_color_button_new (options, prop,
++                                      (title && *title) ? title : _("Color"), TRUE,
++                                      36, 20, GIMP_COLOR_AREA_FLAT);
++      if (! strcmp (prop, "foreground"))
++        {
++          gimp_options_bar_pack_labeled (box, _("Color"), w);
++          *packed = TRUE;
++        }
+       return w;
+     }
+ 
+-  if (! strcmp (prop, "foreground"))
++  if (G_IS_PARAM_SPEC_BOOLEAN (pspec) && gimp_options_bar_label (prop))
++    return gimp_prop_check_button_new (options, prop, gimp_options_bar_label (prop));
++
++  if (! strcmp (prop, "stroke-width"))
+     {
+-      w = gimp_prop_color_button_new (options, prop, _("Text Color"), TRUE,
+-                                      40, 22, GIMP_COLOR_AREA_FLAT);
+-      gimp_options_bar_pack_labeled (box, _("Color"), w);
++      w = gimp_prop_spin_scale_new (options, prop, 1.0, 10.0, 1);
++      gimp_spin_scale_set_scale_limits (GIMP_SPIN_SCALE (w), 0.0, 100.0);
++      gtk_widget_set_size_request (w, 120, -1);
++      gimp_options_bar_pack_labeled (box, gimp_options_bar_label (prop), w);
+       *packed = TRUE;
+       return w;
+     }
+ 
++  if (! strcmp (prop, "paint-mode"))
++    {
++      w = gimp_prop_layer_mode_box_new (options, prop,
++                                        GIMP_LAYER_MODE_CONTEXT_PAINT);
++      gimp_layer_mode_box_set_label (GIMP_LAYER_MODE_BOX (w), _("Mode"));
++      return w;
++    }
++
+   if (! strcmp (prop, "operation"))
+     return gimp_prop_enum_icon_box_new (options, prop, "gimp-selection", 0, 0);
+ 
+-- 
+2.53.0
+

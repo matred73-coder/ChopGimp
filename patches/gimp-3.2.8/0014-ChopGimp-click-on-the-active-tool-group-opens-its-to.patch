@@ -1,7 +1,7 @@
 From d377754a1d5c2e218c218a93d4e1c7bea74ef53c Mon Sep 17 00:00:00 2001
 From: ChopGimp <mathieu.redon@proton.me>
 Date: Wed, 11 Nov 2026 18:59:22 +0100
-Subject: [PATCH 14/17] ChopGimp: click on the active tool group opens its tool
+Subject: [PATCH 14/18] ChopGimp: click on the active tool group opens its tool
  list
 
 ---

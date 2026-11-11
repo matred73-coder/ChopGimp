@@ -828,7 +828,8 @@
                         "../patches/gimp-3.2.8/0014-ChopGimp-click-on-the-active-tool-group-opens-its-to.patch",
                         "../patches/gimp-3.2.8/0015-ChopGimp-Photoshop-stylus-pressure-buttons-size-opac.patch",
                         "../patches/gimp-3.2.8/0016-ChopGimp-Photoshop-transform-controls-around-the-con.patch",
-                        "../patches/gimp-3.2.8/0017-ChopGimp-declare-transform-controls-helpers.patch"
+                        "../patches/gimp-3.2.8/0017-ChopGimp-declare-transform-controls-helpers.patch",
+                        "../patches/gimp-3.2.8/0018-ChopGimp-options-bar-for-the-path-tool-fill-and-stro.patch"
                     ]
                 }
             ],
