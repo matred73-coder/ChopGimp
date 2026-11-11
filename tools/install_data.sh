@@ -1,6 +1,6 @@
 #!/bin/sh
 # ═══════════════════════════════════════════════════════════════
-# PhotoGIMP Pro v3 — installe les données « Photoshop » dans le paquet
+# ChopGimp — installe les données « Photoshop » dans le paquet
 # Flatpak (exécuté par flatpak-builder, module photogimp-data, APRÈS GIMP).
 #
 #   sh tools/install_data.sh <préfixe>     (préfixe = /app dans le Flatpak)
@@ -16,7 +16,7 @@ ETC="$DEST/etc/gimp/3.0"
 PLUG="$DEST/lib/gimp/3.0/plug-ins"
 TMP="$(mktemp -d)"
 
-echo "== PhotoGIMP Pro $(cat "$SRC/VERSION") → $DEST"
+echo "== ChopGimp $(cat "$SRC/VERSION") → $DEST"
 
 # 1. Générateurs (fichiers dérivés)
 python3 "$SRC/tools/build_layout.py"
@@ -72,26 +72,44 @@ done
 # 8. Lanceur : nom et description
 DESK="$DEST/share/applications/gimp.desktop"
 if [ -f "$DESK" ]; then
-    sed -i -e 's/^Name=.*/Name=PhotoGIMP Pro/' -e '/^Name\[/d' \
+    sed -i -e 's/^Name=.*/Name=ChopGimp/' -e '/^Name\[/d' \
            -e 's/^GenericName=.*/GenericName=Éditeur d'"'"'images façon Photoshop/' -e '/^GenericName\[/d' \
-           -e 's/^Comment=.*/Comment=GIMP avec interface et fonctionnement façon Photoshop/' -e '/^Comment\[/d' \
+           -e 's/^Comment=.*/Comment=Retouche d'"'"'images avec une interface familière (basé sur GIMP)/' -e '/^Comment\[/d' \
            "$DESK"
 fi
 
-# 9. Métadonnées AppStream : nom affiché dans les logithèques et « flatpak list »
+# 9. Identité ChopGimp : icône d'application (remplace Wilber), écran de
+#    démarrage, logo « À propos », logo du thème d'icônes
+[ -f "$SRC/branding/chopgimp.svg" ] || { echo "branding/ manquant : lancer tools/make_branding.py"; exit 1; }
+for SZ in 16 22 24 32 36 48 64 72 96 128 192 256 512; do
+    if [ -d "$DEST/share/icons/hicolor/${SZ}x${SZ}/apps" ]; then
+        install -m 644 "$SRC/branding/png/chopgimp-$SZ.png" "$DEST/share/icons/hicolor/${SZ}x${SZ}/apps/gimp.png"
+    fi
+done
+install -m 644 "$SRC/branding/chopgimp.svg" "$DEST/share/icons/hicolor/scalable/apps/gimp.svg"
+install -m 644 "$SRC/branding/splash.png" "$DATA/images/gimp-splash.png"
+install -m 644 "$SRC/branding/logo-128.png" "$DATA/images/gimp-logo.png"
+for T in PS-Line Default; do
+    L="$DATA/icons/$T/scalable/logo/unisize"
+    [ -d "$L" ] || continue
+    install -m 644 "$SRC/branding/chopgimp.svg" "$L/gimp-wilber.svg"
+    install -m 644 "$SRC/branding/chopgimp-symbolic.svg" "$L/gimp-wilber-symbolic.svg"
+done
+
+# 10. Métadonnées AppStream : nom affiché dans les logithèques et « flatpak list »
 for META in "$DEST"/share/metainfo/*.xml; do
     [ -f "$META" ] || continue
     python3 - "$META" <<'PYEOF'
 import re, sys
 p = sys.argv[1]
 s = open(p, encoding="utf-8").read()
-s = re.sub(r"<name>[^<]*</name>", "<name>PhotoGIMP Pro</name>", s, count=1)
+s = re.sub(r"<name>[^<]*</name>", "<name>ChopGimp</name>", s, count=1)
 s = re.sub(r'\s*<name xml:lang="[^"]*">[^<]*</name>', "", s)
-s = re.sub(r"<summary>[^<]*</summary>", "<summary>GIMP avec interface et gestes façon Photoshop</summary>", s, count=1)
+s = re.sub(r"<summary>[^<]*</summary>", "<summary>Retouche d'images avec une interface familière (basé sur GIMP)</summary>", s, count=1)
 s = re.sub(r'\s*<summary xml:lang="[^"]*">[^<]*</summary>', "", s)
 open(p, "w", encoding="utf-8").write(s)
 PYEOF
 done
 
 rm -rf "$TMP"
-echo "== PhotoGIMP Pro : données installées"
+echo "== ChopGimp : données installées"

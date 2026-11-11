@@ -1,11 +1,11 @@
 # ═══════════════════════════════════════════════════════════════
-# PhotoGIMP Pro v3 — GIMP recompilé façon Photoshop (Flatpak)
+# ChopGimp (ex-PhotoGIMP Pro v3) — GIMP recompilé façon Photoshop (Flatpak)
 #
 #   make patches   exporte les patchs depuis build/gimp-src (branche photogimp)
 #   make build     compile le Flatpak (GIMP 3.2.8 + patchs + données)
-#   make bundle    produit dist/PhotoGimpPro-<version>.flatpak (installable hors ligne)
+#   make bundle    produit dist/ChopGimp-<version>.flatpak (installable hors ligne)
 #   make install   installe le paquet pour l'utilisateur courant
-#   make run       lance PhotoGIMP Pro
+#   make run       lance ChopGimp
 #   make repo      publie le dépôt de mises à jour dans $(REPO_DEST)
 #   make vanilla   compile GIMP 3.2.8 sans modification (référence)
 #
@@ -14,7 +14,7 @@
 #             REPO_URL=<https://…/photogimp/repo>   URL publique du dépôt
 # ═══════════════════════════════════════════════════════════════
 
-APP       := org.cen_na.PhotoGimpPro
+APP       := org.cen_na.ChopGimp
 VERSION   := $(shell cat VERSION)
 FLATHUB   := https://dl.flathub.org/repo/flathub.flatpakrepo
 REPO_DEST ?= dist/repo-public
@@ -36,16 +36,16 @@ manifest:
 
 build: manifest
 	cd flatpak && $(FB) --repo=repo $(GPG) --default-branch=stable \
-	  --subject="PhotoGIMP Pro $(VERSION)" build-dir $(APP).json
+	  --subject="ChopGimp $(VERSION)" build-dir $(APP).json
 
 bundle:
 	mkdir -p dist
 	flatpak build-bundle $(GPG) --runtime-repo=$(FLATHUB) flatpak/repo \
-	  dist/PhotoGimpPro-$(VERSION).flatpak $(APP) stable
-	@ls -lh dist/PhotoGimpPro-$(VERSION).flatpak
+	  dist/ChopGimp-$(VERSION).flatpak $(APP) stable
+	@ls -lh dist/ChopGimp-$(VERSION).flatpak
 
 install:
-	flatpak install --user -y --reinstall dist/PhotoGimpPro-$(VERSION).flatpak
+	flatpak install --user -y --reinstall dist/ChopGimp-$(VERSION).flatpak
 
 run:
 	flatpak run $(APP)

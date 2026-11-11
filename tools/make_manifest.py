@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """
-PhotoGIMP Pro v3 — génère flatpak/org.cen_na.PhotoGimpPro.json à partir du
+PhotoGIMP Pro v3 — génère flatpak/org.cen_na.ChopGimp.json à partir du
 manifeste officiel Flathub de GIMP (flatpak/upstream/org.gimp.GIMP.json).
 
 Modifications :
-- identifiant org.cen_na.PhotoGimpPro (installable à côté de GIMP)
+- identifiant org.cen_na.ChopGimp (installable à côté de GIMP)
 - configuration séparée (pas d'accès à ~/.config/GIMP de l'hôte)
 - pas d'extensions Flathub (plug-ins / manuel) propres à org.gimp.GIMP
 - patchs PhotoGIMP (patches/gimp-3.2.8/*.patch) appliqués sur GIMP 3.2.8
@@ -19,7 +19,7 @@ import sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 FP = os.path.join(ROOT, "flatpak")
-APP_ID = "org.cen_na.PhotoGimpPro"
+APP_ID = "org.cen_na.ChopGimp"
 vanilla = "--vanilla" in sys.argv
 
 m = json.load(open(os.path.join(FP, "upstream", "org.gimp.GIMP.json")))

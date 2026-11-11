@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
 PhotoGIMP Pro — génère les fichiers d'installation du dépôt Flatpak privé :
-  dist/photogimp.flatpakrepo     (ajouter le dépôt : flatpak remote-add)
-  dist/PhotoGimpPro.flatpakref   (installer en un clic / une commande)
+  dist/chopgimp.flatpakrepo     (ajouter le dépôt : flatpak remote-add)
+  dist/ChopGimp.flatpakref   (installer en un clic / une commande)
 
 Usage : make_repofiles.py <url du dépôt> [<id clé GPG>] <dossier de sortie>
 """
@@ -21,14 +21,14 @@ if key:
     raw = subprocess.run(["gpg", "--export", key], check=True, capture_output=True).stdout
     gpg = "GPGKey=" + base64.b64encode(raw).decode() + "\n"
 
-common = "Title=PhotoGIMP Pro\nComment=GIMP recompilé façon Photoshop\n"
+common = "Title=ChopGimp\nComment=GIMP recompilé façon Photoshop\n"
 
-open(os.path.join(out, "photogimp.flatpakrepo"), "w").write(
+open(os.path.join(out, "chopgimp.flatpakrepo"), "w").write(
     "[Flatpak Repo]\n" + common + "Url=" + url + "\n" + gpg +
     "DefaultBranch=stable\n")
 
-open(os.path.join(out, "PhotoGimpPro.flatpakref"), "w").write(
-    "[Flatpak Ref]\nName=org.cen_na.PhotoGimpPro\nBranch=stable\n" + common +
+open(os.path.join(out, "ChopGimp.flatpakref"), "w").write(
+    "[Flatpak Ref]\nName=org.cen_na.ChopGimp\nBranch=stable\n" + common +
     "Url=" + url + "\nRuntimeRepo=https://dl.flathub.org/repo/flathub.flatpakrepo\n"
     "IsRuntime=false\n" + gpg)
 

@@ -1,0 +1,112 @@
+From 741bfb7771fec498c479f035815cf2a477b15e84 Mon Sep 17 00:00:00 2001
+From: ChopGimp <mathieu.redon@proton.me>
+Date: Wed, 11 Nov 2026 18:32:49 +0100
+Subject: [PATCH 13/13] ChopGimp: product name and badge instead of Wilber in
+ the empty window
+
+GIMP copyright and license notices are kept unchanged.
+---
+ app/about.h                              |  7 ++-
+ app/display/gimpdisplayshell-callbacks.c | 58 +++++++++++++++++++++++-
+ 2 files changed, 62 insertions(+), 3 deletions(-)
+
+diff --git a/app/about.h b/app/about.h
+index ed333b6..864df17 100644
+--- a/app/about.h
++++ b/app/about.h
+@@ -18,11 +18,14 @@
+ #pragma once
+ 
+ 
++/*  ChopGimp: distribution of GIMP with a Photoshop-like interface.
++ *  Copyright and license notices of GIMP are kept unchanged below.
++ */
+ #define GIMP_ACRONYM \
+-  _("GIMP")
++  "ChopGimp"
+ 
+ #define GIMP_NAME \
+-  _("GNU Image Manipulation Program")
++  _("ChopGimp — éditeur d'images (basé sur GIMP)")
+ 
+ /* The year of the last commit (UTC) will be inserted into this string. */
+ #define GIMP_COPYRIGHT \
+diff --git a/app/display/gimpdisplayshell-callbacks.c b/app/display/gimpdisplayshell-callbacks.c
+index 6cbd719..868fe8d 100644
+--- a/app/display/gimpdisplayshell-callbacks.c
++++ b/app/display/gimpdisplayshell-callbacks.c
+@@ -634,6 +634,62 @@ gimp_display_shell_canvas_draw_image (GimpDisplayShell *shell,
+   gimp_display_shell_selection_restart (shell);
+ }
+ 
++/*  ChopGimp: instead of GIMP's Wilber, the empty image window shows the
++ *  ChopGimp badge and how to get started.
++ */
++static void
++chopgimp_draw_drop_zone (GimpDisplayShell *shell,
++                         cairo_t          *cr)
++{
++  GtkAllocation         a;
++  PangoLayout          *layout;
++  PangoFontDescription *font;
++  cairo_pattern_t      *grad;
++  gdouble               cx, cy, r;
++  gint                  w, h;
++
++  gtk_widget_get_allocation (shell->canvas, &a);
++
++  r  = CLAMP (MIN (a.width, a.height) * 0.12, 36.0, 110.0);
++  cx = a.width  / 2.0;
++  cy = a.height / 2.0 - r * 0.5;
++
++  /* badge */
++  grad = cairo_pattern_create_linear (cx - r, cy + r, cx + r, cy - r);
++  cairo_pattern_add_color_stop_rgba (grad, 0.0,  0.08, 0.15, 0.38, shell->blink ? 0.9 : 0.55);
++  cairo_pattern_add_color_stop_rgba (grad, 0.55, 0.15, 0.38, 0.86, shell->blink ? 0.9 : 0.55);
++  cairo_pattern_add_color_stop_rgba (grad, 1.0,  0.13, 0.83, 0.93, shell->blink ? 0.9 : 0.55);
++  cairo_arc (cr, cx, cy, r, 0, 2 * G_PI);
++  cairo_set_source (cr, grad);
++  cairo_fill (cr);
++  cairo_pattern_destroy (grad);
++
++  layout = gtk_widget_create_pango_layout (shell->canvas, "Cg");
++  font   = pango_font_description_from_string ("Sans Bold");
++  pango_font_description_set_absolute_size (font, r * 1.05 * PANGO_SCALE);
++  pango_layout_set_font_description (layout, font);
++  pango_layout_get_pixel_size (layout, &w, &h);
++  cairo_set_source_rgba (cr, 1.0, 1.0, 1.0, shell->blink ? 1.0 : 0.85);
++  cairo_move_to (cr, cx - w / 2.0, cy - h / 2.0);
++  pango_cairo_show_layout (cr, layout);
++
++  /* hints */
++  pango_layout_set_text (layout,
++                         _("Ctrl+O : ouvrir une image      Ctrl+N : nouveau document\n"
++                           "ou glissez-déposez des images ici"), -1);
++  pango_font_description_set_weight (font, PANGO_WEIGHT_NORMAL);
++  pango_font_description_set_absolute_size (font, 13 * PANGO_SCALE);
++  pango_layout_set_font_description (layout, font);
++  pango_layout_set_alignment (layout, PANGO_ALIGN_CENTER);
++  pango_layout_get_pixel_size (layout, &w, &h);
++  cairo_set_source_rgba (cr, 1.0, 1.0, 1.0, 0.45);
++  cairo_move_to (cr, cx - w / 2.0, cy + r + 18);
++  pango_cairo_show_layout (cr, layout);
++
++  pango_font_description_free (font);
++  g_object_unref (layout);
++}
++
+ static void
+ gimp_display_shell_canvas_draw_drop_zone (GimpDisplayShell *shell,
+                                           cairo_t          *cr)
+@@ -642,7 +698,7 @@ gimp_display_shell_canvas_draw_drop_zone (GimpDisplayShell *shell,
+ 
+   gimp_display_shell_draw_background (shell, cr);
+ 
+-  gimp_cairo_draw_drop_wilber (shell->canvas, cr, shell->blink);
++  chopgimp_draw_drop_zone (shell, cr);
+ 
+   cairo_restore (cr);
+ 
+-- 
+2.53.0
+
