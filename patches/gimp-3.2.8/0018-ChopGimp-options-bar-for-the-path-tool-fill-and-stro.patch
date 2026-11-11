@@ -1,7 +1,7 @@
 From 7b70ed57f2547ea38087e211d3f1d66b6dd3eda4 Mon Sep 17 00:00:00 2001
 From: ChopGimp <mathieu.redon@proton.me>
 Date: Wed, 11 Nov 2026 19:51:30 +0100
-Subject: [PATCH 18/20] =?UTF-8?q?ChopGimp:=20options=20bar=20for=20the=20p?=
+Subject: [PATCH 18/22] =?UTF-8?q?ChopGimp:=20options=20bar=20for=20the=20p?=
  =?UTF-8?q?ath=20tool=20=E2=80=94=20fill=20and=20stroke=20(enable,=20color?=
  =?UTF-8?q?,=20width),=20create=20vector=20layer?=
 MIME-Version: 1.0

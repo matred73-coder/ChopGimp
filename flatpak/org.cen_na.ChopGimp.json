@@ -831,7 +831,9 @@
                         "../patches/gimp-3.2.8/0017-ChopGimp-declare-transform-controls-helpers.patch",
                         "../patches/gimp-3.2.8/0018-ChopGimp-options-bar-for-the-path-tool-fill-and-stro.patch",
                         "../patches/gimp-3.2.8/0019-ChopGimp-options-bar-separate-fill-stroke-opacity-an.patch",
-                        "../patches/gimp-3.2.8/0020-ChopGimp-own-D-Bus-service-name-and-application-id-n.patch"
+                        "../patches/gimp-3.2.8/0020-ChopGimp-own-D-Bus-service-name-and-application-id-n.patch",
+                        "../patches/gimp-3.2.8/0021-ChopGimp-options-bar-recognises-GIMP-color-propertie.patch",
+                        "../patches/gimp-3.2.8/0022-ChopGimp-include-libgimpcolor-in-options-bar.patch"
                     ]
                 }
             ],

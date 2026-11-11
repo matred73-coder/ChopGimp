@@ -1,0 +1,40 @@
+From f694f65880a0ae1f5fd423e3fc28446028dd161e Mon Sep 17 00:00:00 2001
+From: ChopGimp <mathieu.redon@proton.me>
+Date: Wed, 11 Nov 2026 20:18:51 +0100
+Subject: [PATCH 21/22] ChopGimp: options bar recognises GIMP color properties
+ (fill/stroke/text color pickers)
+
+---
+ app/display/gimpoptionsbar.c | 11 +++++++++--
+ 1 file changed, 9 insertions(+), 2 deletions(-)
+
+diff --git a/app/display/gimpoptionsbar.c b/app/display/gimpoptionsbar.c
+index 0859fe2..c37a2f1 100644
+--- a/app/display/gimpoptionsbar.c
++++ b/app/display/gimpoptionsbar.c
+@@ -295,13 +295,20 @@ gimp_options_bar_widget (GObject     *options,
+   if (! pspec)
+     return NULL;
+ 
+-  if (GEGL_IS_PARAM_SPEC_COLOR (pspec))
++  if (GIMP_IS_PARAM_SPEC_COLOR (pspec) || GEGL_IS_PARAM_SPEC_COLOR (pspec))
+     {
+       const gchar *title = g_param_spec_get_nick (pspec);
+ 
++      if (! strcmp (prop, "fill-foreground"))
++        title = _("Couleur du fond");
++      else if (! strcmp (prop, "stroke-foreground"))
++        title = _("Couleur du contour");
++
+       w = gimp_prop_color_button_new (options, prop,
+                                       (title && *title) ? title : _("Color"), TRUE,
+-                                      36, 20, GIMP_COLOR_AREA_FLAT);
++                                      40, 22, GIMP_COLOR_AREA_SMALL_CHECKS);
++      gimp_help_set_help_data (w, _("Cliquer pour choisir la couleur "
++                                    "(pipette et transparence incluses)"), NULL);
+       if (! strcmp (prop, "foreground"))
+         {
+           gimp_options_bar_pack_labeled (box, _("Color"), w);
+-- 
+2.53.0
+
