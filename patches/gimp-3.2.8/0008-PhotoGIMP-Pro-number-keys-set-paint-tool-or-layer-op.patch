@@ -1,0 +1,207 @@
+From 0fac93e953f14b13303bae4341a0e21ba410df6d Mon Sep 17 00:00:00 2001
+From: ChopGimp <mathieu.redon@proton.me>
+Date: Wed, 11 Nov 2026 12:50:50 +0100
+Subject: [PATCH 8/9] PhotoGIMP Pro: number keys set paint-tool or layer
+ opacity (Photoshop)
+
+---
+ app/actions/tools-actions.c  | 70 ++++++++++++++++++++++++++++++++++++
+ app/actions/tools-commands.c | 61 +++++++++++++++++++++++++++++++
+ app/actions/tools-commands.h |  3 ++
+ 3 files changed, 134 insertions(+)
+
+diff --git a/app/actions/tools-actions.c b/app/actions/tools-actions.c
+index 9efa957..6f633e1 100644
+--- a/app/actions/tools-actions.c
++++ b/app/actions/tools-actions.c
+@@ -51,6 +51,72 @@ static const GimpActionEntry tools_actions[] =
+     GIMP_HELP_TOOLBOX_SWAP_TOOLS }
+ };
+ 
++/*  PhotoGIMP Pro (Photoshop): keys 1..9, 0 set the opacity of the active
++ *  paint tool, or of the selected layers for other tools.
++ */
++static const GimpActionEntry tools_ps_opacity_actions[] =
++{
++  { "tools-opacity-ps-10", NULL,
++    NC_("tools-action", "Opacity 10%%"), NULL, { NULL },
++    NC_("tools-action", "Set the opacity of the paint tool, or of the selected layers, to 10%%"),
++    tools_ps_opacity_cmd_callback,
++    NULL },
++
++  { "tools-opacity-ps-20", NULL,
++    NC_("tools-action", "Opacity 20%%"), NULL, { NULL },
++    NC_("tools-action", "Set the opacity of the paint tool, or of the selected layers, to 20%%"),
++    tools_ps_opacity_cmd_callback,
++    NULL },
++
++  { "tools-opacity-ps-30", NULL,
++    NC_("tools-action", "Opacity 30%%"), NULL, { NULL },
++    NC_("tools-action", "Set the opacity of the paint tool, or of the selected layers, to 30%%"),
++    tools_ps_opacity_cmd_callback,
++    NULL },
++
++  { "tools-opacity-ps-40", NULL,
++    NC_("tools-action", "Opacity 40%%"), NULL, { NULL },
++    NC_("tools-action", "Set the opacity of the paint tool, or of the selected layers, to 40%%"),
++    tools_ps_opacity_cmd_callback,
++    NULL },
++
++  { "tools-opacity-ps-50", NULL,
++    NC_("tools-action", "Opacity 50%%"), NULL, { NULL },
++    NC_("tools-action", "Set the opacity of the paint tool, or of the selected layers, to 50%%"),
++    tools_ps_opacity_cmd_callback,
++    NULL },
++
++  { "tools-opacity-ps-60", NULL,
++    NC_("tools-action", "Opacity 60%%"), NULL, { NULL },
++    NC_("tools-action", "Set the opacity of the paint tool, or of the selected layers, to 60%%"),
++    tools_ps_opacity_cmd_callback,
++    NULL },
++
++  { "tools-opacity-ps-70", NULL,
++    NC_("tools-action", "Opacity 70%%"), NULL, { NULL },
++    NC_("tools-action", "Set the opacity of the paint tool, or of the selected layers, to 70%%"),
++    tools_ps_opacity_cmd_callback,
++    NULL },
++
++  { "tools-opacity-ps-80", NULL,
++    NC_("tools-action", "Opacity 80%%"), NULL, { NULL },
++    NC_("tools-action", "Set the opacity of the paint tool, or of the selected layers, to 80%%"),
++    tools_ps_opacity_cmd_callback,
++    NULL },
++
++  { "tools-opacity-ps-90", NULL,
++    NC_("tools-action", "Opacity 90%%"), NULL, { NULL },
++    NC_("tools-action", "Set the opacity of the paint tool, or of the selected layers, to 90%%"),
++    tools_ps_opacity_cmd_callback,
++    NULL },
++
++  { "tools-opacity-ps-100", NULL,
++    NC_("tools-action", "Opacity 100%%"), NULL, { NULL },
++    NC_("tools-action", "Set the opacity of the paint tool, or of the selected layers, to 100%%"),
++    tools_ps_opacity_cmd_callback,
++    NULL }
++};
++
+ static const GimpStringActionEntry tools_alternative_actions[] =
+ {
+   { "tools-by-color-select-short", GIMP_ICON_TOOL_BY_COLOR_SELECT,
+@@ -666,6 +732,10 @@ tools_actions_setup (GimpActionGroup *group)
+                                  tools_actions,
+                                  G_N_ELEMENTS (tools_actions));
+ 
++  gimp_action_group_add_actions (group, "tools-action",
++                                 tools_ps_opacity_actions,
++                                 G_N_ELEMENTS (tools_ps_opacity_actions));
++
+   gimp_action_group_add_string_actions (group, "tools-action",
+                                         tools_alternative_actions,
+                                         G_N_ELEMENTS (tools_alternative_actions),
+diff --git a/app/actions/tools-commands.c b/app/actions/tools-commands.c
+index 7a4d19d..7bacf2d 100644
+--- a/app/actions/tools-commands.c
++++ b/app/actions/tools-commands.c
+@@ -29,6 +29,9 @@
+ #include "core/gimp.h"
+ #include "core/gimpcontainer.h"
+ #include "core/gimpcontext.h"
++#include "core/gimpimage.h"
++#include "core/gimpimage-undo.h"
++#include "core/gimplayer.h"
+ #include "core/gimptoolinfo.h"
+ 
+ #include "paint/gimpinkoptions.h"
+@@ -46,6 +49,7 @@
+ #include "tools/gimpforegroundselectoptions.h"
+ #include "tools/gimppaintselectoptions.h"
+ #include "tools/gimprectangleoptions.h"
++#include "tools/gimppainttool.h"
+ #include "tools/gimptool.h"
+ #include "tools/gimptoolcontrol.h"
+ #include "tools/gimptransformoptions.h"
+@@ -56,6 +60,8 @@
+ #include "actions.h"
+ #include "tools-commands.h"
+ 
++#include "gimp-intl.h"
++
+ 
+ /*  local function prototypes  */
+ 
+@@ -941,3 +947,58 @@ tools_activate_enum_action (const gchar *action_desc,
+         }
+     }
+ }
++
++
++/*  PhotoGIMP Pro (Photoshop): number keys set the opacity  */
++void
++tools_ps_opacity_cmd_callback (GimpAction *action,
++                               GVariant   *value,
++                               gpointer    data)
++{
++  GimpContext *context;
++  GimpTool    *tool;
++  const gchar *name;
++  const gchar *dash;
++  gdouble      opacity;
++  return_if_no_context (context, data);
++
++  name = gimp_action_get_name (action);
++  dash = strrchr (name, '-');
++
++  if (! dash)
++    return;
++
++  opacity = CLAMP (g_ascii_strtod (dash + 1, NULL) / 100.0, 0.0, 1.0);
++
++  tool = tool_manager_get_active (context->gimp);
++
++  if (tool && GIMP_IS_PAINT_TOOL (tool))
++    {
++      g_object_set (tool->tool_info->tool_options,
++                    "opacity", opacity,
++                    NULL);
++    }
++  else
++    {
++      GimpImage *image = gimp_context_get_image (context);
++      GList     *layers;
++      GList     *iter;
++
++      if (! image)
++        return;
++
++      layers = gimp_image_get_selected_layers (image);
++
++      if (! layers)
++        return;
++
++      gimp_image_undo_group_start (image, GIMP_UNDO_GROUP_ITEM_PROPERTIES,
++                                   _("Set Layer Opacity"));
++
++      for (iter = layers; iter; iter = iter->next)
++        gimp_layer_set_opacity (iter->data, opacity, TRUE);
++
++      gimp_image_undo_group_end (image);
++      gimp_image_flush (image);
++    }
++}
+diff --git a/app/actions/tools-commands.h b/app/actions/tools-commands.h
+index c9ffc13..2e0eb68 100644
+--- a/app/actions/tools-commands.h
++++ b/app/actions/tools-commands.h
+@@ -18,6 +18,9 @@
+ #pragma once
+ 
+ 
++void   tools_ps_opacity_cmd_callback                (GimpAction *action,
++                                                     GVariant   *value,
++                                                     gpointer    data);
+ void   tools_swap_cmd_callback                      (GimpAction *action,
+                                                      GVariant   *value,
+                                                      gpointer    data);
+-- 
+2.53.0
+

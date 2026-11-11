@@ -1,0 +1,99 @@
+From 92c0563b7ddcafdcae58d46a66913a81f7696d04 Mon Sep 17 00:00:00 2001
+From: ChopGimp <mathieu.redon@proton.me>
+Date: Wed, 11 Nov 2026 12:47:51 +0100
+Subject: [PATCH 3/9] PhotoGIMP Pro: Alt+click sets clone/heal source, Alt =
+ eyedropper in paint tools
+
+Photoshop uses Alt for these temporary actions; GIMP used Ctrl.
+---
+ app/tools/gimppainttool.c  | 12 ++++++------
+ app/tools/gimpsourcetool.c |  8 ++++----
+ 2 files changed, 10 insertions(+), 10 deletions(-)
+
+diff --git a/app/tools/gimppainttool.c b/app/tools/gimppainttool.c
+index 7b48f0d..85dd56f 100644
+--- a/app/tools/gimppainttool.c
++++ b/app/tools/gimppainttool.c
+@@ -470,8 +470,8 @@ gimp_paint_tool_modifier_key (GimpTool        *tool,
+ 
+   if (paint_tool->pick_colors && ! paint_tool->draw_line)
+     {
+-      if ((state & gimp_get_all_modifiers_mask ()) ==
+-          gimp_get_constrain_behavior_mask ())
++      /* PhotoGIMP Pro: Alt = temporary eyedropper (Photoshop) */
++      if ((state & gimp_get_all_modifiers_mask ()) == GDK_MOD1_MASK)
+         {
+           if (! gimp_color_tool_is_enabled (GIMP_COLOR_TOOL (tool)))
+             {
+@@ -559,7 +559,7 @@ gimp_paint_tool_cursor_update (GimpTool         *tool,
+               gboolean constrain_only;
+ 
+               /* Allow pixel-locked layers to be set as sources */
+-              constrain_only = (state & gimp_get_constrain_behavior_mask () &&
++              constrain_only = (state & GDK_MOD1_MASK &&   /* PhotoGIMP Pro: Alt sets the source */
+                                 ! (state & gimp_get_extend_selection_mask ()));
+ 
+               if (! (GIMP_IS_SOURCE_TOOL (tool) && constrain_only))
+@@ -701,7 +701,7 @@ gimp_paint_tool_oper_update (GimpTool         *tool,
+            * gimp_suggest_modifiers() would interpret this parameter.
+            */
+           if (paint_tool->status_ctrl != NULL)
+-            modifiers |= constrain_mask;
++            modifiers |= GDK_MOD1_MASK;   /* PhotoGIMP Pro: Alt, not Ctrl */
+ 
+           /* suggest drawing lines only after the first point is set
+            */
+@@ -711,8 +711,8 @@ gimp_paint_tool_oper_update (GimpTool         *tool,
+           status = gimp_suggest_modifiers (paint_tool->status,
+                                            modifiers & ~state,
+                                            _("%s for a straight line"),
+-                                           paint_tool->status_ctrl,
+-                                           NULL);
++                                           NULL,
++                                           paint_tool->status_ctrl);
+           paint_tool->draw_line = FALSE;
+         }
+ 
+diff --git a/app/tools/gimpsourcetool.c b/app/tools/gimpsourcetool.c
+index a922309..7c683cb 100644
+--- a/app/tools/gimpsourcetool.c
++++ b/app/tools/gimpsourcetool.c
+@@ -195,7 +195,7 @@ gimp_source_tool_button_press (GimpTool            *tool,
+   GimpSourceCore    *source      = GIMP_SOURCE_CORE (paint_tool->core);
+   GimpSourceOptions *options     = GIMP_SOURCE_TOOL_GET_OPTIONS (tool);
+   GdkModifierType    extend_mask = gimp_get_extend_selection_mask ();
+-  GdkModifierType    toggle_mask = gimp_get_toggle_behavior_mask ();
++  GdkModifierType    toggle_mask = GDK_MOD1_MASK /* PhotoGIMP Pro: Alt+click sets the source (Photoshop) */;
+ 
+   gimp_draw_tool_pause (GIMP_DRAW_TOOL (tool));
+ 
+@@ -256,7 +256,7 @@ gimp_source_tool_modifier_key (GimpTool        *tool,
+ 
+   if (gimp_source_core_use_source (GIMP_SOURCE_CORE (paint_tool->core),
+                                    options) &&
+-      key == gimp_get_toggle_behavior_mask ())
++      key == GDK_MOD1_MASK /* PhotoGIMP Pro: Alt+click sets the source (Photoshop) */)
+     {
+       gimp_draw_tool_pause (GIMP_DRAW_TOOL (tool));
+ 
+@@ -303,7 +303,7 @@ gimp_source_tool_cursor_update (GimpTool         *tool,
+                                    options))
+     {
+       GdkModifierType extend_mask = gimp_get_extend_selection_mask ();
+-      GdkModifierType toggle_mask = gimp_get_toggle_behavior_mask ();
++      GdkModifierType toggle_mask = GDK_MOD1_MASK /* PhotoGIMP Pro: Alt+click sets the source (Photoshop) */;
+ 
+       if ((state & (toggle_mask | extend_mask)) == toggle_mask)
+         {
+@@ -350,7 +350,7 @@ gimp_source_tool_oper_update (GimpTool         *tool,
+     {
+       if (options->src_drawables == NULL)
+         {
+-          GdkModifierType toggle_mask = gimp_get_toggle_behavior_mask ();
++          GdkModifierType toggle_mask = GDK_MOD1_MASK /* PhotoGIMP Pro: Alt+click sets the source (Photoshop) */;
+ 
+           if (state & toggle_mask)
+             {
+-- 
+2.53.0
+

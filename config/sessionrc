@@ -35,11 +35,6 @@
         (book
             (position 250)
             (current-page 0)
-            (dockable "gimp-tool-options"
-                (locked)
-                (tab-style automatic)
-                (aux-info
-                    (show-button-bar "true")))
             (dockable "gimp-undo-history"
                 (tab-style automatic)
                 (aux-info

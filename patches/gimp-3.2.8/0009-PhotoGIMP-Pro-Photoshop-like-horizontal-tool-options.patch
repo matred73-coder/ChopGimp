@@ -1,0 +1,466 @@
+From 547a7e34603118a69e231958a89665b1b665e4fd Mon Sep 17 00:00:00 2001
+From: ChopGimp <mathieu.redon@proton.me>
+Date: Wed, 11 Nov 2026 12:53:32 +0100
+Subject: [PATCH 9/9] PhotoGIMP Pro: Photoshop-like horizontal tool options bar
+
+A new GimpOptionsBar below the menubar follows the active tool and shows its
+most used options as compact widgets bound to the same GimpToolOptions as
+the Tool Options dockable, plus a button opening the full dockable.
+---
+ app/display/gimpimagewindow.c |  10 +
+ app/display/gimpoptionsbar.c  | 382 ++++++++++++++++++++++++++++++++++
+ app/display/gimpoptionsbar.h  |  12 ++
+ app/display/meson.build       |   1 +
+ 4 files changed, 405 insertions(+)
+ create mode 100644 app/display/gimpoptionsbar.c
+ create mode 100644 app/display/gimpoptionsbar.h
+
+diff --git a/app/display/gimpimagewindow.c b/app/display/gimpimagewindow.c
+index 228a067..84b87ee 100644
+--- a/app/display/gimpimagewindow.c
++++ b/app/display/gimpimagewindow.c
+@@ -95,6 +95,7 @@
+ #include "gimpdisplayshell-tool-events.h"
+ #include "gimpdisplayshell-transform.h"
+ #include "gimpimagewindow.h"
++#include "gimpoptionsbar.h"
+ #include "gimpstatusbar.h"
+ 
+ #include "gimp-log.h"
+@@ -582,6 +583,15 @@ gimp_image_window_constructed (GObject *object)
+         }
+     }
+ 
++  /*  PhotoGIMP Pro: Photoshop-like tool options bar below the menubar  */
++  {
++    GtkWidget *options_bar = gimp_options_bar_new (private->gimp);
++
++    gtk_box_pack_start (GTK_BOX (private->main_vbox), options_bar,
++                        FALSE, FALSE, 0);
++    gtk_widget_set_visible (options_bar, TRUE);
++  }
++
+ #ifdef GDK_WINDOWING_QUARTZ
+   menus_quartz_app_menu (private->gimp);
+ #else
+diff --git a/app/display/gimpoptionsbar.c b/app/display/gimpoptionsbar.c
+new file mode 100644
+index 0000000..033646e
+--- /dev/null
++++ b/app/display/gimpoptionsbar.c
+@@ -0,0 +1,382 @@
++/* GIMP - The GNU Image Manipulation Program
++ * Copyright (C) 1995 Spencer Kimball and Peter Mattis
++ *
++ * gimpoptionsbar.c — PhotoGIMP Pro: Photoshop-like horizontal tool options bar
++ * Copyright (C) 2026 PhotoGIMP Pro
++ *
++ * This program is free software: you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation; either version 3 of the License, or
++ * (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License
++ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
++ */
++
++/*  The bar sits below the menubar of every image window. It follows the
++ *  active tool and shows its most used options as compact horizontal
++ *  widgets, bound to the very same GimpToolOptions object as the Tool
++ *  Options dockable (both stay in sync). A « … » button opens the full
++ *  Tool Options dockable.
++ */
++
++#include "config.h"
++
++#include <string.h>
++
++#include <gegl.h>
++#include <gtk/gtk.h>
++
++#include "libgimpwidgets/gimpwidgets.h"
++
++#include "display-types.h"
++
++#include "core/gimp.h"
++#include "core/gimpcontext.h"
++#include "core/gimptoolinfo.h"
++#include "core/gimpviewable.h"
++
++#include "widgets/gimplayermodebox.h"
++#include "widgets/gimppropwidgets.h"
++#include "widgets/gimpuimanager.h"
++#include "widgets/gimpviewablebox.h"
++#include "widgets/gimpwidgets-utils.h"
++
++#include "menus/menus.h"
++
++#include "gimpoptionsbar.h"
++
++#include "gimp-intl.h"
++
++
++#define BAR_KEY "photogimp-options-bar-tool"
++
++/*  Most used options per tool, in Photoshop's options-bar order.
++ *  Special entries: "brush", "font", "gradient", "pattern" (resource
++ *  pickers), "paint-mode" (layer mode menu), "operation" / "justify" /
++ *  "type" (icon boxes), "foreground" (color button). Missing properties
++ *  are silently skipped.
++ */
++typedef struct
++{
++  const gchar *tool;
++  const gchar *props[14];
++} BarSpec;
++
++#define PAINT_COMMON "brush", "brush-size", "brush-hardness", "paint-mode", "opacity"
++
++static const BarSpec bar_specs[] =
++{
++  { "gimp-paintbrush-tool",        { PAINT_COMMON, "dynamics-enabled", NULL } },
++  { "gimp-pencil-tool",            { PAINT_COMMON, NULL } },
++  { "gimp-airbrush-tool",          { PAINT_COMMON, "flow", "rate", NULL } },
++  { "gimp-eraser-tool",            { "brush", "brush-size", "brush-hardness", "opacity", "hard", NULL } },
++  { "gimp-clone-tool",             { "brush", "brush-size", "brush-hardness", "paint-mode", "opacity",
++                                     "clone-type", "align-mode", "sample-merged", NULL } },
++  { "gimp-perspective-clone-tool", { "brush", "brush-size", "brush-hardness", "opacity", "clone-type", NULL } },
++  { "gimp-heal-tool",              { "brush", "brush-size", "brush-hardness", "opacity",
++                                     "align-mode", "sample-merged", NULL } },
++  { "gimp-smudge-tool",            { "brush", "brush-size", "brush-hardness", "rate", "flow", "sample-merged", NULL } },
++  { "gimp-convolve-tool",          { "brush", "brush-size", "brush-hardness", "type", "rate", NULL } },
++  { "gimp-dodge-burn-tool",        { "brush", "brush-size", "brush-hardness", "type", "mode", "exposure", NULL } },
++  { "gimp-ink-tool",               { "size", "tilt-angle", "opacity", NULL } },
++  { "gimp-mypaint-brush-tool",     { "radius", "hardness", "opacity", NULL } },
++
++  { "gimp-rect-select-tool",       { "operation", "feather", "feather-radius", "antialias", "round-corners", NULL } },
++  { "gimp-ellipse-select-tool",    { "operation", "feather", "feather-radius", "antialias", NULL } },
++  { "gimp-free-select-tool",       { "operation", "feather", "feather-radius", "antialias", NULL } },
++  { "gimp-iscissors-tool",         { "operation", "feather", "feather-radius", "antialias", NULL } },
++  { "gimp-fuzzy-select-tool",      { "operation", "threshold", "antialias", "sample-merged",
++                                     "select-transparent", "diagonal-neighbors", NULL } },
++  { "gimp-by-color-select-tool",   { "operation", "threshold", "antialias", "sample-merged", NULL } },
++  { "gimp-foreground-select-tool", { "operation", "draw-mode", "stroke-width", NULL } },
++
++  { "gimp-move-tool",              { "move-current", "move-type", NULL } },
++  { "gimp-crop-tool",              { "delete-pixels", "allow-growing", "layer-only", "highlight", NULL } },
++
++  { "gimp-unified-transform-tool", { "type", "constrain-scale", "interpolation", "clip", "show-preview", NULL } },
++  { "gimp-scale-tool",             { "type", "constrain-scale", "interpolation", "clip", NULL } },
++  { "gimp-rotate-tool",            { "type", "constrain-rotate", "interpolation", "clip", NULL } },
++  { "gimp-shear-tool",             { "type", "interpolation", "clip", NULL } },
++  { "gimp-perspective-tool",       { "type", "interpolation", "clip", NULL } },
++  { "gimp-flip-tool",              { "type", "flip-type", "clip", NULL } },
++  { "gimp-handle-transform-tool",  { "type", "interpolation", "clip", NULL } },
++  { "gimp-transform-3d-tool",      { "type", "interpolation", "clip", NULL } },
++  { "gimp-warp-tool",              { "behavior", "effect-size", "effect-hardness", "effect-strength", NULL } },
++
++  { "gimp-text-tool",              { "font", "font-size", "foreground", "justify", "antialias", NULL } },
++  { "gimp-gradient-tool",          { "gradient", "gradient-type", "paint-mode", "opacity", "dither", "instant", NULL } },
++  { "gimp-bucket-fill-tool",       { "fill-mode", "paint-mode", "opacity", "threshold", "fill-area",
++                                     "sample-merged", "antialias", NULL } },
++  { "gimp-color-picker-tool",      { "sample-average", "average-radius", "pick-target", "sample-merged", NULL } },
++  { "gimp-zoom-tool",              { "zoom-type", "auto-resize", NULL } },
++  { "gimp-path-tool",              { "vectors-edit-mode", "vectors-polygonal", NULL } },
++};
++
++
++static void   gimp_options_bar_tool_changed (GimpContext  *context,
++                                             GimpToolInfo *tool_info,
++                                             GtkWidget    *bar);
++static void   gimp_options_bar_more_clicked (GtkWidget    *button,
++                                             Gimp         *gimp);
++
++
++static const BarSpec *
++gimp_options_bar_get_spec (const gchar *tool_name)
++{
++  gint i;
++
++  for (i = 0; i < G_N_ELEMENTS (bar_specs); i++)
++    if (! strcmp (bar_specs[i].tool, tool_name))
++      return &bar_specs[i];
++
++  return NULL;
++}
++
++static void
++gimp_options_bar_pack (GtkWidget *box,
++                       GtkWidget *widget)
++{
++  gtk_box_pack_start (GTK_BOX (box), widget, FALSE, FALSE, 0);
++  gtk_widget_set_visible (widget, TRUE);
++}
++
++static void
++gimp_options_bar_pack_labeled (GtkWidget   *box,
++                               const gchar *label,
++                               GtkWidget   *widget)
++{
++  GtkWidget *hbox = gtk_box_new (GTK_ORIENTATION_HORIZONTAL, 4);
++
++  if (label)
++    {
++      GtkWidget *l = gtk_label_new (label);
++
++      gtk_style_context_add_class (gtk_widget_get_style_context (l), "dim-label");
++      gtk_box_pack_start (GTK_BOX (hbox), l, FALSE, FALSE, 0);
++      gtk_widget_set_visible (l, TRUE);
++    }
++
++  gtk_box_pack_start (GTK_BOX (hbox), widget, FALSE, FALSE, 0);
++  gtk_widget_set_visible (widget, TRUE);
++  gimp_options_bar_pack (box, hbox);
++}
++
++/*  Build one compact widget for @prop of @options, or NULL  */
++static GtkWidget *
++gimp_options_bar_widget (GObject     *options,
++                         const gchar *prop,
++                         gboolean    *packed,
++                         GtkWidget   *box)
++{
++  GimpContext *context = GIMP_CONTEXT (options);
++  GParamSpec  *pspec;
++  GtkWidget   *w = NULL;
++
++  *packed = FALSE;
++
++  if (! strcmp (prop, "brush"))
++    return gimp_prop_brush_box_new (NULL, context, NULL, 2,
++                                    "brush-view-type", "brush-view-size",
++                                    "gimp-brush-editor", _("Edit this brush"));
++  if (! strcmp (prop, "font"))
++    return gimp_prop_font_box_new (NULL, context, NULL, 2,
++                                   "font-view-type", "font-view-size");
++  if (! strcmp (prop, "gradient"))
++    return gimp_prop_gradient_box_new (NULL, context, NULL, 2,
++                                       "gradient-view-type", "gradient-view-size",
++                                       "gradient-reverse",
++                                       "gradient-blend-color-space",
++                                       "gimp-gradient-editor",
++                                       _("Edit this gradient"));
++
++  pspec = g_object_class_find_property (G_OBJECT_GET_CLASS (options), prop);
++
++  if (! pspec)
++    return NULL;
++
++  if (! strcmp (prop, "paint-mode"))
++    {
++      w = gimp_prop_layer_mode_box_new (options, prop,
++                                        GIMP_LAYER_MODE_CONTEXT_PAINT);
++      gimp_layer_mode_box_set_label (GIMP_LAYER_MODE_BOX (w), _("Mode"));
++      return w;
++    }
++
++  if (! strcmp (prop, "foreground"))
++    {
++      w = gimp_prop_color_button_new (options, prop, _("Text Color"), TRUE,
++                                      40, 22, GIMP_COLOR_AREA_FLAT);
++      gimp_options_bar_pack_labeled (box, _("Color"), w);
++      *packed = TRUE;
++      return w;
++    }
++
++  if (! strcmp (prop, "operation"))
++    return gimp_prop_enum_icon_box_new (options, prop, "gimp-selection", 0, 0);
++
++  if (! strcmp (prop, "justify"))
++    return gimp_prop_enum_icon_box_new (options, prop, "format-justify", 0, 0);
++
++  if (! strcmp (prop, "type") && G_IS_PARAM_SPEC_ENUM (pspec) &&
++      g_object_class_find_property (G_OBJECT_GET_CLASS (options), "direction"))
++    return gimp_prop_enum_icon_box_new (options, prop, "gimp", 0, 0);
++
++  if (! strcmp (prop, "move-current"))
++    {
++      w = gimp_prop_boolean_combo_box_new (options, prop,
++                                           _("Move the active layer"),
++                                           _("Pick a layer or guide"));
++      gimp_options_bar_pack_labeled (box, NULL, w);
++      *packed = TRUE;
++      return w;
++    }
++
++  if (G_IS_PARAM_SPEC_BOOLEAN (pspec))
++    return gimp_prop_check_button_new (options, prop, NULL);
++
++  if (G_IS_PARAM_SPEC_ENUM (pspec))
++    {
++      w = gimp_prop_enum_combo_box_new (options, prop, 0, 0);
++      gimp_options_bar_pack_labeled (box, g_param_spec_get_nick (pspec), w);
++      *packed = TRUE;
++      return w;
++    }
++
++  if (G_IS_PARAM_SPEC_DOUBLE (pspec) || G_IS_PARAM_SPEC_INT (pspec))
++    {
++      gdouble step = 1.0, page = 10.0;
++      gint    digits = 0;
++
++      if (G_IS_PARAM_SPEC_DOUBLE (pspec) &&
++          G_PARAM_SPEC_DOUBLE (pspec)->maximum - G_PARAM_SPEC_DOUBLE (pspec)->minimum <= 10.0)
++        {
++          step = 0.01; page = 0.1; digits = 2;
++        }
++
++      w = gimp_prop_spin_scale_new (options, prop, step, page, digits);
++      gtk_widget_set_size_request (w, 150, -1);
++
++      if (! strcmp (prop, "opacity") || ! strcmp (prop, "brush-hardness") ||
++          ! strcmp (prop, "flow"))
++        gimp_prop_widget_set_factor (w, 100.0, 1.0, 10.0, 1);
++
++      if (! strcmp (prop, "brush-size") || ! strcmp (prop, "font-size"))
++        {
++          gimp_spin_scale_set_scale_limits (GIMP_SPIN_SCALE (w), 1.0, 1000.0);
++          gimp_spin_scale_set_gamma (GIMP_SPIN_SCALE (w), 1.7);
++        }
++
++      return w;
++    }
++
++  return NULL;
++}
++
++static void
++gimp_options_bar_tool_changed (GimpContext  *context,
++                               GimpToolInfo *tool_info,
++                               GtkWidget    *bar)
++{
++  GtkWidget     *box = g_object_get_data (G_OBJECT (bar), "photogimp-box");
++  GtkWidget     *icon;
++  GtkWidget     *label;
++  const BarSpec *spec;
++  GList         *children;
++  GList         *iter;
++  gint           i;
++
++  if (! box || ! tool_info)
++    return;
++
++  if (g_object_get_data (G_OBJECT (bar), BAR_KEY) == tool_info)
++    return;
++
++  g_object_set_data (G_OBJECT (bar), BAR_KEY, tool_info);
++
++  children = gtk_container_get_children (GTK_CONTAINER (box));
++  for (iter = children; iter; iter = iter->next)
++    gtk_widget_destroy (iter->data);
++  g_list_free (children);
++
++  /*  tool icon + name, like Photoshop's tool preset picker  */
++  icon = gtk_image_new_from_icon_name (gimp_viewable_get_icon_name (GIMP_VIEWABLE (tool_info)),
++                                       GTK_ICON_SIZE_LARGE_TOOLBAR);
++  gimp_options_bar_pack (box, icon);
++
++  label = gtk_label_new (tool_info->label);
++  gtk_style_context_add_class (gtk_widget_get_style_context (label), "photogimp-tool-name");
++  gimp_options_bar_pack (box, label);
++
++  spec = gimp_options_bar_get_spec (gimp_object_get_name (tool_info));
++
++  if (spec && tool_info->tool_options)
++    {
++      GObject *options = G_OBJECT (tool_info->tool_options);
++
++      gimp_options_bar_pack (box, gtk_separator_new (GTK_ORIENTATION_VERTICAL));
++
++      for (i = 0; spec->props[i]; i++)
++        {
++          gboolean   packed = FALSE;
++          GtkWidget *w;
++
++          w = gimp_options_bar_widget (options, spec->props[i], &packed, box);
++
++          if (w && ! packed)
++            gimp_options_bar_pack (box, w);
++        }
++    }
++}
++
++static void
++gimp_options_bar_more_clicked (GtkWidget *button,
++                               Gimp      *gimp)
++{
++  GimpUIManager *manager = menus_get_image_manager_singleton (gimp);
++
++  gimp_ui_manager_activate_action (manager, "dialogs", "dialogs-tool-options");
++}
++
++GtkWidget *
++gimp_options_bar_new (Gimp *gimp)
++{
++  GimpContext *context;
++  GtkWidget   *bar;
++  GtkWidget   *box;
++  GtkWidget   *more;
++
++  g_return_val_if_fail (GIMP_IS_GIMP (gimp), NULL);
++
++  context = gimp_get_user_context (gimp);
++
++  bar = gtk_box_new (GTK_ORIENTATION_HORIZONTAL, 8);
++  gtk_widget_set_name (bar, "photogimp-options-bar");
++  gtk_container_set_border_width (GTK_CONTAINER (bar), 2);
++
++  box = gtk_box_new (GTK_ORIENTATION_HORIZONTAL, 10);
++  gtk_box_pack_start (GTK_BOX (bar), box, TRUE, TRUE, 0);
++  gtk_widget_set_visible (box, TRUE);
++  g_object_set_data (G_OBJECT (bar), "photogimp-box", box);
++
++  more = gtk_button_new_from_icon_name ("gimp-tool-options", GTK_ICON_SIZE_SMALL_TOOLBAR);
++  gtk_button_set_relief (GTK_BUTTON (more), GTK_RELIEF_NONE);
++  gimp_help_set_help_data (more, _("Show all tool options"), NULL);
++  gtk_box_pack_end (GTK_BOX (bar), more, FALSE, FALSE, 0);
++  gtk_widget_set_visible (more, TRUE);
++  g_signal_connect (more, "clicked",
++                    G_CALLBACK (gimp_options_bar_more_clicked), gimp);
++
++  g_signal_connect_object (context, "tool-changed",
++                           G_CALLBACK (gimp_options_bar_tool_changed),
++                           bar, 0);
++
++  gimp_options_bar_tool_changed (context, gimp_context_get_tool (context), bar);
++
++  return bar;
++}
+diff --git a/app/display/gimpoptionsbar.h b/app/display/gimpoptionsbar.h
+new file mode 100644
+index 0000000..ff2fab8
+--- /dev/null
++++ b/app/display/gimpoptionsbar.h
+@@ -0,0 +1,12 @@
++/* GIMP - The GNU Image Manipulation Program
++ * gimpoptionsbar.h — PhotoGIMP Pro: Photoshop-like horizontal tool options bar
++ *
++ * This program is free software: you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation; either version 3 of the License, or
++ * (at your option) any later version.
++ */
++
++#pragma once
++
++GtkWidget * gimp_options_bar_new (Gimp *gimp);
+diff --git a/app/display/meson.build b/app/display/meson.build
+index c8450bf..a22a122 100644
+--- a/app/display/meson.build
++++ b/app/display/meson.build
+@@ -86,6 +86,7 @@ libappdisplay_sources = [
+   'gimpdisplayshell.c',
+   'gimpmodifiersmanager.c',
+   'gimpimagewindow.c',
++  'gimpoptionsbar.c',
+   'gimpmotionbuffer.c',
+   'gimpmultiwindowstrategy.c',
+   'gimpnavigationeditor.c',
+-- 
+2.53.0
+

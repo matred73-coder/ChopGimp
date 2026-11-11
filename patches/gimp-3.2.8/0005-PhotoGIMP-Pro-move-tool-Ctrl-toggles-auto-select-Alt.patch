@@ -1,0 +1,124 @@
+From 6cac02b3d79ec2a714b2fcee7d9daa5b36853626 Mon Sep 17 00:00:00 2001
+From: ChopGimp <mathieu.redon@proton.me>
+Date: Wed, 11 Nov 2026 12:48:43 +0100
+Subject: [PATCH 5/9] =?UTF-8?q?PhotoGIMP=20Pro:=20move=20tool=20=E2=80=94?=
+ =?UTF-8?q?=20Ctrl=20toggles=20auto-select,=20Alt+drag=20duplicates=20(Pho?=
+ =?UTF-8?q?toshop)?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+---
+ app/tools/gimpmovetool.c | 85 ++++++++++++++++++++--------------------
+ 1 file changed, 43 insertions(+), 42 deletions(-)
+
+diff --git a/app/tools/gimpmovetool.c b/app/tools/gimpmovetool.c
+index 9f8407d..38a77fb 100644
+--- a/app/tools/gimpmovetool.c
++++ b/app/tools/gimpmovetool.c
+@@ -365,6 +365,43 @@ gimp_move_tool_button_press (GimpTool            *tool,
+             for (iter = selected_items; iter; iter = iter->next)
+               if (gimp_item_is_position_locked (iter->data, &locked_item))
+               locked_message = _("A selected layer's position is locked.");
++
++            /*  PhotoGIMP Pro (Photoshop): Alt+drag moves a duplicate  */
++            if (! locked_message && (state & GDK_MOD1_MASK) &&
++                ! gimp_image_get_floating_selection (image))
++              {
++                GList *new_layers = NULL;
++
++                gimp_image_undo_group_start (image,
++                                             GIMP_UNDO_GROUP_LAYER_ADD,
++                                             _("Duplicate layers"));
++
++                for (iter = selected_items; iter; iter = iter->next)
++                  {
++                    GimpLayer *new_layer;
++
++                    if (! GIMP_IS_LAYER (iter->data))
++                      continue;
++
++                    new_layer = GIMP_LAYER (gimp_item_duplicate (GIMP_ITEM (iter->data),
++                                                                 G_TYPE_FROM_INSTANCE (iter->data)));
++                    gimp_image_add_layer (image, new_layer,
++                                          gimp_layer_get_parent (iter->data),
++                                          gimp_item_get_index (iter->data),
++                                          TRUE);
++                    gimp_drawable_enable_resize_undo (GIMP_DRAWABLE (new_layer));
++                    new_layers = g_list_prepend (new_layers, new_layer);
++                  }
++
++                gimp_image_undo_group_end (image);
++
++                if (new_layers)
++                  {
++                    gimp_image_set_selected_layers (image, new_layers);
++                    g_list_free (selected_items);
++                    selected_items = new_layers;
++                  }
++              }
+           }
+       }
+       break;
+@@ -474,52 +511,16 @@ gimp_move_tool_modifier_key (GimpTool        *tool,
+   GimpMoveTool    *move    = GIMP_MOVE_TOOL (tool);
+   GimpMoveOptions *options = GIMP_MOVE_TOOL_GET_OPTIONS (tool);
+ 
+-  if (key == gimp_get_extend_selection_mask ())
++  /*  PhotoGIMP Pro (Photoshop): holding Ctrl temporarily toggles
++   *  « Auto-Select » (pick the layer under the cursor). Alt+drag
++   *  duplicates the layer (see button_press). Shift constrains.
++   */
++  if (key == gimp_get_toggle_behavior_mask ())
+     {
+       g_object_set (options, "move-current", ! options->move_current, NULL);
+     }
+-  else if (key == GDK_MOD1_MASK ||
+-           key == gimp_get_toggle_behavior_mask ())
+-    {
+-      GimpTransformType button_type;
+ 
+-      button_type = options->move_type;
+-
+-      if (press)
+-        {
+-          if (key == (state & (GDK_MOD1_MASK |
+-                               gimp_get_toggle_behavior_mask ())))
+-            {
+-              /*  first modifier pressed  */
+-
+-              move->saved_type = options->move_type;
+-            }
+-        }
+-      else
+-        {
+-          if (! (state & (GDK_MOD1_MASK |
+-                          gimp_get_toggle_behavior_mask ())))
+-            {
+-              /*  last modifier released  */
+-
+-              button_type = move->saved_type;
+-            }
+-        }
+-
+-      if (state & GDK_MOD1_MASK)
+-        {
+-          button_type = GIMP_TRANSFORM_TYPE_SELECTION;
+-        }
+-      else if (state & gimp_get_toggle_behavior_mask ())
+-        {
+-          button_type = GIMP_TRANSFORM_TYPE_PATH;
+-        }
+-
+-      if (button_type != options->move_type)
+-        {
+-          g_object_set (options, "move-type", button_type, NULL);
+-        }
+-    }
++  (void) move;
+ }
+ 
+ static void
+-- 
+2.53.0
+

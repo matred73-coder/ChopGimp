@@ -1,0 +1,102 @@
+From 18a4f8978c8864fc320b7cd3d4d4664363a8b81d Mon Sep 17 00:00:00 2001
+From: ChopGimp <mathieu.redon@proton.me>
+Date: Wed, 11 Nov 2026 12:47:12 +0100
+Subject: [PATCH 2/9] PhotoGIMP Pro: Photoshop selection modifiers
+
+Shift = add, Alt = subtract, Shift+Alt = intersect, Ctrl+drag inside the
+selection = move pixels, Ctrl+Alt+drag = move a copy, plain drag inside the
+selection = move the selection outline.
+---
+ app/tools/gimpselectiontool.c | 42 ++++++++++++++++++++++++++---------
+ 1 file changed, 31 insertions(+), 11 deletions(-)
+
+diff --git a/app/tools/gimpselectiontool.c b/app/tools/gimpselectiontool.c
+index b9aa27d..24acd7a 100644
+--- a/app/tools/gimpselectiontool.c
++++ b/app/tools/gimpselectiontool.c
+@@ -193,7 +193,10 @@ gimp_selection_tool_modifier_key (GimpTool        *tool,
+             }
+         }
+ 
+-      if ((state & GDK_MOD1_MASK) ||
++      /*  PhotoGIMP Pro (Photoshop): Shift = add, Alt = subtract,
++       *  Shift+Alt = intersect, Ctrl alone = move (no operation change).
++       */
++      if ((state & modify_mask) ||
+          ((state & selection_tool->held_keys) == 0))
+         {
+           /*  if alt is down, pretend that neither
+@@ -215,14 +218,20 @@ gimp_selection_tool_modifier_key (GimpTool        *tool,
+           button_op = selection_tool->saved_operation;
+         }
+       else if (state & (extend_mask |
+-                        modify_mask))
++                        GDK_MOD1_MASK))
+         {
+           /*  else get the operation from the modifier state, but only
+            *  if there is actually a modifier pressed, so we don't
+            *  override the "last modifier released" assignment above
+            */
+-          button_op = gimp_modifiers_to_channel_op (state &
+-                                                    selection_tool->held_keys);
++          GdkModifierType held = state & selection_tool->held_keys;
++
++          if ((held & extend_mask) && (held & GDK_MOD1_MASK))
++            button_op = GIMP_CHANNEL_OP_INTERSECT;
++          else if (held & extend_mask)
++            button_op = GIMP_CHANNEL_OP_ADD;
++          else if (held & GDK_MOD1_MASK)
++            button_op = GIMP_CHANNEL_OP_SUBTRACT;
+         }
+ 
+       if (button_op != options->operation)
+@@ -288,20 +297,30 @@ gimp_selection_tool_oper_update (GimpTool         *tool,
+ 
+   selection_tool->function = SELECTION_SELECT;
+ 
++  /*  PhotoGIMP Pro (Photoshop):
++   *  Ctrl+Alt+drag in selection = move a copy of the pixels,
++   *  Ctrl+drag in selection     = move the pixels,
++   *  drag inside the selection  = move the selection outline,
++   *  Shift / Alt                = add / subtract (see modifier_key).
++   */
+   if (selection_tool->allow_move &&
+       (state & GDK_MOD1_MASK) && (state & modify_mask) && move_layer)
+     {
+-      /* move the selection */
+-      selection_tool->function = SELECTION_MOVE;
++      /* move a copy of the selection */
++      selection_tool->function = SELECTION_MOVE_COPY;
+     }
+   else if (selection_tool->allow_move &&
+-           (state & GDK_MOD1_MASK) && (state & extend_mask) && move_layer)
++           (state & modify_mask) && move_layer)
+     {
+-      /* move a copy of the selection */
+-      selection_tool->function = SELECTION_MOVE_COPY;
++      /* move the selection */
++      selection_tool->function = SELECTION_MOVE;
+     }
+   else if (selection_tool->allow_move &&
+-           (state & GDK_MOD1_MASK) && have_selection)
++           ! (state & (extend_mask | modify_mask | GDK_MOD1_MASK)) &&
++           have_selection && ! floating_sel &&
++           gimp_pickable_get_opacity_at (GIMP_PICKABLE (gimp_image_get_mask (image)),
++                                         (gint) coords->x,
++                                         (gint) coords->y) > 0.5)
+     {
+       /* move the selection mask */
+       selection_tool->function = SELECTION_MOVE_MASK;
+@@ -313,7 +332,8 @@ gimp_selection_tool_oper_update (GimpTool         *tool,
+       /* move the selection */
+       selection_tool->function = SELECTION_MOVE;
+     }
+-  else if ((state & modify_mask) || (state & extend_mask))
++  else if ((state & modify_mask) || (state & extend_mask) ||
++           (state & GDK_MOD1_MASK))
+     {
+       /* select */
+       selection_tool->function = SELECTION_SELECT;
+-- 
+2.53.0
+

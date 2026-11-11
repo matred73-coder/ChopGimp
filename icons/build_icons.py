@@ -596,6 +596,16 @@ def _history():
     return s
 
 
+@icon("photogimp-adjustment")
+def _adjustment():
+    # Cercle mi-plein (bouton « calque de réglage » de Photoshop)
+    s = ring(8, 8, 6.2, 1.3)
+    p = [(8, 1.8)] + [(8 + 6.2 * math.cos(math.radians(a)), 8 + 6.2 * math.sin(math.radians(a)))
+                      for a in range(-90, 91, 10)] + [(8, 14.2)]
+    s += polygon(p)
+    return s
+
+
 def main():
     os.makedirs(OUT, exist_ok=True)
     for name, fn in sorted(ICONS.items()):

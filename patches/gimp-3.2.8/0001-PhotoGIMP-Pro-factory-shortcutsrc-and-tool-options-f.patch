@@ -1,0 +1,65 @@
+From 54da5415dab245d4bec77f811dee50a9fb405096 Mon Sep 17 00:00:00 2001
+From: ChopGimp <mathieu.redon@proton.me>
+Date: Wed, 11 Nov 2026 12:45:31 +0100
+Subject: [PATCH 1/9] PhotoGIMP Pro: factory shortcutsrc and tool-options from
+ sysconf dir
+
+When the user has no personal shortcutsrc or no saved options for a tool,
+read them from ${gimp_sysconf_dir}. This lets a distribution ship
+default shortcuts and tool options without patching every action entry.
+---
+ app/core/gimptooloptions.c | 18 ++++++++++++++++++
+ app/menus/menus.c          |  8 ++++++++
+ 2 files changed, 26 insertions(+)
+
+diff --git a/app/core/gimptooloptions.c b/app/core/gimptooloptions.c
+index db2dafb..91a80cd 100644
+--- a/app/core/gimptooloptions.c
++++ b/app/core/gimptooloptions.c
+@@ -323,6 +323,24 @@ gimp_tool_options_deserialize (GimpToolOptions  *tool_options,
+ 
+   file = gimp_tool_info_get_options_file (tool_options->tool_info, NULL);
+ 
++  /* PhotoGIMP Pro: without personal options for this tool, use the
++   * factory ones shipped in ${gimp_sysconf_dir}/tool-options/. */
++  if (! g_file_query_exists (file, NULL))
++    {
++      GFile *sys = gimp_sysconf_directory_file ("tool-options",
++                                                gimp_object_get_name (tool_options->tool_info),
++                                                NULL);
++      if (g_file_query_exists (sys, NULL))
++        {
++          g_object_unref (file);
++          file = sys;
++        }
++      else
++        {
++          g_object_unref (sys);
++        }
++    }
++
+   if (tool_options->tool_info->gimp->be_verbose)
+     g_print ("Parsing '%s'\n", gimp_file_get_utf8_name (file));
+ 
+diff --git a/app/menus/menus.c b/app/menus/menus.c
+index aa56b07..6cca77f 100644
+--- a/app/menus/menus.c
++++ b/app/menus/menus.c
+@@ -437,6 +437,14 @@ menus_restore (Gimp *gimp)
+ 
+   file = gimp_directory_file ("shortcutsrc", NULL);
+ 
++  /* PhotoGIMP Pro: without a personal shortcutsrc, use the system one
++   * (factory Photoshop-like shortcuts shipped in ${gimp_sysconf_dir}). */
++  if (! g_file_query_exists (file, NULL))
++    {
++      g_object_unref (file);
++      file = gimp_sysconf_directory_file ("shortcutsrc", NULL);
++    }
++
+   if (gimp->be_verbose)
+     g_print ("Parsing '%s'\n", gimp_file_get_utf8_name (file));
+ 
+-- 
+2.53.0
+

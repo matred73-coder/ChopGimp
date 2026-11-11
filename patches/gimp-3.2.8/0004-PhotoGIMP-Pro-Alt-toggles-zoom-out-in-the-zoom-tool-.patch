@@ -1,0 +1,26 @@
+From d0a0597b8904f705c763a80b12f0d6877e559ed3 Mon Sep 17 00:00:00 2001
+From: ChopGimp <mathieu.redon@proton.me>
+Date: Wed, 11 Nov 2026 12:47:55 +0100
+Subject: [PATCH 4/9] PhotoGIMP Pro: Alt toggles zoom out in the zoom tool
+ (Photoshop)
+
+---
+ app/tools/gimpmagnifytool.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/app/tools/gimpmagnifytool.c b/app/tools/gimpmagnifytool.c
+index e0ddac6..f3b2d87 100644
+--- a/app/tools/gimpmagnifytool.c
++++ b/app/tools/gimpmagnifytool.c
+@@ -235,7 +235,7 @@ gimp_magnify_tool_modifier_key (GimpTool        *tool,
+ {
+   GimpMagnifyOptions *options = GIMP_MAGNIFY_TOOL_GET_OPTIONS (tool);
+ 
+-  if (key == gimp_get_toggle_behavior_mask ())
++  if (key == GDK_MOD1_MASK /* PhotoGIMP Pro: Alt = zoom out (Photoshop) */)
+     {
+       switch (options->zoom_type)
+         {
+-- 
+2.53.0
+

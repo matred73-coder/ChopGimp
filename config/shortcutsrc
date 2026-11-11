@@ -75,6 +75,28 @@
 # Déformation de la marionnette (cage)
 (action "tools-cage" "<Shift><Alt>t")
 
+# ── Opacité ─────────────────────────────────────────────────────
+# Opacité 10 % (outil de peinture ou calque)
+(action "tools-opacity-ps-10" "1")
+# Opacité 20 % (outil de peinture ou calque)
+(action "tools-opacity-ps-20" "2")
+# Opacité 30 % (outil de peinture ou calque)
+(action "tools-opacity-ps-30" "3")
+# Opacité 40 % (outil de peinture ou calque)
+(action "tools-opacity-ps-40" "4")
+# Opacité 50 % (outil de peinture ou calque)
+(action "tools-opacity-ps-50" "5")
+# Opacité 60 % (outil de peinture ou calque)
+(action "tools-opacity-ps-60" "6")
+# Opacité 70 % (outil de peinture ou calque)
+(action "tools-opacity-ps-70" "7")
+# Opacité 80 % (outil de peinture ou calque)
+(action "tools-opacity-ps-80" "8")
+# Opacité 90 % (outil de peinture ou calque)
+(action "tools-opacity-ps-90" "9")
+# Opacité 100 % (outil de peinture ou calque)
+(action "tools-opacity-ps-100" "0")
+
 # ── Couleurs ────────────────────────────────────────────────────
 # Couleurs par défaut
 (action "context-colors-default" "d")
@@ -266,6 +288,10 @@
 (action "dialogs-undo-history" "<Alt>F9")
 
 # ── Raccourcis GIMP libérés (touche reprise par un raccourci Photoshop) ──
+# était : 0
+(action "context-swatch-foreground-next")
+# était : 9
+(action "context-swatch-foreground-previous")
 # était : <primary>G
 (action "dialogs-gradients")
 # était : <primary>B
@@ -284,5 +310,13 @@
 (action "tools-transform-3d")
 # était : <primary>J
 (action "view-shrink-wrap")
+# était : 5 KP_5
+(action "view-zoom-16-1" "KP_5")
+# était : 2 KP_2
+(action "view-zoom-2-1" "KP_2")
+# était : 3 KP_3
+(action "view-zoom-4-1" "KP_3")
+# était : 4 KP_4
+(action "view-zoom-8-1" "KP_4")
 
 # end of shortcutsrc

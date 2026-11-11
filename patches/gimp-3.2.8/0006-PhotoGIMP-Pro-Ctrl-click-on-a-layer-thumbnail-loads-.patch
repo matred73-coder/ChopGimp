@@ -1,0 +1,47 @@
+From ecc4e842ac60310fa135526901f18e8ef75b1578 Mon Sep 17 00:00:00 2001
+From: ChopGimp <mathieu.redon@proton.me>
+Date: Wed, 11 Nov 2026 12:49:01 +0100
+Subject: [PATCH 6/9] PhotoGIMP Pro: Ctrl+click on a layer thumbnail loads its
+ selection (Photoshop)
+
+Ctrl = replace, Ctrl+Shift = add, Ctrl+Alt = subtract, Ctrl+Shift+Alt = intersect.
+---
+ app/widgets/gimpitemtreeview.c | 15 ++++++++++++---
+ 1 file changed, 12 insertions(+), 3 deletions(-)
+
+diff --git a/app/widgets/gimpitemtreeview.c b/app/widgets/gimpitemtreeview.c
+index b4c06e9..29b6cb2 100644
+--- a/app/widgets/gimpitemtreeview.c
++++ b/app/widgets/gimpitemtreeview.c
+@@ -2127,8 +2127,10 @@ gimp_item_tree_view_item_pre_clicked (GimpCellRendererViewable *cell,
+ 
+   path = gtk_tree_path_new_from_string (path_str);
+ 
+-  /* Alt modifier at least and none other than Alt, Shift and Ctrl. */
+-  if ((modifiers & GDK_MOD1_MASK)                                          &&
++  /* PhotoGIMP Pro (Photoshop): Ctrl+click on the thumbnail loads the
++   * item as selection; +Shift add, +Alt subtract, +Shift+Alt intersect.
++   */
++  if ((modifiers & GDK_CONTROL_MASK)                                       &&
+       ! (modifiers & ~(GDK_MOD1_MASK | GDK_SHIFT_MASK | GDK_CONTROL_MASK)) &&
+       gtk_tree_model_get_iter (tree_view->model, &iter, path))
+     {
+@@ -2141,7 +2143,14 @@ gimp_item_tree_view_item_pre_clicked (GimpCellRendererViewable *cell,
+       if (renderer)
+         {
+           GimpItem       *item = GIMP_ITEM (renderer->viewable);
+-          GimpChannelOps  op   = gimp_modifiers_to_channel_op (state);
++          GimpChannelOps  op   = GIMP_CHANNEL_OP_REPLACE;
++
++          if ((modifiers & GDK_SHIFT_MASK) && (modifiers & GDK_MOD1_MASK))
++            op = GIMP_CHANNEL_OP_INTERSECT;
++          else if (modifiers & GDK_SHIFT_MASK)
++            op = GIMP_CHANNEL_OP_ADD;
++          else if (modifiers & GDK_MOD1_MASK)
++            op = GIMP_CHANNEL_OP_SUBTRACT;
+ 
+           gimp_item_to_selection (item, op,
+                                   TRUE, FALSE, 0.0, 0.0);
+-- 
+2.53.0
+

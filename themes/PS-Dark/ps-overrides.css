@@ -697,3 +697,39 @@ GimpColorNotebook .frame {
 GimpFgBgEditor {
   background-color: transparent;
 }
+
+/* ── Barre d'options horizontale (PhotoGIMP Pro v3, GIMP recompilé) ── */
+#photogimp-options-bar {
+  background-color: @bg-color;
+  border-bottom: 1px solid @edge-border-color;
+  min-height: 30px;
+  padding: 1px 8px;
+}
+
+#photogimp-options-bar label {
+  color: @fg-color;
+}
+
+#photogimp-options-bar .dim-label {
+  color: @dimmed-fg-color;
+}
+
+#photogimp-options-bar .photogimp-tool-name {
+  font-weight: bold;
+  margin-right: 4px;
+}
+
+#photogimp-options-bar separator {
+  background-color: @stronger-border-color;
+  min-width: 1px;
+  margin: 4px 2px;
+}
+
+#photogimp-options-bar GimpSpinScale entry {
+  min-height: 20px;
+}
+
+#photogimp-options-bar button {
+  min-height: 20px;
+  padding: 1px 6px;
+}

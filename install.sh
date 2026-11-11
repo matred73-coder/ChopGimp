@@ -172,8 +172,8 @@ EOF
 }
 
 install_layout() {
-    python3 -I "$SRC/tools/build_layout.py" >/dev/null
-    python3 -I "$SRC/tools/build_shortcuts.py" >/dev/null
+    python3 -I "$SRC/tools/build_layout.py" --v2 >/dev/null
+    python3 -I "$SRC/tools/build_shortcuts.py" --v2 >/dev/null
     cp "$SRC/config/toolrc" "$GIMP_CFG/toolrc"
     cp "$SRC/config/shortcutsrc" "$GIMP_CFG/shortcutsrc"
     # sessionrc : on garde la position / taille / écran de la fenêtre principale actuelle
@@ -241,13 +241,7 @@ PYEOF
 # Plug-ins v1 désactivés (voir data/audit-plugins-v1.json) : remplacés par
 # photogimp_ps, ou cassés sous GIMP 3.2. Déplacés (pas supprimés) dans
 # photogimp/plug-ins-desactives/ — réversible.
-PLUGINS_OFF="adjustment_layers clipping_mask layer_styles nde_effects
-content_fill spot_healing bitmap_trace color_range_select depth_blur dodge_burn_setup
-focus_stacking frequency_separation gradient_presets hdr_merge histogram_live
-luminosity_masks lut_loader pathfinder pattern_stamp properties_info refine_mask
-select_and_mask shape_library shortcut_overlay smart_recents smart_sharpen split_toning
-vanishing_point vector_mask vector_shapes vector_stroke welcome_screen
-quick_effects text_effects layer_comps color_palette_gen"
+PLUGINS_OFF="$(cat "$SRC/config/plugins-v1-off.txt")"
 
 install_plugins() {
     local off="$PG_DIR/plug-ins-desactives" n=0

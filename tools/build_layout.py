@@ -83,7 +83,9 @@ def book(pos, dockables):
 def sessionrc():
     color = book(None, [dockable("gimp-color-editor"), dockable("gimp-palette-editor"),
                         dockable("gimp-gradient-list"), dockable("gimp-pattern-grid")])
-    props = book(250, [dockable("gimp-tool-options", locked=True), dockable("gimp-undo-history"),
+    # v3 : les options d'outil sont dans la barre d'options horizontale ;
+    # le panneau complet reste accessible (bouton à droite de la barre).
+    props = book(250, [dockable("gimp-undo-history"),
                        dockable("gimp-brush-grid"),
                        dockable("gimp-cursor-view", extra=['(frame-1-mode "pixel")', '(frame-2-mode "rgb-percent")'])])
     layers = book(330, [dockable("gimp-layer-list", tab="name", preview=32),
@@ -120,6 +122,14 @@ def sessionrc():
 
 
 if __name__ == "__main__":
+    import sys
     open(os.path.join(ROOT, "config", "toolrc"), "w").write(toolrc())
-    open(os.path.join(ROOT, "config", "sessionrc"), "w").write(sessionrc())
+    sess = sessionrc()
+    if "--v2" in sys.argv:   # GIMP non recompilé (Snap) : pas de barre d'options
+        sess = sess.replace('            (dockable "gimp-undo-history"',
+                            '            (dockable "gimp-tool-options"\n                (locked)\n'
+                            '                (tab-style automatic)\n                (aux-info\n'
+                            '                    (show-button-bar "true")))\n'
+                            '            (dockable "gimp-undo-history"', 1)
+    open(os.path.join(ROOT, "config", "sessionrc"), "w").write(sess)
     print("config/toolrc et config/sessionrc générés")

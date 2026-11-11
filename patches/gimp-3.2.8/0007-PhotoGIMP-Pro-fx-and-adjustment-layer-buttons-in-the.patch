@@ -1,0 +1,80 @@
+From 90ea256b8d3682f814c5a3d76faf734cce13d7ad Mon Sep 17 00:00:00 2001
+From: ChopGimp <mathieu.redon@proton.me>
+Date: Wed, 11 Nov 2026 12:49:45 +0100
+Subject: [PATCH 7/9] PhotoGIMP Pro: fx and adjustment-layer buttons in the
+ Layers panel (Photoshop)
+
+---
+ app/widgets/gimplayertreeview.c | 42 +++++++++++++++++++++++++++++++++
+ 1 file changed, 42 insertions(+)
+
+diff --git a/app/widgets/gimplayertreeview.c b/app/widgets/gimplayertreeview.c
+index 2af1d7f..79ffb33 100644
+--- a/app/widgets/gimplayertreeview.c
++++ b/app/widgets/gimplayertreeview.c
+@@ -99,6 +99,8 @@ struct _GimpLayerTreeViewPrivate
+ static void       gimp_layer_tree_view_view_iface_init            (GimpContainerViewInterface *iface);
+ 
+ static void       gimp_layer_tree_view_constructed                (GObject                    *object);
++static void       gimp_layer_tree_view_photogimp_menu_clicked     (GtkWidget                  *button,
++                                                                   GimpLayerTreeView          *view);
+ static void       gimp_layer_tree_view_finalize                   (GObject                    *object);
+ 
+ static void       gimp_layer_tree_view_set_container              (GimpContainerView          *view,
+@@ -321,6 +323,27 @@ gimp_layer_tree_view_init (GimpLayerTreeView *view)
+   pango_attr_list_insert (view->priv->bold_attrs, attr);
+ }
+ 
++
++/*  PhotoGIMP Pro (Photoshop): « fx » and « adjustment layer » buttons at the
++ *  bottom of the Layers panel pop up the matching submenus of the layers
++ *  context menu.
++ */
++static void
++gimp_layer_tree_view_photogimp_menu_clicked (GtkWidget         *button,
++                                             GimpLayerTreeView *view)
++{
++  GimpUIManager *manager = gimp_editor_get_ui_manager (GIMP_EDITOR (view));
++  const gchar   *path    = g_object_get_data (G_OBJECT (button),
++                                              "photogimp-menu-path");
++
++  if (manager && path)
++    gimp_ui_manager_ui_popup_at_widget (manager, path, NULL, NULL,
++                                        button,
++                                        GDK_GRAVITY_NORTH_WEST,
++                                        GDK_GRAVITY_SOUTH_WEST,
++                                        NULL, NULL, NULL);
++}
++
+ static void
+ gimp_layer_tree_view_constructed (GObject *object)
+ {
+@@ -410,6 +433,25 @@ gimp_layer_tree_view_constructed (GObject *object)
+   gtk_box_reorder_child (gimp_editor_get_button_box (GIMP_EDITOR (layer_view)),
+                          button, 7);
+ 
++  /*  PhotoGIMP Pro: fx (layer styles) and adjustment-layer buttons  */
++  button = gimp_editor_add_button (GIMP_EDITOR (layer_view), "gimp-effects",
++                                   _("Add a layer style"), NULL,
++                                   G_CALLBACK (gimp_layer_tree_view_photogimp_menu_clicked),
++                                   NULL, G_OBJECT (layer_view));
++  g_object_set_data (G_OBJECT (button), "photogimp-menu-path",
++                     (gpointer) "/layers-popup/Layers Menu/Style de calque");
++  gtk_box_reorder_child (gimp_editor_get_button_box (GIMP_EDITOR (layer_view)),
++                         button, 7);
++
++  button = gimp_editor_add_button (GIMP_EDITOR (layer_view), "photogimp-adjustment",
++                                   _("Create new fill or adjustment layer"), NULL,
++                                   G_CALLBACK (gimp_layer_tree_view_photogimp_menu_clicked),
++                                   NULL, G_OBJECT (layer_view));
++  g_object_set_data (G_OBJECT (button), "photogimp-menu-path",
++                     (gpointer) "/layers-popup/Layers Menu/Nouveau calque de réglage");
++  gtk_box_reorder_child (gimp_editor_get_button_box (GIMP_EDITOR (layer_view)),
++                         button, 9);
++
+   button = gimp_editor_add_action_button (GIMP_EDITOR (layer_view), "layers",
+                                           "layers-mask-delete", NULL);
+   layer_view->priv->delete_mask_button = button;
+-- 
+2.53.0
+

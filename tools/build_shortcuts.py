@@ -60,6 +60,17 @@ PS_MAP = [
     ("Outils", "tools-warp",               [S + P + "x"],    "Fluidité (déformation)"),
     ("Outils", "tools-cage",               [S + A + "t"],    "Déformation de la marionnette (cage)"),
 
+    ("Opacité", "tools-opacity-ps-10", ["1"], "Opacité 10 % (outil de peinture ou calque)"),
+    ("Opacité", "tools-opacity-ps-20", ["2"], "Opacité 20 % (outil de peinture ou calque)"),
+    ("Opacité", "tools-opacity-ps-30", ["3"], "Opacité 30 % (outil de peinture ou calque)"),
+    ("Opacité", "tools-opacity-ps-40", ["4"], "Opacité 40 % (outil de peinture ou calque)"),
+    ("Opacité", "tools-opacity-ps-50", ["5"], "Opacité 50 % (outil de peinture ou calque)"),
+    ("Opacité", "tools-opacity-ps-60", ["6"], "Opacité 60 % (outil de peinture ou calque)"),
+    ("Opacité", "tools-opacity-ps-70", ["7"], "Opacité 70 % (outil de peinture ou calque)"),
+    ("Opacité", "tools-opacity-ps-80", ["8"], "Opacité 80 % (outil de peinture ou calque)"),
+    ("Opacité", "tools-opacity-ps-90", ["9"], "Opacité 90 % (outil de peinture ou calque)"),
+    ("Opacité", "tools-opacity-ps-100", ["0"], "Opacité 100 % (outil de peinture ou calque)"),
+
     # ── Couleurs, pinceau ──────────────────────────────────────────────
     ("Couleurs", "context-colors-default", ["d"],            "Couleurs par défaut"),
     ("Couleurs", "context-colors-swap",    ["x"],            "Permuter premier plan / arrière-plan"),
@@ -176,12 +187,15 @@ def norm(k):
 
 
 def main():
+    global PS_MAP
+    if "--v2" in sys.argv:   # GIMP non recompilé : actions ajoutées par les patchs absentes
+        PS_MAP = [e for e in PS_MAP if not e[1].startswith("tools-opacity-ps-")]
     defaults = json.load(open(DEFAULTS))
     errors = []
 
     # 1. actions valides
     for _, act, _, _ in PS_MAP:
-        if act not in defaults and not act.startswith("photogimp-"):
+        if act not in defaults and not act.startswith(("photogimp-", "tools-opacity-ps-")):
             errors.append("action inconnue de GIMP 3.2.8 : %s" % act)
 
     # 2. aucune touche attribuée deux fois dans PS_MAP

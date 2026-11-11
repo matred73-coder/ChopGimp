@@ -115,7 +115,8 @@ class PhotoGimpPS(Gimp.PlugIn):
             doc = "Ajoute le style « %s » (filtre non destructif, modifiable via fx)" % STYLES[name][0]
         elif name in ADJUST:
             label = ADJUST[name][0]
-            paths = ["<Image>/Layer/Nouveau calque de réglage"]
+            paths = ["<Image>/Layer/Nouveau calque de réglage",
+                     "<Layers>/Layers Menu/Nouveau calque de réglage"]
             doc = "Calque de réglage %s appliqué aux calques situés dessous" % label
         else:
             label = OTHER[name]

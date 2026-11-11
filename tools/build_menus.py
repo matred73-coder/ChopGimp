@@ -194,6 +194,7 @@ layers_popup = """<?xml version="1.0" encoding="utf-8"?>
     sec(items(["layers-new", "layers-duplicate", "layers-delete", "layers-new-group",
                "layers-new-from-visible"])),
     sec("\n".join(style_submenu(8)),
+        '        <submenu>\n          <attribute name="label" translatable="no">Nouveau calque de réglage</attribute>\n        </submenu>',
         sub("Mode de composition", ["layers-composite-mode-auto", "layers-composite-mode-union",
                                     "layers-composite-mode-clip-to-backdrop",
                                     "layers-composite-mode-clip-to-layer",
