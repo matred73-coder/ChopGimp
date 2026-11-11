@@ -1,0 +1,137 @@
+From cba30c32ca6d24556d6618cc1d12bc87bd675a4c Mon Sep 17 00:00:00 2001
+From: ChopGimp <mathieu.redon@proton.me>
+Date: Wed, 11 Nov 2026 18:15:15 +0100
+Subject: [PATCH 12/12] PhotoGIMP Pro: French labels for new strings, fix %% in
+ opacity action labels
+
+---
+ app/actions/tools-actions.c     | 40 ++++++++++++++++-----------------
+ app/display/gimpoptionsbar.c    |  2 +-
+ app/widgets/gimplayertreeview.c |  4 ++--
+ 3 files changed, 23 insertions(+), 23 deletions(-)
+
+diff --git a/app/actions/tools-actions.c b/app/actions/tools-actions.c
+index 6f633e1..89e8e02 100644
+--- a/app/actions/tools-actions.c
++++ b/app/actions/tools-actions.c
+@@ -57,62 +57,62 @@ static const GimpActionEntry tools_actions[] =
+ static const GimpActionEntry tools_ps_opacity_actions[] =
+ {
+   { "tools-opacity-ps-10", NULL,
+-    NC_("tools-action", "Opacity 10%%"), NULL, { NULL },
+-    NC_("tools-action", "Set the opacity of the paint tool, or of the selected layers, to 10%%"),
++    NC_("tools-action", "Opacité 10 %"), NULL, { NULL },
++    NC_("tools-action", "Règle l\'opacité de l\'outil de peinture, ou des calques sélectionnés, à 10 %"),
+     tools_ps_opacity_cmd_callback,
+     NULL },
+ 
+   { "tools-opacity-ps-20", NULL,
+-    NC_("tools-action", "Opacity 20%%"), NULL, { NULL },
+-    NC_("tools-action", "Set the opacity of the paint tool, or of the selected layers, to 20%%"),
++    NC_("tools-action", "Opacité 20 %"), NULL, { NULL },
++    NC_("tools-action", "Règle l\'opacité de l\'outil de peinture, ou des calques sélectionnés, à 20 %"),
+     tools_ps_opacity_cmd_callback,
+     NULL },
+ 
+   { "tools-opacity-ps-30", NULL,
+-    NC_("tools-action", "Opacity 30%%"), NULL, { NULL },
+-    NC_("tools-action", "Set the opacity of the paint tool, or of the selected layers, to 30%%"),
++    NC_("tools-action", "Opacité 30 %"), NULL, { NULL },
++    NC_("tools-action", "Règle l\'opacité de l\'outil de peinture, ou des calques sélectionnés, à 30 %"),
+     tools_ps_opacity_cmd_callback,
+     NULL },
+ 
+   { "tools-opacity-ps-40", NULL,
+-    NC_("tools-action", "Opacity 40%%"), NULL, { NULL },
+-    NC_("tools-action", "Set the opacity of the paint tool, or of the selected layers, to 40%%"),
++    NC_("tools-action", "Opacité 40 %"), NULL, { NULL },
++    NC_("tools-action", "Règle l\'opacité de l\'outil de peinture, ou des calques sélectionnés, à 40 %"),
+     tools_ps_opacity_cmd_callback,
+     NULL },
+ 
+   { "tools-opacity-ps-50", NULL,
+-    NC_("tools-action", "Opacity 50%%"), NULL, { NULL },
+-    NC_("tools-action", "Set the opacity of the paint tool, or of the selected layers, to 50%%"),
++    NC_("tools-action", "Opacité 50 %"), NULL, { NULL },
++    NC_("tools-action", "Règle l\'opacité de l\'outil de peinture, ou des calques sélectionnés, à 50 %"),
+     tools_ps_opacity_cmd_callback,
+     NULL },
+ 
+   { "tools-opacity-ps-60", NULL,
+-    NC_("tools-action", "Opacity 60%%"), NULL, { NULL },
+-    NC_("tools-action", "Set the opacity of the paint tool, or of the selected layers, to 60%%"),
++    NC_("tools-action", "Opacité 60 %"), NULL, { NULL },
++    NC_("tools-action", "Règle l\'opacité de l\'outil de peinture, ou des calques sélectionnés, à 60 %"),
+     tools_ps_opacity_cmd_callback,
+     NULL },
+ 
+   { "tools-opacity-ps-70", NULL,
+-    NC_("tools-action", "Opacity 70%%"), NULL, { NULL },
+-    NC_("tools-action", "Set the opacity of the paint tool, or of the selected layers, to 70%%"),
++    NC_("tools-action", "Opacité 70 %"), NULL, { NULL },
++    NC_("tools-action", "Règle l\'opacité de l\'outil de peinture, ou des calques sélectionnés, à 70 %"),
+     tools_ps_opacity_cmd_callback,
+     NULL },
+ 
+   { "tools-opacity-ps-80", NULL,
+-    NC_("tools-action", "Opacity 80%%"), NULL, { NULL },
+-    NC_("tools-action", "Set the opacity of the paint tool, or of the selected layers, to 80%%"),
++    NC_("tools-action", "Opacité 80 %"), NULL, { NULL },
++    NC_("tools-action", "Règle l\'opacité de l\'outil de peinture, ou des calques sélectionnés, à 80 %"),
+     tools_ps_opacity_cmd_callback,
+     NULL },
+ 
+   { "tools-opacity-ps-90", NULL,
+-    NC_("tools-action", "Opacity 90%%"), NULL, { NULL },
+-    NC_("tools-action", "Set the opacity of the paint tool, or of the selected layers, to 90%%"),
++    NC_("tools-action", "Opacité 90 %"), NULL, { NULL },
++    NC_("tools-action", "Règle l\'opacité de l\'outil de peinture, ou des calques sélectionnés, à 90 %"),
+     tools_ps_opacity_cmd_callback,
+     NULL },
+ 
+   { "tools-opacity-ps-100", NULL,
+-    NC_("tools-action", "Opacity 100%%"), NULL, { NULL },
+-    NC_("tools-action", "Set the opacity of the paint tool, or of the selected layers, to 100%%"),
++    NC_("tools-action", "Opacité 100 %"), NULL, { NULL },
++    NC_("tools-action", "Règle l\'opacité de l\'outil de peinture, ou des calques sélectionnés, à 100 %"),
+     tools_ps_opacity_cmd_callback,
+     NULL }
+ };
+diff --git a/app/display/gimpoptionsbar.c b/app/display/gimpoptionsbar.c
+index 033646e..f846ee1 100644
+--- a/app/display/gimpoptionsbar.c
++++ b/app/display/gimpoptionsbar.c
+@@ -366,7 +366,7 @@ gimp_options_bar_new (Gimp *gimp)
+ 
+   more = gtk_button_new_from_icon_name ("gimp-tool-options", GTK_ICON_SIZE_SMALL_TOOLBAR);
+   gtk_button_set_relief (GTK_BUTTON (more), GTK_RELIEF_NONE);
+-  gimp_help_set_help_data (more, _("Show all tool options"), NULL);
++  gimp_help_set_help_data (more, _("Afficher toutes les options de l'outil"), NULL);
+   gtk_box_pack_end (GTK_BOX (bar), more, FALSE, FALSE, 0);
+   gtk_widget_set_visible (more, TRUE);
+   g_signal_connect (more, "clicked",
+diff --git a/app/widgets/gimplayertreeview.c b/app/widgets/gimplayertreeview.c
+index 79ffb33..6bcdd20 100644
+--- a/app/widgets/gimplayertreeview.c
++++ b/app/widgets/gimplayertreeview.c
+@@ -435,7 +435,7 @@ gimp_layer_tree_view_constructed (GObject *object)
+ 
+   /*  PhotoGIMP Pro: fx (layer styles) and adjustment-layer buttons  */
+   button = gimp_editor_add_button (GIMP_EDITOR (layer_view), "gimp-effects",
+-                                   _("Add a layer style"), NULL,
++                                   _("Ajouter un style de calque (fx)"), NULL,
+                                    G_CALLBACK (gimp_layer_tree_view_photogimp_menu_clicked),
+                                    NULL, G_OBJECT (layer_view));
+   g_object_set_data (G_OBJECT (button), "photogimp-menu-path",
+@@ -444,7 +444,7 @@ gimp_layer_tree_view_constructed (GObject *object)
+                          button, 7);
+ 
+   button = gimp_editor_add_button (GIMP_EDITOR (layer_view), "photogimp-adjustment",
+-                                   _("Create new fill or adjustment layer"), NULL,
++                                   _("Créer un calque de réglage"), NULL,
+                                    G_CALLBACK (gimp_layer_tree_view_photogimp_menu_clicked),
+                                    NULL, G_OBJECT (layer_view));
+   g_object_set_data (G_OBJECT (button), "photogimp-menu-path",
+-- 
+2.53.0
+
