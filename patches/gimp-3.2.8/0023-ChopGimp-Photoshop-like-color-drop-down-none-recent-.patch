@@ -1,0 +1,267 @@
+From 8ac3c79c66495563bb70a77b2df4d370c874d31a Mon Sep 17 00:00:00 2001
+From: ChopGimp <mathieu.redon@proton.me>
+Date: Wed, 11 Nov 2026 20:29:08 +0100
+Subject: [PATCH 23/23] ChopGimp: Photoshop-like color drop-down (none, recent
+ colors, swatches, full picker)
+
+---
+ app/display/gimpoptionsbar.c | 229 +++++++++++++++++++++++++++++++++--
+ 1 file changed, 219 insertions(+), 10 deletions(-)
+
+diff --git a/app/display/gimpoptionsbar.c b/app/display/gimpoptionsbar.c
+index 64fc792..f71389a 100644
+--- a/app/display/gimpoptionsbar.c
++++ b/app/display/gimpoptionsbar.c
+@@ -42,6 +42,8 @@
+ #include "core/gimpcontainer.h"
+ #include "core/gimpdatafactory.h"
+ #include "core/gimpdynamics.h"
++#include "core/gimp-palettes.h"
++#include "core/gimppalette.h"
+ #include "core/gimpstrokeoptions.h"
+ #include "core/gimptoolinfo.h"
+ #include "core/gimpviewable.h"
+@@ -226,6 +228,219 @@ gimp_options_bar_sub_opacity (GObject     *sub,
+   return w;
+ }
+ 
++/*  ChopGimp: Photoshop-like color drop-down for fill / stroke / text color:
++ *  « None », recent colors, a swatch grid and the full color picker.
++ */
++#define CHOPGIMP_PALETTE "ChopGimp — Nuancier"
++
++typedef struct
++{
++  Gimp        *gimp;
++  GObject     *options;
++  gchar       *prop;
++  const gchar *enable_prop;
++  GtkWidget   *popover;
++  GtkWidget   *dialog_button;
++} ColorPop;
++
++static void
++colorpop_free (ColorPop *cp)
++{
++  g_free (cp->prop);
++  g_free (cp);
++}
++
++static void
++colorpop_swatch_clicked (GtkWidget *button,
++                         ColorPop  *cp)
++{
++  GeglColor *color = g_object_get_data (G_OBJECT (button), "photogimp-color");
++
++  if (color)
++    {
++      g_object_set (cp->options, cp->prop, color, NULL);
++      if (cp->enable_prop)
++        g_object_set (cp->options, cp->enable_prop, TRUE, NULL);
++      gimp_palettes_add_color_history (cp->gimp, color);
++    }
++
++  gtk_popover_popdown (GTK_POPOVER (cp->popover));
++}
++
++static void
++colorpop_none_clicked (GtkWidget *button,
++                       ColorPop  *cp)
++{
++  if (cp->enable_prop)
++    g_object_set (cp->options, cp->enable_prop, FALSE, NULL);
++
++  gtk_popover_popdown (GTK_POPOVER (cp->popover));
++}
++
++static void
++colorpop_picker_clicked (GtkWidget *button,
++                         ColorPop  *cp)
++{
++  gtk_popover_popdown (GTK_POPOVER (cp->popover));
++
++  if (cp->enable_prop)
++    g_object_set (cp->options, cp->enable_prop, TRUE, NULL);
++
++  gtk_button_clicked (GTK_BUTTON (cp->dialog_button));
++}
++
++static GtkWidget *
++colorpop_swatch (ColorPop  *cp,
++                 GeglColor *color,
++                 gint       size)
++{
++  GtkWidget *button = gtk_button_new ();
++  GtkWidget *area   = gimp_color_area_new (color, GIMP_COLOR_AREA_SMALL_CHECKS, 0);
++
++  gtk_widget_set_size_request (area, size, size);
++  gtk_container_add (GTK_CONTAINER (button), area);
++  gtk_button_set_relief (GTK_BUTTON (button), GTK_RELIEF_NONE);
++  gtk_style_context_add_class (gtk_widget_get_style_context (button), "chopgimp-swatch");
++  g_object_set_data_full (G_OBJECT (button), "photogimp-color",
++                          gegl_color_duplicate (color), g_object_unref);
++  g_signal_connect (button, "clicked", G_CALLBACK (colorpop_swatch_clicked), cp);
++
++  return button;
++}
++
++static void
++colorpop_build (GtkWidget *popover,
++                ColorPop  *cp)
++{
++  GtkWidget     *old = gtk_bin_get_child (GTK_BIN (popover));
++  GtkWidget     *vbox;
++  GtkWidget     *row;
++  GtkWidget     *grid;
++  GtkWidget     *button;
++  GimpPalette   *history;
++  GimpContainer *palettes;
++  GimpObject    *palette;
++  GList         *list;
++  gint           i;
++
++  if (old)
++    gtk_widget_destroy (old);
++
++  vbox = gtk_box_new (GTK_ORIENTATION_VERTICAL, 6);
++  gtk_container_set_border_width (GTK_CONTAINER (vbox), 8);
++
++  /*  « None » + recent colors  */
++  row = gtk_box_new (GTK_ORIENTATION_HORIZONTAL, 2);
++  gtk_box_pack_start (GTK_BOX (vbox), row, FALSE, FALSE, 0);
++
++  if (cp->enable_prop)
++    {
++      button = gtk_button_new_with_label (_("⊘ Aucune"));
++      gimp_help_set_help_data (button, _("Pas de couleur (désactive le fond ou le contour)"), NULL);
++      g_signal_connect (button, "clicked", G_CALLBACK (colorpop_none_clicked), cp);
++      gtk_box_pack_start (GTK_BOX (row), button, FALSE, FALSE, 4);
++    }
++
++  history = gimp_palettes_get_color_history (cp->gimp);
++  if (history)
++    for (list = gimp_palette_get_colors (history), i = 0; list && i < 10;
++         list = list->next, i++)
++      {
++        GimpPaletteEntry *entry = list->data;
++
++        gtk_box_pack_start (GTK_BOX (row), colorpop_swatch (cp, entry->color, 18),
++                            FALSE, FALSE, 0);
++      }
++
++  /*  swatch grid  */
++  palettes = gimp_data_factory_get_container (cp->gimp->palette_factory);
++  palette  = gimp_container_get_child_by_name (palettes, CHOPGIMP_PALETTE);
++  if (! palette)
++    palette = gimp_container_get_child_by_name (palettes, "Default");
++
++  if (palette)
++    {
++      gint cols = gimp_palette_get_columns (GIMP_PALETTE (palette));
++
++      if (cols <= 0)
++        cols = 12;
++
++      grid = gtk_grid_new ();
++      gtk_box_pack_start (GTK_BOX (vbox), grid, FALSE, FALSE, 0);
++
++      for (list = gimp_palette_get_colors (GIMP_PALETTE (palette)), i = 0;
++           list && i < 144; list = list->next, i++)
++        {
++          GimpPaletteEntry *entry = list->data;
++
++          gtk_grid_attach (GTK_GRID (grid), colorpop_swatch (cp, entry->color, 16),
++                           i % cols, i / cols, 1, 1);
++        }
++    }
++
++  /*  full color picker  */
++  button = gtk_button_new_with_label (_("Sélecteur de couleur…"));
++  g_signal_connect (button, "clicked", G_CALLBACK (colorpop_picker_clicked), cp);
++  gtk_box_pack_start (GTK_BOX (vbox), button, FALSE, FALSE, 0);
++
++  gtk_container_add (GTK_CONTAINER (popover), vbox);
++  gtk_widget_show_all (vbox);
++}
++
++static GtkWidget *
++gimp_options_bar_color_dropdown (GObject     *options,
++                                 const gchar *prop,
++                                 const gchar *title,
++                                 GtkWidget   *box,
++                                 const gchar *label)
++{
++  ColorPop  *cp   = g_new0 (ColorPop, 1);
++  GtkWidget *hbox = gtk_box_new (GTK_ORIENTATION_HORIZONTAL, 2);
++  GtkWidget *menu = gtk_menu_button_new ();
++  GtkWidget *area;
++
++  cp->gimp    = GIMP_CONTEXT (options)->gimp;
++  cp->options = options;
++  cp->prop    = g_strdup (prop);
++  if (! strcmp (prop, "fill-foreground"))
++    cp->enable_prop = "enable-fill";
++  else if (! strcmp (prop, "stroke-foreground"))
++    cp->enable_prop = "enable-stroke";
++
++  /*  hidden swatch button: opens GIMP's full color dialog  */
++  cp->dialog_button = gimp_prop_color_button_new (options, prop, title, TRUE,
++                                                  20, 20, GIMP_COLOR_AREA_SMALL_CHECKS);
++  gtk_box_pack_end (GTK_BOX (hbox), cp->dialog_button, FALSE, FALSE, 0);
++  gtk_widget_set_no_show_all (cp->dialog_button, TRUE);
++  gtk_widget_set_visible (cp->dialog_button, FALSE);
++
++  area = gimp_prop_color_area_new (options, prop, 34, 18, GIMP_COLOR_AREA_SMALL_CHECKS);
++  gtk_container_add (GTK_CONTAINER (menu), area);
++  gtk_widget_set_visible (area, TRUE);
++  gimp_help_set_help_data (menu, title, NULL);
++
++  cp->popover = gtk_popover_new (menu);
++  gtk_menu_button_set_popover (GTK_MENU_BUTTON (menu), cp->popover);
++  g_signal_connect (cp->popover, "show", G_CALLBACK (colorpop_build), cp);
++  g_object_set_data_full (G_OBJECT (menu), "photogimp-colorpop", cp,
++                          (GDestroyNotify) colorpop_free);
++
++  if (label)
++    {
++      GtkWidget *l = gtk_label_new (label);
++
++      gtk_style_context_add_class (gtk_widget_get_style_context (l), "dim-label");
++      gtk_box_pack_start (GTK_BOX (hbox), l, FALSE, FALSE, 2);
++      gtk_widget_set_visible (l, TRUE);
++    }
++
++  gtk_box_pack_start (GTK_BOX (hbox), menu, FALSE, FALSE, 0);
++  gtk_widget_set_visible (menu, TRUE);
++  gimp_options_bar_pack (box, hbox);
++
++  return menu;
++}
++
+ /*  Build one compact widget for @prop of @options, or NULL  */
+ static GtkWidget *
+ gimp_options_bar_widget (GObject     *options,
+@@ -305,16 +520,10 @@ gimp_options_bar_widget (GObject     *options,
+       else if (! strcmp (prop, "stroke-foreground"))
+         title = _("Couleur du contour");
+ 
+-      w = gimp_prop_color_button_new (options, prop,
+-                                      (title && *title) ? title : _("Color"), TRUE,
+-                                      40, 22, GIMP_COLOR_AREA_SMALL_CHECKS);
+-      gimp_help_set_help_data (w, _("Cliquer pour choisir la couleur "
+-                                    "(pipette et transparence incluses)"), NULL);
+-      if (! strcmp (prop, "foreground"))
+-        {
+-          gimp_options_bar_pack_labeled (box, _("Color"), w);
+-          *packed = TRUE;
+-        }
++      w = gimp_options_bar_color_dropdown (options, prop,
++                                           (title && *title) ? title : _("Color"), box,
++                                           ! strcmp (prop, "foreground") ? _("Color") : NULL);
++      *packed = TRUE;
+       return w;
+     }
+ 
+-- 
+2.53.0
+

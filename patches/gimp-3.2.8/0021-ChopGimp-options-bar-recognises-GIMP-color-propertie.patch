@@ -1,7 +1,7 @@
 From f694f65880a0ae1f5fd423e3fc28446028dd161e Mon Sep 17 00:00:00 2001
 From: ChopGimp <mathieu.redon@proton.me>
 Date: Wed, 11 Nov 2026 20:18:51 +0100
-Subject: [PATCH 21/22] ChopGimp: options bar recognises GIMP color properties
+Subject: [PATCH 21/23] ChopGimp: options bar recognises GIMP color properties
  (fill/stroke/text color pickers)
 
 ---

@@ -733,3 +733,22 @@ GimpFgBgEditor {
   min-height: 20px;
   padding: 1px 6px;
 }
+
+/* Panneau déroulant des couleurs (fond / contour / texte) */
+button.chopgimp-swatch {
+  padding: 1px;
+  margin: 0;
+  min-width: 0;
+  min-height: 0;
+  border: 1px solid transparent;
+  border-radius: 2px;
+}
+
+button.chopgimp-swatch:hover {
+  border-color: @ps-white;
+}
+
+#photogimp-options-bar menubutton button,
+#photogimp-options-bar button.popup {
+  padding: 1px 4px;
+}
