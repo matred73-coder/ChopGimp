@@ -1,0 +1,521 @@
+From 9589a1152e74cb3d5be99ca26e7fb94e9a6bdc68 Mon Sep 17 00:00:00 2001
+From: ChopGimp <mathieu.redon@proton.me>
+Date: Wed, 11 Nov 2026 19:30:28 +0100
+Subject: [PATCH 16/17] ChopGimp: Photoshop transform controls around the
+ content in the move tool
+
+The move tool draws a box with handles around the visible content of the
+selected layer; dragging a handle fits the layer to its content and hands
+the drag over to the unified transform tool, which returns to the move
+tool on commit or cancel. Ctrl+T also fits the layer to its content first.
+---
+ app/tools/chopgimp-tools.c        | 196 ++++++++++++++++++++++++++++++
+ app/tools/chopgimp-tools.h        |  30 +++++
+ app/tools/gimpmovetool.c          | 131 +++++++++++++++++++-
+ app/tools/gimpmovetool.h          |   6 +
+ app/tools/gimptransformgridtool.c |  28 +++++
+ app/tools/meson.build             |   1 +
+ 6 files changed, 390 insertions(+), 2 deletions(-)
+ create mode 100644 app/tools/chopgimp-tools.c
+ create mode 100644 app/tools/chopgimp-tools.h
+
+diff --git a/app/tools/chopgimp-tools.c b/app/tools/chopgimp-tools.c
+new file mode 100644
+index 0000000..76923ed
+--- /dev/null
++++ b/app/tools/chopgimp-tools.c
+@@ -0,0 +1,196 @@
++/* GIMP - The GNU Image Manipulation Program
++ * Copyright (C) 1995 Spencer Kimball and Peter Mattis
++ *
++ * chopgimp-tools.c — ChopGimp: Photoshop-like transform controls helpers
++ *
++ * This program is free software: you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation; either version 3 of the License, or
++ * (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License
++ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
++ */
++
++#include "config.h"
++
++#include <gegl.h>
++#include <gtk/gtk.h>
++
++#include "tools-types.h"
++
++#include "core/gimp.h"
++#include "core/gimpcontext.h"
++#include "core/gimpimage.h"
++#include "core/gimpimage-undo.h"
++#include "core/gimplayer.h"
++#include "core/gimplayer-floating-selection.h"
++#include "core/gimppickable.h"
++#include "core/gimppickable-auto-shrink.h"
++#include "core/gimptoolinfo.h"
++
++#include "path/gimpvectorlayer.h"
++
++#include "text/gimptextlayer.h"
++
++#include "display/gimpdisplay.h"
++
++#include "chopgimp-tools.h"
++#include "tool_manager.h"
++
++#include "gimp-intl.h"
++
++
++gboolean chopgimp_transform_from_move = FALSE;
++
++
++static gboolean
++chopgimp_layer_is_croppable (GimpLayer *layer)
++{
++  GimpItem *item = GIMP_ITEM (layer);
++
++  return ! gimp_viewable_get_children (GIMP_VIEWABLE (layer)) &&
++         ! gimp_item_is_text_layer (item)                     &&
++         ! gimp_item_is_vector_layer (item)                   &&
++         ! gimp_layer_is_floating_sel (layer);
++}
++
++/*  Bounds (image coordinates) of the visible content of @layer, like the
++ *  box Photoshop draws with « Show Transform Controls ».
++ */
++gboolean
++chopgimp_layer_content_bounds (GimpLayer *layer,
++                               gint      *x,
++                               gint      *y,
++                               gint      *width,
++                               gint      *height)
++{
++  GimpItem *item = GIMP_ITEM (layer);
++  gint      ox, oy, w, h;
++  gint      sx = 0, sy = 0, sw, sh;
++
++  gimp_item_get_offset (item, &ox, &oy);
++  w = sw = gimp_item_get_width  (item);
++  h = sh = gimp_item_get_height (item);
++
++  if (chopgimp_layer_is_croppable (layer))
++    {
++      switch (gimp_pickable_auto_shrink (GIMP_PICKABLE (layer), 0, 0, w, h,
++                                         &sx, &sy, &sw, &sh))
++        {
++        case GIMP_AUTO_SHRINK_EMPTY:
++          return FALSE;
++
++        case GIMP_AUTO_SHRINK_UNSHRINKABLE:
++          sx = 0; sy = 0; sw = w; sh = h;
++          break;
++
++        case GIMP_AUTO_SHRINK_SHRINK:
++          break;
++        }
++    }
++
++  *x      = ox + sx;
++  *y      = oy + sy;
++  *width  = sw;
++  *height = sh;
++
++  return TRUE;
++}
++
++/*  Photoshop has no layer bounds: before transforming, fit the layer to its
++ *  content (no pixel is lost) so the handles surround the object.
++ */
++gboolean
++chopgimp_crop_layer_to_content (GimpImage   *image,
++                                GimpLayer   *layer,
++                                GimpContext *context)
++{
++  gint x, y, w, h;
++
++  if (! chopgimp_layer_is_croppable (layer))
++    return FALSE;
++
++  if (gimp_pickable_auto_shrink (GIMP_PICKABLE (layer), 0, 0,
++                                 gimp_item_get_width  (GIMP_ITEM (layer)),
++                                 gimp_item_get_height (GIMP_ITEM (layer)),
++                                 &x, &y, &w, &h) != GIMP_AUTO_SHRINK_SHRINK)
++    return FALSE;
++
++  gimp_image_undo_group_start (image, GIMP_UNDO_GROUP_ITEM_RESIZE,
++                               _("Crop Layer to Content"));
++  gimp_item_resize (GIMP_ITEM (layer), context, GIMP_FILL_TRANSPARENT,
++                    w, h, -x, -y);
++  gimp_image_undo_group_end (image);
++
++  return TRUE;
++}
++
++
++typedef struct
++{
++  Gimp            *gimp;
++  GimpDisplay     *display;
++  gchar           *tool_name;
++  gboolean         press;
++  GimpCoords       coords;
++  guint32          time;
++  GdkModifierType  state;
++} SwitchData;
++
++static gboolean
++chopgimp_switch_tool_idle (SwitchData *s)
++{
++  GimpToolInfo *info = gimp_get_tool_info (s->gimp, s->tool_name);
++
++  if (info)
++    gimp_context_set_tool (gimp_get_user_context (s->gimp), info);
++
++  if (s->press && s->display && gimp_display_get_image (s->display))
++    {
++      if (tool_manager_initialize_active (s->gimp, s->display))
++        tool_manager_button_press_active (s->gimp, &s->coords, s->time,
++                                          s->state, GIMP_BUTTON_PRESS_NORMAL,
++                                          s->display);
++    }
++
++  g_clear_object (&s->display);
++  g_free (s->tool_name);
++  g_free (s);
++
++  return G_SOURCE_REMOVE;
++}
++
++/*  Switch to @tool_name once the current event is handled; if @press_coords
++ *  is given, the new tool receives the button press (so the user's drag on
++ *  a handle continues in the new tool).
++ */
++void
++chopgimp_switch_tool_later (Gimp             *gimp,
++                            GimpDisplay      *display,
++                            const gchar      *tool_name,
++                            const GimpCoords *press_coords,
++                            guint32           time,
++                            GdkModifierType   state)
++{
++  SwitchData *s = g_new0 (SwitchData, 1);
++
++  s->gimp      = gimp;
++  s->display   = display ? g_object_ref (display) : NULL;
++  s->tool_name = g_strdup (tool_name);
++  s->time      = time;
++  s->state     = state;
++
++  if (press_coords)
++    {
++      s->press  = TRUE;
++      s->coords = *press_coords;
++    }
++
++  g_idle_add ((GSourceFunc) chopgimp_switch_tool_idle, s);
++}
+diff --git a/app/tools/chopgimp-tools.h b/app/tools/chopgimp-tools.h
+new file mode 100644
+index 0000000..a78b6a1
+--- /dev/null
++++ b/app/tools/chopgimp-tools.h
+@@ -0,0 +1,30 @@
++/* GIMP - The GNU Image Manipulation Program
++ * chopgimp-tools.h — ChopGimp: Photoshop-like transform controls helpers
++ *
++ * This program is free software: you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation; either version 3 of the License, or
++ * (at your option) any later version.
++ */
++
++#pragma once
++
++/*  TRUE while a transform was started from the move tool's controls:
++ *  committing or cancelling it goes back to the move tool.
++ */
++extern gboolean chopgimp_transform_from_move;
++
++gboolean chopgimp_layer_content_bounds   (GimpLayer        *layer,
++                                          gint             *x,
++                                          gint             *y,
++                                          gint             *width,
++                                          gint             *height);
++gboolean chopgimp_crop_layer_to_content  (GimpImage        *image,
++                                          GimpLayer        *layer,
++                                          GimpContext      *context);
++void     chopgimp_switch_tool_later      (Gimp             *gimp,
++                                          GimpDisplay      *display,
++                                          const gchar      *tool_name,
++                                          const GimpCoords *press_coords,
++                                          guint32           time,
++                                          GdkModifierType   state);
+diff --git a/app/tools/gimpmovetool.c b/app/tools/gimpmovetool.c
+index 38a77fb..e3780ff 100644
+--- a/app/tools/gimpmovetool.c
++++ b/app/tools/gimpmovetool.c
+@@ -52,6 +52,7 @@
+ #include "display/gimpdisplayshell-selection.h"
+ #include "display/gimpdisplayshell-transform.h"
+ 
++#include "chopgimp-tools.h"
+ #include "gimpeditselectiontool.h"
+ #include "gimpguidetool.h"
+ #include "gimpmoveoptions.h"
+@@ -192,6 +193,26 @@ gimp_move_tool_button_press (GimpTool            *tool,
+   const gchar       *locked_message = NULL;
+   GimpItem          *locked_item    = NULL;
+ 
++  /*  ChopGimp: dragging a handle of the transform controls resizes the
++   *  object directly (Photoshop): fit the layer to its content, then hand
++   *  the press over to the unified transform tool.
++   */
++  if (options->move_type == GIMP_TRANSFORM_TYPE_LAYER &&
++      ! gimp_image_get_floating_selection (image)     &&
++      chopgimp_move_on_handle (move, display, coords))
++    {
++      chopgimp_crop_layer_to_content (image, move->ctl_layer,
++                                      gimp_get_user_context (display->gimp));
++      gimp_image_flush (image);
++      move->ctl_stamp = -1;
++
++      chopgimp_transform_from_move = TRUE;
++      chopgimp_switch_tool_later (display->gimp, display,
++                                  "gimp-unified-transform-tool",
++                                  coords, time, state);
++      return;
++    }
++
+   tool->display = display;
+ 
+   move->floating_layer = NULL;
+@@ -523,6 +544,69 @@ gimp_move_tool_modifier_key (GimpTool        *tool,
+   (void) move;
+ }
+ 
++
++#define CTL_HANDLE 9
++
++/*  ChopGimp: recompute the content box of the selected layer when the
++ *  layer or the image changed.
++ */
++static gboolean
++chopgimp_move_update_controls (GimpMoveTool *move,
++                               GimpImage    *image)
++{
++  GList     *layers = gimp_image_get_selected_layers (image);
++  GimpLayer *layer  = (g_list_length (layers) == 1) ? layers->data : NULL;
++  gint64     stamp  = gimp_image_get_dirty_time (image);
++  gboolean   valid;
++  gint       x = 0, y = 0, w = 0, h = 0;
++
++  if (layer == move->ctl_layer && stamp == move->ctl_stamp && layer)
++    return FALSE;
++
++  valid = layer && chopgimp_layer_content_bounds (layer, &x, &y, &w, &h);
++
++  move->ctl_layer = layer;
++  move->ctl_stamp = stamp;
++
++  if (valid != move->ctl_valid ||
++      x != move->ctl_x || y != move->ctl_y ||
++      w != move->ctl_w || h != move->ctl_h)
++    {
++      move->ctl_valid = valid;
++      move->ctl_x = x; move->ctl_y = y; move->ctl_w = w; move->ctl_h = h;
++      return TRUE;
++    }
++
++  return FALSE;
++}
++
++static gboolean
++chopgimp_move_on_handle (GimpMoveTool     *move,
++                         GimpDisplay      *display,
++                         const GimpCoords *coords)
++{
++  GimpDrawTool *draw_tool = GIMP_DRAW_TOOL (move);
++  gdouble       xs[3], ys[3];
++  gint          i, j;
++
++  if (! move->ctl_valid)
++    return FALSE;
++
++  xs[0] = move->ctl_x; xs[1] = move->ctl_x + move->ctl_w / 2.0; xs[2] = move->ctl_x + move->ctl_w;
++  ys[0] = move->ctl_y; ys[1] = move->ctl_y + move->ctl_h / 2.0; ys[2] = move->ctl_y + move->ctl_h;
++
++  for (i = 0; i < 3; i++)
++    for (j = 0; j < 3; j++)
++      if ((i != 1 || j != 1) &&
++          gimp_draw_tool_on_handle (draw_tool, display, coords->x, coords->y,
++                                    GIMP_HANDLE_SQUARE, xs[i], ys[j],
++                                    CTL_HANDLE + 4, CTL_HANDLE + 4,
++                                    GIMP_HANDLE_ANCHOR_CENTER))
++        return TRUE;
++
++  return FALSE;
++}
++
+ static void
+ gimp_move_tool_oper_update (GimpTool         *tool,
+                             const GimpCoords *coords,
+@@ -548,6 +632,27 @@ gimp_move_tool_oper_update (GimpTool         *tool,
+                                        FUNSCALEY (shell, snap_distance));
+     }
+ 
++  if (options->move_type == GIMP_TRANSFORM_TYPE_LAYER)
++    {
++      GimpDrawTool *draw_tool = GIMP_DRAW_TOOL (tool);
++      gboolean      changed   = chopgimp_move_update_controls (move, image);
++
++      if (changed || (move->ctl_valid && ! gimp_draw_tool_is_active (draw_tool)) ||
++          (gimp_draw_tool_is_active (draw_tool) && draw_tool->display != display))
++        {
++          gimp_draw_tool_pause (draw_tool);
++
++          if (gimp_draw_tool_is_active (draw_tool) &&
++              draw_tool->display != display)
++            gimp_draw_tool_stop (draw_tool);
++
++          if (! gimp_draw_tool_is_active (draw_tool))
++            gimp_draw_tool_start (draw_tool, display);
++
++          gimp_draw_tool_resume (draw_tool);
++        }
++    }
++
+   if (gimp_g_list_compare (guides, move->guides))
+     {
+       GimpDrawTool *draw_tool = GIMP_DRAW_TOOL (tool);
+@@ -693,8 +798,30 @@ gimp_move_tool_cursor_update (GimpTool         *tool,
+ static void
+ gimp_move_tool_draw (GimpDrawTool *draw_tool)
+ {
+-  GimpMoveTool *move = GIMP_MOVE_TOOL (draw_tool);
+-  GList        *iter;
++  GimpMoveTool    *move    = GIMP_MOVE_TOOL (draw_tool);
++  GimpMoveOptions *options = GIMP_MOVE_TOOL_GET_OPTIONS (draw_tool);
++  GList           *iter;
++
++  /*  ChopGimp: Photoshop « Show Transform Controls »  */
++  if (move->ctl_valid && options->move_type == GIMP_TRANSFORM_TYPE_LAYER)
++    {
++      gdouble xs[3], ys[3];
++      gint    i, j;
++
++      gimp_draw_tool_add_rectangle (draw_tool, FALSE,
++                                    move->ctl_x, move->ctl_y,
++                                    move->ctl_w, move->ctl_h);
++
++      xs[0] = move->ctl_x; xs[1] = move->ctl_x + move->ctl_w / 2.0; xs[2] = move->ctl_x + move->ctl_w;
++      ys[0] = move->ctl_y; ys[1] = move->ctl_y + move->ctl_h / 2.0; ys[2] = move->ctl_y + move->ctl_h;
++
++      for (i = 0; i < 3; i++)
++        for (j = 0; j < 3; j++)
++          if (i != 1 || j != 1)
++            gimp_draw_tool_add_handle (draw_tool, GIMP_HANDLE_SQUARE,
++                                       xs[i], ys[j], CTL_HANDLE, CTL_HANDLE,
++                                       GIMP_HANDLE_ANCHOR_CENTER);
++    }
+ 
+   for (iter = move->guides; iter; iter = g_list_next (iter))
+     {
+diff --git a/app/tools/gimpmovetool.h b/app/tools/gimpmovetool.h
+index 0ae51cc..fc5bb58 100644
+--- a/app/tools/gimpmovetool.h
++++ b/app/tools/gimpmovetool.h
+@@ -44,6 +44,12 @@ struct _GimpMoveTool
+ 
+   GList               *old_selected_layers;
+   GList               *old_selected_paths;
++
++  /*  ChopGimp: Photoshop-like transform controls around the content  */
++  gboolean             ctl_valid;
++  GimpLayer           *ctl_layer;
++  gint64               ctl_stamp;
++  gint                 ctl_x, ctl_y, ctl_w, ctl_h;
+ };
+ 
+ struct _GimpMoveToolClass
+diff --git a/app/tools/gimptransformgridtool.c b/app/tools/gimptransformgridtool.c
+index 303cce4..ffe6c85 100644
+--- a/app/tools/gimptransformgridtool.c
++++ b/app/tools/gimptransformgridtool.c
+@@ -63,6 +63,7 @@
+ 
+ #include "gimptoolcontrol.h"
+ #include "gimptransformgridoptions.h"
++#include "chopgimp-tools.h"
+ #include "gimptransformgridtool.h"
+ #include "gimptransformgridtoolundo.h"
+ #include "gimptransformoptions.h"
+@@ -340,6 +341,19 @@ gimp_transform_grid_tool_initialize (GimpTool     *tool,
+   GList                    *iter;
+   UndoInfo                 *undo_info;
+ 
++  /*  ChopGimp (Photoshop): transform handles surround the content, not
++   *  the whole layer — fit a single selected layer to its content first.
++   */
++  if (GIMP_TRANSFORM_TOOL_GET_OPTIONS (tool)->type == GIMP_TRANSFORM_TYPE_LAYER)
++    {
++      GList *layers = gimp_image_get_selected_layers (image);
++
++      if (g_list_length (layers) == 1 &&
++          chopgimp_crop_layer_to_content (image, layers->data,
++                                          gimp_get_user_context (image->gimp)))
++        gimp_image_flush (image);
++    }
++
+   objects = gimp_transform_tool_check_selected_objects (tr_tool, display, error);
+ 
+   if (! objects)
+@@ -1521,6 +1535,13 @@ gimp_transform_grid_tool_response (GimpToolGui           *gui,
+     case GTK_RESPONSE_OK:
+       g_return_if_fail (display != NULL);
+       gimp_tool_control (tool, GIMP_TOOL_ACTION_COMMIT, display);
++      if (chopgimp_transform_from_move)
++        {
++          /*  ChopGimp: back to the move tool, like Photoshop  */
++          chopgimp_transform_from_move = FALSE;
++          chopgimp_switch_tool_later (display->gimp, NULL, "gimp-move-tool",
++                                      NULL, 0, 0);
++        }
+       break;
+ 
+     default:
+@@ -1529,6 +1550,13 @@ gimp_transform_grid_tool_response (GimpToolGui           *gui,
+       /*  update the undo actions / menu items  */
+       if (display)
+         gimp_image_flush (gimp_display_get_image (display));
++
++      if (chopgimp_transform_from_move && display)
++        {
++          chopgimp_transform_from_move = FALSE;
++          chopgimp_switch_tool_later (display->gimp, NULL, "gimp-move-tool",
++                                      NULL, 0, 0);
++        }
+       break;
+     }
+ }
+diff --git a/app/tools/meson.build b/app/tools/meson.build
+index 91e976c..c350a1e 100644
+--- a/app/tools/meson.build
++++ b/app/tools/meson.build
+@@ -78,6 +78,7 @@ libapptools_sources = [
+   'gimpmeasuretool.c',
+   'gimpmoveoptions.c',
+   'gimpmovetool.c',
++  'chopgimp-tools.c',
+   'gimpmybrushoptions-gui.c',
+   'gimpmybrushtool.c',
+   'gimpnpointdeformationoptions.c',
+-- 
+2.53.0
+

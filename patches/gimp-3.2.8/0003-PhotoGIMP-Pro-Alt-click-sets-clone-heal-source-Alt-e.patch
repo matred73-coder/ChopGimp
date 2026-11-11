@@ -1,7 +1,7 @@
 From 92c0563b7ddcafdcae58d46a66913a81f7696d04 Mon Sep 17 00:00:00 2001
 From: ChopGimp <mathieu.redon@proton.me>
 Date: Wed, 11 Nov 2026 12:47:51 +0100
-Subject: [PATCH 03/15] PhotoGIMP Pro: Alt+click sets clone/heal source, Alt =
+Subject: [PATCH 03/17] PhotoGIMP Pro: Alt+click sets clone/heal source, Alt =
  eyedropper in paint tools
 
 Photoshop uses Alt for these temporary actions; GIMP used Ctrl.

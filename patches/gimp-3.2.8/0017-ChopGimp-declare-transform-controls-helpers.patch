@@ -1,0 +1,29 @@
+From 0d66a7c2038c4d84874a90f05360e6623bd419fe Mon Sep 17 00:00:00 2001
+From: ChopGimp <mathieu.redon@proton.me>
+Date: Wed, 11 Nov 2026 19:31:29 +0100
+Subject: [PATCH 17/17] ChopGimp: declare transform controls helpers
+
+---
+ app/tools/gimpmovetool.c | 6 ++++++
+ 1 file changed, 6 insertions(+)
+
+diff --git a/app/tools/gimpmovetool.c b/app/tools/gimpmovetool.c
+index e3780ff..486a1a3 100644
+--- a/app/tools/gimpmovetool.c
++++ b/app/tools/gimpmovetool.c
+@@ -99,6 +99,12 @@ static void   gimp_move_tool_cursor_update  (GimpTool              *tool,
+ 
+ static void   gimp_move_tool_draw           (GimpDrawTool          *draw_tool);
+ 
++static gboolean chopgimp_move_update_controls (GimpMoveTool          *move,
++                                               GimpImage             *image);
++static gboolean chopgimp_move_on_handle       (GimpMoveTool          *move,
++                                               GimpDisplay           *display,
++                                               const GimpCoords      *coords);
++
+ 
+ G_DEFINE_TYPE (GimpMoveTool, gimp_move_tool, GIMP_TYPE_DRAW_TOOL)
+ 
+-- 
+2.53.0
+
