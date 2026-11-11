@@ -1,0 +1,44 @@
+From 526bb634461fba93f864ea294241b8732956a959 Mon Sep 17 00:00:00 2001
+From: ChopGimp <mathieu.redon@proton.me>
+Date: Wed, 11 Nov 2026 20:41:09 +0100
+Subject: [PATCH 24/24] =?UTF-8?q?ChopGimp:=20path=20tool=20=E2=80=94=20cli?=
+ =?UTF-8?q?cking=20in=20an=20empty=20area=20starts=20a=20new=20shape=20(on?=
+ =?UTF-8?q?e=20shape=20=3D=20one=20vector=20layer)?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+---
+ app/tools/gimppathtool.c | 16 ++++++++++++++++
+ 1 file changed, 16 insertions(+)
+
+diff --git a/app/tools/gimppathtool.c b/app/tools/gimppathtool.c
+index aa4c067..e9ffa3b 100644
+--- a/app/tools/gimppathtool.c
++++ b/app/tools/gimppathtool.c
+@@ -300,6 +300,22 @@ gimp_path_tool_button_press (GimpTool            *tool,
+   if (tool->display && display != tool->display)
+     gimp_tool_control (tool, GIMP_TOOL_ACTION_HALT, tool->display);
+ 
++  /*  ChopGimp (Photoshop): one shape = one vector layer. Clicking in an
++   *  empty area while a vector layer is being edited, in Design mode,
++   *  starts a new shape (new path) instead of adding to the current one,
++   *  so each shape can get its own fill and stroke.
++   */
++  if (tool->display == display                                         &&
++      path_tool->current_vector_layer                                  &&
++      path_tool->widget                                                &&
++      GIMP_PATH_TOOL_GET_OPTIONS (tool)->edit_mode == GIMP_PATH_MODE_DESIGN &&
++      press_type == GIMP_BUTTON_PRESS_NORMAL                           &&
++      ! (state & gimp_get_all_modifiers_mask ())                       &&
++      gimp_tool_widget_hit (path_tool->widget, coords, state, TRUE) == GIMP_HIT_NONE)
++    {
++      gimp_path_tool_set_layer (path_tool, NULL);
++    }
++
+   if (! tool->display)
+     {
+       gimp_path_tool_start (path_tool, display);
+-- 
+2.53.0
+

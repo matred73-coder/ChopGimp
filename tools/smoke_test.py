@@ -116,6 +116,29 @@ try:
         except Exception as e:
             report(False, "Calques : " + proc, repr(e)[:120])
 
+    # 3b. Formes : un calque vectoriel à 2 formes → 2 calques vectoriels
+    try:
+        im = Gimp.Image.new(400, 300, Gimp.ImageBaseType.RGB)
+        bg = Gimp.Layer.new(im, "Fond", 400, 300, Gimp.ImageType.RGB_IMAGE, 100, Gimp.LayerMode.NORMAL)
+        im.insert_layer(bg, None, 0)
+        path = Gimp.Path.new(im, "Formes")
+        im.insert_path(path, None, 0)
+        path.bezier_stroke_new_ellipse(100, 150, 50, 40, 0)
+        path.bezier_stroke_new_ellipse(280, 150, 60, 50, 0)
+        vl = Gimp.VectorLayer.new(im, path)
+        im.insert_layer(vl, None, 0)
+        vl.set_enable_fill(True)
+        vl.set_fill_color(color(0.9, 0.2, 0.2))
+        vl.refresh()
+        r = run("photogimp-split-shapes", **{"run-mode": Gimp.RunMode.NONINTERACTIVE, "image": im,
+                                             "drawables": [vl]})
+        vls = [l for l in im.get_layers() if isinstance(l, Gimp.VectorLayer)]
+        ok_ = r.index(0) == Gimp.PDBStatusType.SUCCESS and len(vls) == 2
+        same = ok_ and all(l.get_enable_fill() for l in vls)
+        report(ok_ and same, "Formes : séparer les formes", "%d calque(s) vectoriel(s)" % len(vls))
+    except Exception as e:
+        report(False, "Formes : séparer les formes", repr(e)[:160])
+
     # 4. Réglages d'usine présents (thème, icônes, menus, raccourcis)
     data = Gimp.data_directory()
     sysconf = Gimp.sysconf_directory()

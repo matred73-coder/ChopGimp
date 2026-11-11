@@ -53,6 +53,7 @@ OTHER = {
     "photogimp-clipping-toggle": "Créer / annuler le masque d'écrêtage",
     "photogimp-style-clear": "Effacer le style de calque",
     "photogimp-stamp-visible": "Fusionner sur un nouveau calque",
+    "photogimp-split-shapes": "Séparer les formes",
 }
 
 CLIP_GROUP_PREFIX = "⧉ "     # préfixe des groupes d'écrêtage créés par PhotoGIMP
@@ -123,7 +124,8 @@ class PhotoGimpPS(Gimp.PlugIn):
             paths = {"photogimp-clipping-toggle": ["<Image>/Layer", "<Layers>/Layers Menu"],
                      "photogimp-style-clear": ["<Image>/Layer/Style de calque",
                                                "<Layers>/Layers Menu/Style de calque"],
-                     "photogimp-stamp-visible": ["<Image>/Layer"]}[name]
+                     "photogimp-stamp-visible": ["<Image>/Layer"],
+                     "photogimp-split-shapes": ["<Image>/Layer", "<Layers>/Layers Menu"]}[name]
             doc = label
         p.set_menu_label(label)
         for path in paths:
@@ -164,6 +166,10 @@ class PhotoGimpPS(Gimp.PlugIn):
                     return fail(procedure, msg)
             elif name == "photogimp-stamp-visible":
                 self.stamp_visible(image)
+            elif name == "photogimp-split-shapes":
+                msg = self.split_shapes(image, layers)
+                if msg:
+                    return fail(procedure, msg)
         finally:
             image.undo_group_end()
             Gimp.displays_flush()
@@ -221,6 +227,53 @@ class PhotoGimpPS(Gimp.PlugIn):
             image.reorder_item(l, group, len(group.get_children()))
         add_filter(group, op, label.rstrip("…"), {})
         image.set_selected_layers([group])
+
+    # Un calque vectoriel qui contient plusieurs formes (sous-chemins) devient
+    # un calque vectoriel par forme, avec le même style de départ : chaque
+    # forme peut ensuite recevoir sa propre couleur de fond et de contour.
+    def split_shapes(self, image, layers):
+        vlayers = [l for l in layers if isinstance(l, Gimp.VectorLayer)]
+        if not vlayers:
+            return "Sélectionnez un calque vectoriel (forme)."
+        for layer in vlayers:
+            path = layer.get_path()
+            strokes = list(path.get_strokes())
+            if len(strokes) < 2:
+                continue
+            parent = layer.get_parent()
+            pos = image.get_item_position(layer)
+            new_layers = []
+            for n, sid in enumerate(strokes, 1):
+                ptype, points, closed = path.stroke_get_points(sid)
+                new_path = Gimp.Path.new(image, "%s — forme %d" % (layer.get_name(), n))
+                image.insert_path(new_path, None, 0)
+                new_path.stroke_new_from_points(ptype, points, closed)
+                nl = Gimp.VectorLayer.new(image, new_path)
+                nl.set_name("%s — forme %d" % (layer.get_name(), n))
+                self.copy_vector_style(layer, nl)
+                image.insert_layer(nl, parent, pos)
+                nl.refresh()
+                new_layers.append(nl)
+            image.remove_layer(layer)
+            image.set_selected_layers(new_layers)
+        return None
+
+    @staticmethod
+    def copy_vector_style(src, dst):
+        dst.set_enable_fill(src.get_enable_fill())
+        dst.set_fill_color(src.get_fill_color())
+        dst.set_enable_stroke(src.get_enable_stroke())
+        dst.set_stroke_color(src.get_stroke_color())
+        dst.set_stroke_width(src.get_stroke_width())
+        dst.set_stroke_width_unit(src.get_stroke_width_unit())
+        dst.set_stroke_cap_style(src.get_stroke_cap_style())
+        dst.set_stroke_join_style(src.get_stroke_join_style())
+        dst.set_stroke_miter_limit(src.get_stroke_miter_limit())
+        try:
+            dst.set_stroke_dash_pattern(src.get_stroke_dash_pattern())
+            dst.set_stroke_dash_offset(src.get_stroke_dash_offset())
+        except Exception:
+            pass
 
     # Ctrl+Maj+Alt+E : copie fusionnée du visible dans un nouveau calque en haut
     def stamp_visible(self, image):
