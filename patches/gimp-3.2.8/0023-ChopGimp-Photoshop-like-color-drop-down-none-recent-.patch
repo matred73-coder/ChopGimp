@@ -1,7 +1,7 @@
 From 69976019f5b32b1d1a969693504c09777ed489fc Mon Sep 17 00:00:00 2001
 From: ChopGimp <mathieu.redon@proton.me>
 Date: Wed, 11 Nov 2026 20:29:08 +0100
-Subject: [PATCH 23/32] ChopGimp: Photoshop-like color drop-down (none, recent
+Subject: [PATCH 23/33] ChopGimp: Photoshop-like color drop-down (none, recent
  colors, swatches, full picker)
 
 ---

@@ -1,7 +1,7 @@
 From fad33b713eea677c8a6778d866c2b15e2cbd7092 Mon Sep 17 00:00:00 2001
 From: ChopGimp <mathieu.redon@proton.me>
 Date: Thu, 12 Nov 2026 06:33:19 +0100
-Subject: [PATCH 26/32] ChopGimp: Hand (H) and Rotate View (R) tools
+Subject: [PATCH 26/33] ChopGimp: Hand (H) and Rotate View (R) tools
 
 ---
  app/tools/chopgimp-viewtools.c | 243 +++++++++++++++++++++++++++++++++

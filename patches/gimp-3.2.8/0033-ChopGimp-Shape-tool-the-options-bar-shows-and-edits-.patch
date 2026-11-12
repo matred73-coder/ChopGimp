@@ -1,0 +1,213 @@
+From 41cb2764ac909c49861472f978230847539da0b6 Mon Sep 17 00:00:00 2001
+From: ChopGimp <mathieu.redon@proton.me>
+Date: Thu, 12 Nov 2026 07:24:22 +0100
+Subject: [PATCH 33/33] =?UTF-8?q?ChopGimp:=20Shape=20tool=20=E2=80=94=20th?=
+ =?UTF-8?q?e=20options=20bar=20shows=20and=20edits=20the=20selected=20shap?=
+ =?UTF-8?q?e=20layer=20(Photoshop)?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+---
+ app/tools/chopgimp-shapetool.c | 149 +++++++++++++++++++++++++++++++++
+ app/tools/chopgimp-shapetool.h |   4 +
+ 2 files changed, 153 insertions(+)
+
+diff --git a/app/tools/chopgimp-shapetool.c b/app/tools/chopgimp-shapetool.c
+index 101ba7d..1946ba0 100644
+--- a/app/tools/chopgimp-shapetool.c
++++ b/app/tools/chopgimp-shapetool.c
+@@ -25,6 +25,8 @@
+ 
+ #include "config.h"
+ 
++#include <string.h>
++
+ #include <gegl.h>
+ #include <gtk/gtk.h>
+ 
+@@ -40,6 +42,7 @@
+ #include "core/gimpfilloptions.h"
+ #include "core/gimpimage.h"
+ #include "core/gimpimage-undo.h"
++#include "core/gimpitem.h"
+ #include "core/gimpstrokeoptions.h"
+ 
+ #include "path/gimpbezierstroke.h"
+@@ -560,12 +563,158 @@ gimp_shape_tool_draw (GimpDrawTool *draw_tool)
+     }
+ }
+ 
++
++/*  ── Photoshop: the options bar edits the selected shape ─────────── */
++
++static GimpVectorLayer *
++shape_selected_vector_layer (GimpShapeTool *shape)
++{
++  GList *layers;
++
++  if (! shape->image)
++    return NULL;
++
++  layers = gimp_image_get_selected_layers (shape->image);
++
++  if (g_list_length (layers) == 1 && GIMP_IS_VECTOR_LAYER (layers->data))
++    return layers->data;
++
++  return NULL;
++}
++
++/*  selected shape → options (so the bar shows its fill / stroke)  */
++static void
++shape_load_from_layer (GimpShapeTool *shape)
++{
++  GimpVectorLayer *layer = shape_selected_vector_layer (shape);
++  GimpPathOptions *popts;
++
++  if (! layer || ! layer->options)
++    return;
++
++  popts = GIMP_PATH_OPTIONS (gimp_tool_get_options (GIMP_TOOL (shape)));
++  gimp_path_options_ensure_fill_stroke (popts);
++
++  shape->loading = TRUE;
++  g_object_set (popts,
++                "enable-fill",   layer->options->enable_fill,
++                "enable-stroke", layer->options->enable_stroke,
++                NULL);
++  gimp_config_sync (G_OBJECT (layer->options->fill_options),
++                    G_OBJECT (popts->fill_options), 0);
++  gimp_config_sync (G_OBJECT (layer->options->stroke_options),
++                    G_OBJECT (popts->stroke_options), 0);
++  shape->loading = FALSE;
++}
++
++/*  options changed in the bar → selected shape  */
++static void
++shape_options_notify (GObject       *object,
++                      GParamSpec    *pspec,
++                      GimpShapeTool *shape)
++{
++  GimpVectorLayer *layer;
++  GimpPathOptions *popts;
++
++  if (shape->loading)
++    return;
++
++  layer = shape_selected_vector_layer (shape);
++  if (! layer || ! layer->options)
++    return;
++
++  popts = GIMP_PATH_OPTIONS (gimp_tool_get_options (GIMP_TOOL (shape)));
++
++  if (object == G_OBJECT (popts->fill_options))
++    gimp_config_sync (object, G_OBJECT (layer->options->fill_options), 0);
++  else if (object == G_OBJECT (popts->stroke_options))
++    gimp_config_sync (object, G_OBJECT (layer->options->stroke_options), 0);
++  else if (! strcmp (pspec->name, "enable-fill") || ! strcmp (pspec->name, "enable-stroke"))
++    g_object_set (layer->options,
++                  "enable-fill",   popts->enable_fill,
++                  "enable-stroke", popts->enable_stroke,
++                  NULL);
++  else
++    return;
++
++  gimp_vector_layer_refresh (layer);
++  gimp_image_flush (shape->image);
++}
++
++static void
++shape_selected_layers_changed (GimpImage     *image,
++                               GimpShapeTool *shape)
++{
++  shape_load_from_layer (shape);
++}
++
++static void
++shape_image_changed (GimpContext   *context,
++                     GimpImage     *image,
++                     GimpShapeTool *shape)
++{
++  if (shape->image)
++    g_signal_handlers_disconnect_by_func (shape->image,
++                                          shape_selected_layers_changed, shape);
++
++  shape->image = image;
++
++  if (image)
++    {
++      g_signal_connect_object (image, "selected-layers-changed",
++                               G_CALLBACK (shape_selected_layers_changed), shape, 0);
++      shape_load_from_layer (shape);
++    }
++}
++
++static void
++gimp_shape_tool_constructed (GObject *object)
++{
++  GimpShapeTool   *shape = GIMP_SHAPE_TOOL (object);
++  GimpTool        *tool  = GIMP_TOOL (object);
++  GimpPathOptions *popts;
++  GimpContext     *context;
++
++  G_OBJECT_CLASS (parent_class)->constructed (object);
++
++  popts = GIMP_PATH_OPTIONS (gimp_tool_get_options (tool));
++  gimp_path_options_ensure_fill_stroke (popts);
++
++  g_signal_connect_object (popts, "notify",
++                           G_CALLBACK (shape_options_notify), shape, 0);
++  g_signal_connect_object (popts->fill_options, "notify",
++                           G_CALLBACK (shape_options_notify), shape, 0);
++  g_signal_connect_object (popts->stroke_options, "notify",
++                           G_CALLBACK (shape_options_notify), shape, 0);
++
++  context = gimp_get_user_context (tool->tool_info->gimp);
++  g_signal_connect_object (context, "image-changed",
++                           G_CALLBACK (shape_image_changed), shape, 0);
++  shape_image_changed (context, gimp_context_get_image (context), shape);
++}
++
++static void
++gimp_shape_tool_finalize (GObject *object)
++{
++  GimpShapeTool *shape = GIMP_SHAPE_TOOL (object);
++
++  if (shape->image)
++    g_signal_handlers_disconnect_by_func (shape->image,
++                                          shape_selected_layers_changed, shape);
++
++  G_OBJECT_CLASS (parent_class)->finalize (object);
++}
++
+ static void
+ gimp_shape_tool_class_init (GimpShapeToolClass *klass)
+ {
++  GObjectClass      *object_class    = G_OBJECT_CLASS (klass);
+   GimpToolClass     *tool_class      = GIMP_TOOL_CLASS (klass);
+   GimpDrawToolClass *draw_tool_class = GIMP_DRAW_TOOL_CLASS (klass);
+ 
++  object_class->constructed       = gimp_shape_tool_constructed;
++  object_class->finalize          = gimp_shape_tool_finalize;
++
+   tool_class->button_press        = gimp_shape_tool_button_press;
+   tool_class->button_release      = gimp_shape_tool_button_release;
+   tool_class->motion              = gimp_shape_tool_motion;
+diff --git a/app/tools/chopgimp-shapetool.h b/app/tools/chopgimp-shapetool.h
+index ed56e70..220ed35 100644
+--- a/app/tools/chopgimp-shapetool.h
++++ b/app/tools/chopgimp-shapetool.h
+@@ -50,6 +50,10 @@ struct _GimpShapeTool
+   gdouble       cur_x,   cur_y;
+   gboolean      constrain;
+   gboolean      from_center;
++
++  /*  Photoshop: the options bar edits the selected shape layer  */
++  GimpImage    *image;
++  gboolean      loading;
+ };
+ 
+ GType   gimp_shape_options_get_type (void) G_GNUC_CONST;
+-- 
+2.53.0
+

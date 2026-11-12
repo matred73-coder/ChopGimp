@@ -1,7 +1,7 @@
 From d1382f9923692ced026594aad8d6a14d0b1c8c4b Mon Sep 17 00:00:00 2001
 From: ChopGimp <mathieu.redon@proton.me>
 Date: Thu, 12 Nov 2026 06:46:44 +0100
-Subject: [PATCH 29/32] ChopGimp: help ids for the new tools (required by tool
+Subject: [PATCH 29/33] ChopGimp: help ids for the new tools (required by tool
  registration)
 
 ---
