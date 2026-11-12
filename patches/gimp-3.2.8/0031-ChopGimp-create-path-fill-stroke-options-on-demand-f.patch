@@ -1,7 +1,7 @@
 From affc76a34823a681d37bbedefe2e77b147014076 Mon Sep 17 00:00:00 2001
 From: ChopGimp <mathieu.redon@proton.me>
 Date: Thu, 12 Nov 2026 07:09:45 +0100
-Subject: [PATCH 31/33] ChopGimp: create path fill/stroke options on demand
+Subject: [PATCH 31/34] ChopGimp: create path fill/stroke options on demand
  (fixes Shape tool crash in the options bar)
 
 ---

@@ -1,7 +1,7 @@
 From e2da07367ece0443ce3fb1331702f26044e9cdcd Mon Sep 17 00:00:00 2001
 From: ChopGimp <mathieu.redon@proton.me>
 Date: Thu, 12 Nov 2026 06:57:30 +0100
-Subject: [PATCH 30/33] ChopGimp: silent fallback to the factory toolrc when
+Subject: [PATCH 30/34] ChopGimp: silent fallback to the factory toolrc when
  the personal one is outdated
 
 ---

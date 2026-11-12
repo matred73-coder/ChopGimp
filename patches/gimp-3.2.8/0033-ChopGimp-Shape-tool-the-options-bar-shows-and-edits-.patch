@@ -1,7 +1,7 @@
 From 41cb2764ac909c49861472f978230847539da0b6 Mon Sep 17 00:00:00 2001
 From: ChopGimp <mathieu.redon@proton.me>
 Date: Thu, 12 Nov 2026 07:24:22 +0100
-Subject: [PATCH 33/33] =?UTF-8?q?ChopGimp:=20Shape=20tool=20=E2=80=94=20th?=
+Subject: [PATCH 33/34] =?UTF-8?q?ChopGimp:=20Shape=20tool=20=E2=80=94=20th?=
  =?UTF-8?q?e=20options=20bar=20shows=20and=20edits=20the=20selected=20shap?=
  =?UTF-8?q?e=20layer=20(Photoshop)?=
 MIME-Version: 1.0

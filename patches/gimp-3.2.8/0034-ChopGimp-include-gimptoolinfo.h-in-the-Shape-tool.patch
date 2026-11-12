@@ -1,0 +1,24 @@
+From ffe0fc084795b7cf04cc08e7e59291893fb83926 Mon Sep 17 00:00:00 2001
+From: ChopGimp <mathieu.redon@proton.me>
+Date: Thu, 12 Nov 2026 07:28:14 +0100
+Subject: [PATCH 34/34] ChopGimp: include gimptoolinfo.h in the Shape tool
+
+---
+ app/tools/chopgimp-shapetool.c | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/app/tools/chopgimp-shapetool.c b/app/tools/chopgimp-shapetool.c
+index 1946ba0..a29c97f 100644
+--- a/app/tools/chopgimp-shapetool.c
++++ b/app/tools/chopgimp-shapetool.c
+@@ -44,6 +44,7 @@
+ #include "core/gimpimage-undo.h"
+ #include "core/gimpitem.h"
+ #include "core/gimpstrokeoptions.h"
++#include "core/gimptoolinfo.h"
+ 
+ #include "path/gimpbezierstroke.h"
+ #include "path/gimppath.h"
+-- 
+2.53.0
+

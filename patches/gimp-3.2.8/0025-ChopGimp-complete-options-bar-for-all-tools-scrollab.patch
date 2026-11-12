@@ -1,7 +1,7 @@
 From 4f779c34c435bba8a24bee7933738831fbaf6295 Mon Sep 17 00:00:00 2001
 From: ChopGimp <mathieu.redon@proton.me>
 Date: Thu, 12 Nov 2026 06:32:06 +0100
-Subject: [PATCH 25/33] ChopGimp: complete options bar for all tools,
+Subject: [PATCH 25/34] ChopGimp: complete options bar for all tools,
  scrollable; patterns for fill and stroke
 
 ---
