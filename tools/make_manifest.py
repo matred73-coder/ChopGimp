@@ -50,9 +50,16 @@ gimp["config-opts"] = [o if not o.startswith("-Dbuild-id=") else "-Dbuild-id=%s.
 gimp["post-install"] = [c for c in gimp["post-install"] if "extensions" not in c]
 
 if not vanilla:
+    # Correctifs GEGL (plantage multi-thread des tuiles mipmap, cf. patches/gegl-0.4.72)
+    gegl = next(x for x in m["modules"] if isinstance(x, dict) and x["name"] == "gegl")
+    for p in sorted(glob.glob(os.path.join(ROOT, "patches", "gegl-0.4.72", "*.patch"))):
+        gegl["sources"].append({"type": "patch", "path": os.path.relpath(p, FP)})
     patches = sorted(glob.glob(os.path.join(ROOT, "patches", "gimp-3.2.8", "*.patch")))
     if patches:
+        # gimp-data est un sous-module : « git am » ne peut pas y appliquer
+        # l'icône Windows (gimp.ico, patch 0045), inutile sous Linux.
         gimp["sources"].append({"type": "patch", "use-git-am": True,
+                                "options": ["--exclude=gimp-data/*"],
                                 "paths": [os.path.relpath(p, FP) for p in patches]})
     # Resynthesizer (GPL) : remplissage d'après le contenu, correcteur de sélection
     m["modules"].append({

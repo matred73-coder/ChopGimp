@@ -1,0 +1,33 @@
+From 6b596743af808fd74deca180b26b2d268e506f75 Mon Sep 17 00:00:00 2001
+From: ChopGimp <mathieu.redon@proton.me>
+Date: Thu, 12 Nov 2026 16:35:21 +0100
+Subject: [PATCH] ChopGimp: register log-handler enum types at startup
+ (thread-safe warnings from GEGL workers)
+
+---
+ app/errors.c | 9 +++++++++
+ 1 file changed, 9 insertions(+)
+
+diff --git a/app/errors.c b/app/errors.c
+index e057bb2..51aa70d 100644
+--- a/app/errors.c
++++ b/app/errors.c
+@@ -122,6 +122,15 @@ errors_init (Gimp               *gimp,
+ 
+   backup_file = g_file_new_for_path (backup_path);
+ 
++  /*  ChopGimp: register the enum types used by the log handler now, in the
++   *  main thread. Their *_get_type() functions are not thread-safe: when
++   *  two GEGL worker threads emit their first warning at the same time,
++   *  both register the type, GObject complains from inside the log handler
++   *  and GLib aborts on the recursive log (crash while opening an XCF).
++   */
++  g_type_class_unref (g_type_class_ref (GIMP_TYPE_MESSAGE_SEVERITY));
++  g_type_class_unref (g_type_class_ref (GIMP_TYPE_DEBUG_POLICY));
++
+   log_domain_handler = gimp_log_set_handler (FALSE,
+                                              G_LOG_LEVEL_WARNING |
+                                              G_LOG_LEVEL_MESSAGE |
+-- 
+2.53.0
+

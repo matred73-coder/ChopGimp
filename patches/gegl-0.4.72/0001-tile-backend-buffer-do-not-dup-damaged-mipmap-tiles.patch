@@ -1,0 +1,36 @@
+From: ChopGimp <mathieu.redon@proton.me>
+Subject: [PATCH] tile-backend-buffer: don't dup damaged mipmap tiles
+
+When an operation copies its input (gegl_operation_context_dup_input_maybe_copy)
+and then samples it at a mipmap level > 0 from several worker threads (e.g.
+gegl:translate with a fractional offset while GIMP renders a layer group's
+projection zoomed out), the source buffer can hand out a level > 0 tile whose
+damage mask is still set. gegl_tile_dup() warns about it and the clone shares
+data that is about to be regenerated, which leads to heap corruption
+("double free or corruption").
+
+Treat such a tile as missing: return NULL, so the zoom handler of the copy
+rebuilds it from the level below, exactly like an uncached tile.
+---
+ gegl/buffer/gegl-tile-backend-buffer.c | 9 +++++++++
+ 1 file changed, 9 insertions(+)
+
+diff --git a/gegl/buffer/gegl-tile-backend-buffer.c b/gegl/buffer/gegl-tile-backend-buffer.c
+--- a/gegl/buffer/gegl-tile-backend-buffer.c
++++ b/gegl/buffer/gegl-tile-backend-buffer.c
+@@ -235,6 +235,15 @@ gegl_tile_backend_buffer_get_tile (GeglTileBackendBuffer *tile_backend_buffer,
+ 
+   if (G_LIKELY(src_tile))
+     {
++      /* a damaged (stale) mipmap tile, or one being rendered by another
++       * thread, must not be shared: let our zoom handler rebuild it.
++       */
++      if (z > 0 && (src_tile->damage || src_tile->lock_count))
++        {
++          gegl_tile_unref (src_tile);
++          return NULL;
++        }
++
+       tile = gegl_tile_dup (src_tile);
+ 
+       gegl_tile_unref (src_tile);

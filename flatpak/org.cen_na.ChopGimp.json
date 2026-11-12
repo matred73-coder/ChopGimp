@@ -770,6 +770,10 @@
                     "url": "https://gitlab.gnome.org/GNOME/gegl.git",
                     "tag": "GEGL_0_4_72",
                     "commit": "02096df3c53f95970c4347a57b43ee571c78a968"
+                },
+                {
+                    "type": "patch",
+                    "path": "../patches/gegl-0.4.72/0001-tile-backend-buffer-do-not-dup-damaged-mipmap-tiles.patch"
                 }
             ],
             "buildsystem": "meson",
@@ -811,6 +815,9 @@
                 {
                     "type": "patch",
                     "use-git-am": true,
+                    "options": [
+                        "--exclude=gimp-data/*"
+                    ],
                     "paths": [
                         "../patches/gimp-3.2.8/0001-PhotoGIMP-Pro-factory-shortcutsrc-and-tool-options-f.patch",
                         "../patches/gimp-3.2.8/0002-PhotoGIMP-Pro-Photoshop-selection-modifiers.patch",
@@ -857,7 +864,8 @@
                         "../patches/gimp-3.2.8/0043-ChopGimp-Windows-build-pacman-exit-code.patch",
                         "../patches/gimp-3.2.8/0044-ChopGimp-own-Windows-mutexes-and-single-instance-win.patch",
                         "../patches/gimp-3.2.8/0045-ChopGimp-Windows-identity-of-the-executables.patch",
-                        "../patches/gimp-3.2.8/0046-ChopGimp-Inno-installer-named-ChopGimp.patch"
+                        "../patches/gimp-3.2.8/0046-ChopGimp-Inno-installer-named-ChopGimp.patch",
+                        "../patches/gimp-3.2.8/0047-ChopGimp-register-log-handler-enum-types-at-startup-.patch"
                     ]
                 }
             ],
