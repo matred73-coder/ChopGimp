@@ -841,7 +841,9 @@
                         "../patches/gimp-3.2.8/0027-ChopGimp-French-title-for-the-layer-effects-popover.patch",
                         "../patches/gimp-3.2.8/0028-ChopGimp-Shape-tool-U-rectangle-rounded-rectangle-el.patch",
                         "../patches/gimp-3.2.8/0029-ChopGimp-help-ids-for-the-new-tools-required-by-tool.patch",
-                        "../patches/gimp-3.2.8/0030-ChopGimp-silent-fallback-to-the-factory-toolrc-when-.patch"
+                        "../patches/gimp-3.2.8/0030-ChopGimp-silent-fallback-to-the-factory-toolrc-when-.patch",
+                        "../patches/gimp-3.2.8/0031-ChopGimp-create-path-fill-stroke-options-on-demand-f.patch",
+                        "../patches/gimp-3.2.8/0032-ChopGimp-ensure-fill-stroke-options-in-the-path-tool.patch"
                     ]
                 }
             ],

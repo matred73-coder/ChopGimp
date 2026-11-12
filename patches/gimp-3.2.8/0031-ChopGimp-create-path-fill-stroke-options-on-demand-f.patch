@@ -1,0 +1,157 @@
+From affc76a34823a681d37bbedefe2e77b147014076 Mon Sep 17 00:00:00 2001
+From: ChopGimp <mathieu.redon@proton.me>
+Date: Thu, 12 Nov 2026 07:09:45 +0100
+Subject: [PATCH 31/32] ChopGimp: create path fill/stroke options on demand
+ (fixes Shape tool crash in the options bar)
+
+---
+ app/display/gimpoptionsbar.c   |  3 ++
+ app/tools/chopgimp-shapetool.c |  2 +
+ app/tools/gimppathoptions.c    | 79 +++++++++++++++++++++-------------
+ app/tools/gimppathoptions.h    |  2 +
+ 4 files changed, 56 insertions(+), 30 deletions(-)
+
+diff --git a/app/display/gimpoptionsbar.c b/app/display/gimpoptionsbar.c
+index 759c0af..a70de9d 100644
+--- a/app/display/gimpoptionsbar.c
++++ b/app/display/gimpoptionsbar.c
+@@ -570,6 +570,9 @@ gimp_options_bar_widget (GObject     *options,
+                                        "gimp-gradient-editor",
+                                        _("Edit this gradient"));
+ 
++  if (GIMP_IS_PATH_OPTIONS (options) && prop[0] == '@')
++    gimp_path_options_ensure_fill_stroke (GIMP_PATH_OPTIONS (options));
++
+   if (GIMP_IS_PATH_OPTIONS (options) && ! strcmp (prop, "@fill-opacity"))
+     {
+       *packed = TRUE;
+diff --git a/app/tools/chopgimp-shapetool.c b/app/tools/chopgimp-shapetool.c
+index 4b53573..101ba7d 100644
+--- a/app/tools/chopgimp-shapetool.c
++++ b/app/tools/chopgimp-shapetool.c
+@@ -398,6 +398,8 @@ shape_create_layer (GimpShapeTool *shape,
+   if (! stroke)
+     return;
+ 
++  gimp_path_options_ensure_fill_stroke (popts);
++
+   ec   = g_type_class_ref (chopgimp_shape_type_get_type ());
+   ev   = g_enum_get_value (ec, options->shape_type);
+   name = gimp_enum_value_get_desc (ec, ev);
+diff --git a/app/tools/gimppathoptions.c b/app/tools/gimppathoptions.c
+index 1995991..3b9d084 100644
+--- a/app/tools/gimppathoptions.c
++++ b/app/tools/gimppathoptions.c
+@@ -521,6 +521,54 @@ button_append_modifier (GtkWidget       *button,
+   g_free (str);
+ }
+ 
++
++/*  ChopGimp: the fill and stroke options used for vector layers used to be
++ *  created only together with the Tool Options GUI. The options bar and the
++ *  Shape tool need them even when that GUI was never built.
++ */
++void
++gimp_path_options_ensure_fill_stroke (GimpPathOptions *options)
++{
++  g_return_if_fail (GIMP_IS_PATH_OPTIONS (options));
++
++  if (! options->fill_options)
++    {
++      options->fill_options =
++        gimp_fill_options_new (GIMP_CONTEXT (options)->gimp, NULL, FALSE);
++
++#define FILL_BIND(a)                                 \
++  g_object_bind_property (options, "fill-" #a,       \
++                          options->fill_options, #a, \
++                          G_BINDING_BIDIRECTIONAL | G_BINDING_SYNC_CREATE)
++      FILL_BIND (custom-style);
++      FILL_BIND (foreground);
++      FILL_BIND (pattern);
++#undef FILL_BIND
++    }
++
++  if (! options->stroke_options)
++    {
++      options->stroke_options =
++        gimp_stroke_options_new (GIMP_CONTEXT (options)->gimp, NULL, FALSE);
++
++#define STROKE_BIND(a)                                 \
++  g_object_bind_property (options, "stroke-" #a,       \
++                          options->stroke_options, #a, \
++                          G_BINDING_BIDIRECTIONAL | G_BINDING_SYNC_CREATE)
++      STROKE_BIND (custom-style);
++      STROKE_BIND (foreground);
++      STROKE_BIND (pattern);
++      STROKE_BIND (width);
++      STROKE_BIND (unit);
++      STROKE_BIND (cap-style);
++      STROKE_BIND (join-style);
++      STROKE_BIND (miter-limit);
++      STROKE_BIND (antialias);
++      STROKE_BIND (dash-offset);
++#undef STROKE_BIND
++    }
++}
++
+ GtkWidget *
+ gimp_path_options_gui (GimpToolOptions *tool_options)
+ {
+@@ -588,17 +636,7 @@ gimp_path_options_gui (GimpToolOptions *tool_options)
+     GtkWidget *frame;
+     GtkWidget *fill_editor;
+ 
+-    options->fill_options =
+-      gimp_fill_options_new (GIMP_CONTEXT (options)->gimp,
+-                             NULL, FALSE);
+-
+-#define FILL_BIND(a)                                 \
+-  g_object_bind_property (options, "fill-" #a,       \
+-                          options->fill_options, #a, \
+-                          G_BINDING_BIDIRECTIONAL | G_BINDING_SYNC_CREATE)
+-    FILL_BIND (custom-style);
+-    FILL_BIND (foreground);
+-    FILL_BIND (pattern);
++    gimp_path_options_ensure_fill_stroke (options);
+ 
+     fill_editor = gimp_fill_editor_new (options->fill_options,
+                                         TRUE, TRUE);
+@@ -614,25 +652,6 @@ gimp_path_options_gui (GimpToolOptions *tool_options)
+     GtkWidget *frame;
+     GtkWidget *stroke_editor;
+ 
+-    options->stroke_options =
+-      gimp_stroke_options_new (GIMP_CONTEXT (options)->gimp,
+-                               NULL, FALSE);
+-
+-#define STROKE_BIND(a)                                 \
+-  g_object_bind_property (options, "stroke-" #a,       \
+-                          options->stroke_options, #a, \
+-                          G_BINDING_BIDIRECTIONAL | G_BINDING_SYNC_CREATE)
+-    STROKE_BIND (custom-style);
+-    STROKE_BIND (foreground);
+-    STROKE_BIND (pattern);
+-    STROKE_BIND (width);
+-    STROKE_BIND (unit);
+-    STROKE_BIND (cap-style);
+-    STROKE_BIND (join-style);
+-    STROKE_BIND (miter-limit);
+-    STROKE_BIND (antialias);
+-    STROKE_BIND (dash-offset);
+-
+     stroke_editor = gimp_stroke_editor_new (options->stroke_options, 72.0,
+                                             TRUE, TRUE);
+     gtk_widget_set_visible (stroke_editor, TRUE);
+diff --git a/app/tools/gimppathoptions.h b/app/tools/gimppathoptions.h
+index d81933b..ede122e 100644
+--- a/app/tools/gimppathoptions.h
++++ b/app/tools/gimppathoptions.h
+@@ -69,3 +69,5 @@ struct _GimpPathOptions
+ GType       gimp_path_options_get_type (void);
+ 
+ GtkWidget * gimp_path_options_gui      (GimpToolOptions *tool_options);
++
++void        gimp_path_options_ensure_fill_stroke (GimpPathOptions *options);
+-- 
+2.53.0
+

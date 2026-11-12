@@ -1,0 +1,33 @@
+From da95289b85039ec799fbc4781a3588e68adba5d0 Mon Sep 17 00:00:00 2001
+From: ChopGimp <mathieu.redon@proton.me>
+Date: Thu, 12 Nov 2026 07:10:02 +0100
+Subject: [PATCH 32/32] ChopGimp: ensure fill/stroke options in the path tool
+
+---
+ app/tools/gimppathtool.c | 3 +++
+ 1 file changed, 3 insertions(+)
+
+diff --git a/app/tools/gimppathtool.c b/app/tools/gimppathtool.c
+index e9ffa3b..5d831f8 100644
+--- a/app/tools/gimppathtool.c
++++ b/app/tools/gimppathtool.c
+@@ -877,6 +877,7 @@ gimp_path_tool_create_vector_layer (GimpPathTool *path_tool)
+   GimpVectorLayer *layer;
+   GimpPathOptions *options = GIMP_PATH_TOOL_GET_OPTIONS (path_tool);
+   gboolean         needs_new_path;
++  gimp_path_options_ensure_fill_stroke (options);   /* ChopGimp */
+ 
+   if (! path_tool->current_image)
+     return;
+@@ -1042,6 +1043,8 @@ gimp_path_tool_set_layer (GimpPathTool    *path_tool,
+ 
+   options = GIMP_PATH_TOOL_GET_OPTIONS (path_tool);
+ 
++  gimp_path_options_ensure_fill_stroke (options);   /* ChopGimp */
++
+   if (path_tool->current_vector_layer)
+     {
+       layer_options = gimp_vector_layer_get_options (path_tool->current_vector_layer);
+-- 
+2.53.0
+

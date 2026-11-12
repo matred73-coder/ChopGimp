@@ -1,7 +1,7 @@
 From d4d3215d4c408cbe413c3f8acc9910a504ab6ee7 Mon Sep 17 00:00:00 2001
 From: ChopGimp <mathieu.redon@proton.me>
 Date: Wed, 11 Nov 2026 19:14:29 +0100
-Subject: [PATCH 15/30] ChopGimp: Photoshop stylus pressure buttons (size /
+Subject: [PATCH 15/32] ChopGimp: Photoshop stylus pressure buttons (size /
  opacity) in the options bar
 
 ---
