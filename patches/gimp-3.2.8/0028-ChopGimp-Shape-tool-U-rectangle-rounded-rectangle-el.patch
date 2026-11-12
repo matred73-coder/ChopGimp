@@ -1,0 +1,723 @@
+From 78843d6d9d16ec27e024d3e3cbf7b5974f860f04 Mon Sep 17 00:00:00 2001
+From: ChopGimp <mathieu.redon@proton.me>
+Date: Thu, 12 Nov 2026 06:41:51 +0100
+Subject: [PATCH 28/29] =?UTF-8?q?ChopGimp:=20Shape=20tool=20(U)=20?=
+ =?UTF-8?q?=E2=80=94=20rectangle,=20rounded=20rectangle,=20ellipse,=20poly?=
+ =?UTF-8?q?gon,=20star,=20line=20as=20vector=20layers?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+---
+ app/display/gimpoptionsbar.c   |   4 +
+ app/tools/chopgimp-shapetool.c | 582 +++++++++++++++++++++++++++++++++
+ app/tools/chopgimp-shapetool.h |  59 ++++
+ app/tools/gimp-tools.c         |   2 +
+ app/tools/meson.build          |   1 +
+ 5 files changed, 648 insertions(+)
+ create mode 100644 app/tools/chopgimp-shapetool.c
+ create mode 100644 app/tools/chopgimp-shapetool.h
+
+diff --git a/app/display/gimpoptionsbar.c b/app/display/gimpoptionsbar.c
+index 15f89a2..759c0af 100644
+--- a/app/display/gimpoptionsbar.c
++++ b/app/display/gimpoptionsbar.c
+@@ -160,6 +160,10 @@ static const BarSpec bar_specs[] =
+                                      "sample-merged", "use-info-window", NULL } },
+   { "gimp-measure-tool",           { "orientation", "use-info-window", NULL } },
+   { "gimp-zoom-tool",              { "zoom-type", "auto-resize", NULL } },
++  { "gimp-shape-tool",             { "shape-type", "corner-radius", "sides", "star-ratio",
++                                     "enable-fill", "fill-foreground", "@fill-opacity",
++                                     "enable-stroke", "stroke-foreground", "stroke-width",
++                                     "@stroke-opacity", "@stroke-dash", NULL } },
+   { "gimp-path-tool",              { "path-edit-mode", "path-polygonal",
+                                      "enable-fill", "fill-foreground", "@fill-opacity",
+                                      "enable-stroke", "stroke-foreground", "stroke-width",
+diff --git a/app/tools/chopgimp-shapetool.c b/app/tools/chopgimp-shapetool.c
+new file mode 100644
+index 0000000..ff9cad1
+--- /dev/null
++++ b/app/tools/chopgimp-shapetool.c
+@@ -0,0 +1,582 @@
++/* GIMP - The GNU Image Manipulation Program
++ * Copyright (C) 1995 Spencer Kimball and Peter Mattis
++ *
++ * chopgimp-shapetool.c — ChopGimp: Photoshop-like Shape tool (U)
++ *
++ * Drag on the canvas to draw a rectangle, rounded rectangle, ellipse,
++ * polygon, star or line. Shift constrains (square, circle, 45° line), Alt
++ * draws from the center. On release, the shape becomes a vector layer with
++ * the fill and stroke chosen in the options bar (same options as the path
++ * tool: fill/stroke enable, color or pattern, width, opacity, dashes).
++ *
++ * This program is free software: you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation; either version 3 of the License, or
++ * (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License
++ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
++ */
++
++#include "config.h"
++
++#include <gegl.h>
++#include <gtk/gtk.h>
++
++#include "libgimpbase/gimpbase.h"
++#include "libgimpconfig/gimpconfig.h"
++#include "libgimpmath/gimpmath.h"
++#include "libgimpwidgets/gimpwidgets.h"
++
++#include "tools-types.h"
++
++#include "core/gimp.h"
++#include "core/gimpcontext.h"
++#include "core/gimpfilloptions.h"
++#include "core/gimpimage.h"
++#include "core/gimpimage-undo.h"
++#include "core/gimpstrokeoptions.h"
++
++#include "path/gimpbezierstroke.h"
++#include "path/gimppath.h"
++#include "path/gimpvectorlayer.h"
++#include "path/gimpvectorlayeroptions.h"
++
++#include "widgets/gimpwidgets-utils.h"
++
++#include "display/gimpdisplay.h"
++
++#include "chopgimp-shapetool.h"
++#include "gimptoolcontrol.h"
++#include "gimptooloptions-gui.h"
++
++#include "gimp-intl.h"
++
++
++/*  ── options ─────────────────────────────────────────────────────── */
++
++enum
++{
++  PROP_0,
++  PROP_SHAPE_TYPE,
++  PROP_CORNER_RADIUS,
++  PROP_SIDES,
++  PROP_STAR_RATIO
++};
++
++static GType
++chopgimp_shape_type_get_type (void)
++{
++  static GType type = 0;
++
++  if (G_UNLIKELY (! type))
++    {
++      static const GEnumValue values[] =
++      {
++        { CHOPGIMP_SHAPE_RECTANGLE,         "CHOPGIMP_SHAPE_RECTANGLE",         "rectangle" },
++        { CHOPGIMP_SHAPE_ROUNDED_RECTANGLE, "CHOPGIMP_SHAPE_ROUNDED_RECTANGLE", "rounded-rectangle" },
++        { CHOPGIMP_SHAPE_ELLIPSE,           "CHOPGIMP_SHAPE_ELLIPSE",           "ellipse" },
++        { CHOPGIMP_SHAPE_POLYGON,           "CHOPGIMP_SHAPE_POLYGON",           "polygon" },
++        { CHOPGIMP_SHAPE_STAR,              "CHOPGIMP_SHAPE_STAR",              "star" },
++        { CHOPGIMP_SHAPE_LINE,              "CHOPGIMP_SHAPE_LINE",              "line" },
++        { 0, NULL, NULL }
++      };
++      static const GimpEnumDesc descs[] =
++      {
++        { CHOPGIMP_SHAPE_RECTANGLE,         "Rectangle",           NULL },
++        { CHOPGIMP_SHAPE_ROUNDED_RECTANGLE, "Rectangle arrondi",   NULL },
++        { CHOPGIMP_SHAPE_ELLIPSE,           "Ellipse",             NULL },
++        { CHOPGIMP_SHAPE_POLYGON,           "Polygone",            NULL },
++        { CHOPGIMP_SHAPE_STAR,              "Étoile",              NULL },
++        { CHOPGIMP_SHAPE_LINE,              "Ligne",               NULL },
++        { 0, NULL, NULL }
++      };
++
++      type = g_enum_register_static ("ChopGimpShapeType", values);
++      gimp_enum_set_value_descriptions (type, descs);
++    }
++
++  return type;
++}
++
++G_DEFINE_TYPE (GimpShapeOptions, gimp_shape_options, GIMP_TYPE_PATH_OPTIONS)
++
++static void
++gimp_shape_options_set_property (GObject      *object,
++                                 guint         property_id,
++                                 const GValue *value,
++                                 GParamSpec   *pspec)
++{
++  GimpShapeOptions *options = GIMP_SHAPE_OPTIONS (object);
++
++  switch (property_id)
++    {
++    case PROP_SHAPE_TYPE:    options->shape_type    = g_value_get_enum   (value); break;
++    case PROP_CORNER_RADIUS: options->corner_radius = g_value_get_double (value); break;
++    case PROP_SIDES:         options->sides         = g_value_get_int    (value); break;
++    case PROP_STAR_RATIO:    options->star_ratio    = g_value_get_double (value); break;
++    default:
++      G_OBJECT_WARN_INVALID_PROPERTY_ID (object, property_id, pspec);
++      break;
++    }
++}
++
++static void
++gimp_shape_options_get_property (GObject    *object,
++                                 guint       property_id,
++                                 GValue     *value,
++                                 GParamSpec *pspec)
++{
++  GimpShapeOptions *options = GIMP_SHAPE_OPTIONS (object);
++
++  switch (property_id)
++    {
++    case PROP_SHAPE_TYPE:    g_value_set_enum   (value, options->shape_type);    break;
++    case PROP_CORNER_RADIUS: g_value_set_double (value, options->corner_radius); break;
++    case PROP_SIDES:         g_value_set_int    (value, options->sides);         break;
++    case PROP_STAR_RATIO:    g_value_set_double (value, options->star_ratio);    break;
++    default:
++      G_OBJECT_WARN_INVALID_PROPERTY_ID (object, property_id, pspec);
++      break;
++    }
++}
++
++static void
++gimp_shape_options_class_init (GimpShapeOptionsClass *klass)
++{
++  GObjectClass *object_class = G_OBJECT_CLASS (klass);
++
++  object_class->set_property = gimp_shape_options_set_property;
++  object_class->get_property = gimp_shape_options_get_property;
++
++  GIMP_CONFIG_PROP_ENUM (object_class, PROP_SHAPE_TYPE,
++                         "shape-type", "Forme", NULL,
++                         chopgimp_shape_type_get_type (),
++                         CHOPGIMP_SHAPE_RECTANGLE,
++                         GIMP_PARAM_STATIC_STRINGS);
++  GIMP_CONFIG_PROP_DOUBLE (object_class, PROP_CORNER_RADIUS,
++                           "corner-radius", "Rayon des angles", NULL,
++                           0.0, 2000.0, 20.0,
++                           GIMP_PARAM_STATIC_STRINGS);
++  GIMP_CONFIG_PROP_INT (object_class, PROP_SIDES,
++                        "sides", "Côtés", NULL,
++                        3, 64, 6,
++                        GIMP_PARAM_STATIC_STRINGS);
++  GIMP_CONFIG_PROP_DOUBLE (object_class, PROP_STAR_RATIO,
++                           "star-ratio", "Creux de l'étoile", NULL,
++                           0.05, 0.95, 0.5,
++                           GIMP_PARAM_STATIC_STRINGS);
++}
++
++static void
++gimp_shape_options_init (GimpShapeOptions *options)
++{
++}
++
++
++/*  ── tool ────────────────────────────────────────────────────────── */
++
++G_DEFINE_TYPE (GimpShapeTool, gimp_shape_tool, GIMP_TYPE_DRAW_TOOL)
++
++#define parent_class gimp_shape_tool_parent_class
++
++void
++gimp_shape_tool_register (GimpToolRegisterCallback  callback,
++                          gpointer                  data)
++{
++  (* callback) (GIMP_TYPE_SHAPE_TOOL,
++                GIMP_TYPE_SHAPE_OPTIONS,
++                gimp_tool_options_empty_gui,
++                0,
++                "gimp-shape-tool",
++                _("Forme"),
++                _("Forme : dessiner un rectangle, une ellipse, un polygone, une étoile ou "
++                  "une ligne en calque vectoriel (Maj : proportions, Alt : depuis le centre)"),
++                N_("_Forme"), "U",
++                NULL, NULL,
++                "chopgimp-tool-shape",
++                data);
++}
++
++/*  bounding box of the shape being drawn, in image coordinates  */
++static void
++shape_bounds (GimpShapeTool *shape,
++              gdouble       *x,
++              gdouble       *y,
++              gdouble       *w,
++              gdouble       *h)
++{
++  gdouble dx = shape->cur_x - shape->start_x;
++  gdouble dy = shape->cur_y - shape->start_y;
++
++  if (shape->constrain)
++    {
++      gdouble m = MAX (fabs (dx), fabs (dy));
++
++      dx = (dx < 0) ? -m : m;
++      dy = (dy < 0) ? -m : m;
++    }
++
++  if (shape->from_center)
++    {
++      *x = shape->start_x - fabs (dx);
++      *y = shape->start_y - fabs (dy);
++      *w = 2 * fabs (dx);
++      *h = 2 * fabs (dy);
++    }
++  else
++    {
++      *x = MIN (shape->start_x, shape->start_x + dx);
++      *y = MIN (shape->start_y, shape->start_y + dy);
++      *w = fabs (dx);
++      *h = fabs (dy);
++    }
++}
++
++/*  end point of a line, with 45° constraint  */
++static void
++shape_line_end (GimpShapeTool *shape,
++                gdouble       *x,
++                gdouble       *y)
++{
++  gdouble dx = shape->cur_x - shape->start_x;
++  gdouble dy = shape->cur_y - shape->start_y;
++
++  if (shape->constrain)
++    {
++      gdouble len   = sqrt (dx * dx + dy * dy);
++      gdouble angle = RINT (atan2 (dy, dx) / (G_PI / 4)) * (G_PI / 4);
++
++      dx = len * cos (angle);
++      dy = len * sin (angle);
++    }
++
++  *x = shape->start_x + dx;
++  *y = shape->start_y + dy;
++}
++
++/*  polygon / star vertices inscribed in the box  */
++static gint
++shape_vertices (GimpShapeOptions *options,
++                gdouble x, gdouble y, gdouble w, gdouble h,
++                GimpVector2 *pts)
++{
++  gboolean star = options->shape_type == CHOPGIMP_SHAPE_STAR;
++  gint     n    = star ? options->sides * 2 : options->sides;
++  gdouble  cx   = x + w / 2, cy = y + h / 2;
++  gint     i;
++
++  for (i = 0; i < n; i++)
++    {
++      gdouble a = -G_PI / 2 + 2 * G_PI * i / n;
++      gdouble r = (star && (i % 2)) ? options->star_ratio : 1.0;
++
++      pts[i].x = cx + r * (w / 2) * cos (a);
++      pts[i].y = cy + r * (h / 2) * sin (a);
++    }
++
++  return n;
++}
++
++static GimpCoords
++xy (gdouble x, gdouble y)
++{
++  GimpCoords c = GIMP_COORDS_DEFAULT_VALUES;
++
++  c.x = x;
++  c.y = y;
++  return c;
++}
++
++static GimpStroke *
++shape_build_stroke (GimpShapeTool    *shape,
++                    GimpShapeOptions *options)
++{
++  GimpStroke  *stroke = NULL;
++  GimpCoords   c, c1, c2;
++  gdouble      x, y, w, h;
++  GimpVector2  pts[130];
++  gint         n, i;
++
++  shape_bounds (shape, &x, &y, &w, &h);
++
++  switch (options->shape_type)
++    {
++    case CHOPGIMP_SHAPE_LINE:
++      {
++        gdouble ex, ey;
++
++        shape_line_end (shape, &ex, &ey);
++        c      = xy (shape->start_x, shape->start_y);
++        stroke = gimp_bezier_stroke_new_moveto (&c);
++        c      = xy (ex, ey);
++        gimp_bezier_stroke_lineto (stroke, &c);
++      }
++      return stroke;
++
++    case CHOPGIMP_SHAPE_ELLIPSE:
++      c = xy (x + w / 2, y + h / 2);
++      return gimp_bezier_stroke_new_ellipse (&c, w / 2, h / 2, 0.0);
++
++    case CHOPGIMP_SHAPE_ROUNDED_RECTANGLE:
++      {
++        gdouble r = MIN (options->corner_radius, MIN (w, h) / 2);
++        gdouble k = r * 0.5523;   /* cubic approximation of a quarter circle */
++
++        if (r > 0.5)
++          {
++            c = xy (x + r, y);           stroke = gimp_bezier_stroke_new_moveto (&c);
++            c = xy (x + w - r, y);       gimp_bezier_stroke_lineto (stroke, &c);
++            c1 = xy (x + w - r + k, y);  c2 = xy (x + w, y + r - k);  c = xy (x + w, y + r);
++            gimp_bezier_stroke_cubicto (stroke, &c1, &c2, &c);
++            c = xy (x + w, y + h - r);   gimp_bezier_stroke_lineto (stroke, &c);
++            c1 = xy (x + w, y + h - r + k);  c2 = xy (x + w - r + k, y + h);  c = xy (x + w - r, y + h);
++            gimp_bezier_stroke_cubicto (stroke, &c1, &c2, &c);
++            c = xy (x + r, y + h);       gimp_bezier_stroke_lineto (stroke, &c);
++            c1 = xy (x + r - k, y + h);  c2 = xy (x, y + h - r + k);  c = xy (x, y + h - r);
++            gimp_bezier_stroke_cubicto (stroke, &c1, &c2, &c);
++            c = xy (x, y + r);           gimp_bezier_stroke_lineto (stroke, &c);
++            c1 = xy (x, y + r - k);      c2 = xy (x + r - k, y);  c = xy (x + r, y);
++            gimp_bezier_stroke_cubicto (stroke, &c1, &c2, &c);
++            gimp_stroke_close (stroke);
++            return stroke;
++          }
++      }
++      /* fall through: radius 0 = plain rectangle */
++
++    case CHOPGIMP_SHAPE_RECTANGLE:
++      pts[0].x = x;     pts[0].y = y;
++      pts[1].x = x + w; pts[1].y = y;
++      pts[2].x = x + w; pts[2].y = y + h;
++      pts[3].x = x;     pts[3].y = y + h;
++      n = 4;
++      break;
++
++    case CHOPGIMP_SHAPE_POLYGON:
++    case CHOPGIMP_SHAPE_STAR:
++      n = shape_vertices (options, x, y, w, h, pts);
++      break;
++
++    default:
++      return NULL;
++    }
++
++  c      = xy (pts[0].x, pts[0].y);
++  stroke = gimp_bezier_stroke_new_moveto (&c);
++
++  for (i = 1; i < n; i++)
++    {
++      c = xy (pts[i].x, pts[i].y);
++      gimp_bezier_stroke_lineto (stroke, &c);
++    }
++
++  gimp_stroke_close (stroke);
++
++  return stroke;
++}
++
++static void
++shape_create_layer (GimpShapeTool *shape,
++                    GimpDisplay   *display)
++{
++  GimpShapeOptions *options = GIMP_SHAPE_OPTIONS (gimp_tool_get_options (GIMP_TOOL (shape)));
++  GimpPathOptions  *popts   = GIMP_PATH_OPTIONS (options);
++  GimpImage        *image   = gimp_display_get_image (display);
++  GimpStroke       *stroke  = shape_build_stroke (shape, options);
++  GimpPath         *path;
++  GimpVectorLayer  *layer;
++  gboolean          is_line = options->shape_type == CHOPGIMP_SHAPE_LINE;
++  GEnumValue       *ev;
++  GEnumClass       *ec;
++  const gchar      *name;
++
++  if (! stroke)
++    return;
++
++  ec   = g_type_class_ref (chopgimp_shape_type_get_type ());
++  ev   = g_enum_get_value (ec, options->shape_type);
++  name = gimp_enum_value_get_desc (ec, ev);
++
++  gimp_image_undo_group_start (image, GIMP_UNDO_GROUP_DRAWABLE, name);
++
++  path = gimp_path_new (image, name);
++  gimp_path_stroke_add (path, stroke);
++  g_object_unref (stroke);
++  gimp_image_add_path (image, path, GIMP_IMAGE_ACTIVE_PARENT, -1, TRUE);
++
++  layer = gimp_vector_layer_new (image, path, gimp_get_user_context (image->gimp));
++
++  g_object_set (layer->options,
++                "enable-fill",   is_line ? FALSE : popts->enable_fill,
++                "enable-stroke", is_line ? TRUE  : popts->enable_stroke,
++                NULL);
++  gimp_config_sync (G_OBJECT (popts->fill_options),
++                    G_OBJECT (layer->options->fill_options), 0);
++  gimp_config_sync (G_OBJECT (popts->stroke_options),
++                    G_OBJECT (layer->options->stroke_options), 0);
++
++  gimp_image_add_layer (image, GIMP_LAYER (layer), GIMP_IMAGE_ACTIVE_PARENT, -1, TRUE);
++  gimp_vector_layer_refresh (layer);
++
++  gimp_image_undo_group_end (image);
++  gimp_image_flush (image);
++
++  g_type_class_unref (ec);
++}
++
++static void
++gimp_shape_tool_button_press (GimpTool            *tool,
++                              const GimpCoords    *coords,
++                              guint32              time,
++                              GdkModifierType      state,
++                              GimpButtonPressType  press_type,
++                              GimpDisplay         *display)
++{
++  GimpShapeTool *shape = GIMP_SHAPE_TOOL (tool);
++
++  if (gimp_draw_tool_is_active (GIMP_DRAW_TOOL (tool)))
++    gimp_draw_tool_stop (GIMP_DRAW_TOOL (tool));
++
++  tool->display = display;
++
++  shape->start_x = shape->cur_x = coords->x;
++  shape->start_y = shape->cur_y = coords->y;
++  shape->constrain   = (state & gimp_get_extend_selection_mask ()) != 0;
++  shape->from_center = (state & GDK_MOD1_MASK) != 0;
++
++  gimp_tool_control_activate (tool->control);
++  gimp_draw_tool_start (GIMP_DRAW_TOOL (tool), display);
++}
++
++static void
++gimp_shape_tool_motion (GimpTool         *tool,
++                        const GimpCoords *coords,
++                        guint32           time,
++                        GdkModifierType   state,
++                        GimpDisplay      *display)
++{
++  GimpShapeTool *shape = GIMP_SHAPE_TOOL (tool);
++
++  gimp_draw_tool_pause (GIMP_DRAW_TOOL (tool));
++
++  shape->cur_x       = coords->x;
++  shape->cur_y       = coords->y;
++  shape->constrain   = (state & gimp_get_extend_selection_mask ()) != 0;
++  shape->from_center = (state & GDK_MOD1_MASK) != 0;
++
++  gimp_draw_tool_resume (GIMP_DRAW_TOOL (tool));
++}
++
++static void
++gimp_shape_tool_active_modifier_key (GimpTool        *tool,
++                                     GdkModifierType  key,
++                                     gboolean         press,
++                                     GdkModifierType  state,
++                                     GimpDisplay     *display)
++{
++  GimpShapeTool *shape = GIMP_SHAPE_TOOL (tool);
++
++  gimp_draw_tool_pause (GIMP_DRAW_TOOL (tool));
++  shape->constrain   = (state & gimp_get_extend_selection_mask ()) != 0;
++  shape->from_center = (state & GDK_MOD1_MASK) != 0;
++  gimp_draw_tool_resume (GIMP_DRAW_TOOL (tool));
++}
++
++static void
++gimp_shape_tool_button_release (GimpTool              *tool,
++                                const GimpCoords      *coords,
++                                guint32                time,
++                                GdkModifierType        state,
++                                GimpButtonReleaseType  release_type,
++                                GimpDisplay           *display)
++{
++  GimpShapeTool *shape = GIMP_SHAPE_TOOL (tool);
++  gdouble        x, y, w, h;
++
++  gimp_tool_control_halt (tool->control);
++  gimp_draw_tool_stop (GIMP_DRAW_TOOL (tool));
++
++  if (release_type == GIMP_BUTTON_RELEASE_CANCEL)
++    return;
++
++  shape_bounds (shape, &x, &y, &w, &h);
++
++  if (GIMP_SHAPE_OPTIONS (gimp_tool_get_options (tool))->shape_type == CHOPGIMP_SHAPE_LINE)
++    {
++      if (fabs (shape->cur_x - shape->start_x) + fabs (shape->cur_y - shape->start_y) < 2)
++        return;
++    }
++  else if (w < 2 || h < 2)
++    {
++      return;
++    }
++
++  shape_create_layer (shape, display);
++}
++
++static void
++gimp_shape_tool_draw (GimpDrawTool *draw_tool)
++{
++  GimpShapeTool    *shape   = GIMP_SHAPE_TOOL (draw_tool);
++  GimpShapeOptions *options = GIMP_SHAPE_OPTIONS (gimp_tool_get_options (GIMP_TOOL (draw_tool)));
++  gdouble           x, y, w, h;
++  GimpVector2       pts[130];
++  gint              n;
++
++  shape_bounds (shape, &x, &y, &w, &h);
++
++  switch (options->shape_type)
++    {
++    case CHOPGIMP_SHAPE_LINE:
++      {
++        gdouble ex, ey;
++
++        shape_line_end (shape, &ex, &ey);
++        gimp_draw_tool_add_line (draw_tool, shape->start_x, shape->start_y, ex, ey);
++      }
++      break;
++
++    case CHOPGIMP_SHAPE_ELLIPSE:
++      gimp_draw_tool_add_arc (draw_tool, FALSE, x, y, w, h, 0.0, 2 * G_PI);
++      break;
++
++    case CHOPGIMP_SHAPE_POLYGON:
++    case CHOPGIMP_SHAPE_STAR:
++      n = shape_vertices (options, x, y, w, h, pts);
++      gimp_draw_tool_add_lines (draw_tool, pts, n, NULL, FALSE);
++      gimp_draw_tool_add_line (draw_tool, pts[n - 1].x, pts[n - 1].y, pts[0].x, pts[0].y);
++      break;
++
++    default:
++      gimp_draw_tool_add_rectangle (draw_tool, FALSE, x, y, w, h);
++      break;
++    }
++}
++
++static void
++gimp_shape_tool_class_init (GimpShapeToolClass *klass)
++{
++  GimpToolClass     *tool_class      = GIMP_TOOL_CLASS (klass);
++  GimpDrawToolClass *draw_tool_class = GIMP_DRAW_TOOL_CLASS (klass);
++
++  tool_class->button_press        = gimp_shape_tool_button_press;
++  tool_class->button_release      = gimp_shape_tool_button_release;
++  tool_class->motion              = gimp_shape_tool_motion;
++  tool_class->active_modifier_key = gimp_shape_tool_active_modifier_key;
++
++  draw_tool_class->draw = gimp_shape_tool_draw;
++}
++
++static void
++gimp_shape_tool_init (GimpShapeTool *shape)
++{
++  GimpTool *tool = GIMP_TOOL (shape);
++
++  gimp_tool_control_set_tool_cursor (tool->control, GIMP_TOOL_CURSOR_RECT_SELECT);
++  gimp_tool_control_set_precision   (tool->control, GIMP_CURSOR_PRECISION_SUBPIXEL);
++}
+diff --git a/app/tools/chopgimp-shapetool.h b/app/tools/chopgimp-shapetool.h
+new file mode 100644
+index 0000000..ed56e70
+--- /dev/null
++++ b/app/tools/chopgimp-shapetool.h
+@@ -0,0 +1,59 @@
++/* GIMP - The GNU Image Manipulation Program
++ * chopgimp-shapetool.h — ChopGimp: Photoshop-like Shape tool (U)
++ *
++ * This program is free software: you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation; either version 3 of the License, or
++ * (at your option) any later version.
++ */
++
++#pragma once
++
++#include "gimpdrawtool.h"
++#include "gimppathoptions.h"
++
++typedef enum
++{
++  CHOPGIMP_SHAPE_RECTANGLE,
++  CHOPGIMP_SHAPE_ROUNDED_RECTANGLE,
++  CHOPGIMP_SHAPE_ELLIPSE,
++  CHOPGIMP_SHAPE_POLYGON,
++  CHOPGIMP_SHAPE_STAR,
++  CHOPGIMP_SHAPE_LINE
++} ChopGimpShapeType;
++
++#define GIMP_TYPE_SHAPE_OPTIONS  (gimp_shape_options_get_type ())
++#define GIMP_SHAPE_OPTIONS(obj)  (G_TYPE_CHECK_INSTANCE_CAST ((obj), GIMP_TYPE_SHAPE_OPTIONS, GimpShapeOptions))
++#define GIMP_TYPE_SHAPE_TOOL     (gimp_shape_tool_get_type ())
++#define GIMP_SHAPE_TOOL(obj)     (G_TYPE_CHECK_INSTANCE_CAST ((obj), GIMP_TYPE_SHAPE_TOOL, GimpShapeTool))
++
++typedef struct _GimpShapeOptions      GimpShapeOptions;
++typedef struct _GimpToolOptionsClass  GimpShapeOptionsClass;
++typedef struct _GimpShapeTool     GimpShapeTool;
++typedef struct _GimpDrawToolClass GimpShapeToolClass;
++
++struct _GimpShapeOptions
++{
++  GimpPathOptions    parent_instance;
++
++  ChopGimpShapeType  shape_type;
++  gdouble            corner_radius;
++  gint               sides;
++  gdouble            star_ratio;
++};
++
++struct _GimpShapeTool
++{
++  GimpDrawTool  parent_instance;
++
++  gdouble       start_x, start_y;
++  gdouble       cur_x,   cur_y;
++  gboolean      constrain;
++  gboolean      from_center;
++};
++
++GType   gimp_shape_options_get_type (void) G_GNUC_CONST;
++GType   gimp_shape_tool_get_type    (void) G_GNUC_CONST;
++
++void    gimp_shape_tool_register    (GimpToolRegisterCallback  callback,
++                                     gpointer                  data);
+diff --git a/app/tools/gimp-tools.c b/app/tools/gimp-tools.c
+index e60d50d..cdff455 100644
+--- a/app/tools/gimp-tools.c
++++ b/app/tools/gimp-tools.c
+@@ -71,6 +71,7 @@
+ #include "gimppathtool.h"
+ #include "gimpmagnifytool.h"
+ #include "chopgimp-viewtools.h"
++#include "chopgimp-shapetool.h"
+ #include "gimpmeasuretool.h"
+ #include "gimpmovetool.h"
+ #include "gimpmybrushtool.h"
+@@ -147,6 +148,7 @@ gimp_tools_init (Gimp *gimp)
+     /*  path tool */
+ 
+     gimp_path_tool_register,
++    gimp_shape_tool_register,         /* ChopGimp (Photoshop U) */
+ 
+     /*  non-modifying tools  */
+ 
+diff --git a/app/tools/meson.build b/app/tools/meson.build
+index 7eef70c..eb009d7 100644
+--- a/app/tools/meson.build
++++ b/app/tools/meson.build
+@@ -80,6 +80,7 @@ libapptools_sources = [
+   'gimpmovetool.c',
+   'chopgimp-tools.c',
+   'chopgimp-viewtools.c',
++  'chopgimp-shapetool.c',
+   'gimpmybrushoptions-gui.c',
+   'gimpmybrushtool.c',
+   'gimpnpointdeformationoptions.c',
+-- 
+2.53.0
+

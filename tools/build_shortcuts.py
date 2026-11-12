@@ -48,11 +48,14 @@ PS_MAP = [
     ("Outils", "tools-eraser",             ["e"],            "Gomme"),
     ("Outils", "tools-gradient",           ["g"],            "Dégradé"),
     ("Outils", "tools-bucket-fill",        [S + "g"],        "Pot de peinture"),
-    ("Outils", "tools-convolve",           ["r"],            "Goutte d'eau / Netteté (R libre : pas de rotation de vue)"),
-    ("Outils", "tools-smudge",             [S + "r"],        "Doigt"),
+    ("Outils", "tools-convolve",           [S + "r"],        "Goutte d'eau / Netteté"),
+    ("Outils", "tools-hand",               ["h"],            "Main"),
+    ("Outils", "tools-rotate-view",        ["r"],            "Rotation de la vue"),
+    ("Outils", "tools-smudge",             [S + A + "r"],    "Doigt"),
     ("Outils", "tools-dodge-burn",         ["o"],            "Densité − / +"),
     ("Outils", "tools-path",               ["p"],            "Plume"),
     ("Outils", "tools-text",               ["t"],            "Texte"),
+    ("Outils", "tools-shape",              ["u"],            "Forme (rectangle, ellipse, polygone, étoile, ligne)"),
     ("Outils", "tools-zoom",               ["z"],            "Zoom"),
     ("Outils", "tools-unified-transform",  [P + "t"],        "Transformation manuelle (Ctrl+T)"),
     ("Outils", "tools-scale",              [P + A + "t"],    "Mise à l'échelle"),
@@ -189,13 +192,14 @@ def norm(k):
 def main():
     global PS_MAP
     if "--v2" in sys.argv:   # GIMP non recompilé : actions ajoutées par les patchs absentes
-        PS_MAP = [e for e in PS_MAP if not e[1].startswith("tools-opacity-ps-")]
+        PS_MAP = [e for e in PS_MAP if not e[1].startswith(("tools-opacity-ps-", "tools-hand",
+                                                             "tools-rotate-view", "tools-shape"))]
     defaults = json.load(open(DEFAULTS))
     errors = []
 
     # 1. actions valides
     for _, act, _, _ in PS_MAP:
-        if act not in defaults and not act.startswith(("photogimp-", "tools-opacity-ps-")):
+        if act not in defaults and not act.startswith(("photogimp-", "tools-opacity-ps-", "tools-hand", "tools-rotate-view", "tools-shape")):
             errors.append("action inconnue de GIMP 3.2.8 : %s" % act)
 
     # 2. aucune touche attribuée deux fois dans PS_MAP

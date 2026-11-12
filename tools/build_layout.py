@@ -27,15 +27,18 @@ TOOLBOX = [
     ("dodge-burn",),                                          # O
     ("path",),                                                # P
     ("text",),                                                # T
+    ("shape",),                                               # U
     ("unified-transform", "scale", "rotate", "shear", "flip",
      "transform-3d", "handle-transform", "warp", "cage", "offset"),  # Ctrl+T
+    ("hand", "rotate-view"),                                  # H / R
     ("zoom",),                                                # Z
 ]
 # Outils de réglage : accessibles par Image > Réglages, masqués de la boîte.
 HIDDEN = ["brightness-contrast", "threshold", "levels", "curves", "gegl"]
 
 ICON = {"dodge-burn": "gimp-tool-dodge", "convolve": "gimp-tool-blur",
-        "gegl": "gimp-gegl"}
+        "gegl": "gimp-gegl", "hand": "chopgimp-tool-hand",
+        "rotate-view": "chopgimp-tool-rotate-view", "shape": "chopgimp-tool-shape"}
 
 
 def info(tool, visible=True, indent=""):

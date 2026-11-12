@@ -51,6 +51,11 @@ OPTIONS = {
     # Tampon (S) / Correcteur (J) : « Aligné » comme Photoshop
     "gimp-clone-tool": {"align-mode": "yes"},
     "gimp-heal-tool": {"align-mode": "yes"},
+    # Forme (U) : fond bleu plein, sans contour (comme un calque de forme Photoshop)
+    "gimp-shape-tool": {"enable-fill": "yes", "enable-stroke": "no",
+                        "fill-foreground": '(color "R\'G\'B\' u8" 3 "\\050\\140\\240" 0)',
+                        "stroke-foreground": '(color "R\'G\'B\' u8" 3 "\\0\\0\\0" 0)',
+                        "stroke-width": "4.0"},
     # Zoom (Z) : ne redimensionne pas la fenêtre
     "gimp-zoom-tool": {"auto-resize": "no"},
 }

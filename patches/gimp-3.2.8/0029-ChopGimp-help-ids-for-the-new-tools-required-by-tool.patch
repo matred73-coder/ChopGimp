@@ -1,0 +1,49 @@
+From d1382f9923692ced026594aad8d6a14d0b1c8c4b Mon Sep 17 00:00:00 2001
+From: ChopGimp <mathieu.redon@proton.me>
+Date: Thu, 12 Nov 2026 06:46:44 +0100
+Subject: [PATCH 29/29] ChopGimp: help ids for the new tools (required by tool
+ registration)
+
+---
+ app/tools/chopgimp-shapetool.c | 2 +-
+ app/tools/chopgimp-viewtools.c | 4 ++--
+ 2 files changed, 3 insertions(+), 3 deletions(-)
+
+diff --git a/app/tools/chopgimp-shapetool.c b/app/tools/chopgimp-shapetool.c
+index ff9cad1..4b53573 100644
+--- a/app/tools/chopgimp-shapetool.c
++++ b/app/tools/chopgimp-shapetool.c
+@@ -198,7 +198,7 @@ gimp_shape_tool_register (GimpToolRegisterCallback  callback,
+                 _("Forme : dessiner un rectangle, une ellipse, un polygone, une étoile ou "
+                   "une ligne en calque vectoriel (Maj : proportions, Alt : depuis le centre)"),
+                 N_("_Forme"), "U",
+-                NULL, NULL,
++                NULL, "gimp-tool-shape",
+                 "chopgimp-tool-shape",
+                 data);
+ }
+diff --git a/app/tools/chopgimp-viewtools.c b/app/tools/chopgimp-viewtools.c
+index b782efa..9b88b37 100644
+--- a/app/tools/chopgimp-viewtools.c
++++ b/app/tools/chopgimp-viewtools.c
+@@ -64,7 +64,7 @@ gimp_hand_tool_register (GimpToolRegisterCallback  callback,
+                 _("Main"),
+                 _("Main : faire défiler l'image en glissant"),
+                 N_("_Main"), "H",
+-                NULL, NULL,
++                NULL, "gimp-tool-hand",
+                 "chopgimp-tool-hand",
+                 data);
+ }
+@@ -82,7 +82,7 @@ gimp_rotate_view_tool_register (GimpToolRegisterCallback  callback,
+                 _("Rotation de la vue : faire pivoter l'affichage (Maj : par pas de 15°, "
+                   "double-clic : remettre droit)"),
+                 N_("_Rotation de la vue"), "R",
+-                NULL, NULL,
++                NULL, "gimp-tool-rotate-view",
+                 "chopgimp-tool-rotate-view",
+                 data);
+ }
+-- 
+2.53.0
+

@@ -630,6 +630,35 @@ def _pressure_opacity():
     return s
 
 
+@icon("chopgimp-tool-hand")
+def _hand():
+    # Main ouverte : paume + 4 doigts + pouce (formes pleines)
+    s = rect(4.6, 7.2, 8.0, 6.8, 2.4)
+    for x, top in [(4.6, 2.8), (6.7, 1.6), (8.8, 1.8), (10.9, 3.2)]:
+        s += rect(x, top, 1.8, 7.6, 0.9)
+    thumb = rotate([(0, 0), (1.8, 0), (1.8, 4.6), (0, 4.6)], 0, 0, -40)
+    s += polygon([(1.6 + x, 8.4 + y) for x, y in thumb])
+    return s
+
+
+@icon("chopgimp-tool-rotate-view")
+def _rotate_view():
+    # Flèche circulaire + petite feuille (rotation de la vue)
+    s = arc(8, 8, 6.0, 200, 470, 1.3)
+    a = math.radians(472)
+    s += arrow_head(8 + 6.0 * math.cos(a), 8 + 6.0 * math.sin(a), 562, 2.8)
+    s += rect(6.0, 5.2, 4.0, 5.6, 0.8)
+    return s
+
+
+@icon("chopgimp-tool-shape")
+def _shape():
+    # Carré + cercle superposés (outil Forme)
+    s = rect(1.5, 1.5, 8.5, 8.5, 0.6)
+    s += ring(10.5, 10.5, 4.6, 1.3)
+    return s
+
+
 def main():
     os.makedirs(OUT, exist_ok=True)
     for name, fn in sorted(ICONS.items()):

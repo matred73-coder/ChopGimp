@@ -1,7 +1,7 @@
 From 7150a89e1efee7148866c0cddbcd0a1d7470a0cb Mon Sep 17 00:00:00 2001
 From: ChopGimp <mathieu.redon@proton.me>
 Date: Wed, 11 Nov 2026 12:53:32 +0100
-Subject: [PATCH 09/24] PhotoGIMP Pro: Photoshop-like horizontal tool options
+Subject: [PATCH 09/29] PhotoGIMP Pro: Photoshop-like horizontal tool options
  bar
 
 A new GimpOptionsBar below the menubar follows the active tool and shows its

@@ -1,0 +1,25 @@
+From 9d582aa34a1c51f7c54e4767c15b65b94211c4e0 Mon Sep 17 00:00:00 2001
+From: ChopGimp <mathieu.redon@proton.me>
+Date: Thu, 12 Nov 2026 06:33:45 +0100
+Subject: [PATCH 27/29] ChopGimp: French title for the layer effects popover
+
+---
+ app/widgets/gimpdrawabletreeview-filters.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/app/widgets/gimpdrawabletreeview-filters.c b/app/widgets/gimpdrawabletreeview-filters.c
+index ef66875..9691953 100644
+--- a/app/widgets/gimpdrawabletreeview-filters.c
++++ b/app/widgets/gimpdrawabletreeview-filters.c
+@@ -166,7 +166,7 @@ _gimp_drawable_tree_view_filter_editor_show (GimpDrawableTreeView *view,
+       /*  top label  */
+       label = gtk_label_new (NULL);
+       text = g_strdup_printf ("<b>%s</b>",
+-                              _("Layer Effects"));
++                              _("Effets de calque"));   /* ChopGimp */
+       gtk_label_set_markup (GTK_LABEL (label), text);
+       g_free (text);
+       gtk_box_pack_start (GTK_BOX (vbox), label, FALSE, FALSE, 0);
+-- 
+2.53.0
+

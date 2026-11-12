@@ -1,0 +1,344 @@
+From fad33b713eea677c8a6778d866c2b15e2cbd7092 Mon Sep 17 00:00:00 2001
+From: ChopGimp <mathieu.redon@proton.me>
+Date: Thu, 12 Nov 2026 06:33:19 +0100
+Subject: [PATCH 26/29] ChopGimp: Hand (H) and Rotate View (R) tools
+
+---
+ app/tools/chopgimp-viewtools.c | 243 +++++++++++++++++++++++++++++++++
+ app/tools/chopgimp-viewtools.h |  39 ++++++
+ app/tools/gimp-tools.c         |   3 +
+ app/tools/meson.build          |   1 +
+ 4 files changed, 286 insertions(+)
+ create mode 100644 app/tools/chopgimp-viewtools.c
+ create mode 100644 app/tools/chopgimp-viewtools.h
+
+diff --git a/app/tools/chopgimp-viewtools.c b/app/tools/chopgimp-viewtools.c
+new file mode 100644
+index 0000000..b782efa
+--- /dev/null
++++ b/app/tools/chopgimp-viewtools.c
+@@ -0,0 +1,243 @@
++/* GIMP - The GNU Image Manipulation Program
++ * Copyright (C) 1995 Spencer Kimball and Peter Mattis
++ *
++ * chopgimp-viewtools.c — ChopGimp: Photoshop Hand (H) and Rotate View (R)
++ *
++ * This program is free software: you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation; either version 3 of the License, or
++ * (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License
++ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
++ */
++
++#include "config.h"
++
++#include <gegl.h>
++#include <gtk/gtk.h>
++
++#include "libgimpwidgets/gimpwidgets.h"
++
++#include "tools-types.h"
++
++#include "core/gimptooloptions.h"
++
++#include "widgets/gimpwidgets-utils.h"
++
++#include "display/gimpdisplay.h"
++#include "display/gimpdisplayshell.h"
++#include "display/gimpdisplayshell-rotate.h"
++#include "display/gimpdisplayshell-scroll.h"
++#include "display/gimpdisplayshell-transform.h"
++
++#include "chopgimp-viewtools.h"
++#include "gimptoolcontrol.h"
++#include "gimptooloptions-gui.h"
++
++#include "gimp-intl.h"
++
++
++typedef GimpViewDragTool      GimpHandTool;
++typedef GimpViewDragToolClass GimpHandToolClass;
++typedef GimpViewDragTool      GimpRotateViewTool;
++typedef GimpViewDragToolClass GimpRotateViewToolClass;
++
++G_DEFINE_TYPE (GimpHandTool,       gimp_hand_tool,        GIMP_TYPE_TOOL)
++G_DEFINE_TYPE (GimpRotateViewTool, gimp_rotate_view_tool, GIMP_TYPE_TOOL)
++
++
++void
++gimp_hand_tool_register (GimpToolRegisterCallback  callback,
++                         gpointer                  data)
++{
++  (* callback) (GIMP_TYPE_HAND_TOOL,
++                GIMP_TYPE_TOOL_OPTIONS,
++                gimp_tool_options_empty_gui,
++                0,
++                "gimp-hand-tool",
++                _("Main"),
++                _("Main : faire défiler l'image en glissant"),
++                N_("_Main"), "H",
++                NULL, NULL,
++                "chopgimp-tool-hand",
++                data);
++}
++
++void
++gimp_rotate_view_tool_register (GimpToolRegisterCallback  callback,
++                                gpointer                  data)
++{
++  (* callback) (GIMP_TYPE_ROTATE_VIEW_TOOL,
++                GIMP_TYPE_TOOL_OPTIONS,
++                gimp_tool_options_empty_gui,
++                0,
++                "gimp-rotate-view-tool",
++                _("Rotation de la vue"),
++                _("Rotation de la vue : faire pivoter l'affichage (Maj : par pas de 15°, "
++                  "double-clic : remettre droit)"),
++                N_("_Rotation de la vue"), "R",
++                NULL, NULL,
++                "chopgimp-tool-rotate-view",
++                data);
++}
++
++
++/*  common: remember the pointer position in window coordinates  */
++
++static void
++view_drag_store (GimpTool         *tool,
++                 const GimpCoords *coords,
++                 GimpDisplay      *display)
++{
++  GimpViewDragTool *vt    = (GimpViewDragTool *) tool;
++  GimpDisplayShell *shell = gimp_display_get_shell (display);
++
++  gimp_display_shell_transform_xy_f (shell, coords->x, coords->y,
++                                     &vt->last_x, &vt->last_y);
++}
++
++static void
++view_drag_button_press (GimpTool            *tool,
++                        const GimpCoords    *coords,
++                        guint32              time,
++                        GdkModifierType      state,
++                        GimpButtonPressType  press_type,
++                        GimpDisplay         *display)
++{
++  tool->display = display;
++  view_drag_store (tool, coords, display);
++  gimp_tool_control_activate (tool->control);
++}
++
++static void
++view_drag_button_release (GimpTool              *tool,
++                          const GimpCoords      *coords,
++                          guint32                time,
++                          GdkModifierType        state,
++                          GimpButtonReleaseType  release_type,
++                          GimpDisplay           *display)
++{
++  gimp_tool_control_halt (tool->control);
++}
++
++static void
++view_drag_class_init (GimpToolClass *tool_class)
++{
++  tool_class->button_press   = view_drag_button_press;
++  tool_class->button_release = view_drag_button_release;
++}
++
++static void
++view_drag_init (GimpTool           *tool,
++                GimpToolCursorType  cursor)
++{
++  gimp_tool_control_set_motion_mode (tool->control, GIMP_MOTION_MODE_EXACT);
++  gimp_tool_control_set_tool_cursor (tool->control, cursor);
++  gimp_tool_control_set_cursor      (tool->control, GIMP_CURSOR_MOUSE);
++  gimp_tool_control_set_wants_all_key_events (tool->control, FALSE);
++}
++
++
++/*  Hand  */
++
++static void
++gimp_hand_tool_motion (GimpTool         *tool,
++                       const GimpCoords *coords,
++                       guint32           time,
++                       GdkModifierType   state,
++                       GimpDisplay      *display)
++{
++  GimpViewDragTool *vt    = (GimpViewDragTool *) tool;
++  GimpDisplayShell *shell = gimp_display_get_shell (display);
++  gdouble           x, y;
++
++  gimp_display_shell_transform_xy_f (shell, coords->x, coords->y, &x, &y);
++
++  gimp_display_shell_scroll (shell,
++                             (gint) (vt->last_x - x),
++                             (gint) (vt->last_y - y));
++
++  /*  keep the pointer position in window coordinates  */
++  vt->last_x = x;
++  vt->last_y = y;
++}
++
++static void
++gimp_hand_tool_class_init (GimpHandToolClass *klass)
++{
++  GimpToolClass *tool_class = GIMP_TOOL_CLASS (klass);
++
++  view_drag_class_init (tool_class);
++  tool_class->motion = gimp_hand_tool_motion;
++}
++
++static void
++gimp_hand_tool_init (GimpHandTool *tool)
++{
++  view_drag_init (GIMP_TOOL (tool), GIMP_TOOL_CURSOR_HAND);
++}
++
++
++/*  Rotate view  */
++
++static void
++gimp_rotate_view_tool_button_press (GimpTool            *tool,
++                                    const GimpCoords    *coords,
++                                    guint32              time,
++                                    GdkModifierType      state,
++                                    GimpButtonPressType  press_type,
++                                    GimpDisplay         *display)
++{
++  if (press_type == GIMP_BUTTON_PRESS_DOUBLE)
++    {
++      gimp_display_shell_rotate_to (gimp_display_get_shell (display), 0.0);
++      return;
++    }
++
++  gimp_display_get_shell (display)->rotate_drag_angle =
++    gimp_display_get_shell (display)->rotate_angle;
++
++  view_drag_button_press (tool, coords, time, state, press_type, display);
++}
++
++static void
++gimp_rotate_view_tool_motion (GimpTool         *tool,
++                              const GimpCoords *coords,
++                              guint32           time,
++                              GdkModifierType   state,
++                              GimpDisplay      *display)
++{
++  GimpViewDragTool *vt    = (GimpViewDragTool *) tool;
++  GimpDisplayShell *shell = gimp_display_get_shell (display);
++  gdouble           x, y;
++
++  gimp_display_shell_transform_xy_f (shell, coords->x, coords->y, &x, &y);
++
++  gimp_display_shell_rotate_drag (shell, vt->last_x, vt->last_y, x, y,
++                                  (state & gimp_get_extend_selection_mask ()) != 0);
++
++  vt->last_x = x;
++  vt->last_y = y;
++}
++
++static void
++gimp_rotate_view_tool_class_init (GimpRotateViewToolClass *klass)
++{
++  GimpToolClass *tool_class = GIMP_TOOL_CLASS (klass);
++
++  view_drag_class_init (tool_class);
++  tool_class->button_press = gimp_rotate_view_tool_button_press;
++  tool_class->motion       = gimp_rotate_view_tool_motion;
++}
++
++static void
++gimp_rotate_view_tool_init (GimpRotateViewTool *tool)
++{
++  view_drag_init (GIMP_TOOL (tool), GIMP_TOOL_CURSOR_ROTATE);
++}
+diff --git a/app/tools/chopgimp-viewtools.h b/app/tools/chopgimp-viewtools.h
+new file mode 100644
+index 0000000..888e754
+--- /dev/null
++++ b/app/tools/chopgimp-viewtools.h
+@@ -0,0 +1,39 @@
++/* GIMP - The GNU Image Manipulation Program
++ * chopgimp-viewtools.h — ChopGimp: Photoshop Hand (H) and Rotate View (R) tools
++ *
++ * This program is free software: you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation; either version 3 of the License, or
++ * (at your option) any later version.
++ */
++
++#pragma once
++
++#include "gimptool.h"
++
++#define GIMP_TYPE_HAND_TOOL         (gimp_hand_tool_get_type ())
++#define GIMP_TYPE_ROTATE_VIEW_TOOL  (gimp_rotate_view_tool_get_type ())
++
++typedef struct _GimpViewDragTool      GimpViewDragTool;
++typedef struct _GimpViewDragToolClass GimpViewDragToolClass;
++
++struct _GimpViewDragTool
++{
++  GimpTool  parent_instance;
++
++  gdouble   last_x;
++  gdouble   last_y;
++};
++
++struct _GimpViewDragToolClass
++{
++  GimpToolClass  parent_class;
++};
++
++GType   gimp_hand_tool_get_type          (void) G_GNUC_CONST;
++GType   gimp_rotate_view_tool_get_type   (void) G_GNUC_CONST;
++
++void    gimp_hand_tool_register          (GimpToolRegisterCallback  callback,
++                                          gpointer                  data);
++void    gimp_rotate_view_tool_register   (GimpToolRegisterCallback  callback,
++                                          gpointer                  data);
+diff --git a/app/tools/gimp-tools.c b/app/tools/gimp-tools.c
+index 7179c09..e60d50d 100644
+--- a/app/tools/gimp-tools.c
++++ b/app/tools/gimp-tools.c
+@@ -70,6 +70,7 @@
+ #include "gimpoperationtool.h"
+ #include "gimppathtool.h"
+ #include "gimpmagnifytool.h"
++#include "chopgimp-viewtools.h"
+ #include "gimpmeasuretool.h"
+ #include "gimpmovetool.h"
+ #include "gimpmybrushtool.h"
+@@ -151,6 +152,8 @@ gimp_tools_init (Gimp *gimp)
+ 
+     gimp_color_picker_tool_register,
+     gimp_magnify_tool_register,
++    gimp_hand_tool_register,          /* ChopGimp (Photoshop H) */
++    gimp_rotate_view_tool_register,   /* ChopGimp (Photoshop R) */
+     gimp_measure_tool_register,
+ 
+     /*  transform tools  */
+diff --git a/app/tools/meson.build b/app/tools/meson.build
+index c350a1e..7eef70c 100644
+--- a/app/tools/meson.build
++++ b/app/tools/meson.build
+@@ -79,6 +79,7 @@ libapptools_sources = [
+   'gimpmoveoptions.c',
+   'gimpmovetool.c',
+   'chopgimp-tools.c',
++  'chopgimp-viewtools.c',
+   'gimpmybrushoptions-gui.c',
+   'gimpmybrushtool.c',
+   'gimpnpointdeformationoptions.c',
+-- 
+2.53.0
+

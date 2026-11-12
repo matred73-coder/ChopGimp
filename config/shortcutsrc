@@ -52,16 +52,22 @@
 (action "tools-gradient" "g")
 # Pot de peinture
 (action "tools-bucket-fill" "<Shift>g")
-# Goutte d'eau / Netteté (R libre : pas de rotation de vue)
-(action "tools-convolve" "r")
+# Goutte d'eau / Netteté
+(action "tools-convolve" "<Shift>r")
+# Main
+(action "tools-hand" "h")
+# Rotation de la vue
+(action "tools-rotate-view" "r")
 # Doigt
-(action "tools-smudge" "<Shift>r")
+(action "tools-smudge" "<Shift><Alt>r")
 # Densité − / +
 (action "tools-dodge-burn" "o")
 # Plume
 (action "tools-path" "p")
 # Texte
 (action "tools-text" "t")
+# Forme (rectangle, ellipse, polygone, étoile, ligne)
+(action "tools-shape" "u")
 # Zoom
 (action "tools-zoom" "z")
 # Transformation manuelle (Ctrl+T)

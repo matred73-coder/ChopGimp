@@ -130,6 +130,9 @@
 (GimpToolInfo "gimp-text-tool"
     (icon-name "gimp-tool-text")
     (visible yes))
+(GimpToolInfo "gimp-shape-tool"
+    (icon-name "chopgimp-tool-shape")
+    (visible yes))
 (GimpToolGroup "tool group"
     (visible yes)
     (active-tool "gimp-unified-transform-tool")
@@ -163,6 +166,16 @@
             (visible yes))
         (GimpToolInfo "gimp-offset-tool"
             (icon-name "gimp-tool-offset")
+            (visible yes))))
+(GimpToolGroup "tool group"
+    (visible yes)
+    (active-tool "gimp-hand-tool")
+    (children
+        (GimpToolInfo "gimp-hand-tool"
+            (icon-name "chopgimp-tool-hand")
+            (visible yes))
+        (GimpToolInfo "gimp-rotate-view-tool"
+            (icon-name "chopgimp-tool-rotate-view")
             (visible yes))))
 (GimpToolInfo "gimp-zoom-tool"
     (icon-name "gimp-tool-zoom")

@@ -1,0 +1,291 @@
+From 4f779c34c435bba8a24bee7933738831fbaf6295 Mon Sep 17 00:00:00 2001
+From: ChopGimp <mathieu.redon@proton.me>
+Date: Thu, 12 Nov 2026 06:32:06 +0100
+Subject: [PATCH 25/29] ChopGimp: complete options bar for all tools,
+ scrollable; patterns for fill and stroke
+
+---
+ app/display/gimpoptionsbar.c | 193 +++++++++++++++++++++++++++--------
+ 1 file changed, 152 insertions(+), 41 deletions(-)
+
+diff --git a/app/display/gimpoptionsbar.c b/app/display/gimpoptionsbar.c
+index f71389a..15f89a2 100644
+--- a/app/display/gimpoptionsbar.c
++++ b/app/display/gimpoptionsbar.c
+@@ -40,10 +40,12 @@
+ #include "core/gimp.h"
+ #include "core/gimpcontext.h"
+ #include "core/gimpcontainer.h"
++#include "core/gimplist.h"
+ #include "core/gimpdatafactory.h"
+ #include "core/gimpdynamics.h"
+ #include "core/gimp-palettes.h"
+ #include "core/gimppalette.h"
++#include "core/gimppattern.h"
+ #include "core/gimpstrokeoptions.h"
+ #include "core/gimptoolinfo.h"
+ #include "core/gimpviewable.h"
+@@ -51,6 +53,7 @@
+ #include "tools/gimppathoptions.h"
+ 
+ #include "widgets/gimplayermodebox.h"
++#include "widgets/gimpview.h"
+ #include "widgets/gimppropwidgets.h"
+ #include "widgets/gimpuimanager.h"
+ #include "widgets/gimpviewablebox.h"
+@@ -74,55 +77,88 @@
+ typedef struct
+ {
+   const gchar *tool;
+-  const gchar *props[14];
++  const gchar *props[20];
+ } BarSpec;
+ 
+-#define PAINT_COMMON "brush", "brush-size", "brush-hardness", "paint-mode", "opacity"
++#define PAINT_COMMON "brush", "brush-size", "brush-hardness", "brush-angle", "paint-mode", "opacity"
++#define SEL_COMMON   "operation", "feather", "feather-radius", "antialias"
++#define TR_COMMON    "type", "interpolation", "clip", "show-preview", "grid-type"
+ 
++/*  ChopGimp: options shown in the bar for every tool of the toolbox,
++ *  in the order of Photoshop's options bar.
++ */
+ static const BarSpec bar_specs[] =
+ {
+-  { "gimp-paintbrush-tool",        { PAINT_COMMON, NULL } },
+-  { "gimp-pencil-tool",            { PAINT_COMMON, NULL } },
+-  { "gimp-airbrush-tool",          { PAINT_COMMON, "flow", "rate", NULL } },
+-  { "gimp-eraser-tool",            { "brush", "brush-size", "brush-hardness", "opacity", "hard", NULL } },
++  /* Peinture */
++  { "gimp-paintbrush-tool",        { PAINT_COMMON, "use-smoothing", NULL } },
++  { "gimp-pencil-tool",            { PAINT_COMMON, "use-smoothing", NULL } },
++  { "gimp-airbrush-tool",          { PAINT_COMMON, "flow", "rate", "motion-only", NULL } },
++  { "gimp-eraser-tool",            { "brush", "brush-size", "brush-hardness", "opacity",
++                                     "hard", "anti-erase", "use-smoothing", NULL } },
+   { "gimp-clone-tool",             { "brush", "brush-size", "brush-hardness", "paint-mode", "opacity",
+                                      "clone-type", "align-mode", "sample-merged", NULL } },
+-  { "gimp-perspective-clone-tool", { "brush", "brush-size", "brush-hardness", "opacity", "clone-type", NULL } },
++  { "gimp-perspective-clone-tool", { "brush", "brush-size", "brush-hardness", "opacity",
++                                     "clone-type", "sample-merged", NULL } },
+   { "gimp-heal-tool",              { "brush", "brush-size", "brush-hardness", "opacity",
+                                      "align-mode", "sample-merged", NULL } },
+-  { "gimp-smudge-tool",            { "brush", "brush-size", "brush-hardness", "rate", "flow", "sample-merged", NULL } },
++  { "gimp-smudge-tool",            { "brush", "brush-size", "brush-hardness", "rate", "flow",
++                                     "no-erasing", "sample-merged", NULL } },
+   { "gimp-convolve-tool",          { "brush", "brush-size", "brush-hardness", "type", "rate", NULL } },
+-  { "gimp-dodge-burn-tool",        { "brush", "brush-size", "brush-hardness", "type", "mode", "exposure", NULL } },
+-  { "gimp-ink-tool",               { "size", "tilt-angle", "opacity", NULL } },
+-  { "gimp-mypaint-brush-tool",     { "radius", "hardness", "opacity", NULL } },
+-
+-  { "gimp-rect-select-tool",       { "operation", "feather", "feather-radius", "antialias", "round-corners", NULL } },
+-  { "gimp-ellipse-select-tool",    { "operation", "feather", "feather-radius", "antialias", NULL } },
+-  { "gimp-free-select-tool",       { "operation", "feather", "feather-radius", "antialias", NULL } },
+-  { "gimp-iscissors-tool",         { "operation", "feather", "feather-radius", "antialias", NULL } },
+-  { "gimp-fuzzy-select-tool",      { "operation", "threshold", "antialias", "sample-merged",
++  { "gimp-dodge-burn-tool",        { "brush", "brush-size", "brush-hardness", "type", "mode",
++                                     "exposure", NULL } },
++  { "gimp-ink-tool",               { "size", "blob-type", "blob-angle", "blob-aspect",
++                                     "tilt-angle", "size-sensitivity", "opacity", NULL } },
++  { "gimp-mypaint-brush-tool",     { "radius", "hardness", "opacity", "eraser", "no-erasing", NULL } },
++
++  /* Sélections */
++  { "gimp-rect-select-tool",       { SEL_COMMON, "fixed-rule-active", "fixed-rule",
++                                     "round-corners", "corner-radius", NULL } },
++  { "gimp-ellipse-select-tool",    { SEL_COMMON, "fixed-rule-active", "fixed-rule", NULL } },
++  { "gimp-free-select-tool",       { SEL_COMMON, NULL } },
++  { "gimp-iscissors-tool",         { SEL_COMMON, NULL } },
++  { "gimp-fuzzy-select-tool",      { SEL_COMMON, "threshold", "select-criterion", "sample-merged",
+                                      "select-transparent", "diagonal-neighbors", NULL } },
+-  { "gimp-by-color-select-tool",   { "operation", "threshold", "antialias", "sample-merged", NULL } },
+-  { "gimp-foreground-select-tool", { "operation", "draw-mode", "stroke-width", NULL } },
++  { "gimp-by-color-select-tool",   { SEL_COMMON, "threshold", "select-criterion",
++                                     "sample-merged", "select-transparent", NULL } },
++  { "gimp-foreground-select-tool", { "operation", "draw-mode", "stroke-width", "engine",
++                                     "preview-mode", NULL } },
++  { "gimp-paint-select-tool",      { "operation", "stroke-width", "show-scribbles", NULL } },
+ 
++  /* Déplacement, alignement, recadrage */
+   { "gimp-move-tool",              { "move-current", "move-type", NULL } },
+-  { "gimp-crop-tool",              { "delete-pixels", "allow-growing", "layer-only", "highlight", NULL } },
+-
+-  { "gimp-unified-transform-tool", { "type", "constrain-scale", "interpolation", "clip", "show-preview", NULL } },
+-  { "gimp-scale-tool",             { "type", "constrain-scale", "interpolation", "clip", NULL } },
+-  { "gimp-rotate-tool",            { "type", "constrain-rotate", "interpolation", "clip", NULL } },
+-  { "gimp-shear-tool",             { "type", "interpolation", "clip", NULL } },
+-  { "gimp-perspective-tool",       { "type", "interpolation", "clip", NULL } },
+-  { "gimp-flip-tool",              { "type", "flip-type", "clip", NULL } },
+-  { "gimp-handle-transform-tool",  { "type", "interpolation", "clip", NULL } },
+-  { "gimp-transform-3d-tool",      { "type", "interpolation", "clip", NULL } },
+-  { "gimp-warp-tool",              { "behavior", "effect-size", "effect-hardness", "effect-strength", NULL } },
+-
+-  { "gimp-text-tool",              { "font", "font-size", "foreground", "justify", "antialias", NULL } },
+-  { "gimp-gradient-tool",          { "gradient", "gradient-type", "paint-mode", "opacity", "dither", "instant", NULL } },
+-  { "gimp-bucket-fill-tool",       { "fill-mode", "paint-mode", "opacity", "threshold", "fill-area",
+-                                     "sample-merged", "antialias", NULL } },
+-  { "gimp-color-picker-tool",      { "sample-average", "average-radius", "pick-target", "sample-merged", NULL } },
++  { "gimp-align-tool",             { "align-reference", "align-contents", "align-layers",
++                                     "align-paths", NULL } },
++  { "gimp-crop-tool",              { "fixed-rule-active", "fixed-rule", "delete-pixels",
++                                     "allow-growing", "layer-only", "guide", "highlight", NULL } },
++
++  /* Transformations */
++  { "gimp-unified-transform-tool", { TR_COMMON, "constrain-scale", "constrain-rotate",
++                                     "frompivot-scale", NULL } },
++  { "gimp-scale-tool",             { TR_COMMON, "constrain-scale", "frompivot-scale", NULL } },
++  { "gimp-rotate-tool",            { TR_COMMON, "constrain-rotate", NULL } },
++  { "gimp-shear-tool",             { TR_COMMON, "constrain-shear", "frompivot-shear", NULL } },
++  { "gimp-perspective-tool",       { TR_COMMON, "constrain-perspective", "frompivot-perspective", NULL } },
++  { "gimp-flip-tool",              { "type", "flip-type", "interpolation", "clip", NULL } },
++  { "gimp-handle-transform-tool",  { TR_COMMON, "handle-mode", NULL } },
++  { "gimp-transform-3d-tool",      { TR_COMMON, "mode", "unified", "constrain-axis", NULL } },
++  { "gimp-warp-tool",              { "behavior", "effect-size", "effect-hardness", "effect-strength",
++                                     "stroke-spacing", "interpolation", "abyss-policy", NULL } },
++  { "gimp-cage-tool",              { "cage-mode", "fill-plain-color", NULL } },
++  { "gimp-n-point-deformation-tool", { "square-size", "rigidity", "asap-deformation",
++                                     "mls-weights", "mesh-visible", NULL } },
++
++  /* Texte, remplissages, mesure */
++  { "gimp-text-tool",              { "font", "font-size", "foreground", "justify", "antialias",
++                                     "letter-spacing", "line-spacing", "box-mode", NULL } },
++  { "gimp-gradient-tool",          { "gradient", "gradient-type", "paint-mode", "opacity",
++                                     "gradient-reverse", "distance-metric", "offset", "dither",
++                                     "instant", NULL } },
++  { "gimp-bucket-fill-tool",       { "fill-mode", "paint-mode", "opacity", "fill-area", "threshold",
++                                     "fill-criterion", "sample-merged", "antialias",
++                                     "fill-transparent", NULL } },
++  { "gimp-color-picker-tool",      { "sample-average", "average-radius", "pick-target",
++                                     "sample-merged", "use-info-window", NULL } },
++  { "gimp-measure-tool",           { "orientation", "use-info-window", NULL } },
+   { "gimp-zoom-tool",              { "zoom-type", "auto-resize", NULL } },
+   { "gimp-path-tool",              { "path-edit-mode", "path-polygonal",
+                                      "enable-fill", "fill-foreground", "@fill-opacity",
+@@ -239,6 +275,8 @@ typedef struct
+   GObject     *options;
+   gchar       *prop;
+   const gchar *enable_prop;
++  const gchar *style_prop;    /* fill/stroke-custom-style (path tool) */
++  const gchar *pattern_prop;  /* fill/stroke-pattern      (path tool) */
+   GtkWidget   *popover;
+   GtkWidget   *dialog_button;
+ } ColorPop;
+@@ -259,6 +297,8 @@ colorpop_swatch_clicked (GtkWidget *button,
+   if (color)
+     {
+       g_object_set (cp->options, cp->prop, color, NULL);
++      if (cp->style_prop)
++        g_object_set (cp->options, cp->style_prop, GIMP_CUSTOM_STYLE_SOLID_COLOR, NULL);
+       if (cp->enable_prop)
+         g_object_set (cp->options, cp->enable_prop, TRUE, NULL);
+       gimp_palettes_add_color_history (cp->gimp, color);
+@@ -267,6 +307,25 @@ colorpop_swatch_clicked (GtkWidget *button,
+   gtk_popover_popdown (GTK_POPOVER (cp->popover));
+ }
+ 
++static void
++colorpop_pattern_clicked (GtkWidget *button,
++                          ColorPop  *cp)
++{
++  GimpPattern *pattern = g_object_get_data (G_OBJECT (button), "photogimp-pattern");
++
++  if (pattern && cp->style_prop && cp->pattern_prop)
++    {
++      g_object_set (cp->options,
++                    cp->pattern_prop, pattern,
++                    cp->style_prop,   GIMP_CUSTOM_STYLE_PATTERN,
++                    NULL);
++      if (cp->enable_prop)
++        g_object_set (cp->options, cp->enable_prop, TRUE, NULL);
++    }
++
++  gtk_popover_popdown (GTK_POPOVER (cp->popover));
++}
++
+ static void
+ colorpop_none_clicked (GtkWidget *button,
+                        ColorPop  *cp)
+@@ -378,6 +437,36 @@ colorpop_build (GtkWidget *popover,
+         }
+     }
+ 
++  /*  patterns (fill / stroke of shapes)  */
++  if (cp->pattern_prop)
++    {
++      GimpContainer *patterns = gimp_data_factory_get_container (cp->gimp->pattern_factory);
++      GimpContext   *context  = gimp_get_user_context (cp->gimp);
++      GtkWidget     *label    = gtk_label_new (_("Motifs"));
++      GtkWidget     *pgrid    = gtk_grid_new ();
++      GList         *plist;
++
++      gtk_widget_set_halign (label, GTK_ALIGN_START);
++      gtk_style_context_add_class (gtk_widget_get_style_context (label), "dim-label");
++      gtk_box_pack_start (GTK_BOX (vbox), label, FALSE, FALSE, 0);
++      gtk_box_pack_start (GTK_BOX (vbox), pgrid, FALSE, FALSE, 0);
++
++      for (plist = GIMP_LIST (patterns)->queue->head, i = 0; plist && i < 36;
++           plist = plist->next, i++)
++        {
++          GtkWidget *pbutton = gtk_button_new ();
++          GtkWidget *view    = gimp_view_new (context, GIMP_VIEWABLE (plist->data), 24, 1, FALSE);
++
++          gtk_container_add (GTK_CONTAINER (pbutton), view);
++          gtk_button_set_relief (GTK_BUTTON (pbutton), GTK_RELIEF_NONE);
++          gtk_style_context_add_class (gtk_widget_get_style_context (pbutton), "chopgimp-swatch");
++          gimp_help_set_help_data (pbutton, gimp_object_get_name (plist->data), NULL);
++          g_object_set_data (G_OBJECT (pbutton), "photogimp-pattern", plist->data);
++          g_signal_connect (pbutton, "clicked", G_CALLBACK (colorpop_pattern_clicked), cp);
++          gtk_grid_attach (GTK_GRID (pgrid), pbutton, i % 12, i / 12, 1, 1);
++        }
++    }
++
+   /*  full color picker  */
+   button = gtk_button_new_with_label (_("Sélecteur de couleur…"));
+   g_signal_connect (button, "clicked", G_CALLBACK (colorpop_picker_clicked), cp);
+@@ -403,9 +492,17 @@ gimp_options_bar_color_dropdown (GObject     *options,
+   cp->options = options;
+   cp->prop    = g_strdup (prop);
+   if (! strcmp (prop, "fill-foreground"))
+-    cp->enable_prop = "enable-fill";
++    {
++      cp->enable_prop  = "enable-fill";
++      cp->style_prop   = "fill-custom-style";
++      cp->pattern_prop = "fill-pattern";
++    }
+   else if (! strcmp (prop, "stroke-foreground"))
+-    cp->enable_prop = "enable-stroke";
++    {
++      cp->enable_prop  = "enable-stroke";
++      cp->style_prop   = "stroke-custom-style";
++      cp->pattern_prop = "stroke-pattern";
++    }
+ 
+   /*  hidden swatch button: opens GIMP's full color dialog  */
+   cp->dialog_button = gimp_prop_color_button_new (options, prop, title, TRUE,
+@@ -855,9 +952,23 @@ gimp_options_bar_new (Gimp *gimp)
+   gtk_widget_set_name (bar, "photogimp-options-bar");
+   gtk_container_set_border_width (GTK_CONTAINER (bar), 2);
+ 
+-  box = gtk_box_new (GTK_ORIENTATION_HORIZONTAL, 10);
+-  gtk_box_pack_start (GTK_BOX (bar), box, TRUE, TRUE, 0);
+-  gtk_widget_set_visible (box, TRUE);
++  /*  long bars (many options) scroll horizontally instead of widening
++   *  the window
++   */
++  {
++    GtkWidget *scrolled = gtk_scrolled_window_new (NULL, NULL);
++
++    gtk_scrolled_window_set_policy (GTK_SCROLLED_WINDOW (scrolled),
++                                    GTK_POLICY_AUTOMATIC, GTK_POLICY_NEVER);
++    gtk_scrolled_window_set_propagate_natural_height (GTK_SCROLLED_WINDOW (scrolled), TRUE);
++    gtk_scrolled_window_set_overlay_scrolling (GTK_SCROLLED_WINDOW (scrolled), TRUE);
++    gtk_box_pack_start (GTK_BOX (bar), scrolled, TRUE, TRUE, 0);
++    gtk_widget_set_visible (scrolled, TRUE);
++
++    box = gtk_box_new (GTK_ORIENTATION_HORIZONTAL, 10);
++    gtk_container_add (GTK_CONTAINER (scrolled), box);
++    gtk_widget_set_visible (box, TRUE);
++  }
+   g_object_set_data (G_OBJECT (bar), "photogimp-box", box);
+ 
+   more = gtk_button_new_from_icon_name ("gimp-tool-options", GTK_ICON_SIZE_SMALL_TOOLBAR);
+-- 
+2.53.0
+

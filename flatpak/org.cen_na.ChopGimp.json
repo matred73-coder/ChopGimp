@@ -835,7 +835,12 @@
                         "../patches/gimp-3.2.8/0021-ChopGimp-options-bar-recognises-GIMP-color-propertie.patch",
                         "../patches/gimp-3.2.8/0022-ChopGimp-include-libgimpcolor-in-options-bar.patch",
                         "../patches/gimp-3.2.8/0023-ChopGimp-Photoshop-like-color-drop-down-none-recent-.patch",
-                        "../patches/gimp-3.2.8/0024-ChopGimp-path-tool-clicking-in-an-empty-area-starts-.patch"
+                        "../patches/gimp-3.2.8/0024-ChopGimp-path-tool-clicking-in-an-empty-area-starts-.patch",
+                        "../patches/gimp-3.2.8/0025-ChopGimp-complete-options-bar-for-all-tools-scrollab.patch",
+                        "../patches/gimp-3.2.8/0026-ChopGimp-Hand-H-and-Rotate-View-R-tools.patch",
+                        "../patches/gimp-3.2.8/0027-ChopGimp-French-title-for-the-layer-effects-popover.patch",
+                        "../patches/gimp-3.2.8/0028-ChopGimp-Shape-tool-U-rectangle-rounded-rectangle-el.patch",
+                        "../patches/gimp-3.2.8/0029-ChopGimp-help-ids-for-the-new-tools-required-by-tool.patch"
                     ]
                 }
             ],

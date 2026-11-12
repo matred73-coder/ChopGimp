@@ -1,7 +1,7 @@
 From b8ae2dac26fd3231a35cf0e6e488b8af58bdf165 Mon Sep 17 00:00:00 2001
 From: ChopGimp <mathieu.redon@proton.me>
 Date: Wed, 11 Nov 2026 17:27:30 +0100
-Subject: [PATCH 11/24] PhotoGIMP Pro: no migration of another GIMP's
+Subject: [PATCH 11/29] PhotoGIMP Pro: no migration of another GIMP's
  configuration in Flatpak
 
 ---

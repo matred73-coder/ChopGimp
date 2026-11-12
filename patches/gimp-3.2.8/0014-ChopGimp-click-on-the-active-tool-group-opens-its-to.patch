@@ -1,7 +1,7 @@
 From f05f37a493c33cd4ec8df8b1c7679f01206c4533 Mon Sep 17 00:00:00 2001
 From: ChopGimp <mathieu.redon@proton.me>
 Date: Wed, 11 Nov 2026 18:59:22 +0100
-Subject: [PATCH 14/24] ChopGimp: click on the active tool group opens its tool
+Subject: [PATCH 14/29] ChopGimp: click on the active tool group opens its tool
  list
 
 ---
