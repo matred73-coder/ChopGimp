@@ -1,0 +1,62 @@
+From 13b3bb628f856d29269aefd4271b3a3a150fbe63 Mon Sep 17 00:00:00 2001
+From: ChopGimp <mathieu.redon@proton.me>
+Date: Thu, 12 Nov 2026 13:28:10 +0100
+Subject: [PATCH 44/46] ChopGimp: own Windows mutexes and single-instance
+ window
+
+The installer mutex, the primary-instance mutex and the hidden window
+that receives files to open are renamed, so that ChopGimp and an
+official GIMP never hand files over to each other and the installer
+of one never waits for the other. Windows-only code.
+---
+ app/gui/gui-unique.h | 6 ++++--
+ app/main.c           | 9 +++++++--
+ 2 files changed, 11 insertions(+), 4 deletions(-)
+
+diff --git a/app/gui/gui-unique.h b/app/gui/gui-unique.h
+index a556eb8..a69c3f1 100644
+--- a/app/gui/gui-unique.h
++++ b/app/gui/gui-unique.h
+@@ -19,8 +19,10 @@
+ 
+ 
+ #ifdef G_OS_WIN32
+-#define GIMP_UNIQUE_WIN32_WINDOW_CLASS  L"GimpWin32UniqueHandler"
+-#define GIMP_UNIQUE_WIN32_WINDOW_NAME   L"GimpProxy"
++/* ChopGimp: own hidden window, so that a second ChopGimp process hands
++ * its files to ChopGimp, never to a running official GIMP. */
++#define GIMP_UNIQUE_WIN32_WINDOW_CLASS  L"ChopGimpWin32UniqueHandler"
++#define GIMP_UNIQUE_WIN32_WINDOW_NAME   L"ChopGimpProxy"
+ #endif
+ 
+ 
+diff --git a/app/main.c b/app/main.c
+index ab421fd..85c2068 100644
+--- a/app/main.c
++++ b/app/main.c
+@@ -741,7 +741,10 @@ main (int    argc,
+ 
+ #ifdef G_OS_WIN32
+   /* Make Inno aware of gimp process avoiding broken install/unninstall */
+-  utf8_name = g_strdup_printf ("GIMP-%s", GIMP_MUTEX_VERSION);
++  /* ChopGimp: own mutex name, so that its installer never mistakes an
++   * official GIMP for ChopGimp (and vice versa). Windows only.
++   */
++  utf8_name = g_strdup_printf ("ChopGimp-%s", GIMP_MUTEX_VERSION);
+   name      = g_utf8_to_utf16 (utf8_name, -1, NULL, NULL, NULL);
+ 
+   CreateMutexW (NULL, FALSE, name);
+@@ -993,7 +996,9 @@ main (int    argc,
+       /* Windows Explorer spawns separate processes when multiple files are selected
+          (except for the MSIX, where the it passes each filename as on Unix: 55c97120).
+          The only realiable way to them communicate is a mutex early on main.c. See: #364 */
+-      HANDLE primary_instance = CreateMutexW (NULL, FALSE, L"Local\\gimp_primary_instance_running");
++      /* ChopGimp: own single-instance mutex, so that files opened with
++       * ChopGimp are never handed over to a running official GIMP. */
++      HANDLE primary_instance = CreateMutexW (NULL, FALSE, L"Local\\chopgimp_primary_instance_running");
+       DWORD  primary_instance_error = primary_instance ? GetLastError () : 0;
+ 
+       if (primary_instance && primary_instance_error == ERROR_ALREADY_EXISTS)
+-- 
+2.54.0.windows.1
+

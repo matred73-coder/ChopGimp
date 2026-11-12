@@ -853,7 +853,11 @@
                         "../patches/gimp-3.2.8/0039-ChopGimp-double-click-on-a-layer-with-a-dynamic-effe.patch",
                         "../patches/gimp-3.2.8/0040-ChopGimp-transform-controls-refresh-at-once-keys-und.patch",
                         "../patches/gimp-3.2.8/0041-ChopGimp-Spot-Healing-Brush-tool-J-painting-the-area.patch",
-                        "../patches/gimp-3.2.8/0042-ChopGimp-thumbnail-controls-on-their-own-row-dock-wi.patch"
+                        "../patches/gimp-3.2.8/0042-ChopGimp-thumbnail-controls-on-their-own-row-dock-wi.patch",
+                        "../patches/gimp-3.2.8/0043-ChopGimp-Windows-build-pacman-exit-code.patch",
+                        "../patches/gimp-3.2.8/0044-ChopGimp-own-Windows-mutexes-and-single-instance-win.patch",
+                        "../patches/gimp-3.2.8/0045-ChopGimp-Windows-identity-of-the-executables.patch",
+                        "../patches/gimp-3.2.8/0046-ChopGimp-Inno-installer-named-ChopGimp.patch"
                     ]
                 }
             ],

@@ -1,0 +1,259 @@
+From aabc84661360e6e6c27efdf6bb6e52eb31beb660 Mon Sep 17 00:00:00 2001
+From: ChopGimp <mathieu.redon@proton.me>
+Date: Thu, 12 Nov 2026 13:28:10 +0100
+Subject: [PATCH 46/46] ChopGimp: Inno installer named ChopGimp
+
+Product name, publisher, install folder, AppID, mutexes, registry keys
+and file associations of its own, so that the ChopGimp installer never
+touches an official GIMP (shortcuts, uninstall entry, settings).
+Output file chopgimp-<version>-setup.exe; CHOPGIMP_VERSION defaults to
+the ChopGimp version and can be overridden from the environment.
+---
+ build/windows/installer/3_dist-gimp-inno.ps1 | 11 ++-
+ build/windows/installer/gimp-setup.iss       | 92 ++++++++++----------
+ 2 files changed, 55 insertions(+), 48 deletions(-)
+
+diff --git a/build/windows/installer/3_dist-gimp-inno.ps1 b/build/windows/installer/3_dist-gimp-inno.ps1
+index cc2f2c3..09c7d6c 100644
+--- a/build/windows/installer/3_dist-gimp-inno.ps1
++++ b/build/windows/installer/3_dist-gimp-inno.ps1
+@@ -182,9 +182,11 @@ function fix_msg ([array]$langsArray, [string]$AppVer)
+         }
+     }
+ }
+-fix_msg 'Default.isl' $CUSTOM_GIMP_VERSION
+-fix_msg $langsArray_Official $CUSTOM_GIMP_VERSION
+-fix_msg $langsArray_unofficial $CUSTOM_GIMP_VERSION
++#ChopGimp: the window titles show the ChopGimp version (same default as gimp-setup.iss)
++$CHOPGIMP_VERSION = if ($env:CHOPGIMP_VERSION) { $env:CHOPGIMP_VERSION } else { '3.11.1' }
++fix_msg 'Default.isl' $CHOPGIMP_VERSION
++fix_msg $langsArray_Official $CHOPGIMP_VERSION
++fix_msg $langsArray_unofficial $CHOPGIMP_VERSION
+ Write-Output "$([char]27)[0Ksection_end:$(Get-Date -UFormat %s -Millisecond 0):installer_source$([char]13)$([char]27)[0K"
+ 
+ 
+@@ -194,7 +196,8 @@ Write-Output "$([char]27)[0Ksection_end:$(Get-Date -UFormat %s -Millisecond 0):i
+ 
+ 
+ # 5. COMPILE .EXE INSTALLER
+-$INSTALLER="gimp-${CUSTOM_GIMP_VERSION}-setup.exe"
++#ChopGimp: must match OutputBaseFileName of gimp-setup.iss
++$INSTALLER="chopgimp-${CHOPGIMP_VERSION}-setup.exe"
+ Write-Output "$([char]27)[0Ksection_start:$(Get-Date -UFormat %s -Millisecond 0):installer_making[collapsed=true]$([char]13)$([char]27)[0KConstructing $INSTALLER installer"
+ iscc -DREVISION="$revision" -DBUILD_DIR="$BUILD_DIR" $supported_archs -DDEBUG_SYMBOLS -DPYTHON build\windows\installer\gimp-setup.iss | Out-Null; if ("$LASTEXITCODE" -gt '0') { exit 1 }
+ Write-Output "$([char]27)[0Ksection_end:$(Get-Date -UFormat %s -Millisecond 0):installer_making$([char]13)$([char]27)[0K"
+diff --git a/build/windows/installer/gimp-setup.iss b/build/windows/installer/gimp-setup.iss
+index 8ad5dcd..68a592b 100644
+--- a/build/windows/installer/gimp-setup.iss
++++ b/build/windows/installer/gimp-setup.iss
+@@ -103,7 +103,11 @@
+ #else
+   #define CUSTOM_GIMP_VERSION ORIGINAL_GIMP_VERSION + "-" + REVISION
+ #endif
+-#define DISPLAY_NAME "GIMP " + CUSTOM_GIMP_VERSION
++;ChopGimp: product name and version shown to users
++#ifndef CHOPGIMP_VERSION
++  #define CHOPGIMP_VERSION "3.11.1"
++#endif
++#define DISPLAY_NAME "ChopGimp " + CHOPGIMP_VERSION
+ 
+ ;This script supports creating both an installer per arch or an universal installer with all arches
+ #if Defined(ARM64_BUNDLE) && !Defined(X64_BUNDLE)
+@@ -159,13 +163,13 @@ NotRecognizedMessagesWarning=no
+ 
+ ;3.2.1 INNO INTERNAL VERSIONING (used to rule how different versions are installed)
+ ;GIMP process identifier for Inno
+-AppMutex=GIMP-{#GIMP_MUTEX_VERSION}
++AppMutex=ChopGimp-{#GIMP_MUTEX_VERSION}
+ ;Inno installer identifier
+-SetupMutex=GIMP-{#GIMP_MUTEX_VERSION}-setup
++SetupMutex=ChopGimp-{#GIMP_MUTEX_VERSION}-setup
+ ;Inno installer (default) install location
+-DefaultDirName={autopf}\GIMP {#GIMP_MUTEX_VERSION}
++DefaultDirName={autopf}\ChopGimp
+ ;Inno uninstaller identifier
+-AppID=GIMP-{#GIMP_MUTEX_VERSION}
++AppID=ChopGimp-{#GIMP_MUTEX_VERSION}
+ ;Inno unninstaller identifier logs location
+ UninstallFilesDir={app}\uninst
+ 
+@@ -181,16 +185,16 @@ AppVerName={#DISPLAY_NAME}
+ ;ImmersiveControlPanel 'DisplayIcon'
+ UninstallDisplayIcon={app}\bin\gimp-{#GIMP_MUTEX_VERSION}.exe
+ ;ImmersiveControlPanel 'Publisher'
+-AppPublisher=The GIMP Team
++AppPublisher=ChopGimp
+ ;ControlPanel 'URLInfoAbout'
+-AppPublisherURL=https://www.gimp.org/
++AppPublisherURL=https://github.com/matred73-coder/ChopGimp
+ ;ControlPanel 'HelpLink'
+-AppSupportURL=https://www.gimp.org/docs/
++AppSupportURL=https://github.com/matred73-coder/ChopGimp
+ #if Defined(GIMP_UNSTABLE)
+   ;ControlPanel 'URLUpdateInfo'
+-  AppUpdatesURL=https://www.gimp.org/downloads/devel/
++  AppUpdatesURL=https://github.com/matred73-coder/ChopGimp/releases
+ #else
+-  AppUpdatesURL=https://www.gimp.org/downloads/
++  AppUpdatesURL=https://github.com/matred73-coder/ChopGimp/releases
+ #endif
+ 
+ 
+@@ -220,10 +224,10 @@ LZMANumFastBytes=273
+ ;SignedUninstallerDir=_Uninst
+ 
+ ;3.3.3 EXE FILE DETAILS
+-AppName=GIMP
++AppName=ChopGimp
+ SetupIconFile={#ASSETS_DIR}\setup.ico
+ OutputDir=..\..\..
+-OutputBaseFileName=gimp-{#CUSTOM_GIMP_VERSION}-setup
++OutputBaseFileName=chopgimp-{#CHOPGIMP_VERSION}-setup
+ OutputManifestFile=inno.log
+ ArchitecturesAllowed={#ARCHS_ALLOWED}
+ ArchitecturesInstallIn64BitMode={#ARCHS_INSTALLED}
+@@ -519,8 +523,8 @@ Type: filesandordirs; Name: "{app}\lib\python{#PREVIOUS_PYTHON_VERSION}\*"
+ Type: filesandordirs; Name: "{app}\32\*"
+ Type: filesandordirs; Name: "{app}\lib\gimp\{#GIMP_PKGCONFIG_VERSION}\plug-ins\twain\*"
+ ;get previous GIMP icon name from uninstall name in Registry
+-Type: files; Name: "{autoprograms}\{reg:HKA\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\GIMP-{#GIMP_MUTEX_VERSION}_is1,DisplayName|GIMP {#GIMP_MUTEX_VERSION}}.lnk"; Check: CheckRegValueExists('SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\GIMP-{#GIMP_MUTEX_VERSION}_is1','DisplayName')
+-Type: files; Name: "{autodesktop}\{reg:HKA\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\GIMP-{#GIMP_MUTEX_VERSION}_is1,DisplayName|GIMP {#GIMP_MUTEX_VERSION}}.lnk"; Check: CheckRegValueExists('SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\GIMP-{#GIMP_MUTEX_VERSION}_is1','DisplayName')
++Type: files; Name: "{autoprograms}\{reg:HKA\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\ChopGimp-{#GIMP_MUTEX_VERSION}_is1,DisplayName|ChopGimp {#GIMP_MUTEX_VERSION}}.lnk"; Check: CheckRegValueExists('SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\ChopGimp-{#GIMP_MUTEX_VERSION}_is1','DisplayName')
++Type: files; Name: "{autodesktop}\{reg:HKA\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\ChopGimp-{#GIMP_MUTEX_VERSION}_is1,DisplayName|ChopGimp {#GIMP_MUTEX_VERSION}}.lnk"; Check: CheckRegValueExists('SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\ChopGimp-{#GIMP_MUTEX_VERSION}_is1','DisplayName')
+ ;.pdb files are taken care by RemoveDebugFilesFromDir procedure
+ 
+ [UninstallDelete]
+@@ -533,7 +537,7 @@ Type: files; Name: "{app}\lib\gimp\{#GIMP_PKGCONFIG_VERSION}\environ\pygimp_win.
+ ;4.3 KEYS TO BE REGISTERED
+ [Registry]
+ ;'ms-settings:appsfeatures' page (using info from 3.2.3 [Setup] section above)
+-;Root: HKA; Subkey: "Software\Microsoft\Windows\CurrentVersion\Uninstall\GIMP-{#GIMP_MUTEX_VERSION}_is1"; //(auto registered by Inno)
++;Root: HKA; Subkey: "Software\Microsoft\Windows\CurrentVersion\Uninstall\ChopGimp-{#GIMP_MUTEX_VERSION}_is1"; //(auto registered by Inno)
+ 
+ ;Add GIMP .exe to PATH/'Win + R' (conflicts with MSIX. See: ..\store\AppxManifest.xml)
+ ;Root: HKA; Subkey: "Software\Microsoft\Windows\CurrentVersion\App Paths\gimp-{#GIMP_MUTEX_VERSION}.exe"; Flags: uninsdeletekey
+@@ -546,11 +550,11 @@ Root: HKA; Subkey: "Software\Classes\Applications\gimp-{#GIMP_MUTEX_VERSION}.exe
+ Root: HKA; Subkey: "Software\Classes\Applications\gimp-{#GIMP_MUTEX_VERSION}.exe\DefaultIcon"; ValueType: string; ValueName: ""; ValueData: "{app}\bin\gimp-{#GIMP_MUTEX_VERSION}.exe,1"
+ Root: HKA; Subkey: "Software\Classes\Applications\gimp-{#GIMP_MUTEX_VERSION}.exe\shell\open\command"; ValueType: string; ValueName: ""; ValueData: """{app}\bin\gimp-{#GIMP_MUTEX_VERSION}.exe"" ""%1"""
+ ;'ms-settings:defaultapps' page
+-Root: HKA; Subkey: "Software\GIMP {#GIMP_MUTEX_VERSION}"; Flags: uninsdeletekey
+-Root: HKA; Subkey: "Software\GIMP {#GIMP_MUTEX_VERSION}\Capabilities"; ValueType: string; ValueName: "ApplicationName"; ValueData: "{#DISPLAY_NAME}"
+-Root: HKA; Subkey: "Software\GIMP {#GIMP_MUTEX_VERSION}\Capabilities"; ValueType: string; ValueName: "ApplicationIcon"; ValueData: "{app}\bin\gimp-{#GIMP_MUTEX_VERSION}.exe,0"
+-Root: HKA; Subkey: "Software\GIMP {#GIMP_MUTEX_VERSION}\Capabilities"; ValueType: string; ValueName: "ApplicationDescription"; ValueData: "GIMP is a free raster graphics editor used for image retouching and editing, free-form drawing, converting between different image formats, and more specialized tasks."
+-Root: HKA; Subkey: "Software\RegisteredApplications"; ValueType: string; ValueName: "GIMP {#GIMP_MUTEX_VERSION}"; ValueData: "Software\GIMP {#GIMP_MUTEX_VERSION}\Capabilities"; Flags: uninsdeletevalue
++Root: HKA; Subkey: "Software\ChopGimp {#GIMP_MUTEX_VERSION}"; Flags: uninsdeletekey
++Root: HKA; Subkey: "Software\ChopGimp {#GIMP_MUTEX_VERSION}\Capabilities"; ValueType: string; ValueName: "ApplicationName"; ValueData: "{#DISPLAY_NAME}"
++Root: HKA; Subkey: "Software\ChopGimp {#GIMP_MUTEX_VERSION}\Capabilities"; ValueType: string; ValueName: "ApplicationIcon"; ValueData: "{app}\bin\gimp-{#GIMP_MUTEX_VERSION}.exe,0"
++Root: HKA; Subkey: "Software\ChopGimp {#GIMP_MUTEX_VERSION}\Capabilities"; ValueType: string; ValueName: "ApplicationDescription"; ValueData: "ChopGimp: image editor with a Photoshop-like interface (based on GIMP)."
++Root: HKA; Subkey: "Software\RegisteredApplications"; ValueType: string; ValueName: "ChopGimp {#GIMP_MUTEX_VERSION}"; ValueData: "Software\ChopGimp {#GIMP_MUTEX_VERSION}\Capabilities"; Flags: uninsdeletevalue
+ ;Associations
+ #pragma option -e-
+ #define protected
+@@ -562,12 +566,12 @@ Root: HKA; Subkey: "Software\RegisteredApplications"; ValueType: string; ValueNa
+       //skip comments and empty lines
+     #else
+       #pragma message "Processing file_associations.list: " + FileLine
+-Root: HKA; Subkey: "Software\Classes\.{#FileLine}\OpenWithProgids"; ValueType: string; ValueName: "GIMP{#GIMP_MUTEX_VERSION}.{#FileLine}"; ValueData: ""; Flags: uninsdeletevalue
+-Root: HKA; Subkey: "Software\Classes\GIMP{#GIMP_MUTEX_VERSION}.{#FileLine}"; ValueType: string; ValueName: ""; ValueData: "{#DISPLAY_NAME} {#UpperCase(FileLine)}"; Flags: uninsdeletekey
+-Root: HKA; Subkey: "Software\Classes\GIMP{#GIMP_MUTEX_VERSION}.{#FileLine}\DefaultIcon"; ValueType: string; ValueName: ""; ValueData: "{app}\bin\gimp-{#GIMP_MUTEX_VERSION}.exe,2"
+-Root: HKA; Subkey: "Software\Classes\GIMP{#GIMP_MUTEX_VERSION}.{#FileLine}\shell\open\command"; ValueType: string; ValueName: ""; ValueData: """{app}\bin\gimp-{#GIMP_MUTEX_VERSION}.exe"" ""%1"""
++Root: HKA; Subkey: "Software\Classes\.{#FileLine}\OpenWithProgids"; ValueType: string; ValueName: "ChopGimp{#GIMP_MUTEX_VERSION}.{#FileLine}"; ValueData: ""; Flags: uninsdeletevalue
++Root: HKA; Subkey: "Software\Classes\ChopGimp{#GIMP_MUTEX_VERSION}.{#FileLine}"; ValueType: string; ValueName: ""; ValueData: "{#DISPLAY_NAME} {#UpperCase(FileLine)}"; Flags: uninsdeletekey
++Root: HKA; Subkey: "Software\Classes\ChopGimp{#GIMP_MUTEX_VERSION}.{#FileLine}\DefaultIcon"; ValueType: string; ValueName: ""; ValueData: "{app}\bin\gimp-{#GIMP_MUTEX_VERSION}.exe,2"
++Root: HKA; Subkey: "Software\Classes\ChopGimp{#GIMP_MUTEX_VERSION}.{#FileLine}\shell\open\command"; ValueType: string; ValueName: ""; ValueData: """{app}\bin\gimp-{#GIMP_MUTEX_VERSION}.exe"" ""%1"""
+ Root: HKA; Subkey: "Software\Classes\Applications\gimp-{#GIMP_MUTEX_VERSION}.exe\SupportedTypes"; ValueType: string; ValueName: ".{#FileLine}"; ValueData: ""
+-Root: HKA; Subkey: "Software\GIMP {#GIMP_MUTEX_VERSION}\Capabilities\FileAssociations"; ValueType: string; ValueName: ".{#FileLine}"; ValueData: "GIMP{#GIMP_MUTEX_VERSION}.{#FileLine}"
++Root: HKA; Subkey: "Software\ChopGimp {#GIMP_MUTEX_VERSION}\Capabilities\FileAssociations"; ValueType: string; ValueName: ".{#FileLine}"; ValueData: "ChopGimp{#GIMP_MUTEX_VERSION}.{#FileLine}"
+     #endif
+   #endif
+ #endsub
+@@ -579,19 +583,19 @@ Root: HKA; Subkey: "Software\GIMP {#GIMP_MUTEX_VERSION}\Capabilities\FileAssocia
+   #expr FileClose(FileHandle)
+ #endif
+ ;Associations (special case for .xcf files)
+-Root: HKA; Subkey: "Software\Classes\.xcf\OpenWithProgids"; ValueType: string; ValueName: "GIMP{#GIMP_MUTEX_VERSION}.xcf"; ValueData: ""; Flags: uninsdeletevalue
+-Root: HKA; Subkey: "Software\Classes\GIMP{#GIMP_MUTEX_VERSION}.xcf"; ValueType: string; ValueName: ""; ValueData: "{#DISPLAY_NAME} XCF"; Flags: uninsdeletekey
+-Root: HKA; Subkey: "Software\Classes\GIMP{#GIMP_MUTEX_VERSION}.xcf\DefaultIcon"; ValueType: string; ValueName: ""; ValueData: "{app}\bin\gimp-{#GIMP_MUTEX_VERSION}.exe,1"
+-Root: HKA; Subkey: "Software\Classes\GIMP{#GIMP_MUTEX_VERSION}.xcf\shell\open\command"; ValueType: string; ValueName: ""; ValueData: """{app}\bin\gimp-{#GIMP_MUTEX_VERSION}.exe"" ""%1"""
++Root: HKA; Subkey: "Software\Classes\.xcf\OpenWithProgids"; ValueType: string; ValueName: "ChopGimp{#GIMP_MUTEX_VERSION}.xcf"; ValueData: ""; Flags: uninsdeletevalue
++Root: HKA; Subkey: "Software\Classes\ChopGimp{#GIMP_MUTEX_VERSION}.xcf"; ValueType: string; ValueName: ""; ValueData: "{#DISPLAY_NAME} XCF"; Flags: uninsdeletekey
++Root: HKA; Subkey: "Software\Classes\ChopGimp{#GIMP_MUTEX_VERSION}.xcf\DefaultIcon"; ValueType: string; ValueName: ""; ValueData: "{app}\bin\gimp-{#GIMP_MUTEX_VERSION}.exe,1"
++Root: HKA; Subkey: "Software\Classes\ChopGimp{#GIMP_MUTEX_VERSION}.xcf\shell\open\command"; ValueType: string; ValueName: ""; ValueData: """{app}\bin\gimp-{#GIMP_MUTEX_VERSION}.exe"" ""%1"""
+ Root: HKA; Subkey: "Software\Classes\Applications\gimp-{#GIMP_MUTEX_VERSION}.exe\SupportedTypes"; ValueType: string; ValueName: ".xcf"; ValueData: ""
+-Root: HKA; Subkey: "Software\GIMP {#GIMP_MUTEX_VERSION}\Capabilities\FileAssociations"; ValueType: string; ValueName: ".xcf"; ValueData: "GIMP{#GIMP_MUTEX_VERSION}.xcf"
++Root: HKA; Subkey: "Software\ChopGimp {#GIMP_MUTEX_VERSION}\Capabilities\FileAssociations"; ValueType: string; ValueName: ".xcf"; ValueData: "ChopGimp{#GIMP_MUTEX_VERSION}.xcf"
+ ;Associations (make association for .ico files but do not set DefaultIcon since their content is the DefaultIcon)
+-Root: HKA; Subkey: "Software\Classes\.ico\OpenWithProgids"; ValueType: string; ValueName: "GIMP{#GIMP_MUTEX_VERSION}.ico"; ValueData: ""; Flags: uninsdeletevalue
+-Root: HKA; Subkey: "Software\Classes\GIMP{#GIMP_MUTEX_VERSION}.ico"; ValueType: string; ValueName: ""; ValueData: "{#DISPLAY_NAME} ICO"; Flags: uninsdeletekey
+-Root: HKA; Subkey: "Software\Classes\GIMP{#GIMP_MUTEX_VERSION}.ico\DefaultIcon"; ValueType: string; ValueName: ""; ValueData: "%1"
+-Root: HKA; Subkey: "Software\Classes\GIMP{#GIMP_MUTEX_VERSION}.ico\shell\open\command"; ValueType: string; ValueName: ""; ValueData: """{app}\bin\gimp-{#GIMP_MUTEX_VERSION}.exe"" ""%1"""
++Root: HKA; Subkey: "Software\Classes\.ico\OpenWithProgids"; ValueType: string; ValueName: "ChopGimp{#GIMP_MUTEX_VERSION}.ico"; ValueData: ""; Flags: uninsdeletevalue
++Root: HKA; Subkey: "Software\Classes\ChopGimp{#GIMP_MUTEX_VERSION}.ico"; ValueType: string; ValueName: ""; ValueData: "{#DISPLAY_NAME} ICO"; Flags: uninsdeletekey
++Root: HKA; Subkey: "Software\Classes\ChopGimp{#GIMP_MUTEX_VERSION}.ico\DefaultIcon"; ValueType: string; ValueName: ""; ValueData: "%1"
++Root: HKA; Subkey: "Software\Classes\ChopGimp{#GIMP_MUTEX_VERSION}.ico\shell\open\command"; ValueType: string; ValueName: ""; ValueData: """{app}\bin\gimp-{#GIMP_MUTEX_VERSION}.exe"" ""%1"""
+ Root: HKA; Subkey: "Software\Classes\Applications\gimp-{#GIMP_MUTEX_VERSION}.exe\SupportedTypes"; ValueType: string; ValueName: ".ico"; ValueData: ""
+-Root: HKA; Subkey: "Software\GIMP {#GIMP_MUTEX_VERSION}\Capabilities\FileAssociations"; ValueType: string; ValueName: ".ico"; ValueData: "GIMP{#GIMP_MUTEX_VERSION}.ico"
++Root: HKA; Subkey: "Software\ChopGimp {#GIMP_MUTEX_VERSION}\Capabilities\FileAssociations"; ValueType: string; ValueName: ".ico"; ValueData: "ChopGimp{#GIMP_MUTEX_VERSION}.ico"
+ 
+ 
+ ;5 INSTALLER CUSTOM CODE
+@@ -1340,16 +1344,16 @@ var
+   ErrorCode: Integer;
+ begin
+   isInstalled := 'notInstalled';
+-  if RegQueryStringValue(HKCU, 'Software\Microsoft\Windows\CurrentVersion\Uninstall\GIMP-{#GIMP_MUTEX_VERSION}_is1',
++  if RegQueryStringValue(HKCU, 'Software\Microsoft\Windows\CurrentVersion\Uninstall\ChopGimp-{#GIMP_MUTEX_VERSION}_is1',
+                            'DisplayVersion', Installed_AppVersion) then begin
+-      RegQueryStringValue(HKCU, 'Software\Microsoft\Windows\CurrentVersion\Uninstall\GIMP-{#GIMP_MUTEX_VERSION}_is1',
++      RegQueryStringValue(HKCU, 'Software\Microsoft\Windows\CurrentVersion\Uninstall\ChopGimp-{#GIMP_MUTEX_VERSION}_is1',
+                            'InstallLocation', InstallLocation);
+     StrToVersion(Installed_AppVersion, Installed_AppVersionInt);
+     isInstalled := 'Installed';
+   end;
+-  if RegQueryStringValue(HKLM, 'Software\Microsoft\Windows\CurrentVersion\Uninstall\GIMP-{#GIMP_MUTEX_VERSION}_is1',
++  if RegQueryStringValue(HKLM, 'Software\Microsoft\Windows\CurrentVersion\Uninstall\ChopGimp-{#GIMP_MUTEX_VERSION}_is1',
+                            'DisplayVersion', Installed_AppVersion) then begin
+-      RegQueryStringValue(HKLM, 'Software\Microsoft\Windows\CurrentVersion\Uninstall\GIMP-{#GIMP_MUTEX_VERSION}_is1',
++      RegQueryStringValue(HKLM, 'Software\Microsoft\Windows\CurrentVersion\Uninstall\ChopGimp-{#GIMP_MUTEX_VERSION}_is1',
+                            'InstallLocation', InstallLocation);
+       StrToVersion(Installed_AppVersion, Installed_AppVersionInt);
+     isInstalled := 'Installed';
+@@ -1991,10 +1995,10 @@ end;
+ //7.2 INSTALL: show GIMP text (aka billboard) above progress bar
+ #if Defined(GIMP_UNSTABLE)
+ const
+-  GIMP_URL = 'https://gimp.org/downloads/devel/';
++  GIMP_URL = 'https://github.com/matred73-coder/ChopGimp';
+ #else
+ const
+-  GIMP_URL = 'https://gimp.org/downloads/';
++  GIMP_URL = 'https://github.com/matred73-coder/ChopGimp';
+ #endif
+ 
+ procedure lblURL_OnClick(Sender: TObject);
+@@ -2631,7 +2635,7 @@ begin
+     //Try to make restore point before unninstalling (like before installing, see RestorePoint() on *gimp3264.iss)
+     if IsAdminInstallMode() then begin
+         RestorePointU();
+-      UninstallProgressForm.StatusLabel.Caption := FmtMessage(SetupMessage(msgStatusUninstalling),['GIMP']);
++      UninstallProgressForm.StatusLabel.Caption := FmtMessage(SetupMessage(msgStatusUninstalling),['ChopGimp']);
+     end;
+ 
+     LoadStringsFromFile(ExpandConstant('{app}\uninst\uninst.inf'),asUninstInf);
+@@ -2643,11 +2647,11 @@ begin
+     if not IsAdminInstallMode() then begin
+             gimp_directory := GetEnv('GIMP{#API_MAJOR}_DIRECTORY');
+       if gimp_directory = '' then begin
+-        gimp_directory := ExpandConstant('{userappdata}\GIMP\{#GIMP_APP_VERSION}');
++        gimp_directory := ExpandConstant('{userappdata}\ChopGimp\{#GIMP_APP_VERSION}');
+       end;
+       if DirExists(gimp_directory + '\') then begin
+         if SuppressibleMsgBox(CustomMessage('UninstallConfig'), mbError, MB_YESNO or MB_DEFBUTTON2, IDNO) = IDYES then begin
+-          CopyFiles(gimp_directory, ExpandConstant('{userdesktop}\gimp_{#GIMP_APP_VERSION}_backup_' + Format('%d', [Time(0)])), '');
++          CopyFiles(gimp_directory, ExpandConstant('{userdesktop}\chopgimp_{#GIMP_APP_VERSION}_backup_' + Format('%d', [Time(0)])), '');
+           DelTree(gimp_directory, True, True, True);
+         end;
+       end;
+-- 
+2.54.0.windows.1
+

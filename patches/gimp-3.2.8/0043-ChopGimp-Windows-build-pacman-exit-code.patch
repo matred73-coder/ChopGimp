@@ -1,0 +1,31 @@
+From 2f8b7fd9eabb07bd52ef8941f1f58c8baf2d6c11 Mon Sep 17 00:00:00 2001
+From: ChopGimp <mathieu.redon@proton.me>
+Date: Thu, 12 Nov 2026 13:28:10 +0100
+Subject: [PATCH 43/46] ChopGimp: Windows build, pacman exit code
+
+Windows PowerShell 5.1 exits with code 1 as soon as a native program
+writes to stderr. pacman prints "is up to date -- skipping" warnings on
+stderr, so re-running 1_build-deps-msys2.ps1 after a partial install
+always failed. The script block now returns pacman's own exit code.
+---
+ build/windows/1_build-deps-msys2.ps1 | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/build/windows/1_build-deps-msys2.ps1 b/build/windows/1_build-deps-msys2.ps1
+index 228e38b..68e0945 100644
+--- a/build/windows/1_build-deps-msys2.ps1
++++ b/build/windows/1_build-deps-msys2.ps1
+@@ -63,8 +63,8 @@ if (Test-Path "$env:VCPKG_ROOT\vcpkg.exe" -Type Leaf)
+   }
+ else
+   {
+-    powershell -Command { $ProgressPreference = 'SilentlyContinue'; $env:PATH="$env:MSYS_ROOT\usr\bin;$env:PATH"; pacman --noconfirm -Suy }; if ("$LASTEXITCODE" -gt '0') { exit 1 }
+-    powershell -Command { $ProgressPreference = 'SilentlyContinue'; $env:PATH="$env:MSYS_ROOT\usr\bin;$env:PATH"; pacman --noconfirm -S --needed (Get-Content build/windows/all-deps-uni.txt | Where-Object { $_ -match 'MINGW_' -and -not $_.Trim().StartsWith('#') } | ForEach-Object { (($_.Split('#')[0].Trim() -split '\|vcpkg:')[0] -replace '\$\{MINGW_PACKAGE_PREFIX\}', $(if ($env:MINGW_PACKAGE_PREFIX) { $env:MINGW_PACKAGE_PREFIX } elseif ($env:MSYSTEM_PREFIX -eq 'clangarm64') { 'mingw-w64-clang-aarch64' } else { 'mingw-w64-clang-x86_64' })) }) }; if ("$LASTEXITCODE" -gt '0') { exit 1 }
++    powershell -Command { $ProgressPreference = 'SilentlyContinue'; $env:PATH="$env:MSYS_ROOT\usr\bin;$env:PATH"; pacman --noconfirm -Suy; exit $LASTEXITCODE }; if ("$LASTEXITCODE" -gt '0') { exit 1 }
++    powershell -Command { $ProgressPreference = 'SilentlyContinue'; $env:PATH="$env:MSYS_ROOT\usr\bin;$env:PATH"; pacman --noconfirm -S --needed (Get-Content build/windows/all-deps-uni.txt | Where-Object { $_ -match 'MINGW_' -and -not $_.Trim().StartsWith('#') } | ForEach-Object { (($_.Split('#')[0].Trim() -split '\|vcpkg:')[0] -replace '\$\{MINGW_PACKAGE_PREFIX\}', $(if ($env:MINGW_PACKAGE_PREFIX) { $env:MINGW_PACKAGE_PREFIX } elseif ($env:MSYSTEM_PREFIX -eq 'clangarm64') { 'mingw-w64-clang-aarch64' } else { 'mingw-w64-clang-x86_64' })) }); exit $LASTEXITCODE }; if ("$LASTEXITCODE" -gt '0') { exit 1 }
+   }
+ #See: https://gitlab.gnome.org/GNOME/gimp/-/work_items/14145
+ if (-not (Get-Command win_flex -ErrorAction SilentlyContinue)) { $winflexbison_tag = (Invoke-RestMethod 'https://api.github.com/repos/lexxmark/winflexbison/releases/latest').tag_name -replace 'v',''; Invoke-WebRequest "https://github.com/lexxmark/winflexbison/releases/download/v${winflexbison_tag}/win_flex_bison-${winflexbison_tag}.zip" -UseBasicParsing -OutFile ${PWD}${PARENT_DIR}\winflexbison.zip; Expand-Archive ${PWD}${PARENT_DIR}\winflexbison.zip ${PWD}${PARENT_DIR}\winflexbison; $env:PATH = "$(Resolve-Path ${PWD}${PARENT_DIR}\winflexbison);$env:PATH" }
+-- 
+2.54.0.windows.1
+
