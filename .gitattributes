@@ -1,0 +1,5 @@
+# Fins de ligne : garder LF à l'extraction, même sous Windows (core.autocrlf=true).
+# Les patchs sont appliqués tels quels sur des sources en LF (git am / git apply),
+# et les scripts shell sont lancés par bash (MSYS2, Flatpak).
+*.patch  -text
+*.sh     text eol=lf
