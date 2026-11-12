@@ -840,7 +840,8 @@
                         "../patches/gimp-3.2.8/0026-ChopGimp-Hand-H-and-Rotate-View-R-tools.patch",
                         "../patches/gimp-3.2.8/0027-ChopGimp-French-title-for-the-layer-effects-popover.patch",
                         "../patches/gimp-3.2.8/0028-ChopGimp-Shape-tool-U-rectangle-rounded-rectangle-el.patch",
-                        "../patches/gimp-3.2.8/0029-ChopGimp-help-ids-for-the-new-tools-required-by-tool.patch"
+                        "../patches/gimp-3.2.8/0029-ChopGimp-help-ids-for-the-new-tools-required-by-tool.patch",
+                        "../patches/gimp-3.2.8/0030-ChopGimp-silent-fallback-to-the-factory-toolrc-when-.patch"
                     ]
                 }
             ],
@@ -854,6 +855,18 @@
             ],
             "post-install": [
                 "for gimp_api_version in ${FLATPAK_DEST}/share/gimp/*; do install -d $gimp_api_version/help; done"
+            ]
+        },
+        {
+            "name": "resynthesizer",
+            "buildsystem": "meson",
+            "sources": [
+                {
+                    "type": "git",
+                    "url": "https://github.com/bootchk/resynthesizer.git",
+                    "tag": "v3.0.1",
+                    "commit": "bddb1dfb6bddc2363bf74d79a95a60691bc46279"
+                }
             ]
         },
         {

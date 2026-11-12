@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 #
-#   PhotoGIMP Pro — Separation de frequence
-#   Professional beauty retouching: split image into low/high frequency layers
+#   PhotoGIMP Pro — Séparation de fréquences
+#   Retouche beauté : calques basse / haute fréquence
 #
 #   License: GPL v3+
 
@@ -20,18 +20,15 @@ def _(message): return GLib.dgettext(None, message)
 
 
 def frequency_separation(procedure, run_mode, image, drawables, config, data):
-    """Separation de frequence — split into low frequency (color/tone) and
-    high frequency (texture/detail) layers for professional retouching.
-
-    Workflow after running:
-    - Paint/clone on "Low Frequency" to smooth skin color and tone
-    - Paint/clone on "High Frequency" to fix texture without affecting color
+    """Séparation de fréquences : calque « Basse fréquence » (couleur/tonalité,
+    flou gaussien) + calque « Haute fréquence » (texture, mode Fusion du grain)
+    dans un groupe. Les deux calques recomposent exactement l'original.
     """
     if run_mode == Gimp.RunMode.INTERACTIVE:
         gi.require_version('GimpUi', '3.0')
         from gi.repository import GimpUi
         GimpUi.init('python-fu-frequency-separation')
-        dialog = GimpUi.ProcedureDialog(procedure=procedure, config=config)
+        dialog = GimpUi.ProcedureDialog.new(procedure, config, _("Séparation de fréquences"))
         dialog.fill(None)
         if not dialog.run():
             dialog.destroy()
@@ -40,116 +37,56 @@ def frequency_separation(procedure, run_mode, image, drawables, config, data):
 
     blur_radius = config.get_property('blur-radius')
 
-    Gimp.context_push()
-    image.undo_group_start()
-
-    source_drawable = drawables[0] if drawables else image.get_active_drawable()
-    if source_drawable is None:
-        image.undo_group_end()
-        Gimp.context_pop()
+    layers = [d for d in drawables if isinstance(d, Gimp.Layer) and not d.is_group()]
+    if not layers:
         return procedure.new_return_values(
             Gimp.PDBStatusType.EXECUTION_ERROR,
-            GLib.Error("No active drawable found."))
+            GLib.Error.new_literal(GLib.quark_from_string("photogimp"),
+                                   _("Sélectionnez un calque (pas un groupe)."), 0))
+    source = layers[0]
 
-    parent = source_drawable.get_parent()
-    position = image.get_item_position(source_drawable)
+    Gimp.context_push()
+    image.undo_group_start()
+    try:
+        parent = source.get_parent()
+        position = image.get_item_position(source)
 
-    # Create a layer group to hold both frequency layers
-    group = Gimp.Layer.group_new(image)
-    group.set_name("Separation de frequence")
-    image.insert_layer(group, parent, position)
+        group = Gimp.GroupLayer.new(image, _("Séparation de fréquences"))
+        image.insert_layer(group, parent, position)
 
-    # --- Low Frequency layer (color/tone) ---
-    low_layer = source_drawable.copy()
-    image.insert_layer(low_layer, group, 0)
-    low_layer.set_name("Low Frequency")
-    low_layer.set_mode(Gimp.LayerMode.NORMAL)
+        # Basse fréquence : copie floutée (couleur / tonalité)
+        low = source.copy()
+        image.insert_layer(low, group, 0)
+        low.set_name(_("Basse fréquence"))
+        low.set_mode(Gimp.LayerMode.NORMAL)
+        low.set_opacity(100.0)
+        low.set_visible(True)
+        blur = Gimp.DrawableFilter.new(low, "gegl:gaussian-blur", _("Flou gaussien"))
+        cfg = blur.get_config()
+        cfg.set_property("std-dev-x", float(blur_radius))
+        cfg.set_property("std-dev-y", float(blur_radius))
+        blur.update()
+        low.merge_filter(blur)
 
-    # Apply Gaussian blur to the low frequency layer
-    blur_filter = Gimp.DrawableFilter.new(low_layer, "gegl:gaussian-blur", "")
-    blur_config = blur_filter.get_config()
-    blur_config.set_property("std-dev-x", float(blur_radius))
-    blur_config.set_property("std-dev-y", float(blur_radius))
-    low_layer.merge_filter(blur_filter)
+        # Haute fréquence = original - basse fréquence + 50 % (Extraction de grain)
+        tmp_low = low.copy()
+        image.insert_layer(tmp_low, group, 0)
+        high = source.copy()
+        image.insert_layer(high, group, 0)
+        high.set_opacity(100.0)
+        high.set_visible(True)
+        high.set_mode(Gimp.LayerMode.GRAIN_EXTRACT)
+        merged = image.merge_down(high, Gimp.MergeType.CLIP_TO_BOTTOM_LAYER)
+        merged.set_name(_("Haute fréquence"))
+        # Recomposition : Fusion du grain au-dessus de la basse fréquence
+        merged.set_mode(Gimp.LayerMode.GRAIN_MERGE)
 
-    # --- High Frequency layer (texture/detail) ---
-    high_layer = source_drawable.copy()
-    image.insert_layer(high_layer, group, 0)
-    high_layer.set_name("High Frequency")
-
-    # Set to Grain Extract mode: High = Original - Low
-    # This extracts the detail/texture that was removed by the blur
-    high_layer.set_mode(Gimp.LayerMode.GRAIN_EXTRACT)
-
-    # Flatten the group content to bake the grain extract result,
-    # then re-separate. Instead, we use a different approach:
-    # We merge the high layer down onto a copy of the low layer to get
-    # the actual high-frequency data, then set it to Grain Merge mode.
-
-    # Actually the standard workflow is simpler:
-    # 1. Low layer = blurred copy (Normal mode)
-    # 2. High layer = original copy set to Grain Extract
-    #    -> visually shows the difference
-    # But for proper non-destructive editing, we flatten the high freq:
-
-    # Merge high onto low to compute the actual grain-extracted pixels
-    # Then undo and use Grain Merge for recombination
-    # Simpler approach: keep high as a copy, apply the grain extract
-    # by computing it pixel-wise via GEGL
-
-    # Reset high layer to normal, apply grain-extract computation via GEGL
-    high_layer.set_mode(Gimp.LayerMode.NORMAL)
-
-    # Use GEGL grain-extract: result = (high - low + 0.5)
-    # We achieve this by using the low layer as aux input is not trivial,
-    # so we use the standard Photoshop technique:
-    # 1. Apply Image with the blurred layer in Soustraction mode + offset 128
-
-    # Simplest reliable approach for GIMP 3.0:
-    # Make high_layer a real grain-extracted version by:
-    # - Temporarily flatten: put blur on high, invert blend
-    # Actually, the cleanest GIMP approach:
-
-    # Apply gaussian blur to high_layer too, then use grain-extract math
-    # No — let's use the proven GIMP method:
-
-    # Copy low_layer pixels onto a temp layer, set temp to grain-extract
-    # over high_layer, flatten them together
-
-    # The most reliable method in GIMP 3.0:
-    # High layer stays as unmodified copy, set to Grain Extract.
-    # When both layers are in the group:
-    #   Group output = Low + (High GRAIN_EXTRACT)
-    #   = Low + (Original - Low) = Original (lossless reconstruction)
-
-    # Set the correct blend mode for recombination
-    high_layer.set_mode(Gimp.LayerMode.GRAIN_EXTRACT)
-
-    # For the retouching workflow, the user should:
-    # - Flatten high into real pixels, then set to Grain Merge
-    # Let's do that for a proper editable setup:
-
-    # Flatten the high frequency to actual pixel values
-    # by merging it temporarily with the low layer
-    temp_low = low_layer.copy()
-    image.insert_layer(temp_low, group, image.get_item_position(high_layer) + 1)
-
-    # Merge high_layer (grain extract) down onto temp_low
-    merged = image.merge_down(high_layer, Gimp.MergeType.CLIP_TO_BOTTOM_LAYER)
-    merged.set_name("High Frequency")
-    merged.set_mode(Gimp.LayerMode.GRAIN_MERGE)
-
-    # Now the group contains:
-    #   Top: "High Frequency" (grain merge) — actual texture data at 50% gray base
-    #   Bottom: "Low Frequency" (normal) — blurred color/tone
-    # Combined they reconstruct the original image perfectly.
-
-    # Hide the original source layer
-    source_drawable.set_visible(False)
-
+        source.set_visible(False)
+        image.set_selected_layers([merged])
+    finally:
+        image.undo_group_end()
+        Gimp.context_pop()
     Gimp.displays_flush()
-    image.undo_group_end()
-    Gimp.context_pop()
 
     return procedure.new_return_values(Gimp.PDBStatusType.SUCCESS, GLib.Error())
 
@@ -172,20 +109,20 @@ class FrequencySeparation(Gimp.PlugIn):
         procedure.set_sensitivity_mask(Gimp.ProcedureSensitivityMask.DRAWABLE |
                                        Gimp.ProcedureSensitivityMask.DRAWABLES)
         procedure.set_documentation(
-            _("Separation de frequence"),
-            _("Separer l'image en calques Basse Frequence (couleur/tonalite) et Haute Frequence "
-              "(texture/detail) pour la retouche beaute professionnelle. "
-              "Peignez sur le calque bas pour lisser la couleur, sur le haut pour corriger la texture."),
+            _("Séparation de fréquences"),
+            _("Sépare le calque en « Basse fréquence » (couleur/tonalité) et « Haute fréquence » "
+              "(texture/détail) pour la retouche beauté. Peignez sur la basse fréquence pour "
+              "lisser la couleur, sur la haute fréquence pour corriger la texture."),
             name)
-        procedure.set_menu_label(_("Separation de _frequence..."))
+        procedure.set_menu_label(_("Séparation de _fréquences…"))
         procedure.set_attribution("PhotoGIMP Pro", "GPL v3+", "2026")
-        procedure.add_menu_path("<Image>/Filters/Retouching")
+        procedure.add_menu_path("<Image>/Filters/Retouche")
 
         procedure.add_double_argument("blur-radius",
                                       _("Rayon de _flou"),
-                                      _("Rayon de flou gaussien pour la separation basse frequence. "
-                                        "Valeurs plus elevees = plus de details dans la haute frequence. "
-                                        "Typique : 5-15 pour portraits, 2-5 pour photos produit."),
+                                      _("Rayon du flou gaussien de la basse fréquence. "
+                                        "Plus il est élevé, plus la haute fréquence contient de détails. "
+                                        "Typique : 5-15 pour les portraits, 2-5 pour les photos produit."),
                                       1.0, 100.0, 10.0,
                                       GObject.ParamFlags.READWRITE)
 

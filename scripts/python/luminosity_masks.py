@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 #
-#   PhotoGIMP Pro — Masques de luminosite
-#   Generate Photoshop-style luminosity masks (Lights, Darks, Midtones)
-#   stored as channels for precise selection control.
+#   PhotoGIMP Pro — Masques de luminosité
+#   Masques de luminosité (Lumières, Ombres, Tons moyens) enregistrés
+#   comme canaux pour des sélections tonales précises.
 #
 #   License: GPL v3+
 
@@ -20,177 +20,86 @@ def N_(message): return message
 def _(message): return GLib.dgettext(None, message)
 
 
-def _desaturate_to_luminosity(image, drawable):
-    """Return a new channel representing the luminosity of the drawable.
-
-    Creates a temporary layer, desaturates it (luminosity mode), converts
-    to grayscale selection, and returns raw pixel data as a channel.
-    """
-    # Duplicate the drawable as a temp layer
+def _select_luminosity(image, drawable):
+    """Remplace la sélection par la luminosité du calque (blanc = sélectionné)."""
     temp = drawable.copy()
-    image.insert_layer(temp, drawable.get_parent(),
-                       image.get_item_position(drawable))
-    temp.set_name("_lum_temp")
-
-    # Desaturate using luminosity (weighted average matching human perception)
-    desat_filter = Gimp.DrawableFilter.new(temp, "gegl:desaturate", "")
-    desat_config = desat_filter.get_config()
-    # 0 = luminosity, 1 = luma, 2 = lightness, 3 = average, 4 = value
-    desat_config.set_property("mode", 0)
-    temp.merge_filter(desat_filter)
-
-    # Select all, copy from the desaturated layer
-    image.set_active_layer(temp)
-    Gimp.Selection.all(image)
-    temp.edit_copy()
-
-    # Create a channel from the clipboard
-    channel = Gimp.Channel.new(image, image.get_width(), image.get_height(),
-                               "_lum_base", 50.0, Gimp.RGB())
-    image.insert_channel(channel, None, 0)
-
-    # Paste the luminosity data into the channel
-    floating = channel.edit_paste(False)
-    Gimp.floating_sel_anchor(floating)
-
-    # Remove temp layer
+    image.insert_layer(temp, drawable.get_parent(), image.get_item_position(drawable))
+    if temp.get_mask() is not None:
+        temp.remove_mask(Gimp.MaskApplyMode.DISCARD)
+    # Masque « copie en niveaux de gris du calque » = luminosité
+    mask = temp.create_mask(Gimp.AddMaskType.COPY)
+    temp.add_mask(mask)
+    image.select_item(Gimp.ChannelOps.REPLACE, mask)
     image.remove_layer(temp)
-    Gimp.Selection.none(image)
 
+
+def _save(image, name):
+    channel = Gimp.Selection.save(image)
+    channel.set_name(name)
+    channel.set_visible(False)
     return channel
 
 
-def _channel_from_existing(image, source_channel, name, opacity):
-    """Duplicate a channel under a new name."""
-    new_ch = source_channel.copy()
-    new_ch.set_name(name)
-    new_ch.set_opacity(opacity)
-    image.insert_channel(new_ch, None, 0)
-    return new_ch
-
-
-def _apply_curves_narrow(image, channel, iterations):
-    """Apply curves to narrow the tonal range of a mask.
-
-    More iterations = narrower range (brighter lights or darker darks).
-    This multiplies the mask by itself, effectively raising pixel values
-    to a power.
-    """
-    for _i in range(iterations):
-        # Select from channel, then intersect with itself via fill
-        image.set_active_channel(channel)
-        Gimp.Selection.all(image)
-        channel.edit_copy()
-        floating = channel.edit_paste(False)
-        Gimp.Item.set_visible(floating, True)
-        # Set the floating selection to Multiply-like behavior:
-        # We paste the same data and anchor — effectively squares the values
-        Gimp.floating_sel_anchor(floating)
-
-        # Use curves to push contrast: darken shadows, brighten highlights
-        curves_filter = Gimp.DrawableFilter.new(channel, "gegl:curves", "")
-        curves_config = curves_filter.get_config()
-        channel.merge_filter(curves_filter)
-
-    Gimp.Selection.none(image)
-
-
-def _invert_channel(image, channel):
-    """Invert a channel's pixel values."""
-    invert_filter = Gimp.DrawableFilter.new(channel, "gegl:invert-linear", "")
-    channel.merge_filter(invert_filter)
-
-
 def generate_luminosity_masks(procedure, run_mode, image, drawables, config, data):
-    """Generate 7 luminosity mask channels: Lights 1-3, Darks 1-3, Midtones."""
-    Gimp.context_push()
+    """Crée 7 canaux : Lumières 1-3, Ombres 1-3, Tons moyens.
+
+    Méthode classique (calculs de sélection GIMP) :
+      L1 = luminosité,  O1 = 1 - L1
+      L2 = L1 - O1,     L3 = L2 - O1
+      O2 = O1 - L1,     O3 = O2 - L1
+      Tons moyens = tout - L2 - O2
+    """
+    layers = [d for d in drawables if isinstance(d, Gimp.Layer)]
+    if not layers:
+        return procedure.new_return_values(
+            Gimp.PDBStatusType.EXECUTION_ERROR,
+            GLib.Error.new_literal(GLib.quark_from_string("photogimp"),
+                                   _("Sélectionnez un calque."), 0))
+    drawable = layers[0]
+
     image.undo_group_start()
+    try:
+        # Conserver la sélection de l'utilisateur
+        saved = None if Gimp.Selection.is_empty(image) else Gimp.Selection.save(image)
 
-    drawable = drawables[0] if drawables else image.get_active_drawable()
-    if drawable is None:
+        if drawable.is_group():
+            visible = Gimp.Layer.new_from_visible(image, image, "_lum")
+            image.insert_layer(visible, None, 0)
+            _select_luminosity(image, visible)
+            image.remove_layer(visible)
+        else:
+            _select_luminosity(image, drawable)
+
+        l1 = _save(image, _("Lumières 1 (large)"))
+        Gimp.Selection.invert(image)
+        o1 = _save(image, _("Ombres 1 (large)"))
+
+        image.select_item(Gimp.ChannelOps.REPLACE, l1)
+        image.select_item(Gimp.ChannelOps.SUBTRACT, o1)
+        l2 = _save(image, _("Lumières 2 (moyen)"))
+        image.select_item(Gimp.ChannelOps.SUBTRACT, o1)
+        _save(image, _("Lumières 3 (étroit)"))
+
+        image.select_item(Gimp.ChannelOps.REPLACE, o1)
+        image.select_item(Gimp.ChannelOps.SUBTRACT, l1)
+        o2 = _save(image, _("Ombres 2 (moyen)"))
+        image.select_item(Gimp.ChannelOps.SUBTRACT, l1)
+        _save(image, _("Ombres 3 (étroit)"))
+
+        Gimp.Selection.all(image)
+        image.select_item(Gimp.ChannelOps.SUBTRACT, l2)
+        image.select_item(Gimp.ChannelOps.SUBTRACT, o2)
+        _save(image, _("Tons moyens"))
+
+        if saved is not None:
+            image.select_item(Gimp.ChannelOps.REPLACE, saved)
+            image.remove_channel(saved)
+        else:
+            Gimp.Selection.none(image)
+        image.set_selected_layers([drawable])
+    finally:
         image.undo_group_end()
-        Gimp.context_pop()
-        return procedure.new_return_values(Gimp.PDBStatusType.EXECUTION_ERROR,
-                                           GLib.Error())
-
-    w = image.get_width()
-    h = image.get_height()
-
-    # --- Base luminosity channel ---
-    base_lum = _desaturate_to_luminosity(image, drawable)
-
-    # --- Lights 1 (brightest pixels, full luminosity) ---
-    lights1 = _channel_from_existing(image, base_lum, "Lumieres 1 (large)", 50.0)
-
-    # --- Lights 2 (narrower highlights) ---
-    lights2 = _channel_from_existing(image, base_lum, "Lumieres 2 (moyen)", 50.0)
-    # Apply levels to narrow: raise black point
-    levels_filter = Gimp.DrawableFilter.new(lights2, "gegl:levels", "")
-    levels_config = levels_filter.get_config()
-    levels_config.set_property("in-low", 0.25)
-    levels_config.set_property("in-high", 1.0)
-    lights2.merge_filter(levels_filter)
-
-    # --- Lights 3 (narrowest highlights) ---
-    lights3 = _channel_from_existing(image, base_lum, "Lumieres 3 (etroit)", 50.0)
-    levels_filter = Gimp.DrawableFilter.new(lights3, "gegl:levels", "")
-    levels_config = levels_filter.get_config()
-    levels_config.set_property("in-low", 0.5)
-    levels_config.set_property("in-high", 1.0)
-    lights3.merge_filter(levels_filter)
-
-    # --- Darks 1 (inverted luminosity = darkest pixels) ---
-    darks1 = _channel_from_existing(image, base_lum, "Ombres 1 (large)", 50.0)
-    _invert_channel(image, darks1)
-
-    # --- Darks 2 (narrower shadows) ---
-    darks2 = _channel_from_existing(image, base_lum, "Ombres 2 (moyen)", 50.0)
-    _invert_channel(image, darks2)
-    levels_filter = Gimp.DrawableFilter.new(darks2, "gegl:levels", "")
-    levels_config = levels_filter.get_config()
-    levels_config.set_property("in-low", 0.25)
-    levels_config.set_property("in-high", 1.0)
-    darks2.merge_filter(levels_filter)
-
-    # --- Darks 3 (narrowest shadows) ---
-    darks3 = _channel_from_existing(image, base_lum, "Ombres 3 (etroit)", 50.0)
-    _invert_channel(image, darks3)
-    levels_filter = Gimp.DrawableFilter.new(darks3, "gegl:levels", "")
-    levels_config = levels_filter.get_config()
-    levels_config.set_property("in-low", 0.5)
-    levels_config.set_property("in-high", 1.0)
-    darks3.merge_filter(levels_filter)
-
-    # --- Midtones (intersection of lights and darks = middle tones) ---
-    # Midtones = lights1 intersected with darks1
-    # Strategy: duplicate lights1, then multiply with darks1 data
-    midtones = _channel_from_existing(image, lights1, "Tons moyens", 50.0)
-
-    # To intersect: load darks1 as selection, then apply as mask on midtones
-    image.set_active_channel(darks1)
-    Gimp.Selection.all(image)
-    darks1.edit_copy()
-    image.set_active_channel(midtones)
-    floating = midtones.edit_paste(False)
-    Gimp.floating_sel_anchor(floating)
-
-    # The midtones channel now has the intersection (min of lights and darks)
-    # Apply levels to boost the midrange
-    levels_filter = Gimp.DrawableFilter.new(midtones, "gegl:levels", "")
-    levels_config = levels_filter.get_config()
-    levels_config.set_property("in-low", 0.0)
-    levels_config.set_property("in-high", 0.75)
-    midtones.merge_filter(levels_filter)
-
-    # Remove the base working channel
-    image.remove_channel(base_lum)
-
-    # Clear selection
-    Gimp.Selection.none(image)
-
     Gimp.displays_flush()
-    image.undo_group_end()
-    Gimp.context_pop()
 
     return procedure.new_return_values(Gimp.PDBStatusType.SUCCESS, GLib.Error())
 
@@ -213,14 +122,14 @@ class LuminosityMasks(Gimp.PlugIn):
         procedure.set_sensitivity_mask(Gimp.ProcedureSensitivityMask.DRAWABLE |
                                        Gimp.ProcedureSensitivityMask.DRAWABLES)
         procedure.set_documentation(
-            _("Generer masques de luminosite"),
-            _("Cree 7 masques de luminosite (Lumieres 1-3, Ombres 1-3, Tons moyens) "
-              "sous forme de canaux. Chargez un canal comme selection pour cibler "
-              "precisement les tons clairs, moyens ou sombres."),
+            _("Générer les masques de luminosité"),
+            _("Crée 7 masques de luminosité (Lumières 1-3, Ombres 1-3, Tons moyens) "
+              "sous forme de canaux. Chargez un canal comme sélection pour cibler "
+              "précisément les tons clairs, moyens ou sombres."),
             name)
-        procedure.set_menu_label(_("_Generer masques de luminosite"))
+        procedure.set_menu_label(_("_Masques de luminosité"))
         procedure.set_attribution("PhotoGIMP Pro", "GPL v3+", "2026")
-        procedure.add_menu_path("<Image>/Filters/Selection")
+        procedure.add_menu_path("<Image>/Select")
 
         return procedure
 

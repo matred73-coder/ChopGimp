@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 #
-#   PhotoGIMP Pro — Configuration Densite +/-
-#   One-click creation of dodge and burn layers for professional retouching
+#   PhotoGIMP Pro — Configuration Densité +/-
+#   Création en un clic des calques Éclaircir / Assombrir pour la retouche
 #
 #   License: GPL v3+
 
@@ -19,18 +19,24 @@ def N_(message): return message
 def _(message): return GLib.dgettext(None, message)
 
 
-def dodge_burn_setup(procedure, run_mode, image, drawables, config, data):
-    """Create Dodge & Burn layers filled with 50% gray.
+def _gray_layer(image, name, mode):
+    w, h = image.get_width(), image.get_height()
+    ltype = (Gimp.ImageType.RGBA_IMAGE if image.get_base_type() == Gimp.ImageBaseType.RGB
+             else Gimp.ImageType.GRAYA_IMAGE)
+    return Gimp.Layer.new(image, name, w, h, ltype, 100.0, mode)
 
-    The user paints white to dodge (lighten) or black to burn (darken)
-    on these layers, which are set to Overlay or Soft Light blend mode
-    so that the 50% gray is invisible.
+
+def dodge_burn_setup(procedure, run_mode, image, drawables, config, data):
+    """Crée un ou deux calques gris 50 % en mode Superposition ou Lumière douce.
+
+    Peindre en blanc éclaircit, peindre en noir assombrit ; le gris 50 % est
+    neutre dans ces modes.
     """
     if run_mode == Gimp.RunMode.INTERACTIVE:
         gi.require_version('GimpUi', '3.0')
         from gi.repository import GimpUi
         GimpUi.init('python-fu-dodge-burn-setup')
-        dialog = GimpUi.ProcedureDialog(procedure=procedure, config=config)
+        dialog = GimpUi.ProcedureDialog.new(procedure, config, _("Densité +/-"))
         dialog.fill(None)
         if not dialog.run():
             dialog.destroy()
@@ -40,82 +46,51 @@ def dodge_burn_setup(procedure, run_mode, image, drawables, config, data):
     use_soft_light = config.get_property('soft-light')
     separate_layers = config.get_property('separate-layers')
 
-    Gimp.context_push()
-    image.undo_group_start()
-
-    img_width = image.get_width()
-    img_height = image.get_height()
-
     blend_mode = Gimp.LayerMode.SOFTLIGHT if use_soft_light else Gimp.LayerMode.OVERLAY
 
-    # Get insertion position (above active layer)
-    active_drawable = drawables[0] if drawables else image.get_active_drawable()
-    parent = active_drawable.get_parent() if active_drawable else None
-    position = 0
-    if active_drawable:
-        position = image.get_item_position(active_drawable)
-
-    # 50% gray color
-    gray_color = Gimp.RGB()
-    gray_color.set(0.5, 0.5, 0.5)
-
-    if separate_layers:
-        # Create a group to hold both D&B layers
-        group = Gimp.Layer.group_new(image)
-        group.set_name("Dodge & Burn")
-        image.insert_layer(group, parent, position)
-
-        # Burn layer (bottom of group)
-        burn_layer = Gimp.Layer.new(image, img_width, img_height,
-                                    Gimp.ImageType.RGBA_IMAGE,
-                                    "Assombrir (peindre en noir)",
-                                    100.0, blend_mode)
-        image.insert_layer(burn_layer, group, 0)
-
-        # Fill burn layer with 50% gray
-        Gimp.context_set_foreground(gray_color)
-        burn_layer.edit_fill(Gimp.FillType.FOREGROUND)
-
-        # Dodge layer (top of group)
-        dodge_layer = Gimp.Layer.new(image, img_width, img_height,
-                                     Gimp.ImageType.RGBA_IMAGE,
-                                     "Eclaircir (peindre en blanc)",
-                                     100.0, blend_mode)
-        image.insert_layer(dodge_layer, group, 0)
-
-        # Fill dodge layer with 50% gray
-        dodge_layer.edit_fill(Gimp.FillType.FOREGROUND)
-
-        # Set active layer to dodge layer for immediate use
-        image.set_active_layer(dodge_layer)
-
+    # Insertion au-dessus du calque actif
+    active = drawables[0] if drawables else None
+    if isinstance(active, Gimp.Layer):
+        parent = active.get_parent()
+        position = image.get_item_position(active)
     else:
-        # Single combined D&B layer
-        db_layer = Gimp.Layer.new(image, img_width, img_height,
-                                  Gimp.ImageType.RGBA_IMAGE,
-                                  "Dodge & Burn",
-                                  100.0, blend_mode)
-        image.insert_layer(db_layer, parent, position)
+        parent, position = None, 0
 
-        # Fill with 50% gray
-        Gimp.context_set_foreground(gray_color)
-        db_layer.edit_fill(Gimp.FillType.FOREGROUND)
+    Gimp.context_push()
+    image.undo_group_start()
+    try:
+        # Gris 50 % (sRGB 128) : neutre en Superposition / Lumière douce
+        Gimp.context_set_foreground(Gegl.Color.new("#808080"))
 
-        image.set_active_layer(db_layer)
+        if separate_layers:
+            group = Gimp.GroupLayer.new(image, _("Densité +/-"))
+            image.insert_layer(group, parent, position)
+            # Traverser : les modes des calques agissent sur l'image dessous
+            group.set_mode(Gimp.LayerMode.PASS_THROUGH)
 
-    # Set brush to a soft round brush for immediate painting
-    # Set foreground to white (dodge) as default starting point
-    white = Gimp.RGB()
-    white.set(1.0, 1.0, 1.0)
-    Gimp.context_set_foreground(white)
+            burn = _gray_layer(image, _("Assombrir (peindre en noir)"), blend_mode)
+            image.insert_layer(burn, group, 0)
+            burn.fill(Gimp.FillType.FOREGROUND)
 
-    # Set opacity to a low value for subtle work
+            dodge = _gray_layer(image, _("Éclaircir (peindre en blanc)"), blend_mode)
+            image.insert_layer(dodge, group, 0)
+            dodge.fill(Gimp.FillType.FOREGROUND)
+            target = dodge
+        else:
+            target = _gray_layer(image, _("Densité +/-"), blend_mode)
+            image.insert_layer(target, parent, position)
+            target.fill(Gimp.FillType.FOREGROUND)
+
+        image.set_selected_layers([target])
+    finally:
+        image.undo_group_end()
+        Gimp.context_pop()
+
+    # Prêt à peindre : blanc (éclaircir) à faible opacité
+    Gimp.context_set_foreground(Gegl.Color.new("white"))
     Gimp.context_set_opacity(15.0)
 
     Gimp.displays_flush()
-    image.undo_group_end()
-    Gimp.context_pop()
-
     return procedure.new_return_values(Gimp.PDBStatusType.SUCCESS, GLib.Error())
 
 
@@ -137,25 +112,25 @@ class DodgeBurnSetup(Gimp.PlugIn):
         procedure.set_sensitivity_mask(Gimp.ProcedureSensitivityMask.DRAWABLE |
                                        Gimp.ProcedureSensitivityMask.DRAWABLES)
         procedure.set_documentation(
-            _("Configuration Densite +/-"),
-            _("Creer un/des calque(s) gris 50% en mode Superposition ou Lumiere tamisee "
-              "pour la retouche densite +/- non-destructive. "
-              "Peignez en blanc pour eclaircir, en noir pour assombrir."),
+            _("Configuration Densité +/-"),
+            _("Crée un ou deux calques gris 50 % en mode Superposition ou Lumière douce "
+              "pour une retouche Densité +/- non destructive. "
+              "Peignez en blanc pour éclaircir, en noir pour assombrir."),
             name)
-        procedure.set_menu_label(_("_Densite +/- (Dodge && Burn)..."))
+        procedure.set_menu_label(_("_Densité +/- (Dodge && Burn)…"))
         procedure.set_attribution("PhotoGIMP Pro", "GPL v3+", "2026")
-        procedure.add_menu_path("<Image>/Filters/Retouching")
+        procedure.add_menu_path("<Image>/Filters/Retouche")
 
         procedure.add_boolean_argument("soft-light",
-                                       _("Utiliser _Lumiere tamisee"),
-                                       _("Utiliser le mode Lumiere tamisee au lieu de Superposition. "
-                                         "La Lumiere tamisee donne un resultat plus subtil et naturel."),
+                                       _("Utiliser _Lumière douce"),
+                                       _("Utiliser le mode Lumière douce au lieu de Superposition, "
+                                         "pour un résultat plus subtil et naturel."),
                                        False, GObject.ParamFlags.READWRITE)
 
         procedure.add_boolean_argument("separate-layers",
-                                       _("Calques _separes Eclaircir/Assombrir"),
-                                       _("Creer deux calques separes (un pour eclaircir, un pour assombrir) "
-                                         "dans un groupe, pour un controle independant."),
+                                       _("Calques _séparés Éclaircir/Assombrir"),
+                                       _("Créer deux calques séparés (éclaircir / assombrir) "
+                                         "dans un groupe, pour un contrôle indépendant."),
                                        True, GObject.ParamFlags.READWRITE)
 
         return procedure

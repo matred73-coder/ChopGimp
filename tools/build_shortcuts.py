@@ -107,6 +107,7 @@ PS_MAP = [
     ("Édition", "edit-paste-into",         [P + S + A + "v"], "Coller dedans"),
     ("Édition", "edit-paste-as-new-image", [P + A + "v"],    "Coller comme nouvelle image"),
     ("Édition", "edit-clear",              ["Delete"],       "Effacer"),
+    ("Édition", "chopgimp-content-aware-fill", [S + "F5"],   "Remplir d'après le contenu"),
     ("Édition", "edit-fill-fg",            [A + "BackSpace"], "Remplir avec la couleur de premier plan"),
     ("Édition", "edit-fill-bg",            [P + "BackSpace"], "Remplir avec la couleur d'arrière-plan"),
     ("Édition", "dialogs-preferences",     [P + "k"],        "Préférences"),
@@ -199,7 +200,7 @@ def main():
 
     # 1. actions valides
     for _, act, _, _ in PS_MAP:
-        if act not in defaults and not act.startswith(("photogimp-", "tools-opacity-ps-", "tools-hand", "tools-rotate-view", "tools-shape")):
+        if act not in defaults and not act.startswith(("photogimp-", "chopgimp-", "tools-opacity-ps-", "tools-hand", "tools-rotate-view", "tools-shape")):
             errors.append("action inconnue de GIMP 3.2.8 : %s" % act)
 
     # 2. aucune touche attribuée deux fois dans PS_MAP

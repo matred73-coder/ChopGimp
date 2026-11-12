@@ -1,0 +1,30 @@
+From e2da07367ece0443ce3fb1331702f26044e9cdcd Mon Sep 17 00:00:00 2001
+From: ChopGimp <mathieu.redon@proton.me>
+Date: Thu, 12 Nov 2026 06:57:30 +0100
+Subject: [PATCH 30/30] ChopGimp: silent fallback to the factory toolrc when
+ the personal one is outdated
+
+---
+ app/tools/gimp-tools.c | 6 +++++-
+ 1 file changed, 5 insertions(+), 1 deletion(-)
+
+diff --git a/app/tools/gimp-tools.c b/app/tools/gimp-tools.c
+index cdff455..cfe67e3 100644
+--- a/app/tools/gimp-tools.c
++++ b/app/tools/gimp-tools.c
+@@ -623,7 +623,11 @@ gimp_tools_reset (Gimp          *gimp,
+         }
+       else
+         {
+-          if (error->code != G_IO_ERROR_NOT_FOUND)
++          /*  ChopGimp: a personal toolrc from an older version (missing the
++           *  new tools) silently falls back to the factory toolrc.
++           */
++          if (error && error->code != G_IO_ERROR_NOT_FOUND &&
++              ! (user_toolrc && list == files))
+             {
+               gimp_message_literal (gimp, NULL,
+                                     GIMP_MESSAGE_WARNING, error->message);
+-- 
+2.53.0
+

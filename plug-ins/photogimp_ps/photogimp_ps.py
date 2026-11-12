@@ -30,7 +30,8 @@ STYLES = {
                                    {"x": 0.0, "y": 0.0, "radius": 18.0, "grow-radius": 2,
                                     "opacity": 1.0}, (1.0, 0.93, 0.6)),
     "photogimp-style-inner-shadow": ("Ombre interne", "gegl:inner-glow",
-                                     {"radius": 8.0, "grow-radius": 2, "opacity": 1.0},
+                                     {"x": 4.0, "y": 4.0, "radius": 8.0, "grow-radius": 2,
+                                      "opacity": 0.75},
                                      (0.0, 0.0, 0.0)),
 }
 
@@ -89,10 +90,15 @@ def add_filter(drawable, op, name, props, color=None):
         except Exception:
             pass
     if color is not None:
-        try:
-            cfg.set_property("color", gegl_color(color))
-        except Exception:
-            pass
+        # gegl:dropshadow → « color », gegl:inner-glow → « value »
+        for prop in ("color", "value"):
+            try:
+                cfg.set_property(prop, gegl_color(color))
+                break
+            except Exception:
+                pass
+    # les effets se superposent au calque (sinon « Remplacer » efface le contenu)
+    f.set_blend_mode(Gimp.LayerMode.NORMAL)
     f.update()
     drawable.append_filter(f)
     return f

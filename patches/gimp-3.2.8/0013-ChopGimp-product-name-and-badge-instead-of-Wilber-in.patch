@@ -1,7 +1,7 @@
 From eb80fb7f0f42d2b1f9e7cd7d2d4951040e532cba Mon Sep 17 00:00:00 2001
 From: ChopGimp <mathieu.redon@proton.me>
 Date: Wed, 11 Nov 2026 18:32:49 +0100
-Subject: [PATCH 13/29] ChopGimp: product name and badge instead of Wilber in
+Subject: [PATCH 13/30] ChopGimp: product name and badge instead of Wilber in
  the empty window
 
 GIMP copyright and license notices are kept unchanged.

@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 #
-#   PhotoGIMP Pro — Text Effects
-#   Apply visual effects to text layers: 3D, Neon, Chrome, Outline, Shadow, Arc
+#   PhotoGIMP Pro — Effets de texte
+#   Effets pour calques texte : 3D, Néon, Chrome, Contour, Ombre, Arc
 #
 #   License: GPL v3+
 
@@ -14,373 +14,247 @@ from gi.repository import Gegl
 from gi.repository import GObject
 from gi.repository import GLib
 import sys
-import math
 
 def N_(message): return message
 def _(message): return GLib.dgettext(None, message)
 
 
 # ---------------------------------------------------------------------------
-#  Helper utilities
+#  Outils
 # ---------------------------------------------------------------------------
 
-def get_pdb():
-    return Gimp.get_pdb()
+def _targets(drawables):
+    """Calques utilisables (pas les groupes)."""
+    return [d for d in drawables if isinstance(d, Gimp.Layer) and not d.is_group()]
 
 
-def ensure_not_group(drawable):
-    """Return True if drawable is usable (not a group)."""
-    return not drawable.is_group()
+def _apply(drawable, op, props):
+    """Applique (fusionne) un filtre GEGL sur le calque."""
+    f = Gimp.DrawableFilter.new(drawable, op, "")
+    cfg = f.get_config()
+    for k, v in props.items():
+        cfg.set_property(k, v)
+    f.update()
+    drawable.merge_filter(f)
+
+
+def _fill_opaque(layer, color):
+    """Remplit les pixels non transparents du calque avec une couleur unie."""
+    layer.set_lock_alpha(True)
+    Gimp.context_set_foreground(color)
+    layer.fill(Gimp.FillType.FOREGROUND)
+    layer.set_lock_alpha(False)
+
+
+def _below(image, drawable, layer, name):
+    """Insère `layer` juste sous `drawable`, à la taille de l'image."""
+    image.insert_layer(layer, drawable.get_parent(), image.get_item_position(drawable) + 1)
+    layer.set_name(name)
+    layer.resize_to_image_size()
+    return layer
+
+
+def _finish(procedure, image):
+    image.undo_group_end()
+    Gimp.context_pop()
+    Gimp.displays_flush()
+    return procedure.new_return_values(Gimp.PDBStatusType.SUCCESS, GLib.Error())
+
+
+def _begin(image):
+    Gimp.context_push()
+    image.undo_group_start()
 
 
 # ---------------------------------------------------------------------------
-#  3D Text Effect
+#  Texte 3D
 # ---------------------------------------------------------------------------
 
 def text_3d(procedure, run_mode, image, drawables, config, data):
-    """Create a 3D / extruded look by stacking darkened offset duplicates."""
-    Gimp.context_push()
-    image.undo_group_start()
-    pdb = get_pdb()
+    """Effet 3D extrudé : copies décalées et assombries empilées sous le texte."""
+    depth = 10       # nombre de copies
+    step = 1         # décalage en px par copie
 
-    depth = 10       # number of copies
-    offset_x = 1     # px per step
-    offset_y = 1
-    darken_step = 8  # darken each successive copy
-
-    for drawable in drawables:
-        if not ensure_not_group(drawable):
-            continue
-
-        parent = drawable.get_parent()
-        pos = image.get_item_position(drawable)
-
-        for i in range(depth, 0, -1):
-            dup = drawable.copy()
-            image.insert_layer(dup, parent, pos + 1)
-            dup.set_offsets(
-                drawable.get_offsets().offset_x + offset_x * i,
-                drawable.get_offsets().offset_y + offset_y * i,
-            )
-            dup.set_name(f"{drawable.get_name()} 3D-{i}")
-
-            # Darken via brightness-contrast GEGL
-            bc_filter = Gimp.DrawableFilter.new(
-                dup, "gegl:brightness-contrast", "")
-            bc_config = bc_filter.get_config()
-            bc_config.set_property("brightness", -darken_step * i / 255.0)
-            dup.merge_filter(bc_filter)
-
-    Gimp.displays_flush()
-    image.undo_group_end()
-    Gimp.context_pop()
-    return procedure.new_return_values(Gimp.PDBStatusType.SUCCESS, GLib.Error())
+    _begin(image)
+    try:
+        for drawable in _targets(drawables):
+            parent = drawable.get_parent()
+            off = drawable.get_offsets()
+            for i in range(1, depth + 1):
+                dup = drawable.copy()
+                image.insert_layer(dup, parent, image.get_item_position(drawable) + i)
+                dup.set_name("%s 3D-%d" % (drawable.get_name(), i))
+                dup.set_offsets(off.offset_x + step * i, off.offset_y + step * i)
+                _apply(dup, "gegl:brightness-contrast",
+                       {"brightness": -0.03 * i - 0.1, "contrast": 1.0})
+    finally:
+        result = _finish(procedure, image)
+    return result
 
 
 # ---------------------------------------------------------------------------
-#  Neon Glow Effect
+#  Lueur néon
 # ---------------------------------------------------------------------------
 
 def text_neon_glow(procedure, run_mode, image, drawables, config, data):
-    """Neon glow: duplicate text, Gaussian blur, colorize, set to Screen mode."""
-    Gimp.context_push()
-    image.undo_group_start()
-    pdb = get_pdb()
+    """Lueur néon : copies colorées et floutées sous le texte, en mode Écran."""
+    neon = Gegl.Color.new("#00ffff")
 
-    glow_radius = 15.0
-
-    for drawable in drawables:
-        if not ensure_not_group(drawable):
-            continue
-
-        parent = drawable.get_parent()
-        pos = image.get_item_position(drawable)
-
-        # Create glow layer (duplicate below the text)
-        glow = drawable.copy()
-        image.insert_layer(glow, parent, pos + 1)
-        glow.set_name(f"{drawable.get_name()} Neon-Glow")
-
-        # Flatten the glow copy if it has alpha
-        pdb.run_procedure("gimp-layer-flatten-image", [])  # noop; we just blur
-
-        # Apply Gaussian blur via GEGL
-        blur_filter = Gimp.DrawableFilter.new(
-            glow, "gegl:gaussian-blur", "")
-        blur_config = blur_filter.get_config()
-        blur_config.set_property("std-dev-x", glow_radius)
-        blur_config.set_property("std-dev-y", glow_radius)
-        glow.merge_filter(blur_filter)
-
-        # Colorize the glow (neon cyan-ish: hue ~0.52, high saturation)
-        color_filter = Gimp.DrawableFilter.new(
-            glow, "gegl:hue-chroma", "")
-        try:
-            cc = color_filter.get_config()
-            cc.set_property("hue", 180.0)  # shift towards cyan
-        except Exception:
-            pass
-        glow.merge_filter(color_filter)
-
-        # Set blend mode to Screen for the glow
-        glow.set_mode(Gimp.LayerMode.SCREEN)
-        glow.set_opacity(85.0)
-
-        # Make a second stronger glow for intensity
-        glow2 = glow.copy()
-        image.insert_layer(glow2, parent, pos + 2)
-        glow2.set_name(f"{drawable.get_name()} Neon-Glow-2")
-        glow2.set_mode(Gimp.LayerMode.SCREEN)
-        glow2.set_opacity(60.0)
-
-    Gimp.displays_flush()
-    image.undo_group_end()
-    Gimp.context_pop()
-    return procedure.new_return_values(Gimp.PDBStatusType.SUCCESS, GLib.Error())
+    _begin(image)
+    try:
+        for drawable in _targets(drawables):
+            for radius, opacity, suffix in ((15.0, 85.0, ""), (5.0, 100.0, "-2")):
+                glow = _below(image, drawable, drawable.copy(),
+                              "%s Néon%s" % (drawable.get_name(), suffix))
+                _fill_opaque(glow, neon)
+                _apply(glow, "gegl:gaussian-blur",
+                       {"std-dev-x": radius, "std-dev-y": radius})
+                glow.set_mode(Gimp.LayerMode.SCREEN)
+                glow.set_opacity(opacity)
+    finally:
+        result = _finish(procedure, image)
+    return result
 
 
 # ---------------------------------------------------------------------------
-#  Chrome / Metal Effect
+#  Chrome / Métal
 # ---------------------------------------------------------------------------
 
 def text_chrome(procedure, run_mode, image, drawables, config, data):
-    """Chrome/metal look: emboss + desaturate + curves for metallic sheen."""
-    Gimp.context_push()
-    image.undo_group_start()
-    pdb = get_pdb()
-
-    for drawable in drawables:
-        if not ensure_not_group(drawable):
-            continue
-
-        # Desaturate (luminosity) to get greyscale base
-        desat_filter = Gimp.DrawableFilter.new(
-            drawable, "gegl:saturation", "")
-        desat_config = desat_filter.get_config()
-        desat_config.set_property("scale", 0.0)
-        drawable.merge_filter(desat_filter)
-
-        # Emboss via GEGL for 3D metallic feel
-        try:
-            emboss_filter = Gimp.DrawableFilter.new(
-                drawable, "gegl:emboss", "")
-            emboss_config = emboss_filter.get_config()
-            emboss_config.set_property("azimuth", 315.0)
-            emboss_config.set_property("elevation", 45.0)
-            emboss_config.set_property("depth", 3)
-            drawable.merge_filter(emboss_filter)
-        except Exception:
-            pass
-
-        # Increase contrast for chrome shine
-        bc_filter = Gimp.DrawableFilter.new(
-            drawable, "gegl:brightness-contrast", "")
-        bc_config = bc_filter.get_config()
-        bc_config.set_property("contrast", 0.4)
-        bc_config.set_property("brightness", 0.05)
-        drawable.merge_filter(bc_filter)
-
-    Gimp.displays_flush()
-    image.undo_group_end()
-    Gimp.context_pop()
-    return procedure.new_return_values(Gimp.PDBStatusType.SUCCESS, GLib.Error())
+    """Aspect chromé : désaturation + estampage + contraste renforcé."""
+    _begin(image)
+    try:
+        for drawable in _targets(drawables):
+            _apply(drawable, "gegl:saturation", {"scale": 0.0})
+            _apply(drawable, "gegl:emboss",
+                   {"azimuth": 315.0, "elevation": 45.0, "depth": 3})
+            _apply(drawable, "gegl:brightness-contrast",
+                   {"contrast": 1.4, "brightness": 0.05})
+    finally:
+        result = _finish(procedure, image)
+    return result
 
 
 # ---------------------------------------------------------------------------
-#  Outline Text Effect
+#  Texte avec contour
 # ---------------------------------------------------------------------------
 
 def text_outline(procedure, run_mode, image, drawables, config, data):
-    """Add a colored outline around text using alpha-to-selection + grow + stroke."""
-    Gimp.context_push()
-    image.undo_group_start()
-    pdb = get_pdb()
+    """Contour : alpha du texte -> sélection agrandie -> remplissage sous le texte."""
+    outline_size = 3
+    outline_color = Gegl.Color.new("white")
 
-    outline_size = 3   # pixels to grow
-    # Outline color: white
-    outline_color = Gimp.RGB()
-    outline_color.set(1.0, 1.0, 1.0)
-
-    for drawable in drawables:
-        if not ensure_not_group(drawable):
-            continue
-
-        parent = drawable.get_parent()
-        pos = image.get_item_position(drawable)
-
-        # Create outline layer below text
-        w = image.get_width()
-        h = image.get_height()
-        outline_layer = Gimp.Layer.new(
-            image, f"{drawable.get_name()} Outline",
-            w, h, Gimp.ImageType.RGBA_IMAGE, 100.0,
-            Gimp.LayerMode.NORMAL)
-        image.insert_layer(outline_layer, parent, pos + 1)
-
-        # Alpha to selection from text layer
-        pdb.run_procedure("gimp-image-set-active-layer", [image, drawable])
-        pdb.run_procedure("gimp-layer-create-mask", [drawable, Gimp.AddMaskType.ALPHA_TRANSFER])
-        image.select_item(Gimp.ChannelOps.REPLACE, drawable)
-
-        # Grow selection
-        pdb.run_procedure("gimp-selection-grow", [image, outline_size])
-
-        # Fill on outline layer
-        image.set_active_layer(outline_layer)
-        Gimp.context_set_foreground(outline_color)
-        pdb.run_procedure("gimp-edit-fill", [outline_layer, Gimp.FillType.FOREGROUND])
-
-        # Remove selection
-        pdb.run_procedure("gimp-selection-none", [image])
-
-    Gimp.displays_flush()
-    image.undo_group_end()
-    Gimp.context_pop()
-    return procedure.new_return_values(Gimp.PDBStatusType.SUCCESS, GLib.Error())
+    _begin(image)
+    try:
+        saved = None if Gimp.Selection.is_empty(image) else Gimp.Selection.save(image)
+        for drawable in _targets(drawables):
+            w, h = image.get_width(), image.get_height()
+            outline = Gimp.Layer.new(image, "%s Contour" % drawable.get_name(), w, h,
+                                     Gimp.ImageType.RGBA_IMAGE, 100.0, Gimp.LayerMode.NORMAL)
+            image.insert_layer(outline, drawable.get_parent(),
+                               image.get_item_position(drawable) + 1)
+            image.select_item(Gimp.ChannelOps.REPLACE, drawable)
+            Gimp.Selection.grow(image, outline_size)
+            Gimp.context_set_foreground(outline_color)
+            outline.edit_fill(Gimp.FillType.FOREGROUND)
+        if saved is not None:
+            image.select_item(Gimp.ChannelOps.REPLACE, saved)
+            image.remove_channel(saved)
+        else:
+            Gimp.Selection.none(image)
+    finally:
+        result = _finish(procedure, image)
+    return result
 
 
 # ---------------------------------------------------------------------------
-#  Shadow Text Effect
+#  Ombre portée
 # ---------------------------------------------------------------------------
 
 def text_shadow(procedure, run_mode, image, drawables, config, data):
-    """Add a configurable drop shadow behind text."""
-    Gimp.context_push()
-    image.undo_group_start()
-    pdb = get_pdb()
+    """Ombre portée floutée et décalée sous le texte."""
+    dx, dy = 4, 4
+    blur = 8.0
 
-    shadow_offset_x = 4
-    shadow_offset_y = 4
-    shadow_blur = 8.0
-    shadow_opacity = 60.0
-
-    shadow_color = Gimp.RGB()
-    shadow_color.set(0.0, 0.0, 0.0)
-
-    for drawable in drawables:
-        if not ensure_not_group(drawable):
-            continue
-
-        parent = drawable.get_parent()
-        pos = image.get_item_position(drawable)
-
-        # Duplicate text layer for shadow
-        shadow = drawable.copy()
-        image.insert_layer(shadow, parent, pos + 1)
-        shadow.set_name(f"{drawable.get_name()} Shadow")
-        shadow.set_opacity(shadow_opacity)
-
-        # Offset the shadow
-        off = drawable.get_offsets()
-        shadow.set_offsets(off.offset_x + shadow_offset_x,
-                           off.offset_y + shadow_offset_y)
-
-        # Fill shadow layer with black (lock alpha, fill)
-        shadow.set_lock_alpha(True)
-        Gimp.context_set_foreground(shadow_color)
-        pdb.run_procedure("gimp-edit-fill",
-                          [shadow, Gimp.FillType.FOREGROUND])
-        shadow.set_lock_alpha(False)
-
-        # Blur the shadow
-        blur_filter = Gimp.DrawableFilter.new(
-            shadow, "gegl:gaussian-blur", "")
-        blur_config = blur_filter.get_config()
-        blur_config.set_property("std-dev-x", shadow_blur)
-        blur_config.set_property("std-dev-y", shadow_blur)
-        shadow.merge_filter(blur_filter)
-
-    Gimp.displays_flush()
-    image.undo_group_end()
-    Gimp.context_pop()
-    return procedure.new_return_values(Gimp.PDBStatusType.SUCCESS, GLib.Error())
+    _begin(image)
+    try:
+        for drawable in _targets(drawables):
+            shadow = drawable.copy()
+            image.insert_layer(shadow, drawable.get_parent(),
+                               image.get_item_position(drawable) + 1)
+            shadow.set_name("%s Ombre" % drawable.get_name())
+            off = drawable.get_offsets()
+            shadow.set_offsets(off.offset_x + dx, off.offset_y + dy)
+            shadow.resize_to_image_size()
+            _fill_opaque(shadow, Gegl.Color.new("black"))
+            _apply(shadow, "gegl:gaussian-blur", {"std-dev-x": blur, "std-dev-y": blur})
+            shadow.set_opacity(60.0)
+    finally:
+        result = _finish(procedure, image)
+    return result
 
 
 # ---------------------------------------------------------------------------
-#  Arc Text Effect
+#  Texte en arc
 # ---------------------------------------------------------------------------
+
+def _double_array(values):
+    v = GObject.Value(Gimp.DoubleArray)
+    Gimp.value_set_double_array(v, values)
+    return v.get_value()
+
 
 def text_arc(procedure, run_mode, image, drawables, config, data):
-    """Bend text along an arc using text-along-path (vectors)."""
-    Gimp.context_push()
-    image.undo_group_start()
-    pdb = get_pdb()
+    """Courbe le calque en arc (filtre Courbure de GIMP, plug-in-curve-bend).
 
-    for drawable in drawables:
-        if not ensure_not_group(drawable):
-            continue
+    Un calque texte est converti en pixels par l'opération.
+    """
+    pdb = Gimp.get_pdb()
+    bend = pdb.lookup_procedure("plug-in-curve-bend")
+    if bend is None:
+        return procedure.new_return_values(
+            Gimp.PDBStatusType.EXECUTION_ERROR,
+            GLib.Error.new_literal(GLib.quark_from_string("photogimp"),
+                                   "Le filtre « Courbure » (plug-in-curve-bend) est introuvable.", 0))
 
-        w = image.get_width()
-        h = image.get_height()
+    # Courbe en cloche : bords à mi-hauteur, centre en haut (17 points max, -1 = inutilisé)
+    xs = [0.0, 0.25, 0.5, 0.75, 1.0] + [-1.0] * 12
+    ys = [0.5, 0.62, 0.66, 0.62, 0.5] + [-1.0] * 12
 
-        # Create an elliptical arc path
-        # The arc spans the width of the image
-        vectors = Gimp.Vectors.new(image, "Arc Path")
-        image.insert_vectors(vectors, None, 0)
-
-        # Build a Bezier arc (semicircle across the top half)
-        cx, cy = w / 2.0, h / 2.0
-        rx, ry = w * 0.4, h * 0.3
-
-        # Approximate semicircle with cubic Bezier (4 control points)
-        kappa = 0.5522847498  # magic number for circle approx
-        points = [
-            cx - rx, cy,            # P0
-            cx - rx, cy,            # P0 handle-left (same)
-            cx - rx, cy - ry * kappa,  # P0 handle-right
-
-            cx - rx * kappa, cy - ry,  # P1 handle-left
-            cx, cy - ry,               # P1
-            cx + rx * kappa, cy - ry,  # P1 handle-right
-
-            cx + rx, cy - ry * kappa,  # P2 handle-left
-            cx + rx, cy,               # P2
-            cx + rx, cy,               # P2 handle-right (same)
-        ]
-
-        # GIMP vectors stroke: each anchor has 6 coords (ctrl1_x, ctrl1_y, x, y, ctrl2_x, ctrl2_y)
-        stroke_id = vectors.stroke_new_from_points(
-            Gimp.VectorsContourType.BEZIER,
-            points, False)
-
-        # If drawable is a text layer, use text-along-path
-        is_text = False
-        try:
-            is_text = drawable.is_text_layer()
-        except Exception:
-            pass
-
-        if is_text:
-            try:
-                pdb.run_procedure("gimp-text-layer-set-text-along-path",
-                                  [drawable, vectors])
-            except Exception:
-                # Fallback: warp transform via GEGL
-                try:
-                    warp = Gimp.DrawableFilter.new(
-                        drawable, "gegl:waterpixels", "")
-                    # Simple spherize as arc approximation
-                    sph = Gimp.DrawableFilter.new(
-                        drawable, "gegl:spherize", "")
-                    sph_config = sph.get_config()
-                    sph_config.set_property("mode", 0)  # radial
-                    sph_config.set_property("angle-over-pi-x", 1.0)
-                    drawable.merge_filter(sph)
-                except Exception:
-                    pass
-        else:
-            # Non-text layer: apply curve warp
-            try:
-                curve = Gimp.DrawableFilter.new(
-                    drawable, "gegl:curve-bend", "")
-                drawable.merge_filter(curve)
-            except Exception:
-                pass
-
-    Gimp.displays_flush()
-    image.undo_group_end()
-    Gimp.context_pop()
-    return procedure.new_return_values(Gimp.PDBStatusType.SUCCESS, GLib.Error())
+    error = None
+    _begin(image)
+    try:
+        # Le filtre ne traiterait que la sélection : on la met de côté
+        saved = None if Gimp.Selection.is_empty(image) else Gimp.Selection.save(image)
+        Gimp.Selection.none(image)
+        for drawable in _targets(drawables):
+            cfg = bend.create_config()
+            cfg.set_property("run-mode", Gimp.RunMode.NONINTERACTIVE)
+            cfg.set_property("image", image)
+            cfg.set_core_object_array("drawables", [drawable])
+            cfg.set_property("rotation", 0.0)
+            cfg.set_property("smoothing", True)
+            cfg.set_property("antialias", True)
+            cfg.set_property("work-on-copy", False)
+            cfg.set_property("curve-type", "smooth")
+            cfg.set_property("upper-point-x", _double_array(xs))
+            cfg.set_property("upper-point-y", _double_array(ys))
+            cfg.set_property("lower-point-x", _double_array(xs))
+            cfg.set_property("lower-point-y", _double_array(ys))
+            res = bend.run(cfg)
+            if res.index(0) != Gimp.PDBStatusType.SUCCESS:
+                error = "Échec du filtre Courbure : %s" % pdb.get_last_error()
+                break
+        if saved is not None:
+            image.select_item(Gimp.ChannelOps.REPLACE, saved)
+            image.remove_channel(saved)
+    finally:
+        result = _finish(procedure, image)
+    if error:
+        return procedure.new_return_values(
+            Gimp.PDBStatusType.EXECUTION_ERROR,
+            GLib.Error.new_literal(GLib.quark_from_string("photogimp"), error, 0))
+    return result
 
 
 # ===========================================================================
@@ -409,32 +283,32 @@ class TextEffects(Gimp.PlugIn):
             'python-fu-text-3d': (
                 text_3d,
                 "Texte _3D",
-                "Creer un effet de texte 3D extrude avec des calques decales empiles.",
+                "Effet de texte 3D extrudé avec des copies décalées empilées.",
             ),
             'python-fu-text-neon-glow': (
                 text_neon_glow,
-                "Lueur _neon",
-                "Ajouter un effet de lueur neon autour du texte avec des calques flous en mode ecran.",
+                "Lueur _néon",
+                "Ajoute une lueur néon autour du texte (calques flous en mode Écran).",
             ),
             'python-fu-text-chrome': (
                 text_chrome,
-                "_Chrome / Metal",
-                "Appliquer un reflet chrome/metallique au texte par estampage et desaturation.",
+                "_Chrome / Métal",
+                "Reflet chromé / métallique par désaturation et estampage.",
             ),
             'python-fu-text-outline': (
                 text_outline,
                 "Texte avec _contour",
-                "Ajouter un contour colore autour du texte en agrandissant la selection et en remplissant.",
+                "Ajoute un contour autour du texte (sélection agrandie et remplie).",
             ),
             'python-fu-text-shadow': (
                 text_shadow,
-                "Ombre _portee",
-                "Ajouter une ombre portee configurable derriere le texte.",
+                "Ombre _portée",
+                "Ajoute une ombre portée floutée derrière le texte.",
             ),
             'python-fu-text-arc': (
                 text_arc,
                 "Texte en _arc",
-                "Courber le texte le long d'un chemin en arc.",
+                "Courbe le calque (texte) en arc.",
             ),
         }
 
@@ -455,7 +329,7 @@ class TextEffects(Gimp.PlugIn):
         procedure.set_documentation(_(label), _(doc), name)
         procedure.set_menu_label(_(label))
         procedure.set_attribution("PhotoGIMP Pro", "GPL v3+", "2026")
-        procedure.add_menu_path("<Image>/Filters/Typography/Text Effects")
+        procedure.add_menu_path("<Image>/Filters/Effets de texte")
 
         return procedure
 

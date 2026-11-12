@@ -166,6 +166,8 @@
 (action "edit-paste-as-new-image" "<Primary><Alt>v")
 # Effacer
 (action "edit-clear" "Delete")
+# Remplir d'après le contenu
+(action "chopgimp-content-aware-fill" "<Shift>F5")
 # Remplir avec la couleur de premier plan
 (action "edit-fill-fg" "<Alt>BackSpace")
 # Remplir avec la couleur d'arrière-plan

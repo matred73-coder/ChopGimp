@@ -54,6 +54,13 @@ if not vanilla:
     if patches:
         gimp["sources"].append({"type": "patch", "use-git-am": True,
                                 "paths": [os.path.relpath(p, FP) for p in patches]})
+    # Resynthesizer (GPL) : remplissage d'après le contenu, correcteur de sélection
+    m["modules"].append({
+        "name": "resynthesizer",
+        "buildsystem": "meson",
+        "sources": [{"type": "git", "url": "https://github.com/bootchk/resynthesizer.git",
+                     "tag": "v3.0.1", "commit": "bddb1dfb6bddc2363bf74d79a95a60691bc46279"}],
+    })
     # Données PhotoGIMP Pro, installées après GIMP (voir tools/install_data.sh)
     m["modules"].append({
         "name": "photogimp-data",

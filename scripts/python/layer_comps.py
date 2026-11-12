@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 #
-#   PhotoGIMP Pro — Layer Comps
-#   Photoshop-style Layer Comps: save/restore layer visibility,
-#   position, and opacity states. Stored as image parasites
-#   so they persist in XCF files.
+#   PhotoGIMP Pro — Compositions de calques
+#   Compositions de calques façon Photoshop : enregistrer / restaurer la
+#   visibilité, la position et l'opacité des calques. Stockées comme
+#   parasites de l'image, donc conservées dans les fichiers XCF.
 #
 #   License: GPL v3+
 
@@ -61,25 +61,27 @@ def _load_comps(image):
     if parasite is None:
         return {}
     try:
-        data_bytes = parasite.get_data()
-        if isinstance(data_bytes, bytes):
-            text = data_bytes.decode('utf-8')
-        else:
-            # GLib.Bytes or similar
-            text = bytes(data_bytes).decode('utf-8')
-        return json.loads(text)
+        raw = parasite.get_data()
+        # Les données peuvent revenir en gint8 signés : remettre en octets 0-255
+        data_bytes = bytes((b & 0xFF) for b in raw) if not isinstance(raw, bytes) else raw
+        return json.loads(data_bytes.decode('utf-8').rstrip('\x00'))
     except Exception:
         return {}
 
 
 def _save_comps(image, comps):
-    """Save comps dict to the image parasite."""
-    data = json.dumps(comps, ensure_ascii=False, indent=2)
-    data_bytes = data.encode('utf-8')
+    """Save comps dict to the image parasite (JSON ASCII : octets < 128)."""
+    data = json.dumps(comps, ensure_ascii=True)
     parasite = Gimp.Parasite.new(PARASITE_NAME,
-                                  Gimp.PARASITE_PERSISTENT,
-                                  data_bytes)
+                                 Gimp.PARASITE_PERSISTENT | Gimp.PARASITE_UNDOABLE,
+                                 list(data.encode('ascii')))
     image.attach_parasite(parasite)
+
+
+def _error(procedure, msg):
+    return procedure.new_return_values(
+        Gimp.PDBStatusType.EXECUTION_ERROR,
+        GLib.Error.new_literal(GLib.quark_from_string("photogimp"), msg, 0))
 
 
 # ---------------------------------------------------------------------------
@@ -90,7 +92,7 @@ def save_comp(procedure, run_mode, image, drawables, config, data):
         gi.require_version('GimpUi', '3.0')
         from gi.repository import GimpUi
         GimpUi.init('python-fu-save-layer-comp')
-        dialog = GimpUi.ProcedureDialog(procedure=procedure, config=config)
+        dialog = GimpUi.ProcedureDialog.new(procedure, config, _("Compositions de calques"))
         dialog.fill(None)
         if not dialog.run():
             dialog.destroy()
@@ -108,11 +110,11 @@ def save_comp(procedure, run_mode, image, drawables, config, data):
     comps[comp_name] = _capture_layer_states(image)
     _save_comps(image, comps)
 
-    Gimp.message("Composition de calques '{}' enregistree ({} calques captures).".format(
-        comp_name, len(comps[comp_name])))
-
     image.undo_group_end()
     Gimp.context_pop()
+
+    Gimp.message("Composition de calques « {} » enregistrée ({} calques capturés).".format(
+        comp_name, len(comps[comp_name])))
     return procedure.new_return_values(Gimp.PDBStatusType.SUCCESS, GLib.Error())
 
 
@@ -124,7 +126,7 @@ def restore_comp(procedure, run_mode, image, drawables, config, data):
         gi.require_version('GimpUi', '3.0')
         from gi.repository import GimpUi
         GimpUi.init('python-fu-restore-layer-comp')
-        dialog = GimpUi.ProcedureDialog(procedure=procedure, config=config)
+        dialog = GimpUi.ProcedureDialog.new(procedure, config, _("Compositions de calques"))
         dialog.fill(None)
         if not dialog.run():
             dialog.destroy()
@@ -135,9 +137,8 @@ def restore_comp(procedure, run_mode, image, drawables, config, data):
 
     comps = _load_comps(image)
     if comp_name not in comps:
-        Gimp.message("Composition de calques '{}' introuvable.\nDisponibles : {}".format(
+        return _error(procedure, "Composition de calques « {} » introuvable.\nDisponibles : {}".format(
             comp_name, ", ".join(comps.keys()) if comps else "(aucune)"))
-        return procedure.new_return_values(Gimp.PDBStatusType.EXECUTION_ERROR, GLib.Error())
 
     states = comps[comp_name]
 
@@ -158,7 +159,7 @@ def restore_comp(procedure, run_mode, image, drawables, config, data):
     image.undo_group_end()
     Gimp.context_pop()
 
-    Gimp.message("Composition de calques '{}' restauree ({} calques mis a jour).".format(
+    Gimp.message("Composition de calques « {} » restaurée ({} calques mis à jour).".format(
         comp_name, restored))
     return procedure.new_return_values(Gimp.PDBStatusType.SUCCESS, GLib.Error())
 
@@ -170,14 +171,14 @@ def list_comps(procedure, run_mode, image, drawables, config, data):
     comps = _load_comps(image)
 
     if not comps:
-        Gimp.message("Aucune composition de calques enregistree dans cette image.\n"
-                      "Utilisez 'Enregistrer la composition de calques' pour en creer une.")
+        Gimp.message("Aucune composition de calques enregistrée dans cette image.\n"
+                     "Utilisez « Enregistrer la composition de calques » pour en créer une.")
     else:
         lines = ["Compositions de calques dans cette image :", ""]
         for i, (name, states) in enumerate(comps.items(), 1):
-            lines.append("  {}. '{}' ({} calques)".format(i, name, len(states)))
+            lines.append("  {}. « {} » ({} calques)".format(i, name, len(states)))
         lines.append("")
-        lines.append("Use 'Restaurer la composition de calques' with the exact name to restore.")
+        lines.append("Utilisez « Restaurer la composition de calques » avec le nom exact.")
         Gimp.message("\n".join(lines))
 
     return procedure.new_return_values(Gimp.PDBStatusType.SUCCESS, GLib.Error())
@@ -191,7 +192,7 @@ def delete_comp(procedure, run_mode, image, drawables, config, data):
         gi.require_version('GimpUi', '3.0')
         from gi.repository import GimpUi
         GimpUi.init('python-fu-delete-layer-comp')
-        dialog = GimpUi.ProcedureDialog(procedure=procedure, config=config)
+        dialog = GimpUi.ProcedureDialog.new(procedure, config, _("Compositions de calques"))
         dialog.fill(None)
         if not dialog.run():
             dialog.destroy()
@@ -202,12 +203,14 @@ def delete_comp(procedure, run_mode, image, drawables, config, data):
     comps = _load_comps(image)
 
     if comp_name not in comps:
-        Gimp.message("Composition de calques '{}' introuvable.".format(comp_name))
-        return procedure.new_return_values(Gimp.PDBStatusType.EXECUTION_ERROR, GLib.Error())
+        return _error(procedure, "Composition de calques « {} » introuvable.".format(comp_name))
 
     del comps[comp_name]
-    _save_comps(image, comps)
-    Gimp.message("Composition de calques '{}' supprimee.".format(comp_name))
+    if comps:
+        _save_comps(image, comps)
+    else:
+        image.detach_parasite(PARASITE_NAME)
+    Gimp.message("Composition de calques « {} » supprimée.".format(comp_name))
 
     return procedure.new_return_values(Gimp.PDBStatusType.SUCCESS, GLib.Error())
 
@@ -231,7 +234,7 @@ class LayerComps(Gimp.PlugIn):
     def do_create_procedure(self, name):
         Gegl.init(None)
 
-        menu_base = "<Image>/Filters/Layer Comps"
+        menu_base = "<Image>/Layer/Compositions de calques"
 
         if name == 'python-fu-save-layer-comp':
             procedure = Gimp.ImageProcedure.new(self, name,
@@ -242,10 +245,10 @@ class LayerComps(Gimp.PlugIn):
                                            Gimp.ProcedureSensitivityMask.DRAWABLES)
             procedure.set_documentation(
                 _("Enregistrer la composition de calques"),
-                _("Save current layer visibility, positions, and opacity as a named comp "
-                  "(stored in image parasite, persists with XCF)."),
+                _("Enregistre la visibilité, la position et l'opacité des calques sous un nom "
+                  "(stockée dans l'image, conservée dans le fichier XCF)."),
                 name)
-            procedure.set_menu_label(_("_Enregistrer la composition de calques..."))
+            procedure.set_menu_label(_("_Enregistrer la composition de calques…"))
             procedure.set_attribution("PhotoGIMP Pro", "GPL v3+", "2026")
             procedure.add_menu_path(menu_base)
 
@@ -263,14 +266,14 @@ class LayerComps(Gimp.PlugIn):
                                            Gimp.ProcedureSensitivityMask.DRAWABLES)
             procedure.set_documentation(
                 _("Restaurer la composition de calques"),
-                _("Restaurer une composition de calques precedemment enregistree par son nom."),
+                _("Restaurer une composition de calques enregistrée, par son nom."),
                 name)
-            procedure.set_menu_label(_("_Restaurer la composition de calques..."))
+            procedure.set_menu_label(_("_Restaurer la composition de calques…"))
             procedure.set_attribution("PhotoGIMP Pro", "GPL v3+", "2026")
             procedure.add_menu_path(menu_base)
 
             procedure.add_string_argument("comp-name", _("_Nom de la composition"),
-                                          _("Nom de la composition de calques a restaurer"),
+                                          _("Nom de la composition de calques à restaurer"),
                                           "Comp 1",
                                           GObject.ParamFlags.READWRITE)
 
@@ -283,7 +286,7 @@ class LayerComps(Gimp.PlugIn):
                                            Gimp.ProcedureSensitivityMask.DRAWABLES)
             procedure.set_documentation(
                 _("Lister les compositions de calques"),
-                _("Afficher toutes les compositions de calques enregistrees dans cette image."),
+                _("Afficher toutes les compositions de calques enregistrées dans cette image."),
                 name)
             procedure.set_menu_label(_("_Lister les compositions de calques"))
             procedure.set_attribution("PhotoGIMP Pro", "GPL v3+", "2026")
@@ -298,14 +301,14 @@ class LayerComps(Gimp.PlugIn):
                                            Gimp.ProcedureSensitivityMask.DRAWABLES)
             procedure.set_documentation(
                 _("Supprimer la composition de calques"),
-                _("Supprimer une composition de calques enregistree de cette image."),
+                _("Supprimer une composition de calques enregistrée dans cette image."),
                 name)
-            procedure.set_menu_label(_("_Supprimer la composition de calques..."))
+            procedure.set_menu_label(_("_Supprimer la composition de calques…"))
             procedure.set_attribution("PhotoGIMP Pro", "GPL v3+", "2026")
             procedure.add_menu_path(menu_base)
 
             procedure.add_string_argument("comp-name", _("_Nom de la composition"),
-                                          _("Nom de la composition de calques a supprimer"),
+                                          _("Nom de la composition de calques à supprimer"),
                                           "Comp 1",
                                           GObject.ParamFlags.READWRITE)
 

@@ -73,7 +73,10 @@ install_plugin() {   # $1 = nom, $2 = fichier source
     mkdir -p "$PLUG/$1"
     install -m 755 "$2" "$PLUG/$1/$1.py"
 }
-install_plugin photogimp_ps "$SRC/plug-ins/photogimp_ps/photogimp_ps.py"
+for d in "$SRC/plug-ins/"*/; do          # plug-ins ChopGimp (photogimp_ps, chopgimp_fx…)
+    n="$(basename "$d")"
+    install_plugin "$n" "$d$n.py"
+done
 OFF=" $(tr '\n' ' ' < "$SRC/config/plugins-v1-off.txt") "
 for f in "$SRC/scripts/python/"*.py; do
     n="$(basename "$f" .py)"

@@ -139,6 +139,46 @@ try:
     except Exception as e:
         report(False, "Formes : séparer les formes", repr(e)[:160])
 
+    # 3c. Remplir d'après le contenu (Resynthesizer) : un carré rouge sur un
+    #     dégradé doit disparaître
+    try:
+        im = Gimp.Image.new(300, 200, Gimp.ImageBaseType.RGB)
+        bg = Gimp.Layer.new(im, "Fond", 300, 200, Gimp.ImageType.RGB_IMAGE, 100, Gimp.LayerMode.NORMAL)
+        im.insert_layer(bg, None, 0)
+        Gimp.context_set_foreground(color(0.2, 0.5, 0.3))
+        Gimp.context_set_background(color(0.6, 0.8, 0.5))
+        bg.edit_gradient_fill(Gimp.GradientType.LINEAR, 0, False, 1, 0, True, 0, 0, 300, 200)
+        im.select_rectangle(Gimp.ChannelOps.REPLACE, 130, 80, 40, 40)
+        Gimp.context_set_foreground(color(1.0, 0.0, 0.0))
+        bg.edit_fill(Gimp.FillType.FOREGROUND)
+        r = run("chopgimp-content-aware-fill", **{"run-mode": Gimp.RunMode.NONINTERACTIVE, "image": im,
+                                                  "drawables": [bg]})
+        px = bg.get_pixel(150, 100).get_rgba()
+        reddish = px[0] > 0.8 and px[1] < 0.2
+        report(r.index(0) == Gimp.PDBStatusType.SUCCESS and not reddish,
+               "Remplir d'après le contenu", "pixel central %.2f %.2f %.2f" % (px[0], px[1], px[2]))
+    except Exception as e:
+        report(False, "Remplir d'après le contenu", repr(e)[:160])
+
+    # 3d. Effets de forme et style de calque (plug-in chopgimp_fx)
+    for proc in ["chopgimp-fx-zigzag", "chopgimp-fx-wave", "chopgimp-fx-width",
+                 "chopgimp-fx-stroke-outside", "chopgimp-layer-style", "chopgimp-fx-gradient-overlay"]:
+        try:
+            im = Gimp.Image.new(300, 200, Gimp.ImageBaseType.RGB)
+            bg = Gimp.Layer.new(im, "Fond", 300, 200, Gimp.ImageType.RGB_IMAGE, 100, Gimp.LayerMode.NORMAL)
+            im.insert_layer(bg, None, 0)
+            path = Gimp.Path.new(im, "Forme")
+            im.insert_path(path, None, 0)
+            path.bezier_stroke_new_ellipse(150, 100, 60, 40, 0)
+            vl = Gimp.VectorLayer.new(im, path)
+            im.insert_layer(vl, None, 0)
+            vl.set_enable_fill(True); vl.set_enable_stroke(True); vl.set_stroke_width(4)
+            vl.refresh()
+            r = run(proc, **{"run-mode": Gimp.RunMode.NONINTERACTIVE, "image": im, "drawables": [vl]})
+            report(r.index(0) == Gimp.PDBStatusType.SUCCESS, "Effets : " + proc)
+        except Exception as e:
+            report(False, "Effets : " + proc, repr(e)[:160])
+
     # 4. Réglages d'usine présents (thème, icônes, menus, raccourcis)
     data = Gimp.data_directory()
     sysconf = Gimp.sysconf_directory()
