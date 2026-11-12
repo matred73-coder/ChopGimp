@@ -1,4 +1,4 @@
-From 5af01518c39375d597565e139d4fb9da2d5ef549 Mon Sep 17 00:00:00 2001
+From 962b8f03a100c5868f59c6ffb7ee2274cefd676a Mon Sep 17 00:00:00 2001
 From: ChopGimp <mathieu.redon@proton.me>
 Date: Wed, 11 Nov 2026 20:00:52 +0100
 Subject: [PATCH 20/24] ChopGimp: own D-Bus service name and application id (no

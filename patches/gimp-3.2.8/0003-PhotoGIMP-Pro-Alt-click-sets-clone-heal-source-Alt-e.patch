@@ -1,4 +1,4 @@
-From 92c0563b7ddcafdcae58d46a66913a81f7696d04 Mon Sep 17 00:00:00 2001
+From 18e92f7135915de1be512732227fc5dbbd5ea2f6 Mon Sep 17 00:00:00 2001
 From: ChopGimp <mathieu.redon@proton.me>
 Date: Wed, 11 Nov 2026 12:47:51 +0100
 Subject: [PATCH 03/24] PhotoGIMP Pro: Alt+click sets clone/heal source, Alt =
