@@ -1,7 +1,7 @@
 From dc8db79ac02f5b42d96b81162957df6af2b1096e Mon Sep 17 00:00:00 2001
 From: ChopGimp <mathieu.redon@proton.me>
 Date: Wed, 11 Nov 2026 12:50:50 +0100
-Subject: [PATCH 08/34] PhotoGIMP Pro: number keys set paint-tool or layer
+Subject: [PATCH 08/36] PhotoGIMP Pro: number keys set paint-tool or layer
  opacity (Photoshop)
 
 ---

@@ -845,7 +845,9 @@
                         "../patches/gimp-3.2.8/0031-ChopGimp-create-path-fill-stroke-options-on-demand-f.patch",
                         "../patches/gimp-3.2.8/0032-ChopGimp-ensure-fill-stroke-options-in-the-path-tool.patch",
                         "../patches/gimp-3.2.8/0033-ChopGimp-Shape-tool-the-options-bar-shows-and-edits-.patch",
-                        "../patches/gimp-3.2.8/0034-ChopGimp-include-gimptoolinfo.h-in-the-Shape-tool.patch"
+                        "../patches/gimp-3.2.8/0034-ChopGimp-include-gimptoolinfo.h-in-the-Shape-tool.patch",
+                        "../patches/gimp-3.2.8/0035-ChopGimp-transform-controls-follow-moves-undo-French.patch",
+                        "../patches/gimp-3.2.8/0036-ChopGimp-hide-transform-controls-while-dragging-redr.patch"
                     ]
                 }
             ],

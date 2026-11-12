@@ -1,0 +1,32 @@
+From 251840fe71135d7a44aac647489d830bbb5fa0ad Mon Sep 17 00:00:00 2001
+From: ChopGimp <mathieu.redon@proton.me>
+Date: Thu, 12 Nov 2026 07:37:32 +0100
+Subject: [PATCH 36/36] ChopGimp: hide transform controls while dragging,
+ redraw at the new position
+
+---
+ app/tools/gimpmovetool.c | 8 ++++++++
+ 1 file changed, 8 insertions(+)
+
+diff --git a/app/tools/gimpmovetool.c b/app/tools/gimpmovetool.c
+index 295f184..f450304 100644
+--- a/app/tools/gimpmovetool.c
++++ b/app/tools/gimpmovetool.c
+@@ -460,6 +460,14 @@ gimp_move_tool_button_press (GimpTool            *tool,
+ 
+   gimp_tool_control_activate (tool->control);
+ 
++  /*  ChopGimp: hide the transform controls while dragging; they are
++   *  recomputed at the new position on release (oper_update).
++   */
++  if (gimp_draw_tool_is_active (GIMP_DRAW_TOOL (tool)))
++    gimp_draw_tool_stop (GIMP_DRAW_TOOL (tool));
++  move->ctl_stamp = -1;
++  move->ctl_valid = FALSE;
++
+   gimp_edit_selection_tool_start (tool, display, coords,
+                                   translate_mode,
+                                   TRUE);
+-- 
+2.53.0
+

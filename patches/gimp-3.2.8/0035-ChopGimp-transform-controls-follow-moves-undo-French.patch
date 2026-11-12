@@ -1,0 +1,78 @@
+From 5e1e5ed66250b1536a2a187812911ec2a460d2f6 Mon Sep 17 00:00:00 2001
+From: ChopGimp <mathieu.redon@proton.me>
+Date: Thu, 12 Nov 2026 07:36:11 +0100
+Subject: [PATCH 35/36] ChopGimp: transform controls follow moves/undo; French
+ labels in the move tool bar
+
+---
+ app/display/gimpoptionsbar.c | 10 +++++++---
+ app/tools/gimpmovetool.c     | 15 ++++++++++++++-
+ 2 files changed, 21 insertions(+), 4 deletions(-)
+
+diff --git a/app/display/gimpoptionsbar.c b/app/display/gimpoptionsbar.c
+index a70de9d..e63f471 100644
+--- a/app/display/gimpoptionsbar.c
++++ b/app/display/gimpoptionsbar.c
+@@ -227,6 +227,7 @@ gimp_options_bar_label (const gchar *prop)
+   if (! strcmp (prop, "enable-fill"))   return _("Fond");
+   if (! strcmp (prop, "enable-stroke")) return _("Contour");
+   if (! strcmp (prop, "stroke-width"))  return _("Épaisseur");
++  if (! strcmp (prop, "move-type"))     return _("Déplacer");
+   return NULL;
+ }
+ 
+@@ -665,8 +666,8 @@ gimp_options_bar_widget (GObject     *options,
+   if (! strcmp (prop, "move-current"))
+     {
+       w = gimp_prop_boolean_combo_box_new (options, prop,
+-                                           _("Move the active layer"),
+-                                           _("Pick a layer or guide"));
++                                           _("Déplacer le calque actif"),
++                                           _("Sélection automatique du calque"));
+       gimp_options_bar_pack_labeled (box, NULL, w);
+       *packed = TRUE;
+       return w;
+@@ -678,7 +679,10 @@ gimp_options_bar_widget (GObject     *options,
+   if (G_IS_PARAM_SPEC_ENUM (pspec))
+     {
+       w = gimp_prop_enum_combo_box_new (options, prop, 0, 0);
+-      gimp_options_bar_pack_labeled (box, g_param_spec_get_nick (pspec), w);
++      gimp_options_bar_pack_labeled (box,
++                                     gimp_options_bar_label (prop) ?
++                                     gimp_options_bar_label (prop) :
++                                     g_param_spec_get_nick (pspec), w);
+       *packed = TRUE;
+       return w;
+     }
+diff --git a/app/tools/gimpmovetool.c b/app/tools/gimpmovetool.c
+index 486a1a3..295f184 100644
+--- a/app/tools/gimpmovetool.c
++++ b/app/tools/gimpmovetool.c
+@@ -562,10 +562,23 @@ chopgimp_move_update_controls (GimpMoveTool *move,
+ {
+   GList     *layers = gimp_image_get_selected_layers (image);
+   GimpLayer *layer  = (g_list_length (layers) == 1) ? layers->data : NULL;
+-  gint64     stamp  = gimp_image_get_dirty_time (image);
++  GimpUndo  *undo   = gimp_undo_stack_peek (gimp_image_get_undo_stack (image));
++  gint64     stamp  = (gint64) (gintptr) undo;
+   gboolean   valid;
+   gint       x = 0, y = 0, w = 0, h = 0;
+ 
++  /*  the box must follow moves, resizes, painting and undo/redo  */
++  if (layer)
++    {
++      gint ox, oy;
++
++      gimp_item_get_offset (GIMP_ITEM (layer), &ox, &oy);
++      stamp = stamp * 31 +
++              (gint64) ox * 100003 + (gint64) oy * 1009 +
++              (gint64) gimp_item_get_width  (GIMP_ITEM (layer)) * 13 +
++              (gint64) gimp_item_get_height (GIMP_ITEM (layer)) * 17;
++    }
++
+   if (layer == move->ctl_layer && stamp == move->ctl_stamp && layer)
+     return FALSE;
+ 
+-- 
+2.53.0
+

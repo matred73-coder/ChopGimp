@@ -1,7 +1,7 @@
 From 9f40b78452fb6e28f71000253bb563235c58689e Mon Sep 17 00:00:00 2001
 From: ChopGimp <mathieu.redon@proton.me>
 Date: Wed, 11 Nov 2026 12:49:45 +0100
-Subject: [PATCH 07/34] PhotoGIMP Pro: fx and adjustment-layer buttons in the
+Subject: [PATCH 07/36] PhotoGIMP Pro: fx and adjustment-layer buttons in the
  Layers panel (Photoshop)
 
 ---

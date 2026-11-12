@@ -1,7 +1,7 @@
 From da95289b85039ec799fbc4781a3588e68adba5d0 Mon Sep 17 00:00:00 2001
 From: ChopGimp <mathieu.redon@proton.me>
 Date: Thu, 12 Nov 2026 07:10:02 +0100
-Subject: [PATCH 32/34] ChopGimp: ensure fill/stroke options in the path tool
+Subject: [PATCH 32/36] ChopGimp: ensure fill/stroke options in the path tool
 
 ---
  app/tools/gimppathtool.c | 3 +++
