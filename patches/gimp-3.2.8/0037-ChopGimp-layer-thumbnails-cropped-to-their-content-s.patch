@@ -1,0 +1,175 @@
+From 4ad55e10fa87b9bbba70f3b203ab3d1e54d5d147 Mon Sep 17 00:00:00 2001
+From: ChopGimp <mathieu.redon@proton.me>
+Date: Thu, 12 Nov 2026 07:50:52 +0100
+Subject: [PATCH 37/41] ChopGimp: layer thumbnails cropped to their content
+ (setting in chopgimprc)
+
+---
+ app/widgets/gimpviewrendererdrawable.c | 113 +++++++++++++++++++++++++
+ app/widgets/gimpviewrendererdrawable.h |   7 ++
+ 2 files changed, 120 insertions(+)
+
+diff --git a/app/widgets/gimpviewrendererdrawable.c b/app/widgets/gimpviewrendererdrawable.c
+index b4738e8..97b7796 100644
+--- a/app/widgets/gimpviewrendererdrawable.c
++++ b/app/widgets/gimpviewrendererdrawable.c
+@@ -35,7 +35,13 @@
+ #include "core/gimpcancelable.h"
+ #include "core/gimpdrawable.h"
+ #include "core/gimpdrawable-preview.h"
++#include "core/gimpcontainer.h"
+ #include "core/gimpimage.h"
++#include "core/gimplist.h"
++#include "core/gimplayer.h"
++#include "core/gimplayermask.h"
++#include "core/gimppickable.h"
++#include "core/gimppickable-auto-shrink.h"
+ #include "core/gimptempbuf.h"
+ 
+ #include "gimpviewrendererdrawable.h"
+@@ -152,6 +158,80 @@ gimp_view_renderer_drawable_render_async_callback (GimpAsync                *asy
+   g_object_unref (widget);
+ }
+ 
++
++/*  ── ChopGimp: thumbnails cropped to the content ─────────────────── */
++
++static gint chopgimp_crop_state = -1;   /* -1 = not loaded yet */
++
++static GFile *
++chopgimp_rc_file (void)
++{
++  return gimp_directory_file ("chopgimprc", NULL);
++}
++
++gboolean
++chopgimp_thumbs_get_crop (void)
++{
++  if (chopgimp_crop_state < 0)
++    {
++      GKeyFile *kf   = g_key_file_new ();
++      GFile    *file = chopgimp_rc_file ();
++      GError   *err  = NULL;
++
++      chopgimp_crop_state = 1;   /* default: cropped, like Photoshop */
++
++      if (g_key_file_load_from_file (kf, g_file_peek_path (file), G_KEY_FILE_NONE, NULL))
++        {
++          gboolean v = g_key_file_get_boolean (kf, "layers", "crop-thumbnails", &err);
++
++          if (! err)
++            chopgimp_crop_state = v ? 1 : 0;
++          g_clear_error (&err);
++        }
++
++      g_object_unref (file);
++      g_key_file_unref (kf);
++    }
++
++  return chopgimp_crop_state == 1;
++}
++
++static void
++chopgimp_invalidate_layers (GList *items)
++{
++  for (; items; items = items->next)
++    {
++      GimpViewable  *viewable = items->data;
++      GimpContainer *children = gimp_viewable_get_children (viewable);
++
++      gimp_viewable_invalidate_preview (viewable);
++
++      if (children)
++        chopgimp_invalidate_layers (GIMP_LIST (children)->queue->head);
++    }
++}
++
++void
++chopgimp_thumbs_set_crop (Gimp     *gimp,
++                          gboolean  crop)
++{
++  GKeyFile *kf   = g_key_file_new ();
++  GFile    *file = chopgimp_rc_file ();
++  GList    *list;
++
++  chopgimp_crop_state = crop ? 1 : 0;
++
++  g_key_file_load_from_file (kf, g_file_peek_path (file), G_KEY_FILE_KEEP_COMMENTS, NULL);
++  g_key_file_set_boolean (kf, "layers", "crop-thumbnails", crop);
++  g_key_file_save_to_file (kf, g_file_peek_path (file), NULL);
++  g_key_file_unref (kf);
++  g_object_unref (file);
++
++  if (gimp)
++    for (list = gimp_get_image_iter (gimp); list; list = list->next)
++      chopgimp_invalidate_layers (gimp_image_get_layer_iter (list->data));
++}
++
+ static void
+ gimp_view_renderer_drawable_render (GimpViewRenderer *renderer,
+                                     GtkWidget        *widget)
+@@ -216,6 +296,38 @@ gimp_view_renderer_drawable_render (GimpViewRenderer *renderer,
+       image_height = gimp_item_get_height (item);
+     }
+ 
++  /*  ChopGimp: crop the thumbnail of a layer to its visible content so a
++   *  small object fills the thumbnail (Photoshop « Layer Bounds »).
++   */
++  if (image && GIMP_IS_LAYER (drawable) && ! GIMP_IS_LAYER_MASK (drawable) &&
++      chopgimp_thumbs_get_crop () &&
++      (gint64) gimp_item_get_width (item) * gimp_item_get_height (item) <= 40000000)
++    {
++      gint cx, cy, cw, ch;
++
++      if (gimp_pickable_auto_shrink (GIMP_PICKABLE (drawable), 0, 0,
++                                     gimp_item_get_width (item),
++                                     gimp_item_get_height (item),
++                                     &cx, &cy, &cw, &ch) == GIMP_AUTO_SHRINK_SHRINK)
++        {
++          gimp_viewable_calc_preview_size (cw, ch,
++                                           renderer->width, renderer->height,
++                                           renderer->dot_for_dot, xres, yres,
++                                           &view_width, &view_height, NULL);
++
++          src_x      = cx;
++          src_y      = cy;
++          src_width  = cw;
++          src_height = ch;
++          dst_x      = (renderer->width  - view_width)  / 2;
++          dst_y      = (renderer->height - view_height) / 2;
++          dst_width  = MAX (view_width,  1);
++          dst_height = MAX (view_height, 1);
++
++          goto chopgimp_render;
++        }
++    }
++
+   gimp_viewable_calc_preview_size (image_width,
+                                    image_height,
+                                    renderer->width,
+@@ -279,6 +391,7 @@ gimp_view_renderer_drawable_render (GimpViewRenderer *renderer,
+   dst_width  = MAX (dst_width,  1);
+   dst_height = MAX (dst_height, 1);
+ 
++ chopgimp_render:
+   if (! empty)
+     {
+       async = gimp_drawable_get_sub_preview_async (drawable,
+diff --git a/app/widgets/gimpviewrendererdrawable.h b/app/widgets/gimpviewrendererdrawable.h
+index 652fa33..11c090b 100644
+--- a/app/widgets/gimpviewrendererdrawable.h
++++ b/app/widgets/gimpviewrendererdrawable.h
+@@ -48,3 +48,10 @@ struct _GimpViewRendererDrawableClass
+ 
+ 
+ GType   gimp_view_renderer_drawable_get_type (void);
++
++/*  ChopGimp: layer thumbnails cropped to their visible content (Photoshop
++ *  « Layer Bounds » thumbnails). Setting saved in ${gimp_dir}/chopgimprc.
++ */
++gboolean chopgimp_thumbs_get_crop (void);
++void     chopgimp_thumbs_set_crop (Gimp     *gimp,
++                                   gboolean  crop);
+-- 
+2.53.0
+

@@ -651,6 +651,16 @@ def _rotate_view():
     return s
 
 
+@icon("chopgimp-tool-spot-heal")
+def _spot_heal():
+    # Pansement plus petit + éclat (Correcteur localisé)
+    outer = rrect_poly(4.0, 6.0, 11.0, 4.6, -45, 9.5, 8.3)
+    inner = rrect_poly(7.3, 6.0, 4.4, 4.6, -45, 9.5, 8.3)
+    s = polygon(outer, 0.45) + polygon(inner)
+    s += polygon([(3.0, 0.6), (3.6, 2.4), (5.4, 3.0), (3.6, 3.6), (3.0, 5.4), (2.4, 3.6), (0.6, 3.0), (2.4, 2.4)])
+    return s
+
+
 @icon("chopgimp-tool-shape")
 def _shape():
     # Carré + cercle superposés (outil Forme)

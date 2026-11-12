@@ -847,7 +847,12 @@
                         "../patches/gimp-3.2.8/0033-ChopGimp-Shape-tool-the-options-bar-shows-and-edits-.patch",
                         "../patches/gimp-3.2.8/0034-ChopGimp-include-gimptoolinfo.h-in-the-Shape-tool.patch",
                         "../patches/gimp-3.2.8/0035-ChopGimp-transform-controls-follow-moves-undo-French.patch",
-                        "../patches/gimp-3.2.8/0036-ChopGimp-hide-transform-controls-while-dragging-redr.patch"
+                        "../patches/gimp-3.2.8/0036-ChopGimp-hide-transform-controls-while-dragging-redr.patch",
+                        "../patches/gimp-3.2.8/0037-ChopGimp-layer-thumbnails-cropped-to-their-content-s.patch",
+                        "../patches/gimp-3.2.8/0038-ChopGimp-thumbnail-size-slider-and-crop-toggle-in-th.patch",
+                        "../patches/gimp-3.2.8/0039-ChopGimp-double-click-on-a-layer-with-a-dynamic-effe.patch",
+                        "../patches/gimp-3.2.8/0040-ChopGimp-transform-controls-refresh-at-once-keys-und.patch",
+                        "../patches/gimp-3.2.8/0041-ChopGimp-Spot-Healing-Brush-tool-J-painting-the-area.patch"
                     ]
                 }
             ],

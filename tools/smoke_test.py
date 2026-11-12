@@ -179,6 +179,77 @@ try:
         except Exception as e:
             report(False, "Effets : " + proc, repr(e)[:160])
 
+    # 3e. Effets dynamiques : modifier / supprimer l'effet (parasite chopgimp-fx)
+    def shape_image():
+        im = Gimp.Image.new(300, 200, Gimp.ImageBaseType.RGB)
+        bg = Gimp.Layer.new(im, "Fond", 300, 200, Gimp.ImageType.RGB_IMAGE, 100, Gimp.LayerMode.NORMAL)
+        im.insert_layer(bg, None, 0)
+        path = Gimp.Path.new(im, "Forme")
+        im.insert_path(path, None, 0)
+        path.bezier_stroke_new_ellipse(150, 100, 60, 40, 0)
+        vl = Gimp.VectorLayer.new(im, path)
+        im.insert_layer(vl, None, 0)
+        vl.set_enable_fill(True); vl.set_enable_stroke(True); vl.set_stroke_width(4)
+        vl.refresh()
+        return im, vl
+
+    def nonint(proc, im, d, **kw):
+        return run(proc, **dict({"run-mode": Gimp.RunMode.NONINTERACTIVE, "image": im, "drawables": [d]}, **kw))
+
+    def fx_of(item):
+        par = item.get_parasite("chopgimp-fx")
+        return par is not None
+
+    for proc in ["chopgimp-fx-zigzag", "chopgimp-fx-stroke-outside", "chopgimp-fx-arrows",
+                 "chopgimp-fx-brush-stroke", "chopgimp-fx-gradient-overlay"]:
+        name = "Effet dynamique : " + proc.replace("chopgimp-fx-", "")
+        try:
+            im, vl = shape_image()
+            if proc == "chopgimp-fx-arrows":       # les flèches s'appliquent aux traits ouverts
+                p2 = Gimp.Path.new(im, "Trait")
+                im.insert_path(p2, None, 0)
+                p2.stroke_new_from_points(Gimp.PathStrokeType.BEZIER,
+                                          [20, 20, 20, 20, 20, 20, 250, 150, 250, 150, 250, 150], False)
+                im.remove_layer(vl)
+                vl = Gimp.VectorLayer.new(im, p2)
+                im.insert_layer(vl, None, 0)
+                vl.set_enable_stroke(True); vl.set_stroke_width(4); vl.refresh()
+            im.select_rectangle(Gimp.ChannelOps.REPLACE, 10, 10, 50, 40)
+            n0 = len(im.get_layers())
+            r1 = nonint(proc, im, vl)
+            res = im.get_selected_layers()[0]
+            r2 = nonint("chopgimp-fx-edit", im, res)
+            res2 = im.get_selected_layers()[0]
+            kept = fx_of(res2)
+            r3 = nonint("chopgimp-fx-remove", im, res2)
+            back = im.get_selected_layers()[0]
+            sel = Gimp.Selection.bounds(im)
+            okk = (r1.index(0) == r2.index(0) == r3.index(0) == Gimp.PDBStatusType.SUCCESS and kept
+                   and not fx_of(back) and len(im.get_layers()) == n0
+                   and isinstance(back, Gimp.VectorLayer)
+                   and sel[1] and (sel[2], sel[3], sel[4], sel[5]) == (10, 10, 60, 50))
+            report(okk, name, "couches %d→%d, sélection %r" % (n0, len(im.get_layers()), tuple(sel)[1:]))
+        except Exception as e:
+            report(False, name, repr(e)[:160])
+
+    try:
+        im, vl = shape_image()
+        nonint("chopgimp-layer-style", im, vl)
+        has_style = vl.get_parasite("chopgimp-style") is not None and \
+            any(f.get_name().startswith("Style : ") for f in (vl.get_filters() or []))
+        nonint("chopgimp-fx-remove", im, vl)
+        gone = not any(f.get_name().startswith("Style : ") for f in (vl.get_filters() or []))
+        report(has_style and gone, "Style de calque mémorisé puis supprimé")
+    except Exception as e:
+        report(False, "Style de calque mémorisé puis supprimé", repr(e)[:160])
+
+    try:
+        sc = open(os.path.join(Gimp.sysconf_directory(), "shortcutsrc")).read()
+        report('"tools-spot-heal" "j"' in sc or '(action "tools-spot-heal" "j")' in sc,
+               "Correcteur localisé sur J", "")
+    except Exception as e:
+        report(False, "Correcteur localisé sur J", repr(e)[:160])
+
     # 4. Réglages d'usine présents (thème, icônes, menus, raccourcis)
     data = Gimp.data_directory()
     sysconf = Gimp.sysconf_directory()

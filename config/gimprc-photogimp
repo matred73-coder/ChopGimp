@@ -8,7 +8,7 @@
 (toolbox-foo-area no)
 (toolbox-image-area no)
 (toolbox-groups yes)
-(layer-preview-size medium)
+(layer-preview-size large)
 (show-tool-tips yes)
 (default-view
     (show-menubar yes)

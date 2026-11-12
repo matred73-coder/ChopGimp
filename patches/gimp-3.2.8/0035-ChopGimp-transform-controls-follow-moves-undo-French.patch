@@ -1,7 +1,7 @@
 From 5e1e5ed66250b1536a2a187812911ec2a460d2f6 Mon Sep 17 00:00:00 2001
 From: ChopGimp <mathieu.redon@proton.me>
 Date: Thu, 12 Nov 2026 07:36:11 +0100
-Subject: [PATCH 35/36] ChopGimp: transform controls follow moves/undo; French
+Subject: [PATCH 35/41] ChopGimp: transform controls follow moves/undo; French
  labels in the move tool bar
 
 ---

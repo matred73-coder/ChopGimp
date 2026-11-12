@@ -1,7 +1,7 @@
 From 34b80de85722832886b00acf37aa892d24e0922f Mon Sep 17 00:00:00 2001
 From: ChopGimp <mathieu.redon@proton.me>
 Date: Wed, 11 Nov 2026 12:47:55 +0100
-Subject: [PATCH 04/36] PhotoGIMP Pro: Alt toggles zoom out in the zoom tool
+Subject: [PATCH 04/41] PhotoGIMP Pro: Alt toggles zoom out in the zoom tool
  (Photoshop)
 
 ---

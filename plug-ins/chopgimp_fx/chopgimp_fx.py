@@ -10,10 +10,14 @@ ChopGimp — effets façon Photoshop / Illustrator pour les formes et les calque
   Calque > Effets de tracé > Contour au pinceau                  (d)
   Calque > Style de calque > Incrustation de dégradé             (e)
   Calque > Style de calque > Style de calque… (fenêtre unique)   (h)
+  Calque > Effets de tracé > Modifier l'effet… / Supprimer l'effet
 
-Les effets de tracé s'appliquent au calque vectoriel (forme) sélectionné ;
-ils remplacent sa forme (Ctrl+Z pour annuler).
+Les effets restent modifiables (« effets dynamiques ») : la forme d'origine,
+l'effet et ses réglages sont mémorisés dans le calque résultat (parasite
+« chopgimp-fx ») ; « Modifier l'effet… » régénère le résultat avec de nouveaux
+réglages, « Supprimer l'effet » rend la forme d'origine.
 """
+import json
 import math
 import random
 import sys
@@ -44,6 +48,99 @@ def gegl_color(r, g, b, a=1.0):
     c = Gegl.Color.new("black")
     c.set_rgba(r, g, b, a)
     return c
+
+
+# ─── Mémoire des effets (parasites) ──────────────────────────────────────
+FX_PARASITE = "chopgimp-fx"
+STYLE_PARASITE = "chopgimp-style"
+
+
+def parasite_get(item, name):
+    try:
+        par = item.get_parasite(name)
+    except Exception:
+        par = None
+    if par is None:
+        return None
+    try:
+        return json.loads(bytes(par.get_data()).decode("utf-8"))
+    except Exception:
+        return None
+
+
+def parasite_set(item, name, data):
+    # 1 = persistant (enregistré dans le XCF), 2 = annulable
+    item.attach_parasite(Gimp.Parasite.new(name, 3, list(json.dumps(data).encode("utf-8"))))
+
+
+def rgba(c):
+    r = c.get_rgba()
+    return [r.red, r.green, r.blue, r.alpha]
+
+
+def from_rgba(v):
+    return gegl_color(*v)
+
+
+class NoSelection:
+    """Retire temporairement la sélection (remplissages et tracés sur tout le calque)."""
+
+    def __init__(self, image):
+        self.image, self.saved = image, None
+
+    def __enter__(self):
+        if not Gimp.Selection.is_empty(self.image):
+            self.saved = Gimp.Selection.save(self.image)
+            Gimp.Selection.none(self.image)
+        return self
+
+    def __exit__(self, *exc):
+        if self.saved is not None:
+            self.image.select_item(Gimp.ChannelOps.REPLACE, self.saved)
+            self.image.remove_channel(self.saved)
+        return False
+
+
+def capture_source(layer, path=None):
+    """Forme d'origine (sous-chemins + style) d'un calque vectoriel ou d'un chemin."""
+    path = path or layer.get_path()
+    strokes = []
+    for sid in path.get_strokes():
+        t, pts, closed = path.stroke_get_points(sid)
+        strokes.append([int(t), list(pts), bool(closed)])
+    src = {"name": layer.get_name() if layer else path.get_name(), "strokes": strokes}
+    if isinstance(layer, Gimp.VectorLayer):
+        src.update({"fill": layer.get_enable_fill(), "fill-color": rgba(layer.get_fill_color()),
+                    "stroke": layer.get_enable_stroke(), "stroke-color": rgba(layer.get_stroke_color()),
+                    "stroke-width": layer.get_stroke_width()})
+    return src
+
+
+def source_path(image, src):
+    path = Gimp.Path.new(image, src["name"])
+    for t, pts, closed in src["strokes"]:
+        path.stroke_new_from_points(Gimp.PathStrokeType(t), pts, closed)
+    image.insert_path(path, None, 0)
+    return path
+
+
+def rebuild_source(image, ref, src):
+    """Recrée, à la place de ref, le calque vectoriel d'origine mémorisé."""
+    nl = Gimp.VectorLayer.new(image, source_path(image, src))
+    nl.set_name(src["name"])
+    if isinstance(ref, Gimp.VectorLayer):
+        copy_vector_style(ref, nl)
+    else:
+        nl.set_opacity(ref.get_opacity())
+    if "fill" in src:
+        nl.set_enable_fill(src["fill"])
+        nl.set_fill_color(from_rgba(src["fill-color"]))
+        nl.set_enable_stroke(src["stroke"])
+        nl.set_stroke_color(from_rgba(src["stroke-color"]))
+        nl.set_stroke_width(src["stroke-width"])
+    image.insert_layer(nl, ref.get_parent(), image.get_item_position(ref))
+    nl.refresh()
+    return nl
 
 
 # ─── Géométrie des chemins ───────────────────────────────────────────────
@@ -350,7 +447,7 @@ def add_arrows(image, layer, at_start, at_end, size_factor):
     image.insert_layer(al, group, 0)
     al.refresh()
     image.set_selected_layers([group])
-    return None
+    return group
 
 
 # ─── Position du contour (g) ─────────────────────────────────────────────
@@ -375,12 +472,13 @@ def stroke_position(image, layer, outside):
     s.set_stroke_width(layer.get_stroke_width() * 2.0)
     image.insert_layer(s, group, 0)
     s.refresh()
-    image.select_item(Gimp.ChannelOps.REPLACE, path)
-    if outside:
-        Gimp.Selection.invert(image)
-    mask = s.create_mask(Gimp.AddMaskType.SELECTION)
-    s.add_mask(mask)
-    Gimp.Selection.none(image)
+    with NoSelection(image):          # la sélection de l'utilisateur est rendue ensuite
+        image.select_item(Gimp.ChannelOps.REPLACE, path)
+        if outside:
+            Gimp.Selection.invert(image)
+        mask = s.create_mask(Gimp.AddMaskType.SELECTION)
+        s.add_mask(mask)
+        Gimp.Selection.none(image)
 
     if layer.get_enable_fill():
         fpath = path.copy()
@@ -394,45 +492,48 @@ def stroke_position(image, layer, outside):
 
     image.remove_layer(layer)
     image.set_selected_layers([group])
-    return None
+    return group
 
 
 # ─── Contour au pinceau (d) ──────────────────────────────────────────────
 
-def brush_stroke(image, layer, simulate=True):
-    path = layer.get_path() if isinstance(layer, Gimp.VectorLayer) else None
+def brush_stroke(image, layer, simulate=True, target=None, src_path=None, color=None):
+    """Trace le chemin avec la brosse active dans un calque raster (target
+    réutilisé lors d'une modification)."""
+    path = src_path or (layer.get_path() if isinstance(layer, Gimp.VectorLayer) else None)
     if path is None:
         paths = image.get_selected_paths()
         path = paths[0] if paths else None
     if path is None:
         return "Sélectionnez une forme (calque vectoriel) ou un chemin."
-    raster = Gimp.Layer.new(image, "Contour au pinceau", image.get_width(), image.get_height(),
-                            Gimp.ImageType.RGBA_IMAGE, 100, Gimp.LayerMode.NORMAL)
+    if target is None:
+        raster = Gimp.Layer.new(image, "Contour au pinceau", image.get_width(), image.get_height(),
+                                Gimp.ImageType.RGBA_IMAGE, 100, Gimp.LayerMode.NORMAL)
+        image.insert_layer(raster, layer.get_parent(), image.get_item_position(layer))
+    else:
+        raster = target
     raster.fill(Gimp.FillType.TRANSPARENT)
-    image.insert_layer(raster, layer.get_parent(), image.get_item_position(layer))
+    if color is None and isinstance(layer, Gimp.VectorLayer) and layer.get_enable_stroke():
+        color = layer.get_stroke_color()
     Gimp.context_push()
     try:
-        if isinstance(layer, Gimp.VectorLayer) and layer.get_enable_stroke():
-            Gimp.context_set_foreground(layer.get_stroke_color())
+        if color is not None:
+            Gimp.context_set_foreground(color)
         Gimp.context_set_stroke_method(Gimp.StrokeMethod.PAINT_METHOD)
         Gimp.context_set_paint_method("gimp-paintbrush")
         Gimp.context_set_emulate_brush_dynamics(bool(simulate))
-        raster.edit_stroke_item(path)
+        with NoSelection(image):
+            raster.edit_stroke_item(path)
     finally:
         Gimp.context_pop()
     image.set_selected_layers([raster])
-    return None
+    return raster
 
 
 # ─── Incrustation de dégradé (e) ─────────────────────────────────────────
 
-def gradient_overlay(image, layer, angle, reverse):
-    ok_, x, y = layer.get_offsets()
-    w, h = layer.get_width(), layer.get_height()
-    g = Gimp.Layer.new(image, "Incrustation de dégradé", w, h, Gimp.ImageType.RGBA_IMAGE, 100,
-                       Gimp.LayerMode.NORMAL)
-    image.insert_layer(g, layer.get_parent(), image.get_item_position(layer))
-    g.set_offsets(x, y)
+def gradient_fill(image, g, angle, reverse, c1, c2):
+    w, h = g.get_width(), g.get_height()
     a = math.radians(angle)
     cx, cy, r = w / 2.0, h / 2.0, (abs(w * math.cos(a)) + abs(h * math.sin(a))) / 2.0
     x1, y1 = cx - r * math.cos(a), cy - r * math.sin(a)
@@ -441,10 +542,33 @@ def gradient_overlay(image, layer, angle, reverse):
         x1, y1, x2, y2 = x2, y2, x1, y1
     Gimp.context_push()
     try:
+        if c1 is not None:
+            Gimp.context_set_foreground(c1)
+        if c2 is not None:
+            Gimp.context_set_background(c2)
         Gimp.context_set_gradient_fg_bg_rgb()
-        g.edit_gradient_fill(Gimp.GradientType.LINEAR, 0, False, 1, 0, True, x1, y1, x2, y2)
+        with NoSelection(image):
+            g.fill(Gimp.FillType.TRANSPARENT)
+            g.edit_gradient_fill(Gimp.GradientType.LINEAR, 0, False, 1, 0, True, x1, y1, x2, y2)
     finally:
         Gimp.context_pop()
+
+
+def gradient_overlay(image, layer, angle, reverse, c1=None, c2=None, target=None):
+    ok_, x, y = layer.get_offsets()
+    w, h = layer.get_width(), layer.get_height()
+    if target is not None:
+        g = target
+        if (g.get_width(), g.get_height()) != (w, h):
+            g.resize(w, h, 0, 0)
+        g.set_offsets(x, y)
+        gradient_fill(image, g, angle, reverse, c1, c2)
+        return g
+    g = Gimp.Layer.new(image, "Incrustation de dégradé", w, h, Gimp.ImageType.RGBA_IMAGE, 100,
+                       Gimp.LayerMode.NORMAL)
+    image.insert_layer(g, layer.get_parent(), image.get_item_position(layer))
+    g.set_offsets(x, y)
+    gradient_fill(image, g, angle, reverse, c1, c2)
     image.set_selected_layers([g])
     # masque d'écrêtage sur le calque du dessous (plug-in photogimp_ps)
     pdb = Gimp.get_pdb()
@@ -455,7 +579,7 @@ def gradient_overlay(image, layer, angle, reverse):
         cfg.set_property("image", image)
         cfg.set_core_object_array("drawables", [g])
         proc.run(cfg)
-    return None
+    return g
 
 
 # ─── Fenêtre « Style de calque » (h) ─────────────────────────────────────
@@ -519,7 +643,18 @@ def apply_styles(layer, chosen):
         layer.append_filter(f)
 
 
+def style_to_json(chosen):
+    return {k: [v, rgba(c), o] for k, (v, c, o) in chosen.items()}
+
+
+def style_from_json(data):
+    return {k: (v, from_rgba(c), o) for k, (v, c, o) in (data or {}).items()}
+
+
 def layer_style_dialog(image, layer):
+    """Fenêtre Style de calque avec aperçu en direct (comme Photoshop) :
+    chaque réglage est appliqué immédiatement au calque ; Annuler rétablit
+    le style d'origine."""
     GimpUi.init("chopgimp_fx")
     dialog = GimpUi.Dialog(title="Style de calque — " + layer.get_name(), role="chopgimp-layer-style",
                            modal=True)
@@ -532,16 +667,19 @@ def layer_style_dialog(image, layer):
 
     present = {f.get_name()[len(STYLE_PREFIX):] for f in (layer.get_filters() or [])
                if f.get_name().startswith(STYLE_PREFIX)}
+    saved = parasite_get(layer, STYLE_PARASITE) or {}
     widgets = {}
     row = 0
     for key, label, op, params in STYLES:
+        mem = saved.get(key)
         check = Gtk.CheckButton(label=label)
         check.set_active(label in present)
         grid.attach(check, 0, row, 1, 1)
-        col = DEFAULT_COLORS[key]
+        col = mem[1][:3] if mem else DEFAULT_COLORS[key]
         cbtn = Gtk.ColorButton.new_with_rgba(Gdk_rgba(col))
         grid.attach(cbtn, 1, row, 1, 1)
-        op_adj = Gtk.Adjustment(value=75, lower=0, upper=100, step_increment=1)
+        op_adj = Gtk.Adjustment(value=round(mem[2] * 100) if mem else 75, lower=0, upper=100,
+                                step_increment=1)
         op_spin = Gtk.SpinButton(adjustment=op_adj, digits=0)
         op_spin.set_tooltip_text("Opacité (%)")
         grid.attach(op_spin, 2, row, 1, 1)
@@ -551,7 +689,8 @@ def layer_style_dialog(image, layer):
             lab = Gtk.Label(label=plabel)
             lab.get_style_context().add_class("dim-label")
             grid.attach(lab, c, row, 1, 1)
-            adj = Gtk.Adjustment(value=default, lower=lo, upper=hi, step_increment=1)
+            value = mem[0].get(pkey, default) if mem else default
+            adj = Gtk.Adjustment(value=value, lower=lo, upper=hi, step_increment=1)
             sp = Gtk.SpinButton(adjustment=adj, digits=0)
             grid.attach(sp, c + 1, row, 1, 1)
             pw[pkey] = sp
@@ -559,23 +698,55 @@ def layer_style_dialog(image, layer):
         widgets[key] = (check, cbtn, op_spin, pw)
         row += 1
 
+    preview = Gtk.CheckButton(label="Aperçu")
+    preview.set_active(True)
+    grid.attach(preview, 0, row, 2, 1)
+
     def collect():
         chosen = {}
         for key, (check, cbtn, op_spin, pw) in widgets.items():
             if not check.get_active():
                 continue
-            rgba = cbtn.get_rgba()
-            color = gegl_color(rgba.red, rgba.green, rgba.blue)
+            rgba_ = cbtn.get_rgba()
+            color = gegl_color(rgba_.red, rgba_.green, rgba_.blue)
             chosen[key] = ({k: sp.get_value() for k, sp in pw.items()}, color, op_spin.get_value() / 100.0)
         return chosen
+
+    original = collect()            # état à rétablir si l'on annule
+    pending = [0]
+
+    def refresh():
+        pending[0] = 0
+        apply_styles(layer, collect() if preview.get_active() else original)
+        Gimp.displays_flush()
+        return False
+
+    def changed(*_):
+        if pending[0]:
+            GLib.source_remove(pending[0])
+        pending[0] = GLib.timeout_add(120, refresh)
+
+    for check, cbtn, op_spin, pw in widgets.values():
+        check.connect("toggled", changed)
+        cbtn.connect("color-set", changed)
+        op_spin.connect("value-changed", changed)
+        for sp in pw.values():
+            sp.connect("value-changed", changed)
+    preview.connect("toggled", changed)
 
     dialog.show_all()
     while True:
         resp = dialog.run()
+        if pending[0]:
+            GLib.source_remove(pending[0])
+            pending[0] = 0
         if resp in (Gtk.ResponseType.APPLY, Gtk.ResponseType.OK):
-            image.undo_group_start()
-            apply_styles(layer, collect())
-            image.undo_group_end()
+            original = collect()
+            apply_styles(layer, original)
+            parasite_set(layer, STYLE_PARASITE, style_to_json(original))
+            Gimp.displays_flush()
+        else:
+            apply_styles(layer, original)
             Gimp.displays_flush()
         if resp != Gtk.ResponseType.APPLY:
             break
@@ -626,10 +797,94 @@ PROCS = {
                                    None, None, True)]),
     "chopgimp-fx-gradient-overlay": ("Incrustation de dégradé…", [STYLE, STYLE_L],
                                      [("double", "angle", "Angle (°)", -180, 180, 90),
-                                      ("boolean", "reverse", "Inverser", None, None, False)]),
+                                      ("boolean", "reverse", "Inverser", None, None, False),
+                                      ("color", "color1", "Couleur de départ", None, None, (0, 0, 0)),
+                                      ("color", "color2", "Couleur d'arrivée", None, None, (1, 1, 1))]),
     "chopgimp-layer-style": ("Style de calque (fenêtre)…", [STYLE, STYLE_L], []),
+    "chopgimp-fx-edit": ("Modifier l'effet…", [TRACE, TRACE_L, STYLE, STYLE_L], []),
+    "chopgimp-fx-remove": ("Supprimer l'effet", [TRACE, TRACE_L, STYLE, STYLE_L], []),
     "chopgimp-content-aware-fill": ("Remplir d'après le contenu", ["<Image>/Edit"], []),
 }
+VECTOR_FX = {"chopgimp-fx-zigzag", "chopgimp-fx-roughen", "chopgimp-fx-wave", "chopgimp-fx-pucker",
+             "chopgimp-fx-twist", "chopgimp-fx-width", "chopgimp-fx-arrows",
+             "chopgimp-fx-stroke-inside", "chopgimp-fx-stroke-outside"}
+STROKE_SIDES = [("chopgimp-fx-stroke-inside", "Contour à l'intérieur"),
+                ("chopgimp-fx-stroke-outside", "Contour à l'extérieur")]
+
+
+def store_args(name, A):
+    out = {}
+    for kind, key, *_ in PROCS[name][2]:
+        v = A(key)
+        out[key] = rgba(v) if kind == "color" else v
+    return out
+
+
+def load_args(name, cfg, stored):
+    for kind, key, *_ in PROCS[name][2]:
+        if key in stored:
+            v = stored[key]
+            cfg.set_property(key, from_rgba(v) if kind == "color" else v)
+
+
+def apply_vector_fx(image, layer, name, A):
+    """Applique un effet de tracé et mémorise forme d'origine + réglages dans le résultat."""
+    src = capture_source(layer)
+    res = None
+    if name == "chopgimp-fx-zigzag":
+        res = replace_shape(image, layer, fx_zigzag(A("size"), A("ridges"), A("smooth")), "zigzag")
+    elif name == "chopgimp-fx-roughen":
+        res = replace_shape(image, layer, fx_roughen(A("size"), A("detail"), A("seed")), "rugosité")
+    elif name == "chopgimp-fx-wave":
+        res = replace_shape(image, layer, fx_wave(A("amplitude"), A("wavelength")), "ondulation")
+    elif name == "chopgimp-fx-pucker":
+        res = replace_shape(image, layer, fx_pucker_bloat(A("amount")), "contracter")
+    elif name == "chopgimp-fx-twist":
+        res = replace_shape(image, layer, fx_twist(A("angle")), "torsion")
+    elif name == "chopgimp-fx-width":
+        res = variable_width(image, layer, A("width"), int(A("profile")))
+    elif name == "chopgimp-fx-arrows":
+        res = add_arrows(image, layer, A("at-start"), A("at-end"), A("size"))
+    elif name == "chopgimp-fx-stroke-inside":
+        res = stroke_position(image, layer, outside=False)
+    elif name == "chopgimp-fx-stroke-outside":
+        res = stroke_position(image, layer, outside=True)
+    if res is None:
+        return "L'effet n'a rien produit (forme vide ?)."
+    if isinstance(res, str):
+        return res
+    parasite_set(res, FX_PARASITE, {"proc": name, "args": store_args(name, A), "src": src})
+    return res
+
+
+def choose_stroke_side(current):
+    GimpUi.init("chopgimp_fx")
+    dialog = GimpUi.Dialog(title="Position du contour", role="chopgimp-stroke-side", modal=True)
+    dialog.add_button("_Annuler", Gtk.ResponseType.CANCEL)
+    dialog.add_button("_OK", Gtk.ResponseType.OK)
+    box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6, margin=12)
+    dialog.get_content_area().pack_start(box, True, True, 0)
+    group, buttons = None, {}
+    for proc, label in STROKE_SIDES:
+        rb = Gtk.RadioButton.new_with_label_from_widget(group, label)
+        group = group or rb
+        rb.set_active(proc == current)
+        box.pack_start(rb, False, False, 0)
+        buttons[proc] = rb
+    dialog.show_all()
+    resp = dialog.run()
+    choice = next((p for p, rb in buttons.items() if rb.get_active()), current)
+    dialog.destroy()
+    return choice if resp == Gtk.ResponseType.OK else None
+
+
+def find_layer(image, tattoo):
+    if not tattoo:
+        return None
+    try:
+        return image.get_layer_by_tattoo(tattoo)
+    except Exception:
+        return None
 
 
 class ChopGimpFx(Gimp.PlugIn):
@@ -658,6 +913,9 @@ class ChopGimpFx(Gimp.PlugIn):
                 p.add_int_argument(key, nick, nick, lo, hi, default, GObject.ParamFlags.READWRITE)
             elif kind == "boolean":
                 p.add_boolean_argument(key, nick, nick, default, GObject.ParamFlags.READWRITE)
+            elif kind == "color":
+                p.add_color_argument(key, nick, nick, False, gegl_color(*default),
+                                     GObject.ParamFlags.READWRITE)
             elif kind == "choice":
                 ch = Gimp.Choice.new()
                 for i, label_ in enumerate(PROFILES):
@@ -670,21 +928,39 @@ class ChopGimpFx(Gimp.PlugIn):
         layers = [d for d in drawables if isinstance(d, Gimp.Layer)]
         if not layers:
             return fail(procedure, "Sélectionnez un calque.")
+        cancel = procedure.new_return_values(Gimp.PDBStatusType.CANCEL, GLib.Error())
+
+        if name == "chopgimp-content-aware-fill":
+            return self.content_aware_fill(procedure, image, layers)
+
+        if name in ("chopgimp-fx-edit", "chopgimp-fx-remove"):
+            image.undo_group_start()
+            try:
+                if name == "chopgimp-fx-edit":
+                    msg = self.edit_effect(image, layers[0], run_mode)
+                else:
+                    msg = self.remove_effect(image, layers[0])
+            finally:
+                image.undo_group_end()
+                Gimp.displays_flush()
+            if msg == "cancel":
+                return cancel
+            return fail(procedure, msg) if msg else ok(procedure)
 
         if run_mode == Gimp.RunMode.INTERACTIVE and PROCS[name][2]:
+            if name == "chopgimp-fx-gradient-overlay":
+                config.set_property("color1", Gimp.context_get_foreground())
+                config.set_property("color2", Gimp.context_get_background())
             GimpUi.init("chopgimp_fx")
             dialog = GimpUi.ProcedureDialog.new(procedure, config, PROCS[name][0].rstrip("…"))
             dialog.fill(None)
             if not dialog.run():
                 dialog.destroy()
-                return procedure.new_return_values(Gimp.PDBStatusType.CANCEL, GLib.Error())
+                return cancel
             dialog.destroy()
 
-        def arg(k):
+        def A(k):
             return config.get_property(k)
-
-        if name == "chopgimp-content-aware-fill":
-            return self.content_aware_fill(procedure, image, layers)
 
         image.undo_group_start()
         try:
@@ -692,46 +968,128 @@ class ChopGimpFx(Gimp.PlugIn):
                 if run_mode == Gimp.RunMode.INTERACTIVE:
                     layer_style_dialog(image, layers[0])
                 else:
-                    apply_styles(layers[0], {"drop-shadow": ({"dist": 8, "radius": 10, "angle": 120},
-                                                             gegl_color(0, 0, 0), 0.75)})
+                    chosen = {"drop-shadow": ({"dist": 8, "radius": 10, "angle": 120},
+                                              gegl_color(0, 0, 0), 0.75)}
+                    apply_styles(layers[0], chosen)
+                    parasite_set(layers[0], STYLE_PARASITE, style_to_json(chosen))
                 return ok(procedure)
             if name == "chopgimp-fx-gradient-overlay":
-                msg = gradient_overlay(image, layers[0], arg("angle"), arg("reverse"))
-                return fail(procedure, msg) if msg else ok(procedure)
+                g = gradient_overlay(image, layers[0], A("angle"), A("reverse"), A("color1"), A("color2"))
+                parasite_set(g, FX_PARASITE, {"proc": name, "args": store_args(name, A),
+                                              "src-tattoo": layers[0].get_tattoo()})
+                return ok(procedure)
             if name == "chopgimp-fx-brush-stroke":
-                msg = brush_stroke(image, layers[0], arg("simulate"))
-                return fail(procedure, msg) if msg else ok(procedure)
+                layer = layers[0]
+                vec = isinstance(layer, Gimp.VectorLayer)
+                paths = image.get_selected_paths()
+                res = brush_stroke(image, layer, A("simulate"))
+                if isinstance(res, str):
+                    return fail(procedure, res)
+                src = capture_source(layer) if vec else capture_source(None, paths[0])
+                parasite_set(res, FX_PARASITE, {"proc": name, "args": store_args(name, A), "src": src,
+                                                "src-tattoo": layer.get_tattoo() if vec else 0})
+                return ok(procedure)
 
             vlayers = selected_vector_layers(layers)
             if not vlayers:
                 return fail(procedure, "Sélectionnez une forme (calque vectoriel).")
             for layer in vlayers:
-                msg = None
-                if name == "chopgimp-fx-zigzag":
-                    replace_shape(image, layer, fx_zigzag(arg("size"), arg("ridges"), arg("smooth")), "zigzag")
-                elif name == "chopgimp-fx-roughen":
-                    replace_shape(image, layer, fx_roughen(arg("size"), arg("detail"), arg("seed")), "rugosité")
-                elif name == "chopgimp-fx-wave":
-                    replace_shape(image, layer, fx_wave(arg("amplitude"), arg("wavelength")), "ondulation")
-                elif name == "chopgimp-fx-pucker":
-                    replace_shape(image, layer, fx_pucker_bloat(arg("amount")), "contracter")
-                elif name == "chopgimp-fx-twist":
-                    replace_shape(image, layer, fx_twist(arg("angle")), "torsion")
-                elif name == "chopgimp-fx-width":
-                    variable_width(image, layer, arg("width"), int(arg("profile")))
-                elif name == "chopgimp-fx-arrows":
-                    msg = add_arrows(image, layer, arg("at-start"), arg("at-end"), arg("size"))
-                elif name == "chopgimp-fx-stroke-inside":
-                    msg = stroke_position(image, layer, outside=False)
-                elif name == "chopgimp-fx-stroke-outside":
-                    msg = stroke_position(image, layer, outside=True)
-                if msg:
-                    return fail(procedure, msg)
+                res = apply_vector_fx(image, layer, name, A)
+                if isinstance(res, str):
+                    return fail(procedure, res)
         finally:
             image.undo_group_end()
             Gimp.displays_flush()
         return ok(procedure)
 
+    # Calque > Effets de tracé > Modifier l'effet… : régénère le résultat à
+    # partir de la forme d'origine mémorisée, avec de nouveaux réglages.
+    def edit_effect(self, image, layer, run_mode):
+        interactive = run_mode == Gimp.RunMode.INTERACTIVE
+        info = parasite_get(layer, FX_PARASITE)
+        if not info:
+            styled = any(f.get_name().startswith(STYLE_PREFIX) for f in (layer.get_filters() or []))
+            if styled and interactive:
+                layer_style_dialog(image, layer)
+                return None
+            return ("Ce calque n'a pas d'effet modifiable (effet de tracé, contour au pinceau "
+                    "ou incrustation de dégradé).")
+        target = info["proc"]
+        if target in ("chopgimp-fx-stroke-inside", "chopgimp-fx-stroke-outside"):
+            if interactive:
+                target = choose_stroke_side(target)
+                if target is None:
+                    return "cancel"
+            A = None
+        else:
+            proc = Gimp.get_pdb().lookup_procedure(target)
+            cfg = proc.create_config()
+            load_args(target, cfg, info.get("args", {}))
+            if interactive and PROCS[target][2]:
+                GimpUi.init("chopgimp_fx")
+                dlg = GimpUi.ProcedureDialog.new(proc, cfg, "Modifier — " + PROCS[target][0].rstrip("…"))
+                dlg.fill(None)
+                accepted = dlg.run()
+                dlg.destroy()
+                if not accepted:
+                    return "cancel"
+            A = cfg.get_property
+
+        if target in VECTOR_FX:
+            src = rebuild_source(image, layer, info["src"])
+            res = apply_vector_fx(image, src, target, A)
+            if isinstance(res, str):
+                image.remove_layer(src)
+                return res
+            image.remove_layer(layer)
+            image.set_selected_layers([res])
+            return None
+
+        source = find_layer(image, info.get("src-tattoo"))
+        if target == "chopgimp-fx-brush-stroke":
+            if isinstance(source, Gimp.VectorLayer):
+                path, tmp, color = source.get_path(), None, None
+                info["src"] = capture_source(source)
+            else:
+                source = None
+                path = tmp = source_path(image, info["src"])
+                c = info["src"].get("stroke-color")
+                color = from_rgba(c) if c and info["src"].get("stroke") else None
+            res = brush_stroke(image, source, A("simulate"), target=layer, src_path=path, color=color)
+            if tmp is not None:
+                image.remove_path(tmp)
+            if isinstance(res, str):
+                return res
+        elif target == "chopgimp-fx-gradient-overlay":
+            gradient_overlay(image, source or layer, A("angle"), A("reverse"), A("color1"), A("color2"),
+                             target=layer)
+        info["args"] = store_args(target, A)
+        parasite_set(layer, FX_PARASITE, info)
+        image.set_selected_layers([layer])
+        return None
+
+    # Calque > Effets de tracé > Supprimer l'effet : rend la forme d'origine.
+    def remove_effect(self, image, layer):
+        info = parasite_get(layer, FX_PARASITE)
+        if info:
+            if info["proc"] in VECTOR_FX:
+                src = rebuild_source(image, layer, info["src"])
+                image.remove_layer(layer)
+                image.set_selected_layers([src])
+            else:
+                source = find_layer(image, info.get("src-tattoo"))
+                image.remove_layer(layer)
+                if source is not None:
+                    image.set_selected_layers([source])
+            return None
+        if any(f.get_name().startswith(STYLE_PREFIX) for f in (layer.get_filters() or [])):
+            apply_styles(layer, {})
+            try:
+                layer.detach_parasite(STYLE_PARASITE)
+            except Exception:
+                pass
+            return None
+        return "Ce calque n'a pas d'effet à supprimer."
 
     # Édition > Remplir d'après le contenu (Maj+F5) : la zone sélectionnée est
     # reconstruite à partir de son entourage (moteur Resynthesizer).

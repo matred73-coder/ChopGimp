@@ -1,0 +1,132 @@
+From 1348e862475f799a240630ccd3c52934f08ea85c Mon Sep 17 00:00:00 2001
+From: ChopGimp <mathieu.redon@proton.me>
+Date: Thu, 12 Nov 2026 07:51:15 +0100
+Subject: [PATCH 38/41] ChopGimp: thumbnail size slider and crop toggle in the
+ Layers panel; fx and double-click open Layer Style
+
+---
+ app/actions/layers-commands.c   | 11 +++++-
+ app/widgets/gimplayertreeview.c | 64 +++++++++++++++++++++++++++++++++
+ 2 files changed, 74 insertions(+), 1 deletion(-)
+
+diff --git a/app/actions/layers-commands.c b/app/actions/layers-commands.c
+index aa60fe9..1fb60b9 100644
+--- a/app/actions/layers-commands.c
++++ b/app/actions/layers-commands.c
+@@ -214,7 +214,16 @@ layers_edit_cmd_callback (GimpAction *action,
+   else if (gimp_item_is_vector_layer (GIMP_ITEM (layers->data)))
+     layers_edit_vector_cmd_callback (action, value, data);
+   else
+-    layers_edit_attributes_cmd_callback (action, value, data);
++    {
++      /*  ChopGimp (Photoshop): double-clicking a layer opens Layer Style  */
++      GAction *style = g_action_map_lookup_action (G_ACTION_MAP (image->gimp->app),
++                                                   "chopgimp-layer-style");
++
++      if (style && g_action_get_enabled (style))
++        g_action_activate (style, NULL);
++      else
++        layers_edit_attributes_cmd_callback (action, value, data);
++    }
+ }
+ 
+ void
+diff --git a/app/widgets/gimplayertreeview.c b/app/widgets/gimplayertreeview.c
+index 6bcdd20..b40fee2 100644
+--- a/app/widgets/gimplayertreeview.c
++++ b/app/widgets/gimplayertreeview.c
+@@ -69,6 +69,7 @@
+ #include "gimptoggleaction.h"
+ #include "gimpuimanager.h"
+ #include "gimpviewrenderer.h"
++#include "gimpviewrendererdrawable.h"
+ #include "gimpwidgets-utils.h"
+ 
+ #include "gimp-intl.h"
+@@ -328,6 +329,27 @@ gimp_layer_tree_view_init (GimpLayerTreeView *view)
+  *  bottom of the Layers panel pop up the matching submenus of the layers
+  *  context menu.
+  */
++static void
++gimp_layer_tree_view_thumb_size_changed (GtkRange          *range,
++                                         GimpLayerTreeView *view)
++{
++  gint border = 0;
++
++  gimp_container_view_get_view_size (GIMP_CONTAINER_VIEW (view), &border);
++  gimp_container_view_set_view_size (GIMP_CONTAINER_VIEW (view),
++                                     (gint) gtk_range_get_value (range), border);
++}
++
++static void
++gimp_layer_tree_view_thumb_crop_toggled (GtkToggleButton   *toggle,
++                                         GimpLayerTreeView *view)
++{
++  GimpContext *context = gimp_container_view_get_context (GIMP_CONTAINER_VIEW (view));
++
++  chopgimp_thumbs_set_crop (context ? context->gimp : NULL,
++                            gtk_toggle_button_get_active (toggle));
++}
++
+ static void
+ gimp_layer_tree_view_photogimp_menu_clicked (GtkWidget         *button,
+                                              GimpLayerTreeView *view)
+@@ -335,6 +357,19 @@ gimp_layer_tree_view_photogimp_menu_clicked (GtkWidget         *button,
+   GimpUIManager *manager = gimp_editor_get_ui_manager (GIMP_EDITOR (view));
+   const gchar   *path    = g_object_get_data (G_OBJECT (button),
+                                               "photogimp-menu-path");
++  GimpContext   *context = gimp_container_view_get_context (GIMP_CONTAINER_VIEW (view));
++
++  /*  fx: open the Layer Style dialog directly (Photoshop)  */
++  if (path && strstr (path, "Style de calque") && context)
++    {
++      GAction *action = g_action_map_lookup_action (G_ACTION_MAP (context->gimp->app),
++                                                    "chopgimp-layer-style");
++      if (action && g_action_get_enabled (action))
++        {
++          g_action_activate (action, NULL);
++          return;
++        }
++    }
+ 
+   if (manager && path)
+     gimp_ui_manager_ui_popup_at_widget (manager, path, NULL, NULL,
+@@ -452,6 +487,35 @@ gimp_layer_tree_view_constructed (GObject *object)
+   gtk_box_reorder_child (gimp_editor_get_button_box (GIMP_EDITOR (layer_view)),
+                          button, 9);
+ 
++  /*  ChopGimp: thumbnail size slider and « crop to content » toggle  */
++  {
++    GtkWidget *bbox  = GTK_WIDGET (gimp_editor_get_button_box (GIMP_EDITOR (layer_view)));
++    GtkWidget *scale = gtk_scale_new_with_range (GTK_ORIENTATION_HORIZONTAL, 16, 128, 8);
++    GtkWidget *crop  = gtk_toggle_button_new ();
++    gint       border;
++
++    gtk_scale_set_draw_value (GTK_SCALE (scale), FALSE);
++    gtk_widget_set_size_request (scale, 70, -1);
++    gtk_range_set_value (GTK_RANGE (scale),
++                         gimp_container_view_get_view_size (GIMP_CONTAINER_VIEW (layer_view),
++                                                            &border));
++    gimp_help_set_help_data (scale, _("Taille des vignettes"), NULL);
++    g_signal_connect (scale, "value-changed",
++                      G_CALLBACK (gimp_layer_tree_view_thumb_size_changed), layer_view);
++    gtk_box_pack_end (GTK_BOX (bbox), scale, FALSE, FALSE, 0);
++    gtk_widget_set_visible (scale, TRUE);
++
++    gtk_container_add (GTK_CONTAINER (crop),
++                       gtk_image_new_from_icon_name ("gimp-tool-crop", GTK_ICON_SIZE_MENU));
++    gtk_widget_show_all (crop);
++    gtk_button_set_relief (GTK_BUTTON (crop), GTK_RELIEF_NONE);
++    gtk_toggle_button_set_active (GTK_TOGGLE_BUTTON (crop), chopgimp_thumbs_get_crop ());
++    gimp_help_set_help_data (crop, _("Vignettes recadrées sur le contenu du calque"), NULL);
++    g_signal_connect (crop, "toggled",
++                      G_CALLBACK (gimp_layer_tree_view_thumb_crop_toggled), layer_view);
++    gtk_box_pack_end (GTK_BOX (bbox), crop, FALSE, FALSE, 0);
++  }
++
+   button = gimp_editor_add_action_button (GIMP_EDITOR (layer_view), "layers",
+                                           "layers-mask-delete", NULL);
+   layer_view->priv->delete_mask_button = button;
+-- 
+2.53.0
+

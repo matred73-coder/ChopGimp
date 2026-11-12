@@ -38,7 +38,8 @@ PS_MAP = [
     ("Outils", "tools-perspective",        [S + "c"],        "Recadrage perspective"),
     ("Outils", "tools-color-picker",       ["i"],            "Pipette"),
     ("Outils", "tools-measure",            [S + "i"],        "Règle"),
-    ("Outils", "tools-heal",               ["j"],            "Correcteur"),
+    ("Outils", "tools-spot-heal",          ["j"],            "Correcteur localisé"),
+    ("Outils", "tools-heal",               [S + "j"],        "Correcteur"),
     ("Outils", "tools-paintbrush",         ["b"],            "Pinceau"),
     ("Outils", "tools-pencil",             [S + "b"],        "Crayon"),
     ("Outils", "tools-airbrush",           [S + A + "b"],    "Aérographe"),
@@ -194,13 +195,14 @@ def main():
     global PS_MAP
     if "--v2" in sys.argv:   # GIMP non recompilé : actions ajoutées par les patchs absentes
         PS_MAP = [e for e in PS_MAP if not e[1].startswith(("tools-opacity-ps-", "tools-hand",
-                                                             "tools-rotate-view", "tools-shape"))]
+                                                             "tools-rotate-view", "tools-shape",
+                                                             "tools-spot-heal"))]
     defaults = json.load(open(DEFAULTS))
     errors = []
 
     # 1. actions valides
     for _, act, _, _ in PS_MAP:
-        if act not in defaults and not act.startswith(("photogimp-", "chopgimp-", "tools-opacity-ps-", "tools-hand", "tools-rotate-view", "tools-shape")):
+        if act not in defaults and not act.startswith(("photogimp-", "chopgimp-", "tools-opacity-ps-", "tools-hand", "tools-rotate-view", "tools-shape", "tools-spot-heal")):
             errors.append("action inconnue de GIMP 3.2.8 : %s" % act)
 
     # 2. aucune touche attribuée deux fois dans PS_MAP

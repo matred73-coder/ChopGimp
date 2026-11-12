@@ -1,7 +1,7 @@
 From ffe0fc084795b7cf04cc08e7e59291893fb83926 Mon Sep 17 00:00:00 2001
 From: ChopGimp <mathieu.redon@proton.me>
 Date: Thu, 12 Nov 2026 07:28:14 +0100
-Subject: [PATCH 34/36] ChopGimp: include gimptoolinfo.h in the Shape tool
+Subject: [PATCH 34/41] ChopGimp: include gimptoolinfo.h in the Shape tool
 
 ---
  app/tools/chopgimp-shapetool.c | 1 +

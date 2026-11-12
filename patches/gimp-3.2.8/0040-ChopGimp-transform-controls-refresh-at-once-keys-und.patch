@@ -1,0 +1,321 @@
+From 47eafe14c82d02e14f7d4d286f23338f7723e637 Mon Sep 17 00:00:00 2001
+From: ChopGimp <mathieu.redon@proton.me>
+Date: Thu, 12 Nov 2026 07:57:50 +0100
+Subject: [PATCH 40/41] ChopGimp: transform controls refresh at once (keys,
+ undo, Layers panel) and enclose all selected layers
+
+---
+ app/tools/chopgimp-tools.c        |  16 +++
+ app/tools/chopgimp-tools.h        |   2 +
+ app/tools/gimpmovetool.c          | 157 ++++++++++++++++++++++++++----
+ app/tools/gimpmovetool.h          |   2 +
+ app/tools/gimptransformgridtool.c |   7 +-
+ 5 files changed, 161 insertions(+), 23 deletions(-)
+
+diff --git a/app/tools/chopgimp-tools.c b/app/tools/chopgimp-tools.c
+index 76923ed..988b08a 100644
+--- a/app/tools/chopgimp-tools.c
++++ b/app/tools/chopgimp-tools.c
+@@ -131,6 +131,22 @@ chopgimp_crop_layer_to_content (GimpImage   *image,
+   return TRUE;
+ }
+ 
++gboolean
++chopgimp_crop_selected_layers (GimpImage   *image,
++                               GimpContext *context)
++{
++  GList    *iter;
++  gboolean  cropped = FALSE;
++
++  gimp_image_undo_group_start (image, GIMP_UNDO_GROUP_ITEM_RESIZE,
++                               _("Crop Layer to Content"));
++  for (iter = gimp_image_get_selected_layers (image); iter; iter = iter->next)
++    cropped |= chopgimp_crop_layer_to_content (image, iter->data, context);
++  gimp_image_undo_group_end (image);
++
++  return cropped;
++}
++
+ 
+ typedef struct
+ {
+diff --git a/app/tools/chopgimp-tools.h b/app/tools/chopgimp-tools.h
+index a78b6a1..c9cac99 100644
+--- a/app/tools/chopgimp-tools.h
++++ b/app/tools/chopgimp-tools.h
+@@ -22,6 +22,8 @@ gboolean chopgimp_layer_content_bounds   (GimpLayer        *layer,
+ gboolean chopgimp_crop_layer_to_content  (GimpImage        *image,
+                                           GimpLayer        *layer,
+                                           GimpContext      *context);
++gboolean chopgimp_crop_selected_layers   (GimpImage        *image,
++                                          GimpContext      *context);
+ void     chopgimp_switch_tool_later      (Gimp             *gimp,
+                                           GimpDisplay      *display,
+                                           const gchar      *tool_name,
+diff --git a/app/tools/gimpmovetool.c b/app/tools/gimpmovetool.c
+index f450304..f2e4b02 100644
+--- a/app/tools/gimpmovetool.c
++++ b/app/tools/gimpmovetool.c
+@@ -53,6 +53,7 @@
+ #include "display/gimpdisplayshell-transform.h"
+ 
+ #include "chopgimp-tools.h"
++#include "tool_manager.h"
+ #include "gimpeditselectiontool.h"
+ #include "gimpguidetool.h"
+ #include "gimpmoveoptions.h"
+@@ -101,6 +102,11 @@ static void   gimp_move_tool_draw           (GimpDrawTool          *draw_tool);
+ 
+ static gboolean chopgimp_move_update_controls (GimpMoveTool          *move,
+                                                GimpImage             *image);
++static void     chopgimp_move_refresh         (GimpMoveTool          *move,
++                                               GimpImage             *image);
++static void     chopgimp_move_watch           (GimpMoveTool          *move,
++                                               GimpImage             *image,
++                                               GimpDisplay           *display);
+ static gboolean chopgimp_move_on_handle       (GimpMoveTool          *move,
+                                                GimpDisplay           *display,
+                                                const GimpCoords      *coords);
+@@ -172,6 +178,8 @@ gimp_move_tool_finalize (GObject *object)
+ {
+   GimpMoveTool *move = GIMP_MOVE_TOOL (object);
+ 
++  chopgimp_move_watch (move, NULL, NULL);
++
+   g_clear_pointer (&move->guides,              g_list_free);
+   g_clear_pointer (&move->old_selected_layers, g_list_free);
+   g_clear_pointer (&move->old_selected_paths,  g_list_free);
+@@ -207,8 +215,8 @@ gimp_move_tool_button_press (GimpTool            *tool,
+       ! gimp_image_get_floating_selection (image)     &&
+       chopgimp_move_on_handle (move, display, coords))
+     {
+-      chopgimp_crop_layer_to_content (image, move->ctl_layer,
+-                                      gimp_get_user_context (display->gimp));
++      chopgimp_crop_selected_layers (image,
++                                     gimp_get_user_context (display->gimp));
+       gimp_image_flush (image);
+       move->ctl_stamp = -1;
+ 
+@@ -521,6 +529,10 @@ gimp_move_tool_button_release (GimpTool              *tool,
+ 
+   if (flush)
+     gimp_image_flush (image);
++
++  /*  ChopGimp: show the transform controls at the new place at once  */
++  chopgimp_move_watch (move, image, display);
++  chopgimp_move_refresh (move, image);
+ }
+ 
+ static gboolean
+@@ -569,44 +581,150 @@ chopgimp_move_update_controls (GimpMoveTool *move,
+                                GimpImage    *image)
+ {
+   GList     *layers = gimp_image_get_selected_layers (image);
+-  GimpLayer *layer  = (g_list_length (layers) == 1) ? layers->data : NULL;
++  GList     *iter;
+   GimpUndo  *undo   = gimp_undo_stack_peek (gimp_image_get_undo_stack (image));
+   gint64     stamp  = (gint64) (gintptr) undo;
+-  gboolean   valid;
+-  gint       x = 0, y = 0, w = 0, h = 0;
++  gboolean   valid  = FALSE;
++  gint       x1 = 0, y1 = 0, x2 = 0, y2 = 0;
+ 
+   /*  the box must follow moves, resizes, painting and undo/redo  */
+-  if (layer)
++  for (iter = layers; iter; iter = iter->next)
+     {
+       gint ox, oy;
+ 
+-      gimp_item_get_offset (GIMP_ITEM (layer), &ox, &oy);
+-      stamp = stamp * 31 +
++      gimp_item_get_offset (GIMP_ITEM (iter->data), &ox, &oy);
++      stamp = stamp * 31 + (gint64) (gintptr) iter->data +
+               (gint64) ox * 100003 + (gint64) oy * 1009 +
+-              (gint64) gimp_item_get_width  (GIMP_ITEM (layer)) * 13 +
+-              (gint64) gimp_item_get_height (GIMP_ITEM (layer)) * 17;
++              (gint64) gimp_item_get_width  (GIMP_ITEM (iter->data)) * 13 +
++              (gint64) gimp_item_get_height (GIMP_ITEM (iter->data)) * 17;
+     }
+ 
+-  if (layer == move->ctl_layer && stamp == move->ctl_stamp && layer)
++  if (layers && stamp == move->ctl_stamp)
+     return FALSE;
+ 
+-  valid = layer && chopgimp_layer_content_bounds (layer, &x, &y, &w, &h);
++  /*  Photoshop: one box around all the selected layers  */
++  for (iter = layers; iter; iter = iter->next)
++    {
++      gint x, y, w, h;
++
++      if (! chopgimp_layer_content_bounds (iter->data, &x, &y, &w, &h))
++        continue;
++
++      if (! valid)
++        {
++          x1 = x; y1 = y; x2 = x + w; y2 = y + h;
++          valid = TRUE;
++        }
++      else
++        {
++          x1 = MIN (x1, x);     y1 = MIN (y1, y);
++          x2 = MAX (x2, x + w); y2 = MAX (y2, y + h);
++        }
++    }
+ 
+-  move->ctl_layer = layer;
+-  move->ctl_stamp = stamp;
++  move->ctl_layer = layers ? layers->data : NULL;
++  move->ctl_stamp = layers ? stamp : -1;
+ 
+   if (valid != move->ctl_valid ||
+-      x != move->ctl_x || y != move->ctl_y ||
+-      w != move->ctl_w || h != move->ctl_h)
++      x1 != move->ctl_x || y1 != move->ctl_y ||
++      x2 - x1 != move->ctl_w || y2 - y1 != move->ctl_h)
+     {
+       move->ctl_valid = valid;
+-      move->ctl_x = x; move->ctl_y = y; move->ctl_w = w; move->ctl_h = h;
++      move->ctl_x = x1; move->ctl_y = y1;
++      move->ctl_w = x2 - x1; move->ctl_h = y2 - y1;
+       return TRUE;
+     }
+ 
+   return FALSE;
+ }
+ 
++/*  ChopGimp: redraw the controls right away when the image changes
++ *  (arrow keys, undo/redo, layer picked in the Layers panel…), not only
++ *  on the next mouse motion.
++ */
++static void
++chopgimp_move_refresh (GimpMoveTool *move,
++                       GimpImage    *image)
++{
++  GimpTool        *tool      = GIMP_TOOL (move);
++  GimpDrawTool    *draw_tool = GIMP_DRAW_TOOL (move);
++  GimpMoveOptions *options   = GIMP_MOVE_TOOL_GET_OPTIONS (move);
++  GimpDisplay     *display;
++
++  if (options->move_type != GIMP_TRANSFORM_TYPE_LAYER ||
++      gimp_tool_control_is_active (tool->control)     ||
++      tool_manager_get_active (image->gimp) != tool)
++    return;
++
++  display = gimp_draw_tool_is_active (draw_tool) ? draw_tool->display
++                                                 : move->ctl_display;
++  if (! display || gimp_display_get_image (display) != image)
++    return;
++
++  if (! chopgimp_move_update_controls (move, image) &&
++      gimp_draw_tool_is_active (draw_tool))
++    return;
++
++  gimp_draw_tool_pause (draw_tool);
++  if (! gimp_draw_tool_is_active (draw_tool))
++    gimp_draw_tool_start (draw_tool, display);
++  gimp_draw_tool_resume (draw_tool);
++}
++
++static void
++chopgimp_move_undo_event (GimpImage     *image,
++                          GimpUndoEvent  event,
++                          GimpUndo      *undo,
++                          GimpMoveTool  *move)
++{
++  chopgimp_move_refresh (move, image);
++}
++
++static void
++chopgimp_move_layers_changed (GimpImage    *image,
++                              GimpMoveTool *move)
++{
++  chopgimp_move_refresh (move, image);
++}
++
++static void
++chopgimp_move_watch (GimpMoveTool *move,
++                     GimpImage    *image,
++                     GimpDisplay  *display)
++{
++  if (move->ctl_display != display)
++    {
++      if (move->ctl_display)
++        g_object_remove_weak_pointer (G_OBJECT (move->ctl_display),
++                                      (gpointer *) &move->ctl_display);
++      move->ctl_display = display;
++      if (display)
++        g_object_add_weak_pointer (G_OBJECT (display),
++                                   (gpointer *) &move->ctl_display);
++    }
++
++  if (move->ctl_image == image)
++    return;
++
++  if (move->ctl_image)
++    {
++      g_signal_handlers_disconnect_by_data (move->ctl_image, move);
++      g_object_remove_weak_pointer (G_OBJECT (move->ctl_image),
++                                    (gpointer *) &move->ctl_image);
++    }
++
++  move->ctl_image = image;
++
++  if (image)
++    {
++      g_object_add_weak_pointer (G_OBJECT (image), (gpointer *) &move->ctl_image);
++      g_signal_connect (image, "undo-event",
++                        G_CALLBACK (chopgimp_move_undo_event), move);
++      g_signal_connect (image, "selected-layers-changed",
++                        G_CALLBACK (chopgimp_move_layers_changed), move);
++    }
++}
++
+ static gboolean
+ chopgimp_move_on_handle (GimpMoveTool     *move,
+                          GimpDisplay      *display,
+@@ -662,7 +780,10 @@ gimp_move_tool_oper_update (GimpTool         *tool,
+   if (options->move_type == GIMP_TRANSFORM_TYPE_LAYER)
+     {
+       GimpDrawTool *draw_tool = GIMP_DRAW_TOOL (tool);
+-      gboolean      changed   = chopgimp_move_update_controls (move, image);
++      gboolean      changed;
++
++      chopgimp_move_watch (move, image, display);
++      changed = chopgimp_move_update_controls (move, image);
+ 
+       if (changed || (move->ctl_valid && ! gimp_draw_tool_is_active (draw_tool)) ||
+           (gimp_draw_tool_is_active (draw_tool) && draw_tool->display != display))
+diff --git a/app/tools/gimpmovetool.h b/app/tools/gimpmovetool.h
+index fc5bb58..380a405 100644
+--- a/app/tools/gimpmovetool.h
++++ b/app/tools/gimpmovetool.h
+@@ -50,6 +50,8 @@ struct _GimpMoveTool
+   GimpLayer           *ctl_layer;
+   gint64               ctl_stamp;
+   gint                 ctl_x, ctl_y, ctl_w, ctl_h;
++  GimpImage           *ctl_image;    /* watched image (weak)   */
++  GimpDisplay         *ctl_display;  /* last display (weak)    */
+ };
+ 
+ struct _GimpMoveToolClass
+diff --git a/app/tools/gimptransformgridtool.c b/app/tools/gimptransformgridtool.c
+index ffe6c85..59fae34 100644
+--- a/app/tools/gimptransformgridtool.c
++++ b/app/tools/gimptransformgridtool.c
+@@ -346,11 +346,8 @@ gimp_transform_grid_tool_initialize (GimpTool     *tool,
+    */
+   if (GIMP_TRANSFORM_TOOL_GET_OPTIONS (tool)->type == GIMP_TRANSFORM_TYPE_LAYER)
+     {
+-      GList *layers = gimp_image_get_selected_layers (image);
+-
+-      if (g_list_length (layers) == 1 &&
+-          chopgimp_crop_layer_to_content (image, layers->data,
+-                                          gimp_get_user_context (image->gimp)))
++      if (chopgimp_crop_selected_layers (image,
++                                         gimp_get_user_context (image->gimp)))
+         gimp_image_flush (image);
+     }
+ 
+-- 
+2.53.0
+

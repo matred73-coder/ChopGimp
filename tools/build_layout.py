@@ -18,7 +18,7 @@ TOOLBOX = [
     ("fuzzy-select", "foreground-select", "by-color-select"), # W
     ("crop", "perspective"),                                  # C
     ("color-picker", "measure"),                              # I
-    ("heal",),                                                # J
+    ("spot-heal", "heal"),                                    # J
     ("paintbrush", "pencil", "airbrush", "mypaint-brush", "ink"),  # B
     ("clone", "perspective-clone"),                           # S
     ("eraser",),                                              # E
@@ -38,7 +38,8 @@ HIDDEN = ["brightness-contrast", "threshold", "levels", "curves", "gegl"]
 
 ICON = {"dodge-burn": "gimp-tool-dodge", "convolve": "gimp-tool-blur",
         "gegl": "gimp-gegl", "hand": "chopgimp-tool-hand",
-        "rotate-view": "chopgimp-tool-rotate-view", "shape": "chopgimp-tool-shape"}
+        "rotate-view": "chopgimp-tool-rotate-view", "shape": "chopgimp-tool-shape",
+        "spot-heal": "chopgimp-tool-spot-heal"}
 
 
 def info(tool, visible=True, indent=""):
@@ -91,7 +92,7 @@ def sessionrc():
     props = book(250, [dockable("gimp-undo-history"),
                        dockable("gimp-brush-grid"),
                        dockable("gimp-cursor-view", extra=['(frame-1-mode "pixel")', '(frame-2-mode "rgb-percent")'])])
-    layers = book(330, [dockable("gimp-layer-list", tab="name", preview=32),
+    layers = book(330, [dockable("gimp-layer-list", tab="name", preview=64),
                         dockable("gimp-channel-list", tab="name", preview=32),
                         dockable("gimp-path-list", tab="name", preview=32)])
     return """# GIMP sessionrc — PhotoGIMP Pro v2 (espace de travail « Essentiel »)

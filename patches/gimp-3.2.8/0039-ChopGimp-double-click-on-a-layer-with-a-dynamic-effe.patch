@@ -1,0 +1,36 @@
+From d8ed86a314c9412931cd63f6595edea18808b1e4 Mon Sep 17 00:00:00 2001
+From: ChopGimp <mathieu.redon@proton.me>
+Date: Thu, 12 Nov 2026 07:56:30 +0100
+Subject: [PATCH 39/41] =?UTF-8?q?ChopGimp:=20double-click=20on=20a=20layer?=
+ =?UTF-8?q?=20with=20a=20dynamic=20effect=20opens=20=C2=AB=20Modifier=20l'?=
+ =?UTF-8?q?effet=20=C2=BB?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+---
+ app/actions/layers-commands.c | 8 ++++++++
+ 1 file changed, 8 insertions(+)
+
+diff --git a/app/actions/layers-commands.c b/app/actions/layers-commands.c
+index 1fb60b9..207c6e5 100644
+--- a/app/actions/layers-commands.c
++++ b/app/actions/layers-commands.c
+@@ -211,6 +211,14 @@ layers_edit_cmd_callback (GimpAction *action,
+ 
+   if (gimp_item_is_text_layer (GIMP_ITEM (layers->data)))
+     layers_edit_text_cmd_callback (action, value, data);
++  else if (gimp_item_parasite_find (GIMP_ITEM (layers->data), "chopgimp-fx") &&
++           g_action_map_lookup_action (G_ACTION_MAP (image->gimp->app),
++                                       "chopgimp-fx-edit"))
++    {
++      /*  ChopGimp: dynamic effect → edit its settings  */
++      g_action_activate (g_action_map_lookup_action (G_ACTION_MAP (image->gimp->app),
++                                                     "chopgimp-fx-edit"), NULL);
++    }
+   else if (gimp_item_is_vector_layer (GIMP_ITEM (layers->data)))
+     layers_edit_vector_cmd_callback (action, value, data);
+   else
+-- 
+2.53.0
+
