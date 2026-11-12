@@ -1,7 +1,7 @@
 From 4ad55e10fa87b9bbba70f3b203ab3d1e54d5d147 Mon Sep 17 00:00:00 2001
 From: ChopGimp <mathieu.redon@proton.me>
 Date: Thu, 12 Nov 2026 07:50:52 +0100
-Subject: [PATCH 37/41] ChopGimp: layer thumbnails cropped to their content
+Subject: [PATCH 37/42] ChopGimp: layer thumbnails cropped to their content
  (setting in chopgimprc)
 
 ---

@@ -1,7 +1,7 @@
 From 9d582aa34a1c51f7c54e4767c15b65b94211c4e0 Mon Sep 17 00:00:00 2001
 From: ChopGimp <mathieu.redon@proton.me>
 Date: Thu, 12 Nov 2026 06:33:45 +0100
-Subject: [PATCH 27/41] ChopGimp: French title for the layer effects popover
+Subject: [PATCH 27/42] ChopGimp: French title for the layer effects popover
 
 ---
  app/widgets/gimpdrawabletreeview-filters.c | 2 +-

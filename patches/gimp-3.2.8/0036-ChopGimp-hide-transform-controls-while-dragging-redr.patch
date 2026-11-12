@@ -1,7 +1,7 @@
 From 251840fe71135d7a44aac647489d830bbb5fa0ad Mon Sep 17 00:00:00 2001
 From: ChopGimp <mathieu.redon@proton.me>
 Date: Thu, 12 Nov 2026 07:37:32 +0100
-Subject: [PATCH 36/41] ChopGimp: hide transform controls while dragging,
+Subject: [PATCH 36/42] ChopGimp: hide transform controls while dragging,
  redraw at the new position
 
 ---

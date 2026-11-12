@@ -1,7 +1,7 @@
 From 47eafe14c82d02e14f7d4d286f23338f7723e637 Mon Sep 17 00:00:00 2001
 From: ChopGimp <mathieu.redon@proton.me>
 Date: Thu, 12 Nov 2026 07:57:50 +0100
-Subject: [PATCH 40/41] ChopGimp: transform controls refresh at once (keys,
+Subject: [PATCH 40/42] ChopGimp: transform controls refresh at once (keys,
  undo, Layers panel) and enclose all selected layers
 
 ---

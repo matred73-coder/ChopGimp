@@ -1,7 +1,7 @@
 From d8ed86a314c9412931cd63f6595edea18808b1e4 Mon Sep 17 00:00:00 2001
 From: ChopGimp <mathieu.redon@proton.me>
 Date: Thu, 12 Nov 2026 07:56:30 +0100
-Subject: [PATCH 39/41] =?UTF-8?q?ChopGimp:=20double-click=20on=20a=20layer?=
+Subject: [PATCH 39/42] =?UTF-8?q?ChopGimp:=20double-click=20on=20a=20layer?=
  =?UTF-8?q?=20with=20a=20dynamic=20effect=20opens=20=C2=AB=20Modifier=20l'?=
  =?UTF-8?q?effet=20=C2=BB?=
 MIME-Version: 1.0

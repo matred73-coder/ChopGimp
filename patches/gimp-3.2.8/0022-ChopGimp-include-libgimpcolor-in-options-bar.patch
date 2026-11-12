@@ -1,7 +1,7 @@
 From 8d2940d844bdfcbadfd453a4b6cbea08a71f72da Mon Sep 17 00:00:00 2001
 From: ChopGimp <mathieu.redon@proton.me>
 Date: Wed, 11 Nov 2026 20:19:38 +0100
-Subject: [PATCH 22/41] ChopGimp: include libgimpcolor in options bar
+Subject: [PATCH 22/42] ChopGimp: include libgimpcolor in options bar
 
 ---
  app/display/gimpoptionsbar.c | 1 +

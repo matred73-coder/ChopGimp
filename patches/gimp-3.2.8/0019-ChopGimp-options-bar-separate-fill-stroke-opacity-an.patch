@@ -1,7 +1,7 @@
 From 6d5ec748f82c67698b29f087ba27a5e6a77fab56 Mon Sep 17 00:00:00 2001
 From: ChopGimp <mathieu.redon@proton.me>
 Date: Wed, 11 Nov 2026 20:00:29 +0100
-Subject: [PATCH 19/41] =?UTF-8?q?ChopGimp:=20options=20bar=20=E2=80=94=20s?=
+Subject: [PATCH 19/42] =?UTF-8?q?ChopGimp:=20options=20bar=20=E2=80=94=20s?=
  =?UTF-8?q?eparate=20fill/stroke=20opacity=20and=20stroke=20style=20for=20?=
  =?UTF-8?q?the=20path=20tool?=
 MIME-Version: 1.0

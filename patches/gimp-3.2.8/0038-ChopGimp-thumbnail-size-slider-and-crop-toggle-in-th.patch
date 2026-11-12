@@ -1,7 +1,7 @@
 From 1348e862475f799a240630ccd3c52934f08ea85c Mon Sep 17 00:00:00 2001
 From: ChopGimp <mathieu.redon@proton.me>
 Date: Thu, 12 Nov 2026 07:51:15 +0100
-Subject: [PATCH 38/41] ChopGimp: thumbnail size slider and crop toggle in the
+Subject: [PATCH 38/42] ChopGimp: thumbnail size slider and crop toggle in the
  Layers panel; fx and double-click open Layer Style
 
 ---

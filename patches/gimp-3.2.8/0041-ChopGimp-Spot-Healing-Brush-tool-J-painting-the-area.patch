@@ -1,7 +1,7 @@
 From 6f2607d9a64e94e66e1e78336167849150ec3787 Mon Sep 17 00:00:00 2001
 From: ChopGimp <mathieu.redon@proton.me>
 Date: Thu, 12 Nov 2026 08:00:07 +0100
-Subject: [PATCH 41/41] ChopGimp: Spot Healing Brush tool (J) painting the area
+Subject: [PATCH 41/42] ChopGimp: Spot Healing Brush tool (J) painting the area
  to rebuild with content-aware fill
 
 ---

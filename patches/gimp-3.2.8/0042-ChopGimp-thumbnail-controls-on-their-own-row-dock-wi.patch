@@ -1,0 +1,177 @@
+From 21ee4d3fe91a6c3ab702083e98b4df15a543988b Mon Sep 17 00:00:00 2001
+From: ChopGimp <mathieu.redon@proton.me>
+Date: Thu, 12 Nov 2026 08:43:11 +0100
+Subject: [PATCH 42/42] ChopGimp: thumbnail controls on their own row (dock
+ width); group thumbnails cropped to their children
+
+---
+ app/widgets/gimplayertreeview.c        | 22 +++++--
+ app/widgets/gimpviewrendererdrawable.c | 89 ++++++++++++++++++++++++--
+ 2 files changed, 98 insertions(+), 13 deletions(-)
+
+diff --git a/app/widgets/gimplayertreeview.c b/app/widgets/gimplayertreeview.c
+index b40fee2..136a583 100644
+--- a/app/widgets/gimplayertreeview.c
++++ b/app/widgets/gimplayertreeview.c
+@@ -487,33 +487,41 @@ gimp_layer_tree_view_constructed (GObject *object)
+   gtk_box_reorder_child (gimp_editor_get_button_box (GIMP_EDITOR (layer_view)),
+                          button, 9);
+ 
+-  /*  ChopGimp: thumbnail size slider and « crop to content » toggle  */
++  /*  ChopGimp: thumbnail size slider and « crop to content » toggle, on
++   *  their own row above the buttons (the button box is homogeneous: a
++   *  wide widget there would widen every button and the whole dock).
++   */
+   {
+-    GtkWidget *bbox  = GTK_WIDGET (gimp_editor_get_button_box (GIMP_EDITOR (layer_view)));
++    GtkWidget *row   = gtk_box_new (GTK_ORIENTATION_HORIZONTAL, 4);
++    GtkWidget *icon  = gtk_image_new_from_icon_name ("gimp-image", GTK_ICON_SIZE_MENU);
+     GtkWidget *scale = gtk_scale_new_with_range (GTK_ORIENTATION_HORIZONTAL, 16, 128, 8);
+     GtkWidget *crop  = gtk_toggle_button_new ();
+     gint       border;
+ 
++    gtk_container_set_border_width (GTK_CONTAINER (row), 2);
++    gimp_help_set_help_data (icon, _("Taille des vignettes"), NULL);
++    gtk_box_pack_start (GTK_BOX (row), icon, FALSE, FALSE, 2);
++
+     gtk_scale_set_draw_value (GTK_SCALE (scale), FALSE);
+-    gtk_widget_set_size_request (scale, 70, -1);
+     gtk_range_set_value (GTK_RANGE (scale),
+                          gimp_container_view_get_view_size (GIMP_CONTAINER_VIEW (layer_view),
+                                                             &border));
+     gimp_help_set_help_data (scale, _("Taille des vignettes"), NULL);
+     g_signal_connect (scale, "value-changed",
+                       G_CALLBACK (gimp_layer_tree_view_thumb_size_changed), layer_view);
+-    gtk_box_pack_end (GTK_BOX (bbox), scale, FALSE, FALSE, 0);
+-    gtk_widget_set_visible (scale, TRUE);
++    gtk_box_pack_start (GTK_BOX (row), scale, TRUE, TRUE, 0);
+ 
+     gtk_container_add (GTK_CONTAINER (crop),
+                        gtk_image_new_from_icon_name ("gimp-tool-crop", GTK_ICON_SIZE_MENU));
+-    gtk_widget_show_all (crop);
+     gtk_button_set_relief (GTK_BUTTON (crop), GTK_RELIEF_NONE);
+     gtk_toggle_button_set_active (GTK_TOGGLE_BUTTON (crop), chopgimp_thumbs_get_crop ());
+     gimp_help_set_help_data (crop, _("Vignettes recadrées sur le contenu du calque"), NULL);
+     g_signal_connect (crop, "toggled",
+                       G_CALLBACK (gimp_layer_tree_view_thumb_crop_toggled), layer_view);
+-    gtk_box_pack_end (GTK_BOX (bbox), crop, FALSE, FALSE, 0);
++    gtk_box_pack_start (GTK_BOX (row), crop, FALSE, FALSE, 0);
++
++    gtk_box_pack_end (GTK_BOX (layer_view), row, FALSE, FALSE, 0);
++    gtk_widget_show_all (row);
+   }
+ 
+   button = gimp_editor_add_action_button (GIMP_EDITOR (layer_view), "layers",
+diff --git a/app/widgets/gimpviewrendererdrawable.c b/app/widgets/gimpviewrendererdrawable.c
+index 97b7796..2561c34 100644
+--- a/app/widgets/gimpviewrendererdrawable.c
++++ b/app/widgets/gimpviewrendererdrawable.c
+@@ -232,6 +232,86 @@ chopgimp_thumbs_set_crop (Gimp     *gimp,
+       chopgimp_invalidate_layers (gimp_image_get_layer_iter (list->data));
+ }
+ 
++/*  content bounds of a layer in its own coordinates; for a group, the
++ *  union of its visible children (its projection may not be rendered yet)
++ */
++static gboolean
++chopgimp_content_bounds (GimpLayer *layer,
++                         gint      *x,
++                         gint      *y,
++                         gint      *w,
++                         gint      *h)
++{
++  GimpItem      *item     = GIMP_ITEM (layer);
++  GimpContainer *children = gimp_viewable_get_children (GIMP_VIEWABLE (layer));
++
++  if (children)
++    {
++      GList    *list;
++      gboolean  any = FALSE;
++      gint      ox, oy, x1 = 0, y1 = 0, x2 = 0, y2 = 0;
++
++      gimp_item_get_offset (item, &ox, &oy);
++
++      for (list = GIMP_LIST (children)->queue->head; list; list = list->next)
++        {
++          GimpItem *child = list->data;
++          gint      cx, cy, cw, ch, chx, chy;
++
++          if (! gimp_item_get_visible (child) ||
++              ! chopgimp_content_bounds (GIMP_LAYER (child), &cx, &cy, &cw, &ch))
++            continue;
++
++          gimp_item_get_offset (child, &chx, &chy);
++          cx += chx - ox;
++          cy += chy - oy;
++
++          if (! any)
++            {
++              x1 = cx; y1 = cy; x2 = cx + cw; y2 = cy + ch;
++              any = TRUE;
++            }
++          else
++            {
++              x1 = MIN (x1, cx);      y1 = MIN (y1, cy);
++              x2 = MAX (x2, cx + cw); y2 = MAX (y2, cy + ch);
++            }
++        }
++
++      x1 = MAX (x1, 0);
++      y1 = MAX (y1, 0);
++      x2 = MIN (x2, gimp_item_get_width  (item));
++      y2 = MIN (y2, gimp_item_get_height (item));
++
++      if (! any || x2 <= x1 || y2 <= y1)
++        return FALSE;
++
++      *x = x1; *y = y1; *w = x2 - x1; *h = y2 - y1;
++      return TRUE;
++    }
++
++  if ((gint64) gimp_item_get_width (item) * gimp_item_get_height (item) > 40000000)
++    return FALSE;
++
++  switch (gimp_pickable_auto_shrink (GIMP_PICKABLE (layer), 0, 0,
++                                     gimp_item_get_width (item),
++                                     gimp_item_get_height (item),
++                                     x, y, w, h))
++    {
++    case GIMP_AUTO_SHRINK_SHRINK:
++      return TRUE;
++
++    case GIMP_AUTO_SHRINK_UNSHRINKABLE:
++      *x = 0; *y = 0;
++      *w = gimp_item_get_width  (item);
++      *h = gimp_item_get_height (item);
++      return TRUE;
++
++    default:
++      return FALSE;
++    }
++}
++
+ static void
+ gimp_view_renderer_drawable_render (GimpViewRenderer *renderer,
+                                     GtkWidget        *widget)
+@@ -300,15 +380,12 @@ gimp_view_renderer_drawable_render (GimpViewRenderer *renderer,
+    *  small object fills the thumbnail (Photoshop « Layer Bounds »).
+    */
+   if (image && GIMP_IS_LAYER (drawable) && ! GIMP_IS_LAYER_MASK (drawable) &&
+-      chopgimp_thumbs_get_crop () &&
+-      (gint64) gimp_item_get_width (item) * gimp_item_get_height (item) <= 40000000)
++      chopgimp_thumbs_get_crop ())
+     {
+       gint cx, cy, cw, ch;
+ 
+-      if (gimp_pickable_auto_shrink (GIMP_PICKABLE (drawable), 0, 0,
+-                                     gimp_item_get_width (item),
+-                                     gimp_item_get_height (item),
+-                                     &cx, &cy, &cw, &ch) == GIMP_AUTO_SHRINK_SHRINK)
++      if (chopgimp_content_bounds (GIMP_LAYER (drawable), &cx, &cy, &cw, &ch) &&
++          (cw < gimp_item_get_width (item) || ch < gimp_item_get_height (item)))
+         {
+           gimp_viewable_calc_preview_size (cw, ch,
+                                            renderer->width, renderer->height,
+-- 
+2.53.0
+
