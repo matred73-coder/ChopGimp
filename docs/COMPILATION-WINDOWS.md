@@ -241,7 +241,26 @@ la valeur par défaut `CHOPGIMP_VERSION` de `build/windows/installer/gimp-setup.
 
 ---
 
-## 10. En cas d'erreur, que m'envoyer
+## 10. Fabriquer la version portable (sans installation)
+
+Après l'étape 8, dans **PowerShell 7** :
+
+```powershell
+pwsh C:\gimpshop\ChopGimp-3.11.1\tools\make_windows_portable.ps1
+```
+
+Le script produit `C:\gimpshop\portable\ChopGimp-3.11.1-portable\` et son zip (~170 Mo) :
+
+- même contenu que l'installateur, sans symboles de débogage ni kit de développement ;
+- lancement par **`ChopGimp.cmd`**, réglages dans le sous-dossier `profil\` (rien dans `%APPDATA%`) ;
+- le lanceur réécrit à chaque lancement les chemins de Python et Script-Fu : le dossier peut être
+  déplacé (clé USB…). `ChopGimp.cmd --preparer` les réécrit sans lancer ChopGimp.
+
+Options : `-Bundle <gimp-clang64>`, `-OutDir <dossier>`, `-Version <x.y.z>` (par défaut : fichier `VERSION`).
+
+---
+
+## 11. En cas d'erreur, que m'envoyer
 
 | Étape | À copier |
 |---|---|
