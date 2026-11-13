@@ -870,7 +870,10 @@
                         "../patches/gimp-3.2.8/0049-ChopGimp-room-freed-by-a-collapsed-group-goes-to-the.patch",
                         "../patches/gimp-3.2.8/0050-ChopGimp-collapsed-groups-sizes-from-paned-positions.patch",
                         "../patches/gimp-3.2.8/0051-ChopGimp-panel-strip-without-widget-margin-no-alloca.patch",
-                        "../patches/gimp-3.2.8/0052-ChopGimp-Tab-Shift-Tab-hide-the-panels-wherever-the-.patch"
+                        "../patches/gimp-3.2.8/0052-ChopGimp-Tab-Shift-Tab-hide-the-panels-wherever-the-.patch",
+                        "../patches/gimp-3.2.8/0053-ChopGimp-flexible-panel-groups-a-separator-pushes-al.patch",
+                        "../patches/gimp-3.2.8/0054-ChopGimp-panels-may-be-smaller-than-their-content-cu.patch",
+                        "../patches/gimp-3.2.8/0055-ChopGimp-panel-groups-keep-the-size-set-by-a-drag-no.patch"
                     ]
                 }
             ],

@@ -1,0 +1,319 @@
+From 23db279c291177907d4a071e971d23259c1aca8c Mon Sep 17 00:00:00 2001
+From: ChopGimp <mathieu.redon@proton.me>
+Date: Fri, 13 Nov 2026 08:02:44 +0100
+Subject: [PATCH] =?UTF-8?q?ChopGimp:=20flexible=20panel=20groups=20?=
+ =?UTF-8?q?=E2=80=94=20a=20separator=20pushes=20all=20the=20groups=20on=20?=
+ =?UTF-8?q?the=20other=20side,=20down=20to=20their=20tab=20bar?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+---
+ app/widgets/gimppanedbox.c | 246 ++++++++++++++++++++++++++++++++++++-
+ 1 file changed, 240 insertions(+), 6 deletions(-)
+
+diff --git a/app/widgets/gimppanedbox.c b/app/widgets/gimppanedbox.c
+index 5cb63d4..b357776 100644
+--- a/app/widgets/gimppanedbox.c
++++ b/app/widgets/gimppanedbox.c
+@@ -59,6 +59,8 @@
+ #define DROP_AREA_SIZE_SIDE             20
+ 
+ #define CHOPGIMP_COLLAPSED_KEY          "chopgimp-collapsed"
++#define CHOPGIMP_LAYOUT_GUARD_KEY "chopgimp-layout-guard"
++#define CHOPGIMP_MIN_GROUP        26
+ #define CHOPGIMP_FORCED_KEY             "chopgimp-forced"
+ 
+ #define DROP_HIGHLIGHT_MIN_SIZE         32
+@@ -1016,8 +1018,230 @@ gimp_paned_box_update_collapsed (GimpPanedBox *paned_box)
+     g_hash_table_insert (targets, g_ptr_array_index (leaves, i),
+                          GINT_TO_POINTER (size[i]));
+ 
++  g_object_set_data (G_OBJECT (paned_box), CHOPGIMP_LAYOUT_GUARD_KEY,
++                     GINT_TO_POINTER (TRUE));
+   gimp_paned_box_apply_collapsed (root, orientation, targets,
+                                   allocated, &total);
++  g_object_set_data (G_OBJECT (paned_box), CHOPGIMP_LAYOUT_GUARD_KEY, NULL);
++
++  g_hash_table_unref (targets);
++  g_free (size);
++  g_free (min);
++  g_ptr_array_unref (leaves);
++}
++
++/*  ChopGimp: flexible panel groups (Photoshop).
++ *
++ *  GIMP nests a GtkPaned per group and packs them with shrink = FALSE:
++ *  a separator only shares the room of its two neighbours and stops at
++ *  their minimum size. Here the groups may shrink down to their tab bar,
++ *  and dragging a separator pushes or pulls ALL the groups on the other
++ *  side, the nearest first: enlarging the group above shrinks the ones
++ *  below one after the other, and the other way round.
++ */
++
++static gint
++gimp_paned_box_leaf_min (GtkWidget      *leaf,
++                         GtkOrientation  orientation)
++{
++  gint min = CHOPGIMP_MIN_GROUP;
++
++  if (orientation != GTK_ORIENTATION_VERTICAL)
++    {
++      gtk_widget_get_preferred_width (leaf, &min, NULL);
++      return min;
++    }
++
++  if (g_object_get_data (G_OBJECT (leaf), CHOPGIMP_COLLAPSED_KEY))
++    {
++      gtk_widget_get_preferred_height (leaf, &min, NULL);
++    }
++  else if (GTK_IS_NOTEBOOK (leaf))
++    {
++      GtkNotebook *notebook = GTK_NOTEBOOK (leaf);
++      GtkWidget   *page     =
++        gtk_notebook_get_nth_page (notebook,
++                                   gtk_notebook_get_current_page (notebook));
++
++      /*  the height of the tab bar  */
++      if (page && gtk_widget_get_mapped (page))
++        {
++          GtkAllocation book_alloc;
++          GtkAllocation page_alloc;
++
++          gtk_widget_get_allocation (leaf, &book_alloc);
++          gtk_widget_get_allocation (page, &page_alloc);
++
++          if (page_alloc.y > book_alloc.y)
++            min = MAX (min, page_alloc.y - book_alloc.y + 2);
++        }
++    }
++
++  return min;
++}
++
++static gint
++gimp_paned_box_leaf_index (GPtrArray *leaves,
++                           GtkWidget *leaf)
++{
++  guint i;
++
++  for (i = 0; i < leaves->len; i++)
++    if (g_ptr_array_index (leaves, i) == leaf)
++      return i;
++
++  return -1;
++}
++
++static GtkWidget *
++gimp_paned_box_edge_leaf (GtkWidget *widget,
++                          gboolean   last)
++{
++  while (GTK_IS_PANED (widget))
++    {
++      GtkWidget *child = last ? gtk_paned_get_child2 (GTK_PANED (widget))
++                              : gtk_paned_get_child1 (GTK_PANED (widget));
++      if (! child)
++        child = last ? gtk_paned_get_child1 (GTK_PANED (widget))
++                     : gtk_paned_get_child2 (GTK_PANED (widget));
++      widget = child;
++    }
++
++  return widget;
++}
++
++static void
++gimp_paned_box_flexible_position (GtkPaned     *paned,
++                                  GParamSpec   *pspec,
++                                  GimpPanedBox *paned_box)
++{
++  GtkOrientation  orientation;
++  GtkWidget      *root  = NULL;
++  GdkEvent       *event;
++  GPtrArray      *leaves;
++  GHashTable     *targets;
++  GList          *children;
++  GList          *iter;
++  gboolean        marked = FALSE;
++  gint           *size;
++  gint           *min;
++  gint            n, b, f, i, j;
++  gint            total, sum = 0, handle;
++  gint            origin_p, old_boundary, new_boundary, delta, room, left;
++  gboolean        user_drag;
++
++  if (g_object_get_data (G_OBJECT (paned_box), CHOPGIMP_LAYOUT_GUARD_KEY))
++    return;
++
++  /*  only the separator dragged by the user, not GTK's own adjustments  */
++  event     = gtk_get_current_event ();
++  user_drag = event && gdk_event_get_event_type (event) == GDK_MOTION_NOTIFY;
++  if (event)
++    gdk_event_free (event);
++
++  if (! user_drag)
++    return;
++
++  children = gtk_container_get_children (GTK_CONTAINER (paned_box));
++  for (iter = children; iter; iter = g_list_next (iter))
++    if (GTK_IS_PANED (iter->data))
++      root = iter->data;
++  g_list_free (children);
++
++  if (! root || ! gtk_paned_get_child1 (paned) || ! gtk_paned_get_child2 (paned))
++    return;
++
++  orientation = gtk_orientable_get_orientation (GTK_ORIENTABLE (paned_box));
++
++  leaves = g_ptr_array_new ();
++  gimp_paned_box_collect_leaves (root, leaves, &marked);
++  n = leaves->len;
++
++  /*  b: first leaf after the separator; f: first leaf of the paned  */
++  b = gimp_paned_box_leaf_index (leaves,
++                                 gimp_paned_box_edge_leaf (gtk_paned_get_child2 (paned),
++                                                           FALSE));
++  f = gimp_paned_box_leaf_index (leaves,
++                                 gimp_paned_box_edge_leaf (gtk_paned_get_child1 (paned),
++                                                           FALSE));
++  if (n < 2 || b < 1 || f < 0 || f >= b)
++    {
++      g_ptr_array_unref (leaves);
++      return;
++    }
++
++  /*  the sizes before the drag: still the allocations at this point  */
++  size = g_new0 (gint, n);
++  min  = g_new0 (gint, n);
++
++  for (i = 0; i < n; i++)
++    {
++      GtkWidget *leaf = g_ptr_array_index (leaves, i);
++
++      size[i] = gimp_paned_box_widget_size (leaf, orientation);
++      min[i]  = MIN (gimp_paned_box_leaf_min (leaf, orientation), size[i]);
++      sum    += size[i];
++    }
++
++  total  = gimp_paned_box_widget_size (root, orientation);
++  handle = MAX (0, (total - sum) / (n - 1));
++
++  origin_p = 0;
++  for (i = 0; i < f; i++)
++    origin_p += size[i] + handle;
++
++  old_boundary = 0;
++  for (i = 0; i < b; i++)
++    old_boundary += size[i] + (i < b - 1 ? handle : 0);
++
++  new_boundary = origin_p + gtk_paned_get_position (paned);
++  delta        = new_boundary - old_boundary;
++
++  if (delta > 0)
++    {
++      /*  the group above grows, those below give their room in turn  */
++      for (room = 0, j = b; j < n; j++)
++        room += size[j] - min[j];
++
++      delta = MIN (delta, room);
++      size[b - 1] += delta;
++
++      for (left = delta, j = b; j < n && left > 0; j++)
++        {
++          gint take = MIN (size[j] - min[j], left);
++
++          size[j] -= take;
++          left    -= take;
++        }
++    }
++  else if (delta < 0)
++    {
++      delta = -delta;
++
++      for (room = 0, j = b - 1; j >= 0; j--)
++        room += size[j] - min[j];
++
++      delta = MIN (delta, room);
++      size[b] += delta;
++
++      for (left = delta, j = b - 1; j >= 0 && left > 0; j--)
++        {
++          gint take = MIN (size[j] - min[j], left);
++
++          size[j] -= take;
++          left    -= take;
++        }
++    }
++
++  targets = g_hash_table_new (NULL, NULL);
++  for (i = 0; i < n; i++)
++    g_hash_table_insert (targets, g_ptr_array_index (leaves, i),
++                         GINT_TO_POINTER (size[i]));
++
++  g_object_set_data (G_OBJECT (paned_box), CHOPGIMP_LAYOUT_GUARD_KEY,
++                     GINT_TO_POINTER (TRUE));
++  gimp_paned_box_apply_collapsed (root, orientation, targets, TRUE, &total);
++  g_object_set_data (G_OBJECT (paned_box), CHOPGIMP_LAYOUT_GUARD_KEY, NULL);
+ 
+   g_hash_table_unref (targets);
+   g_free (size);
+@@ -1101,6 +1325,7 @@ gimp_paned_box_add_widget (GimpPanedBox *paned_box,
+       GtkWidget      *parent;
+       GtkWidget      *paned;
+       GtkOrientation  orientation;
++      gboolean        shrink;
+ 
+       /* Figure out what widget to detach */
+       if (index == 0)
+@@ -1131,9 +1356,16 @@ gimp_paned_box_add_widget (GimpPanedBox *paned_box,
+       paned = gtk_paned_new (orientation);
+       gtk_paned_set_wide_handle (GTK_PANED (paned), TRUE);
+ 
++      /*  ChopGimp: groups shrink, separators push the other groups  */
++      shrink = (orientation == GTK_ORIENTATION_VERTICAL);
++      if (shrink)
++        g_signal_connect (paned, "notify::position",
++                          G_CALLBACK (gimp_paned_box_flexible_position),
++                          paned_box);
++
+       if (GTK_IS_PANED (parent))
+         {
+-          gtk_paned_pack1 (GTK_PANED (parent), paned, TRUE, FALSE);
++          gtk_paned_pack1 (GTK_PANED (parent), paned, TRUE, shrink);
+         }
+       else
+         {
+@@ -1144,16 +1376,16 @@ gimp_paned_box_add_widget (GimpPanedBox *paned_box,
+       if (index == 0)
+         {
+           gtk_paned_pack1 (GTK_PANED (paned), widget,
+-                           TRUE, FALSE);
++                           TRUE, shrink);
+           gtk_paned_pack2 (GTK_PANED (paned), old_widget,
+-                           TRUE, FALSE);
++                           TRUE, shrink);
+         }
+       else
+         {
+           gtk_paned_pack1 (GTK_PANED (paned), old_widget,
+-                           TRUE, FALSE);
++                           TRUE, shrink);
+           gtk_paned_pack2 (GTK_PANED (paned), widget,
+-                           TRUE, FALSE);
++                           TRUE, shrink);
+         }
+ 
+       g_object_unref (old_widget);
+@@ -1228,7 +1460,9 @@ gimp_paned_box_remove_widget (GimpPanedBox *paned_box,
+       gtk_container_remove (GTK_CONTAINER (grandparent), parent);
+ 
+       if (GTK_IS_PANED (grandparent))
+-        gtk_paned_pack1 (GTK_PANED (grandparent), other_widget, TRUE, FALSE);
++        gtk_paned_pack1 (GTK_PANED (grandparent), other_widget, TRUE,
++                         gtk_orientable_get_orientation (GTK_ORIENTABLE (paned_box)) ==
++                         GTK_ORIENTATION_VERTICAL);
+       else
+         gtk_box_pack_start (GTK_BOX (paned_box), other_widget, TRUE, TRUE, 0);
+ 
+-- 
+2.53.0
+

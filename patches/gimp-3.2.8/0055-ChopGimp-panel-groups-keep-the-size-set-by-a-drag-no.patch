@@ -1,0 +1,31 @@
+From 49da166b0cef5e8de9fde996b8e276634f5118d7 Mon Sep 17 00:00:00 2001
+From: ChopGimp <mathieu.redon@proton.me>
+Date: Fri, 13 Nov 2026 08:18:05 +0100
+Subject: [PATCH] ChopGimp: panel groups keep the size set by a drag (no
+ proportional rescaling by GtkPaned)
+
+---
+ app/widgets/gimppanedbox.c | 6 +++++-
+ 1 file changed, 5 insertions(+), 1 deletion(-)
+
+diff --git a/app/widgets/gimppanedbox.c b/app/widgets/gimppanedbox.c
+index b357776..f912029 100644
+--- a/app/widgets/gimppanedbox.c
++++ b/app/widgets/gimppanedbox.c
+@@ -837,8 +837,12 @@ gimp_paned_box_apply_collapsed (GtkWidget      *widget,
+ 
+   if (expanded1 && expanded2)
+     {
++      /*  with « resize » on both sides GTK would rescale the position we
++       *  set in proportion to the new size of the paned: the group above
++       *  keeps its size, the last one takes the window size changes
++       */
+       gtk_container_child_set (GTK_CONTAINER (paned), child1,
+-                               "resize", TRUE, NULL);
++                               "resize", FALSE, NULL);
+       gtk_container_child_set (GTK_CONTAINER (paned), child2,
+                                "resize", TRUE, NULL);
+ 
+-- 
+2.53.0
+

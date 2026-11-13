@@ -1,0 +1,112 @@
+From 44661f084f13ad5d4b6061e898195eb393d7d2ac Mon Sep 17 00:00:00 2001
+From: ChopGimp <mathieu.redon@proton.me>
+Date: Fri, 13 Nov 2026 08:11:07 +0100
+Subject: [PATCH] ChopGimp: panels may be smaller than their content, cut at
+ the bottom
+
+---
+ app/widgets/gimpdockable.c | 81 ++++++++++++++++++++++++++++++++++++++
+ 1 file changed, 81 insertions(+)
+
+diff --git a/app/widgets/gimpdockable.c b/app/widgets/gimpdockable.c
+index 11b4dff..a39283f 100644
+--- a/app/widgets/gimpdockable.c
++++ b/app/widgets/gimpdockable.c
+@@ -96,6 +96,82 @@ static void       gimp_dockable_set_aux_info  (GimpSessionManaged *managed,
+                                                GList              *aux_info);
+ 
+ 
++/*  ChopGimp: a panel may be smaller than its content, which is then cut
++ *  at the bottom (Photoshop): the panel groups can shrink freely.
++ */
++#define CHOPGIMP_DOCKABLE_MIN_HEIGHT 0
++
++static void
++gimp_dockable_get_preferred_height (GtkWidget *widget,
++                                    gint      *minimum,
++                                    gint      *natural)
++{
++  GTK_WIDGET_CLASS (g_type_class_peek (GTK_TYPE_BIN))->get_preferred_height (widget,
++                                                                            minimum,
++                                                                            natural);
++  *minimum = MIN (*minimum, CHOPGIMP_DOCKABLE_MIN_HEIGHT);
++}
++
++static void
++gimp_dockable_get_preferred_height_for_width (GtkWidget *widget,
++                                              gint       width,
++                                              gint      *minimum,
++                                              gint      *natural)
++{
++  GTK_WIDGET_CLASS (g_type_class_peek (GTK_TYPE_BIN))->get_preferred_height_for_width (widget,
++                                                                                      width,
++                                                                                      minimum,
++                                                                                      natural);
++  *minimum = MIN (*minimum, CHOPGIMP_DOCKABLE_MIN_HEIGHT);
++}
++
++static void
++gimp_dockable_size_allocate (GtkWidget     *widget,
++                             GtkAllocation *allocation)
++{
++  GtkWidget *child = gtk_bin_get_child (GTK_BIN (widget));
++
++  gtk_widget_set_allocation (widget, allocation);
++
++  if (child && gtk_widget_get_visible (child))
++    {
++      GtkAllocation child_alloc;
++      gint          child_min;
++
++      /*  the border width is already removed (handle_border_width)  */
++      child_alloc        = *allocation;
++      child_alloc.width  = MAX (1, child_alloc.width);
++      child_alloc.height = MAX (1, child_alloc.height);
++
++      /*  never under-allocated: laid out at its minimum, cut by the clip  */
++      gtk_widget_get_preferred_height_for_width (child, child_alloc.width,
++                                                 &child_min, NULL);
++      child_alloc.height = MAX (child_alloc.height, child_min);
++
++      gtk_widget_size_allocate (child, &child_alloc);
++    }
++
++  /*  draw only inside the panel  */
++  gtk_widget_set_clip (widget, allocation);
++}
++
++static gboolean
++gimp_dockable_draw (GtkWidget *widget,
++                    cairo_t   *cr)
++{
++  gboolean handled;
++
++  cairo_save (cr);
++  cairo_rectangle (cr, 0, 0,
++                   gtk_widget_get_allocated_width  (widget),
++                   gtk_widget_get_allocated_height (widget));
++  cairo_clip (cr);
++  handled = GTK_WIDGET_CLASS (g_type_class_peek (GTK_TYPE_BIN))->draw (widget, cr);
++  cairo_restore (cr);
++
++  return handled;
++}
++
+ G_DEFINE_TYPE_WITH_CODE (GimpDockable, gimp_dockable, GTK_TYPE_BIN,
+                          G_ADD_PRIVATE (GimpDockable)
+                          G_IMPLEMENT_INTERFACE (GIMP_TYPE_SESSION_MANAGED,
+@@ -119,6 +195,11 @@ gimp_dockable_class_init (GimpDockableClass *klass)
+ 
+   widget_class->style_updated = gimp_dockable_style_updated;
+ 
++  widget_class->get_preferred_height           = gimp_dockable_get_preferred_height;
++  widget_class->get_preferred_height_for_width = gimp_dockable_get_preferred_height_for_width;
++  widget_class->size_allocate                  = gimp_dockable_size_allocate;
++  widget_class->draw                           = gimp_dockable_draw;
++
+   container_class->add        = gimp_dockable_add;
+   container_class->child_type = gimp_dockable_child_type;
+ 
+-- 
+2.53.0
+
