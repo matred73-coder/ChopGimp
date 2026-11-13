@@ -107,8 +107,8 @@ def workspace_books(name):
                            dockable("gimp-navigation-view"), dockable("gimp-symmetry-editor")]))
     if name == "typographie":
         return (book(None, [dockable("chopgimp-character"), dockable("chopgimp-paragraph")]),
-                book(250, [dockable("chopgimp-glyphs"), dockable("chopgimp-text-styles"),
-                           dockable("gimp-font-list")]),
+                book(250, [dockable("chopgimp-fonts"), dockable("chopgimp-document-texts"),
+                           dockable("chopgimp-glyphs"), dockable("chopgimp-text-styles")]),
                 book(330, [dockable("gimp-layer-list", tab="name", preview=64),
                            dockable("gimp-path-list", tab="name", preview=32)]))
     if name == "illustration":

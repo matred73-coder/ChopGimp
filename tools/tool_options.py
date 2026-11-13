@@ -47,7 +47,7 @@ OPTIONS = {
                                "sample-average": "no"},
     # Texte (T) : taille en points, édition sur le canevas
     "gimp-text-tool": {"font-size-unit": "points", "font-size": "24.0", "antialias": "yes",
-                       "use-editor": "no", "show-on-canvas": "yes"},
+                       "use-editor": "no", "show-on-canvas": "no"},
     # Tampon (S) / Correcteur (J) : « Aligné » comme Photoshop
     "gimp-clone-tool": {"align-mode": "yes"},
     "gimp-heal-tool": {"align-mode": "yes"},

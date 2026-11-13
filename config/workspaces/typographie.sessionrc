@@ -27,15 +27,19 @@
         (book
             (position 250)
             (current-page 0)
+            (dockable "chopgimp-fonts"
+                (tab-style automatic)
+                (aux-info
+                    (show-button-bar "true")))
+            (dockable "chopgimp-document-texts"
+                (tab-style automatic)
+                (aux-info
+                    (show-button-bar "true")))
             (dockable "chopgimp-glyphs"
                 (tab-style automatic)
                 (aux-info
                     (show-button-bar "true")))
             (dockable "chopgimp-text-styles"
-                (tab-style automatic)
-                (aux-info
-                    (show-button-bar "true")))
-            (dockable "gimp-font-list"
                 (tab-style automatic)
                 (aux-info
                     (show-button-bar "true"))))

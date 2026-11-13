@@ -973,7 +973,8 @@
                         "../patches/gimp-3.2.8/0069-ChopGimp-code-review-fixes-vector-robustness-shape-t.patch",
                         "../patches/gimp-3.2.8/0070-ChopGimp-end-of-review-docks-own-window-re-clamp-sty.patch",
                         "../patches/gimp-3.2.8/0071-ChopGimp-appearance-variants-palettes-accent-density.patch",
-                        "../patches/gimp-3.2.8/0072-ChopGimp-workspaces-edit-toolbar-Apparence-preferenc.patch"
+                        "../patches/gimp-3.2.8/0072-ChopGimp-workspaces-edit-toolbar-Apparence-preferenc.patch",
+                        "../patches/gimp-3.2.8/0073-ChopGimp-text-tool-rework-line-highlights-no-canvas-.patch"
                     ]
                 }
             ],

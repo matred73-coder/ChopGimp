@@ -1,0 +1,1253 @@
+From 32be5a05521c3cb0c5a36ea7520b2834dfab40da Mon Sep 17 00:00:00 2001
+From: ChopGimp <mathieu.redon@proton.me>
+Date: Fri, 13 Nov 2026 19:52:44 +0100
+Subject: [PATCH] ChopGimp: text tool rework (line highlights, no canvas style
+ bar, options bar styles, point text scaling, font picker, fonts and document
+ texts panels)
+
+---
+ app/actions/dialogs-actions.c          |  16 +
+ app/dialogs/chopgimp-textpanels.c      | 682 ++++++++++++++++++++++---
+ app/dialogs/chopgimp-textpanels.h      |   8 +
+ app/dialogs/dialogs.c                  |   8 +
+ app/display/chopgimp-canvashighlight.c |  65 +++
+ app/display/chopgimp-canvashighlight.h |  38 ++
+ app/display/gimpoptionsbar.c           |  93 +++-
+ app/display/meson.build                |   1 +
+ app/tools/gimptextoptions.c            |   2 +-
+ app/tools/gimptexttool.c               |  53 +-
+ menus/dialogs-menuitems.ui.in          |   2 +
+ 11 files changed, 902 insertions(+), 66 deletions(-)
+ create mode 100644 app/display/chopgimp-canvashighlight.c
+ create mode 100644 app/display/chopgimp-canvashighlight.h
+
+diff --git a/app/actions/dialogs-actions.c b/app/actions/dialogs-actions.c
+index c47b15c..bd77eeb 100644
+--- a/app/actions/dialogs-actions.c
++++ b/app/actions/dialogs-actions.c
+@@ -172,6 +172,22 @@ const GimpStringActionEntry dialogs_dockable_actions[] =
+     "chopgimp-text-styles",
+     GIMP_HELP_TOOL_TEXT },
+ 
++  { "dialogs-fonts-preview", "gimp-font",
++    NC_("dialogs-action", "Polices (_aperçu)"),
++    NC_("dialogs-action", "Polices (_aperçu)"),
++    { NULL },
++    NC_("dialogs-action", "Toutes les polices, chacune dans son propre dessin, avec aperçu en direct"),
++    "chopgimp-fonts",
++    GIMP_HELP_TOOL_TEXT },
++
++  { "dialogs-document-texts", "gimp-tool-text",
++    NC_("dialogs-action", "Textes du _document"),
++    NC_("dialogs-action", "Textes du _document"),
++    { NULL },
++    NC_("dialogs-action", "Tous les calques de texte de l'image : cliquer pour le modifier"),
++    "chopgimp-document-texts",
++    GIMP_HELP_TOOL_TEXT },
++
+   { "dialogs-cursor", GIMP_ICON_CURSOR,
+     NC_("dialogs-action", "_Pointer Dialog"),
+     NC_("dialogs-action", "_Pointer"),
+diff --git a/app/dialogs/chopgimp-textpanels.c b/app/dialogs/chopgimp-textpanels.c
+index 835ec35..a3a38c8 100644
+--- a/app/dialogs/chopgimp-textpanels.c
++++ b/app/dialogs/chopgimp-textpanels.c
+@@ -40,9 +40,11 @@
+ #include "core/gimp.h"
+ #include "core/gimpcontainer.h"
+ #include "core/gimpcontext.h"
++#include "core/gimp-utils.h"
+ #include "core/gimpdatafactory.h"
+ #include "core/gimpimage.h"
+ #include "core/gimpimage-undo.h"
++#include "core/gimplist.h"
+ 
+ #include "text/gimpfont.h"
+ #include "text/gimptext.h"
+@@ -57,6 +59,7 @@
+ #include "tools/tools-types.h"
+ #include "tools/gimptexttool.h"
+ #include "tools/tool_manager.h"
++#include "tools/chopgimp-tools.h"
+ 
+ #include "chopgimp-textpanels.h"
+ 
+@@ -354,11 +357,10 @@ font_preview_possible (Panel *panel)
+ }
+ 
+ static void
+-font_item_select (GtkMenuItem *item, Panel *panel)
++font_preview_name (Panel *panel, const gchar *name)
+ {
+   GimpTextLayer *layer = panel_layer (panel);
+-  GimpFont      *font  = font_by_name (panel->gimp,
+-                                       g_object_get_data (G_OBJECT (item), "font"));
++  GimpFont      *font  = name ? font_by_name (panel->gimp, name) : NULL;
+ 
+   if (! font || ! font_preview_possible (panel))
+     return;
+@@ -386,101 +388,425 @@ font_preview_restore (Panel *panel)
+     }
+ }
+ 
++
++static void panel_free (Panel *panel);
++
+ static void
+-font_item_activate (GtkMenuItem *item, Panel *panel)
++effect_clicked (GtkButton *button, Panel *panel)
+ {
+-  const gchar *name = g_object_get_data (G_OBJECT (item), "font");
++  const gchar *name   = g_object_get_data (G_OBJECT (button), "chopgimp-action");
++  GAction     *action = g_action_map_lookup_action (G_ACTION_MAP (panel->gimp->app), name);
+ 
+-  panel->preview_chosen = TRUE;
+-  font_preview_restore (panel);
++  if (action && g_action_get_enabled (action))
++    g_action_activate (action, NULL);
++  else
++    gdk_display_beep (gtk_widget_get_display (GTK_WIDGET (button)));
++}
+ 
+-  panel->updating = TRUE;
+-  gtk_entry_set_text (GTK_ENTRY (panel->font), name);
+-  panel->updating = FALSE;
++/* ─── font picker: every font shown in its own face (Photoshop) ─────── */
+ 
+-  font_apply (panel, name);
+-  favorite_update (panel);
++typedef struct
++{
++  Panel     *panel;
++  gboolean   own_panel;
++  GtkWidget *box;
++  GtkWidget *search;
++  GtkWidget *filter;
++  GtkWidget *sample;
++  GtkWidget *list;
++  GtkWidget *popover;
++  GPtrArray *names;
++  guint      next;
++  guint      idle_id;
++  gboolean   chosen;
++  GtkWidget *hover_row;
++} Picker;
++
++enum { FILTER_ALL, FILTER_FAVORITES, FILTER_RECENT, FILTER_SERIF, FILTER_SANS,
++       FILTER_SCRIPT, FILTER_MONO };
++
++static gint
++font_category (const gchar *name)
++{
++  gchar *low = g_ascii_strdown (name, -1);
++  gint   cat = FILTER_SANS;
++
++  if (strstr (low, "mono") || strstr (low, "code") || strstr (low, "courier") ||
++      strstr (low, "console") || strstr (low, "typewriter"))
++    cat = FILTER_MONO;
++  else if (strstr (low, "script") || strstr (low, "hand") || strstr (low, "brush") ||
++           strstr (low, "callig") || strstr (low, "comic") || strstr (low, "pacifico") ||
++           strstr (low, "dancing") || strstr (low, "lobster"))
++    cat = FILTER_SCRIPT;
++  else if ((strstr (low, "serif") && ! strstr (low, "sans")) || strstr (low, "times") ||
++           strstr (low, "georgia") || strstr (low, "garamond") || strstr (low, "roman") ||
++           strstr (low, "baskerville") || strstr (low, "bodoni") || strstr (low, "palatino") ||
++           strstr (low, "book") || strstr (low, "caslon") || strstr (low, "playfair"))
++    cat = FILTER_SERIF;
++
++  g_free (low);
++
++  return cat;
+ }
+ 
+-static void
+-font_menu_deactivate (GtkMenuShell *menu, Panel *panel)
++static gchar *
++picker_sample_text (Picker *pk)
+ {
+-  if (! panel->preview_chosen)
+-    font_preview_restore (panel);
++  GimpTextTool  *tool  = panel_text_tool (pk->panel->gimp);
++  GimpTextLayer *layer = panel_layer (pk->panel);
++  gchar         *text  = NULL;
++
++  if (tool && gtk_text_buffer_get_has_selection (GTK_TEXT_BUFFER (tool->buffer)))
++    {
++      GtkTextIter a, b;
++
++      gtk_text_buffer_get_selection_bounds (GTK_TEXT_BUFFER (tool->buffer), &a, &b);
++      text = gtk_text_buffer_get_text (GTK_TEXT_BUFFER (tool->buffer), &a, &b, FALSE);
++    }
++  else if (layer && gimp_text_layer_get_text (layer))
++    {
++      GimpText *t = gimp_text_layer_get_text (layer);
++
++      text = t->text ? g_strdup (t->text) :
++             t->markup ? gimp_markup_extract_text (t->markup) : NULL;
++    }
++
++  if (text)
++    {
++      gchar *nl = strchr (text, '\n');
++
++      if (nl)
++        *nl = '\0';
++      if (g_utf8_strlen (text, -1) > 32)
++        *g_utf8_offset_to_pointer (text, 32) = '\0';
++    }
++
++  if (! text || ! *text)
++    {
++      g_free (text);
++      text = g_strdup (_("Échantillon Aa 123"));
++    }
++
++  return text;
+ }
+ 
+ static void
+-font_menu_add_section (Panel *panel, GtkWidget *menu, const gchar *title, const gchar *key)
++picker_row_markup (Picker *pk, GtkWidget *row)
+ {
+-  gchar    **names = chopgimp_rc_get_strings ("fonts", key);
+-  GtkWidget *item;
+-  gint       i;
++  const gchar *name   = g_object_get_data (G_OBJECT (row), "font");
++  GtkWidget   *label  = g_object_get_data (G_OBJECT (row), "sample");
++  GimpFont    *font   = font_by_name (pk->panel->gimp, name);
++  gchar       *markup;
+ 
+-  item = gtk_menu_item_new_with_label (title);
+-  gtk_widget_set_sensitive (item, FALSE);
+-  gtk_menu_shell_append (GTK_MENU_SHELL (menu), item);
++  markup = g_markup_printf_escaped ("<span font_desc=\"%s 17\">%s</span>",
++                                    font ? gimp_font_get_lookup_name (font) : "Sans",
++                                    gtk_entry_get_text (GTK_ENTRY (pk->sample)));
++  gtk_label_set_markup (GTK_LABEL (label), markup);
++  g_free (markup);
++}
+ 
+-  for (i = 0; names[i]; i++)
++static GtkWidget *
++picker_make_row (Picker *pk, const gchar *name, const gchar *badge)
++{
++  GtkWidget *row    = gtk_list_box_row_new ();
++  GtkWidget *box    = gtk_box_new (GTK_ORIENTATION_VERTICAL, 0);
++  GtkWidget *title  = gtk_label_new (NULL);
++  GtkWidget *sample = gtk_label_new (NULL);
++  gchar     *markup;
++
++  markup = g_markup_printf_escaped ("<small>%s%s</small>", badge, name);
++  gtk_label_set_markup (GTK_LABEL (title), markup);
++  g_free (markup);
++  gtk_label_set_xalign (GTK_LABEL (title), 0.0);
++  gtk_style_context_add_class (gtk_widget_get_style_context (title), "dim-label");
++  gtk_label_set_xalign (GTK_LABEL (sample), 0.0);
++  gtk_label_set_ellipsize (GTK_LABEL (sample), PANGO_ELLIPSIZE_END);
++
++  gtk_container_set_border_width (GTK_CONTAINER (box), 4);
++  gtk_box_pack_start (GTK_BOX (box), title,  FALSE, FALSE, 0);
++  gtk_box_pack_start (GTK_BOX (box), sample, FALSE, FALSE, 0);
++  gtk_container_add (GTK_CONTAINER (row), box);
++
++  g_object_set_data_full (G_OBJECT (row), "font", g_strdup (name), g_free);
++  g_object_set_data (G_OBJECT (row), "sample", sample);
++  g_object_set_data (G_OBJECT (row), "badge", (gpointer) badge);
++  g_object_set_data (G_OBJECT (row), "category", GINT_TO_POINTER (font_category (name)));
++
++  picker_row_markup (pk, row);
++  gtk_widget_show_all (row);
++
++  return row;
++}
++
++/*  rows are made a few at a time: there may be a thousand fonts  */
++static gboolean
++picker_fill_idle (Picker *pk)
++{
++  guint end = MIN (pk->next + 40, pk->names->len);
++
++  for (; pk->next < end; pk->next++)
+     {
+-      GimpFont *font = font_by_name (panel->gimp, names[i]);
+-      gchar    *markup;
++      const gchar *entry = g_ptr_array_index (pk->names, pk->next);
++      const gchar *badge = entry[0] == '*' ? "★ " : entry[0] == '+' ? "🕘 " : "";
+ 
+-      if (! font)
+-        continue;
++      gtk_list_box_insert (GTK_LIST_BOX (pk->list),
++                           picker_make_row (pk, entry + 1, badge), -1);
++    }
+ 
+-      markup = g_markup_printf_escaped ("<span font_desc=\"%s 12\">%s</span>",
+-                                        gimp_font_get_lookup_name (font), names[i]);
+-      item = gtk_menu_item_new_with_label ("");
+-      gtk_label_set_markup (GTK_LABEL (gtk_bin_get_child (GTK_BIN (item))), markup);
+-      g_free (markup);
++  if (pk->next >= pk->names->len)
++    {
++      pk->idle_id = 0;
++      return G_SOURCE_REMOVE;
++    }
+ 
+-      g_object_set_data_full (G_OBJECT (item), "font", g_strdup (names[i]), g_free);
+-      g_signal_connect (item, "select",   G_CALLBACK (font_item_select),   panel);
+-      g_signal_connect (item, "activate", G_CALLBACK (font_item_activate), panel);
+-      gtk_menu_shell_append (GTK_MENU_SHELL (menu), item);
++  return G_SOURCE_CONTINUE;
++}
++
++static void
++picker_collect_name (GimpObject *font, GPtrArray *names)
++{
++  g_ptr_array_add (names, g_strconcat (" ", gimp_object_get_name (font), NULL));
++}
++
++static void
++picker_fill (Picker *pk)
++{
++  gchar **favs    = chopgimp_rc_get_strings ("fonts", "favorites");
++  gchar **recents = chopgimp_rc_get_strings ("fonts", "recent");
++  gint    i;
++
++  pk->names = g_ptr_array_new_with_free_func (g_free);
++
++  for (i = 0; favs[i]; i++)
++    if (font_by_name (pk->panel->gimp, favs[i]))
++      g_ptr_array_add (pk->names, g_strconcat ("*", favs[i], NULL));
++
++  for (i = 0; recents[i]; i++)
++    if (font_by_name (pk->panel->gimp, recents[i]) &&
++        ! g_strv_contains ((const gchar * const *) favs, recents[i]))
++      g_ptr_array_add (pk->names, g_strconcat ("+", recents[i], NULL));
++
++  gimp_container_foreach (gimp_data_factory_get_container (pk->panel->gimp->font_factory),
++                          (GFunc) picker_collect_name, pk->names);
++
++  g_strfreev (favs);
++  g_strfreev (recents);
++
++  pk->next    = 0;
++  pk->idle_id = g_idle_add ((GSourceFunc) picker_fill_idle, pk);
++}
++
++static gboolean
++picker_filter (GtkListBoxRow *row, Picker *pk)
++{
++  const gchar *name   = g_object_get_data (G_OBJECT (row), "font");
++  const gchar *badge  = g_object_get_data (G_OBJECT (row), "badge");
++  const gchar *search = gtk_entry_get_text (GTK_ENTRY (pk->search));
++  gint         filter = gtk_combo_box_get_active (GTK_COMBO_BOX (pk->filter));
++  gint         cat    = GPOINTER_TO_INT (g_object_get_data (G_OBJECT (row), "category"));
++  gboolean     fav    = badge && ! strcmp (badge, "★ ");
++  gboolean     recent = badge && *badge && ! fav;
++
++  /*  favourites and recents are listed once more among all the fonts:
++   *  show the copies only with no filter and no search
++   */
++  if (search && *search)
++    {
++      gchar *a = g_utf8_casefold (name, -1);
++      gchar *b = g_utf8_casefold (search, -1);
++      gboolean found = strstr (a, b) != NULL;
++
++      g_free (a);
++      g_free (b);
++
++      if (! found || fav || recent)
++        return FALSE;
+     }
+ 
+-  if (! names[0])
++  switch (filter)
+     {
+-      item = gtk_menu_item_new_with_label (_("   (vide)"));
+-      gtk_widget_set_sensitive (item, FALSE);
+-      gtk_menu_shell_append (GTK_MENU_SHELL (menu), item);
++    case FILTER_FAVORITES: return fav;
++    case FILTER_RECENT:    return recent;
++    case FILTER_ALL:       return TRUE;
++    default:               return ! fav && ! recent && cat == filter;
+     }
++}
++
++static void
++picker_refilter (Picker *pk)
++{
++  gtk_list_box_invalidate_filter (GTK_LIST_BOX (pk->list));
++}
+ 
+-  g_strfreev (names);
++static void
++picker_sample_changed (Picker *pk)
++{
++  GList *rows = gtk_container_get_children (GTK_CONTAINER (pk->list));
++  GList *iter;
++
++  for (iter = rows; iter; iter = iter->next)
++    picker_row_markup (pk, iter->data);
++
++  g_list_free (rows);
++}
++
++/*  live preview of the font under the pointer, or selected with the keys  */
++static void
++picker_preview_row (Picker *pk, GtkListBoxRow *row)
++{
++  if ((GtkWidget *) row == pk->hover_row)
++    return;
++
++  pk->hover_row = (GtkWidget *) row;
++
++  if (row)
++    font_preview_name (pk->panel, g_object_get_data (G_OBJECT (row), "font"));
++}
++
++static gboolean
++picker_motion (GtkWidget *list, GdkEventMotion *event, Picker *pk)
++{
++  picker_preview_row (pk, gtk_list_box_get_row_at_y (GTK_LIST_BOX (list), (gint) event->y));
++  return FALSE;
+ }
+ 
+ static gboolean
+-font_menu_destroy (gpointer menu)
++picker_leave (GtkWidget *list, GdkEventCrossing *event, Picker *pk)
+ {
+-  gtk_widget_destroy (menu);
+-  return G_SOURCE_REMOVE;
++  if (! pk->chosen)
++    font_preview_restore (pk->panel);
++  pk->hover_row = NULL;
++  return FALSE;
+ }
+ 
+ static void
+-font_menu_hidden (GtkWidget *menu, Panel *panel)
++picker_row_selected (GtkListBox *list, GtkListBoxRow *row, Picker *pk)
+ {
+-  g_idle_add (font_menu_destroy, menu);
++  picker_preview_row (pk, row);
+ }
+ 
+ static void
+-font_menu_clicked (GtkButton *button, Panel *panel)
++picker_row_activated (GtkListBox *list, GtkListBoxRow *row, Picker *pk)
++{
++  const gchar *name = g_object_get_data (G_OBJECT (row), "font");
++
++  pk->chosen = TRUE;
++  font_preview_restore (pk->panel);
++
++  if (pk->panel->font)
++    {
++      pk->panel->updating = TRUE;
++      gtk_entry_set_text (GTK_ENTRY (pk->panel->font), name);
++      pk->panel->updating = FALSE;
++    }
++
++  font_apply (pk->panel, name);
++  favorite_update (pk->panel);
++
++  if (pk->popover)
++    gtk_popover_popdown (GTK_POPOVER (pk->popover));
++
++  pk->chosen = FALSE;
++}
++
++static void
++picker_free (Picker *pk)
+ {
+-  GtkWidget *menu = gtk_menu_new ();
++  if (pk->idle_id)
++    g_source_remove (pk->idle_id);
++  if (pk->names)
++    g_ptr_array_unref (pk->names);
++  if (pk->own_panel)
++    panel_free (pk->panel);
++  g_free (pk);
++}
++
++static GtkWidget *
++picker_new (Panel *panel, gboolean own_panel)
++{
++  Picker    *pk     = g_new0 (Picker, 1);
++  GtkWidget *scroll = gtk_scrolled_window_new (NULL, NULL);
++  GtkWidget *row    = gtk_box_new (GTK_ORIENTATION_HORIZONTAL, 4);
++  gchar     *sample;
++  const gchar *filters[] = { N_("Toutes les polices"), N_("★ Favorites"), N_("Récentes"),
++                             N_("Avec empattement"), N_("Sans empattement"),
++                             N_("Manuscrites"), N_("Chasse fixe"), NULL };
++  gint       i;
+ 
+-  panel->preview_chosen = FALSE;
++  pk->panel     = panel;
++  pk->own_panel = own_panel;
++  pk->box       = gtk_box_new (GTK_ORIENTATION_VERTICAL, 4);
++  gtk_container_set_border_width (GTK_CONTAINER (pk->box), 4);
++
++  pk->search = gtk_search_entry_new ();
++  gtk_entry_set_placeholder_text (GTK_ENTRY (pk->search), _("Rechercher une police"));
++  pk->filter = gtk_combo_box_text_new ();
++  for (i = 0; filters[i]; i++)
++    gtk_combo_box_text_append_text (GTK_COMBO_BOX_TEXT (pk->filter), _(filters[i]));
++  gtk_combo_box_set_active (GTK_COMBO_BOX (pk->filter), 0);
++  gtk_box_pack_start (GTK_BOX (row), pk->search, TRUE, TRUE, 0);
++  gtk_box_pack_start (GTK_BOX (row), pk->filter, FALSE, FALSE, 0);
++  gtk_box_pack_start (GTK_BOX (pk->box), row, FALSE, FALSE, 0);
++
++  pk->sample = gtk_entry_new ();
++  sample = picker_sample_text (pk);
++  gtk_entry_set_text (GTK_ENTRY (pk->sample), sample);
++  g_free (sample);
++  gtk_widget_set_tooltip_text (pk->sample, _("Texte de l'aperçu"));
++  gtk_box_pack_start (GTK_BOX (pk->box), pk->sample, FALSE, FALSE, 0);
++
++  pk->list = gtk_list_box_new ();
++  gtk_list_box_set_activate_on_single_click (GTK_LIST_BOX (pk->list), TRUE);
++  gtk_list_box_set_filter_func (GTK_LIST_BOX (pk->list),
++                                (GtkListBoxFilterFunc) picker_filter, pk, NULL);
++  gtk_widget_add_events (pk->list, GDK_POINTER_MOTION_MASK | GDK_LEAVE_NOTIFY_MASK);
++  g_signal_connect (pk->list, "motion-notify-event", G_CALLBACK (picker_motion), pk);
++  g_signal_connect (pk->list, "leave-notify-event",  G_CALLBACK (picker_leave), pk);
++  g_signal_connect (pk->list, "row-selected",  G_CALLBACK (picker_row_selected), pk);
++  g_signal_connect (pk->list, "row-activated", G_CALLBACK (picker_row_activated), pk);
+ 
+-  font_menu_add_section (panel, menu, _("★ Favoris"), "favorites");
+-  gtk_menu_shell_append (GTK_MENU_SHELL (menu), gtk_separator_menu_item_new ());
+-  font_menu_add_section (panel, menu, _("Récentes"), "recent");
++  gtk_scrolled_window_set_policy (GTK_SCROLLED_WINDOW (scroll),
++                                  GTK_POLICY_NEVER, GTK_POLICY_AUTOMATIC);
++  gtk_container_add (GTK_CONTAINER (scroll), pk->list);
++  gtk_box_pack_start (GTK_BOX (pk->box), scroll, TRUE, TRUE, 0);
++
++  g_signal_connect_swapped (pk->search, "search-changed", G_CALLBACK (picker_refilter), pk);
++  g_signal_connect_swapped (pk->filter, "changed",        G_CALLBACK (picker_refilter), pk);
++  g_signal_connect_swapped (pk->sample, "changed",        G_CALLBACK (picker_sample_changed), pk);
++
++  g_object_set_data_full (G_OBJECT (pk->box), "chopgimp-picker", pk,
++                          (GDestroyNotify) picker_free);
+ 
+-  g_signal_connect (menu, "deactivate", G_CALLBACK (font_menu_deactivate), panel);
+-  g_signal_connect (menu, "hide", G_CALLBACK (font_menu_hidden), panel);
+-  gtk_widget_show_all (menu);
+-  gtk_menu_popup_at_widget (GTK_MENU (menu), GTK_WIDGET (button),
+-                            GDK_GRAVITY_SOUTH_WEST, GDK_GRAVITY_NORTH_WEST, NULL);
++  picker_fill (pk);
++  gtk_widget_show_all (pk->box);
++
++  return pk->box;
+ }
+ 
++static void
++picker_popover_closed (GtkPopover *popover, Panel *panel)
++{
++  font_preview_restore (panel);
++  gtk_widget_destroy (GTK_WIDGET (popover));
++}
++
++static void
++font_menu_clicked (GtkButton *button, Panel *panel)
++{
++  /*  every font with its preview (Photoshop's font menu)  */
++  GtkWidget *popover = gtk_popover_new (GTK_WIDGET (button));
++  GtkWidget *picker  = picker_new (panel, FALSE);
++  Picker    *pk      = g_object_get_data (G_OBJECT (picker), "chopgimp-picker");
++
++  pk->popover = popover;
++  gtk_widget_set_size_request (picker, 380, 460);
++  gtk_container_add (GTK_CONTAINER (popover), picker);
++  g_signal_connect (popover, "closed", G_CALLBACK (picker_popover_closed), panel);
++  gtk_popover_popup (GTK_POPOVER (popover));
++  gtk_widget_grab_focus (pk->search);
++}
++
++
+ static void
+ size_changed (GtkSpinButton *spin, Panel *panel)
+ {
+@@ -1030,6 +1356,31 @@ panel_new (Gimp *gimp, gboolean paragraph)
+       gtk_box_pack_start (GTK_BOX (box),
+                           toggle_row (panel, opentype_toggles, G_N_ELEMENTS (opentype_toggles)),
+                           FALSE, FALSE, 0);
++
++      /*  one-click text effects: layer styles of the text layer  */
++      {
++        static const gchar *const effects[] =
++        {
++          "chopgimp-layer-style",         N_("Ombre…"),
++          "photogimp-style-stroke",       N_("Contour"),
++          "chopgimp-fx-gradient-overlay", N_("Dégradé…"),
++          NULL
++        };
++        GtkWidget *row = gtk_box_new (GTK_ORIENTATION_HORIZONTAL, 2);
++
++        for (gint e = 0; effects[e]; e += 2)
++          {
++            GtkWidget *b = gtk_button_new_with_label (_(effects[e + 1]));
++
++            gtk_widget_set_hexpand (b, TRUE);
++            g_object_set_data (G_OBJECT (b), "chopgimp-action", (gpointer) effects[e]);
++            g_signal_connect (b, "clicked", G_CALLBACK (effect_clicked), panel);
++            gtk_box_pack_start (GTK_BOX (row), b, TRUE, TRUE, 0);
++          }
++
++        gtk_box_pack_start (GTK_BOX (box), gtk_label_new (_("Effets")), FALSE, FALSE, 0);
++        gtk_box_pack_start (GTK_BOX (box), row, FALSE, FALSE, 0);
++      }
+     }
+   else
+     {
+@@ -1751,3 +2102,218 @@ chopgimp_text_styles_panel_new (GimpDialogFactory *factory,
+ 
+   return editor;
+ }
++
++
++/* ─── Polices : every font in its own face ─────────────────────────── */
++
++GtkWidget *
++chopgimp_fonts_panel_new (GimpDialogFactory *factory,
++                          GimpContext       *context,
++                          GimpUIManager     *ui_manager,
++                          gint              view_size)
++{
++  GtkWidget *editor = g_object_new (GIMP_TYPE_EDITOR, NULL);
++  Panel     *panel  = g_new0 (Panel, 1);
++  GtkWidget *picker;
++
++  panel->gimp = context->gimp;
++  picker      = picker_new (panel, TRUE);
++
++  gtk_box_pack_start (GTK_BOX (editor), picker, TRUE, TRUE, 0);
++
++  return editor;
++}
++
++
++/* ─── Textes du document : all the text layers of the image ────────── */
++
++typedef struct
++{
++  Gimp      *gimp;
++  GtkWidget *list;
++  gchar     *stamp;
++  guint      refresh_id;
++} DocTexts;
++
++static void
++doc_texts_collect (GList *layers, GList **out)
++{
++  for (; layers; layers = layers->next)
++    {
++      GimpContainer *children = gimp_viewable_get_children (layers->data);
++
++      if (children)
++        doc_texts_collect (GIMP_LIST (children)->queue->head, out);
++      else if (gimp_item_is_text_layer (layers->data))
++        *out = g_list_append (*out, layers->data);
++    }
++}
++
++static void
++doc_texts_activated (GtkListBox *box, GtkListBoxRow *row, DocTexts *dt)
++{
++  GimpContext   *context = gimp_get_user_context (dt->gimp);
++  GimpImage     *image   = gimp_context_get_image (context);
++  GimpDisplay   *display = gimp_context_get_display (context);
++  GimpLayer     *layer;
++  GList         *sel;
++  GimpCoords     coords  = GIMP_COORDS_DEFAULT_VALUES;
++
++  if (! image)
++    return;
++
++  layer = gimp_image_get_layer_by_tattoo (image,
++                                          GPOINTER_TO_UINT (g_object_get_data (G_OBJECT (row),
++                                                                               "tattoo")));
++  if (! layer)
++    return;
++
++  sel = g_list_prepend (NULL, layer);
++  gimp_image_set_selected_layers (image, sel);
++  g_list_free (sel);
++  gimp_image_flush (image);
++
++  /*  edit it right away: the text tool, as if clicked in the text  */
++  if (display)
++    {
++      gint x, y;
++
++      gimp_item_get_offset (GIMP_ITEM (layer), &x, &y);
++      coords.x = x + gimp_item_get_width  (GIMP_ITEM (layer)) / 2.0;
++      coords.y = y + gimp_item_get_height (GIMP_ITEM (layer)) / 2.0;
++
++      chopgimp_switch_tool_later (dt->gimp, display, "gimp-text-tool", &coords, 0, 0);
++    }
++}
++
++static gboolean
++doc_texts_refresh (DocTexts *dt)
++{
++  GimpImage *image = gimp_context_get_image (gimp_get_user_context (dt->gimp));
++  GList     *layers = NULL, *iter, *rows;
++  GString   *stamp  = g_string_new (NULL);
++
++  if (image)
++    doc_texts_collect (gimp_image_get_layer_iter (image), &layers);
++
++  for (iter = layers; iter; iter = iter->next)
++    {
++      GimpText *text = gimp_text_layer_get_text (iter->data);
++
++      g_string_append_printf (stamp, "%p:%u:%s:%s;", iter->data,
++                              g_str_hash (text->text ? text->text :
++                                          text->markup ? text->markup : ""),
++                              text->font ? gimp_object_get_name (text->font) : "",
++                              gimp_object_get_name (iter->data));
++    }
++
++  if (! g_strcmp0 (stamp->str, dt->stamp))
++    {
++      g_string_free (stamp, TRUE);
++      g_list_free (layers);
++      return G_SOURCE_CONTINUE;
++    }
++
++  g_free (dt->stamp);
++  dt->stamp = g_string_free (stamp, FALSE);
++
++  rows = gtk_container_get_children (GTK_CONTAINER (dt->list));
++  for (iter = rows; iter; iter = iter->next)
++    gtk_widget_destroy (iter->data);
++  g_list_free (rows);
++
++  for (iter = layers; iter; iter = iter->next)
++    {
++      GimpText  *text    = gimp_text_layer_get_text (iter->data);
++      gchar     *content = text->text ? g_strdup (text->text) :
++                           text->markup ? gimp_markup_extract_text (text->markup) :
++                           g_strdup ("");
++      GtkWidget *row     = gtk_list_box_row_new ();
++      GtkWidget *box     = gtk_box_new (GTK_ORIENTATION_VERTICAL, 0);
++      GtkWidget *title   = gtk_label_new (NULL);
++      GtkWidget *preview = gtk_label_new (NULL);
++      gchar     *markup;
++
++      if (g_utf8_strlen (content, -1) > 80)
++        *g_utf8_offset_to_pointer (content, 80) = '\0';
++
++      markup = g_markup_printf_escaped ("<small>%s</small>", gimp_object_get_name (iter->data));
++      gtk_label_set_markup (GTK_LABEL (title), markup);
++      g_free (markup);
++      gtk_style_context_add_class (gtk_widget_get_style_context (title), "dim-label");
++
++      markup = g_markup_printf_escaped ("<span font_desc=\"%s 14\">%s</span>",
++                                        text->font ? gimp_font_get_lookup_name (text->font) : "Sans",
++                                        content);
++      gtk_label_set_markup (GTK_LABEL (preview), markup);
++      g_free (markup);
++      g_free (content);
++
++      gtk_label_set_xalign (GTK_LABEL (title), 0.0);
++      gtk_label_set_xalign (GTK_LABEL (preview), 0.0);
++      gtk_label_set_line_wrap (GTK_LABEL (preview), TRUE);
++      gtk_label_set_lines (GTK_LABEL (preview), 3);
++      gtk_label_set_ellipsize (GTK_LABEL (preview), PANGO_ELLIPSIZE_END);
++
++      gtk_container_set_border_width (GTK_CONTAINER (box), 4);
++      gtk_box_pack_start (GTK_BOX (box), title,   FALSE, FALSE, 0);
++      gtk_box_pack_start (GTK_BOX (box), preview, FALSE, FALSE, 0);
++      gtk_container_add (GTK_CONTAINER (row), box);
++
++      g_object_set_data (G_OBJECT (row), "tattoo",
++                         GUINT_TO_POINTER (gimp_item_get_tattoo (iter->data)));
++      gtk_widget_show_all (row);
++      gtk_list_box_insert (GTK_LIST_BOX (dt->list), row, -1);
++    }
++
++  if (! layers)
++    {
++      GtkWidget *label = gtk_label_new (_("Aucun calque de texte dans l'image."));
++
++      gtk_style_context_add_class (gtk_widget_get_style_context (label), "dim-label");
++      gtk_widget_show (label);
++      gtk_list_box_insert (GTK_LIST_BOX (dt->list), label, -1);
++    }
++
++  g_list_free (layers);
++
++  return G_SOURCE_CONTINUE;
++}
++
++static void
++doc_texts_free (DocTexts *dt)
++{
++  if (dt->refresh_id)
++    g_source_remove (dt->refresh_id);
++  g_free (dt->stamp);
++  g_free (dt);
++}
++
++GtkWidget *
++chopgimp_document_texts_panel_new (GimpDialogFactory *factory,
++                                   GimpContext       *context,
++                                   GimpUIManager     *ui_manager,
++                                   gint               view_size)
++{
++  DocTexts  *dt     = g_new0 (DocTexts, 1);
++  GtkWidget *editor = g_object_new (GIMP_TYPE_EDITOR, NULL);
++  GtkWidget *scroll = gtk_scrolled_window_new (NULL, NULL);
++
++  dt->gimp = context->gimp;
++  dt->list = gtk_list_box_new ();
++  gtk_list_box_set_activate_on_single_click (GTK_LIST_BOX (dt->list), TRUE);
++  g_signal_connect (dt->list, "row-activated", G_CALLBACK (doc_texts_activated), dt);
++
++  gtk_scrolled_window_set_policy (GTK_SCROLLED_WINDOW (scroll),
++                                  GTK_POLICY_NEVER, GTK_POLICY_AUTOMATIC);
++  gtk_container_add (GTK_CONTAINER (scroll), dt->list);
++  gtk_box_pack_start (GTK_BOX (editor), scroll, TRUE, TRUE, 0);
++  gtk_widget_show_all (scroll);
++
++  doc_texts_refresh (dt);
++  dt->refresh_id = g_timeout_add (700, (GSourceFunc) doc_texts_refresh, dt);
++  g_object_set_data_full (G_OBJECT (editor), "chopgimp-doc-texts", dt,
++                          (GDestroyNotify) doc_texts_free);
++
++  return editor;
++}
+diff --git a/app/dialogs/chopgimp-textpanels.h b/app/dialogs/chopgimp-textpanels.h
+index bdec237..270d4f4 100644
+--- a/app/dialogs/chopgimp-textpanels.h
++++ b/app/dialogs/chopgimp-textpanels.h
+@@ -20,3 +20,11 @@ GtkWidget * chopgimp_text_styles_panel_new (GimpDialogFactory *factory,
+                                             GimpContext       *context,
+                                             GimpUIManager     *ui_manager,
+                                             gint               view_size);
++GtkWidget * chopgimp_fonts_panel_new          (GimpDialogFactory *factory,
++                                               GimpContext       *context,
++                                               GimpUIManager     *ui_manager,
++                                               gint               view_size);
++GtkWidget * chopgimp_document_texts_panel_new (GimpDialogFactory *factory,
++                                               GimpContext       *context,
++                                               GimpUIManager     *ui_manager,
++                                               gint               view_size);
+diff --git a/app/dialogs/dialogs.c b/app/dialogs/dialogs.c
+index 4aa3d19..44de547 100644
+--- a/app/dialogs/dialogs.c
++++ b/app/dialogs/dialogs.c
+@@ -342,6 +342,14 @@ static const GimpDialogFactoryEntry entries[] =
+             N_("Styles de texte"), N_("Styles de caractère et de paragraphe"), "gimp-tool-text",
+             GIMP_HELP_TOOL_TEXT,
+             chopgimp_text_styles_panel_new, 0, TRUE),
++  DOCKABLE ("chopgimp-fonts",
++            N_("Polices"), N_("Polices (aperçu de chaque police)"), "gimp-font",
++            GIMP_HELP_TOOL_TEXT,
++            chopgimp_fonts_panel_new, 0, TRUE),
++  DOCKABLE ("chopgimp-document-texts",
++            N_("Textes"), N_("Textes du document"), "gimp-tool-text",
++            GIMP_HELP_TOOL_TEXT,
++            chopgimp_document_texts_panel_new, 0, TRUE),
+   DOCKABLE ("gimp-cursor-view",
+             N_("Pointer"), N_("Pointer Information"), GIMP_ICON_CURSOR,
+             GIMP_HELP_POINTER_INFO_DIALOG,
+diff --git a/app/display/chopgimp-canvashighlight.c b/app/display/chopgimp-canvashighlight.c
+new file mode 100644
+index 0000000..326d076
+--- /dev/null
++++ b/app/display/chopgimp-canvashighlight.c
+@@ -0,0 +1,65 @@
++/* GIMP - The GNU Image Manipulation Program
++ * chopgimp-canvashighlight.c — ChopGimp: translucent filled rectangle
++ * (text selection highlight, as in Photoshop)
++ *
++ * This program is free software: you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation; either version 3 of the License, or
++ * (at your option) any later version.
++ */
++
++#include "config.h"
++
++#include <gegl.h>
++#include <gtk/gtk.h>
++
++#include "display-types.h"
++
++#include "gimpdisplayshell.h"
++#include "chopgimp-canvashighlight.h"
++
++
++G_DEFINE_TYPE (ChopGimpCanvasHighlight, chopgimp_canvas_highlight,
++               GIMP_TYPE_CANVAS_RECTANGLE)
++
++
++static void
++chopgimp_canvas_highlight_fill (GimpCanvasItem *item,
++                                cairo_t        *cr)
++{
++  /*  the blue of the selection, see through  */
++  cairo_set_source_rgba (cr, 0.22, 0.56, 0.94, 0.38);
++  cairo_fill (cr);
++}
++
++static void
++chopgimp_canvas_highlight_class_init (ChopGimpCanvasHighlightClass *klass)
++{
++  GimpCanvasItemClass *item_class = GIMP_CANVAS_ITEM_CLASS (klass);
++
++  item_class->fill = chopgimp_canvas_highlight_fill;
++}
++
++static void
++chopgimp_canvas_highlight_init (ChopGimpCanvasHighlight *highlight)
++{
++}
++
++GimpCanvasItem *
++chopgimp_canvas_highlight_new (GimpDisplayShell *shell,
++                               gdouble           x,
++                               gdouble           y,
++                               gdouble           width,
++                               gdouble           height)
++{
++  g_return_val_if_fail (GIMP_IS_DISPLAY_SHELL (shell), NULL);
++
++  return g_object_new (CHOPGIMP_TYPE_CANVAS_HIGHLIGHT,
++                       "shell",  shell,
++                       "x",      x,
++                       "y",      y,
++                       "width",  width,
++                       "height", height,
++                       "filled", TRUE,
++                       NULL);
++}
+diff --git a/app/display/chopgimp-canvashighlight.h b/app/display/chopgimp-canvashighlight.h
+new file mode 100644
+index 0000000..a858f1d
+--- /dev/null
++++ b/app/display/chopgimp-canvashighlight.h
+@@ -0,0 +1,38 @@
++/* GIMP - The GNU Image Manipulation Program
++ * chopgimp-canvashighlight.h — ChopGimp: translucent filled rectangle
++ * (text selection highlight, as in Photoshop)
++ *
++ * This program is free software: you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation; either version 3 of the License, or
++ * (at your option) any later version.
++ */
++
++#pragma once
++
++#include "gimpcanvasrectangle.h"
++
++
++#define CHOPGIMP_TYPE_CANVAS_HIGHLIGHT (chopgimp_canvas_highlight_get_type ())
++
++typedef struct _ChopGimpCanvasHighlight      ChopGimpCanvasHighlight;
++typedef struct _ChopGimpCanvasHighlightClass ChopGimpCanvasHighlightClass;
++
++struct _ChopGimpCanvasHighlight
++{
++  GimpCanvasRectangle parent_instance;
++};
++
++struct _ChopGimpCanvasHighlightClass
++{
++  GimpCanvasRectangleClass parent_class;
++};
++
++
++GType            chopgimp_canvas_highlight_get_type (void) G_GNUC_CONST;
++
++GimpCanvasItem * chopgimp_canvas_highlight_new      (GimpDisplayShell *shell,
++                                                     gdouble           x,
++                                                     gdouble           y,
++                                                     gdouble           width,
++                                                     gdouble           height);
+diff --git a/app/display/gimpoptionsbar.c b/app/display/gimpoptionsbar.c
+index 7f6262a..3b14fcf 100644
+--- a/app/display/gimpoptionsbar.c
++++ b/app/display/gimpoptionsbar.c
+@@ -50,7 +50,12 @@
+ #include "core/gimptoolinfo.h"
+ #include "core/gimpviewable.h"
+ 
++#include "tools/tools-types.h"
+ #include "tools/gimppathoptions.h"
++#include "tools/gimptexttool.h"
++#include "tools/tool_manager.h"
++
++#include "widgets/gimptextbuffer.h"
+ 
+ #include "widgets/gimplayermodebox.h"
+ #include "widgets/gimpview.h"
+@@ -149,8 +154,9 @@ static const BarSpec bar_specs[] =
+                                      "mls-weights", "mesh-visible", NULL } },
+ 
+   /* Texte, remplissages, mesure */
+-  { "gimp-text-tool",              { "font", "font-size", "foreground", "justify", "antialias",
+-                                     "letter-spacing", "line-spacing", "box-mode", NULL } },
++  { "gimp-text-tool",              { "font", "font-size", "foreground", "@text-style", "justify",
++                                     "letter-spacing", "line-spacing", "box-mode", "@text",
++                                     NULL } },
+   { "gimp-gradient-tool",          { "gradient", "gradient-type", "paint-mode", "opacity",
+                                      "gradient-reverse", "distance-metric", "offset", "dither",
+                                      "instant", NULL } },
+@@ -187,6 +193,16 @@ static const gchar *const chopgimp_pathfinder_buttons[] =
+   NULL
+ };
+ 
++/*  ChopGimp: text tool — warp and panels (the floating style bar of the
++ *  canvas is gone: its settings are here and in the Character panel)
++ */
++static const gchar *const chopgimp_text_buttons[] =
++{
++  "chopgimp-text-warp", "gimp-tool-warp",       N_("Déformer le texte"),
++  "dialogs-character",  "gimp-tool-text",       N_("Panneaux Caractère et Paragraphe"),
++  NULL
++};
++
+ static const gchar *const chopgimp_nodes_buttons[] =
+ {
+   "chopgimp-nodes-corner",          "chopgimp-node-corner",    N_("Nœud angulaire"),
+@@ -252,6 +268,66 @@ gimp_options_bar_action_row (const gchar *const *buttons)
+ }
+ 
+ 
++/*  ChopGimp: bold / italic / underline / strike of the selected
++ *  characters, applied by the text tool being used
++ */
++static void
++gimp_options_bar_text_style_clicked (GtkButton *button,
++                                     Gimp      *gimp)
++{
++  GimpTool    *tool = tool_manager_get_active (gimp);
++  const gchar *tag  = g_object_get_data (G_OBJECT (button), "chopgimp-tag");
++  GimpTextTool *text_tool;
++
++  if (! GIMP_IS_TEXT_TOOL (tool) || ! GIMP_TEXT_TOOL (tool)->buffer)
++    return;
++
++  text_tool = GIMP_TEXT_TOOL (tool);
++
++  if (! strcmp (tag, "b"))
++    gimp_text_tool_toggle_tag (text_tool, text_tool->buffer->bold_tag);
++  else if (! strcmp (tag, "i"))
++    gimp_text_tool_toggle_tag (text_tool, text_tool->buffer->italic_tag);
++  else if (! strcmp (tag, "u"))
++    gimp_text_tool_toggle_tag (text_tool, text_tool->buffer->underline_tag);
++  else
++    gimp_text_tool_toggle_tag (text_tool, text_tool->buffer->strikethrough_tag);
++}
++
++static GtkWidget *
++gimp_options_bar_text_style_row (Gimp *gimp)
++{
++  static const struct { const gchar *tag, *markup, *tip; } styles[] =
++  {
++    { "b", "<b>G</b>",   N_("Gras (Ctrl+B)") },
++    { "i", "<i>I</i>",   N_("Italique (Ctrl+I)") },
++    { "u", "<u>S</u>",   N_("Souligné (Ctrl+U)") },
++    { "s", "<s>B</s>",   N_("Barré") },
++  };
++  GtkWidget *row = gtk_box_new (GTK_ORIENTATION_HORIZONTAL, 0);
++  guint      i;
++
++  for (i = 0; i < G_N_ELEMENTS (styles); i++)
++    {
++      GtkWidget *button = gtk_button_new ();
++      GtkWidget *label  = gtk_label_new (NULL);
++
++      gtk_label_set_markup (GTK_LABEL (label), styles[i].markup);
++      gtk_container_add (GTK_CONTAINER (button), label);
++      gtk_button_set_relief (GTK_BUTTON (button), GTK_RELIEF_NONE);
++      gtk_widget_set_can_focus (button, FALSE);
++      gimp_help_set_help_data (button, _(styles[i].tip), NULL);
++      g_object_set_data (G_OBJECT (button), "chopgimp-tag", (gpointer) styles[i].tag);
++      g_signal_connect (button, "clicked",
++                        G_CALLBACK (gimp_options_bar_text_style_clicked), gimp);
++      gtk_box_pack_start (GTK_BOX (row), button, FALSE, FALSE, 0);
++    }
++
++  gtk_widget_show_all (row);
++
++  return row;
++}
++
+ static void   gimp_options_bar_tool_changed (GimpContext  *context,
+                                              GimpToolInfo *tool_info,
+                                              GtkWidget    *bar);
+@@ -308,6 +384,10 @@ gimp_options_bar_label (const gchar *prop)
+   if (! strcmp (prop, "enable-stroke")) return _("Contour");
+   if (! strcmp (prop, "stroke-width"))  return _("Épaisseur");
+   if (! strcmp (prop, "move-type"))     return _("Déplacer");
++  if (! strcmp (prop, "letter-spacing")) return _("Approche");
++  if (! strcmp (prop, "line-spacing"))   return _("Interlignage");
++  if (! strcmp (prop, "font-size"))      return _("Taille");
++  if (! strcmp (prop, "box-mode"))       return _("Cadre");
+   return NULL;
+ }
+ 
+@@ -684,6 +764,12 @@ gimp_options_bar_widget (GObject     *options,
+   if (! strcmp (prop, "@pathfinder"))
+     return gimp_options_bar_action_row (chopgimp_pathfinder_buttons);
+ 
++  if (! strcmp (prop, "@text"))
++    return gimp_options_bar_action_row (chopgimp_text_buttons);
++
++  if (! strcmp (prop, "@text-style"))
++    return gimp_options_bar_text_style_row (GIMP_CONTEXT (options)->gimp);
++
+   if (! strcmp (prop, "@nodes"))
+     return gimp_options_bar_action_row (chopgimp_nodes_buttons);
+ 
+@@ -787,6 +873,9 @@ gimp_options_bar_widget (GObject     *options,
+       w = gimp_prop_spin_scale_new (options, prop, step, page, digits);
+       gtk_widget_set_size_request (w, 150, -1);
+ 
++      if (gimp_options_bar_label (prop))
++        gimp_spin_scale_set_label (GIMP_SPIN_SCALE (w), gimp_options_bar_label (prop));
++
+       if (! strcmp (prop, "opacity") || ! strcmp (prop, "brush-hardness") ||
+           ! strcmp (prop, "flow"))
+         gimp_prop_widget_set_factor (w, 100.0, 1.0, 10.0, 1);
+diff --git a/app/display/meson.build b/app/display/meson.build
+index a22a122..e7a0349 100644
+--- a/app/display/meson.build
++++ b/app/display/meson.build
+@@ -42,6 +42,7 @@ libappdisplay_sources = [
+   'gimpcanvasprogress.c',
+   'gimpcanvasproxygroup.c',
+   'gimpcanvasrectangle.c',
++  'chopgimp-canvashighlight.c',
+   'gimpcanvasrectangleguides.c',
+   'gimpcanvassamplepoint.c',
+   'gimpcanvastextcursor.c',
+diff --git a/app/tools/gimptextoptions.c b/app/tools/gimptextoptions.c
+index ebd1e00..2e0b8f2 100644
+--- a/app/tools/gimptextoptions.c
++++ b/app/tools/gimptextoptions.c
+@@ -257,7 +257,7 @@ gimp_text_options_class_init (GimpTextOptionsClass *klass)
+                             "show-on-canvas",
+                             _("Show on-canvas editor"),
+                             _("Show on-canvas text editor"),
+-                            TRUE,
++                            FALSE,   /* ChopGimp: the options bar and the Character panel instead */
+                             GIMP_PARAM_STATIC_STRINGS);
+ 
+   GIMP_CONFIG_PROP_ENUM (object_class, PROP_FONT_VIEW_TYPE,
+diff --git a/app/tools/gimptexttool.c b/app/tools/gimptexttool.c
+index 38817f6..c9b8532 100644
+--- a/app/tools/gimptexttool.c
++++ b/app/tools/gimptexttool.c
+@@ -80,6 +80,7 @@
+ #include "widgets/gimpviewabledialog.h"
+ #include "widgets/chopgimp-spell.h"
+ 
++#include "display/chopgimp-canvashighlight.h"
+ #include "display/gimpcanvasgroup.h"
+ #include "display/gimpcanvasitem.h"
+ #include "display/gimpdisplay.h"
+@@ -1334,6 +1335,7 @@ gimp_text_tool_draw_selection (GimpDrawTool *draw_tool)
+   gint              min, max;
+   gint              i;
+   GimpTextDirection direction;
++  GArray           *spans = g_array_new (FALSE, FALSE, sizeof (GdkRectangle));
+ 
+   group = gimp_draw_tool_add_stroke_group (draw_tool);
+   gimp_canvas_item_set_highlight (GIMP_CANVAS_ITEM (group), TRUE);
+@@ -1385,11 +1387,29 @@ gimp_text_tool_draw_selection (GimpDrawTool *draw_tool)
+             {
+             case GIMP_TEXT_DIRECTION_LTR:
+             case GIMP_TEXT_DIRECTION_RTL:
++              /*  ChopGimp: no box around every character, one highlight
++               *  per line (Photoshop): the character joins its line span
++               */
+               rect.x += offset_x;
+               rect.y += offset_y;
+-              gimp_draw_tool_add_rectangle (draw_tool, FALSE,
+-                                            rect.x, rect.y,
+-                                            rect.width, rect.height);
++              {
++                GdkRectangle *last = spans->len ?
++                                     &g_array_index (spans, GdkRectangle, spans->len - 1) : NULL;
++
++                if (last && last->y == rect.y && last->height == rect.height)
++                  {
++                    gint x2 = MAX (last->x + last->width, rect.x + rect.width);
++
++                    last->x     = MIN (last->x, rect.x);
++                    last->width = x2 - last->x;
++                  }
++                else
++                  {
++                    GdkRectangle span = { rect.x, rect.y, rect.width, rect.height };
++
++                    g_array_append_val (spans, span);
++                  }
++              }
+               break;
+             case GIMP_TEXT_DIRECTION_TTB_RTL:
+             case GIMP_TEXT_DIRECTION_TTB_RTL_UPRIGHT:
+@@ -1415,6 +1435,26 @@ gimp_text_tool_draw_selection (GimpDrawTool *draw_tool)
+   gimp_draw_tool_pop_group (draw_tool);
+ 
+   pango_layout_iter_free (iter);
++
++  /*  ChopGimp: the line highlights (filled: outside the stroke group)  */
++  {
++    GimpDisplayShell *shell = gimp_display_get_shell (GIMP_TOOL (draw_tool)->display);
++    guint             i;
++
++    for (i = 0; i < spans->len; i++)
++      {
++        GdkRectangle *r = &g_array_index (spans, GdkRectangle, i);
++
++        GimpCanvasItem *item = chopgimp_canvas_highlight_new (shell,
++                                                              r->x, r->y,
++                                                              r->width, r->height);
++
++        gimp_draw_tool_add_item (draw_tool, item);
++        g_object_unref (item);
++      }
++
++    g_array_unref (spans);
++  }
+ }
+ 
+ static gboolean
+@@ -1577,9 +1617,12 @@ gimp_text_tool_rectangle_change_complete (GimpToolRectangle *rectangle,
+ 
+           gimp_image_get_resolution (text_tool->image, &xres, &yres);
+ 
+-          if (g_object_get_data (G_OBJECT (text_tool), "chopgimp-scale-text"))
++          /*  ChopGimp (Photoshop): the handles of a point text scale the
++           *  type; those of a paragraph text resize its box, Ctrl scales
++           */
++          if (text_tool->proxy->box_mode == GIMP_TEXT_BOX_DYNAMIC ||
++              g_object_get_data (G_OBJECT (text_tool), "chopgimp-scale-text"))
+             {
+-              /*  ChopGimp: Ctrl + handle — scale the type, not the box  */
+               GimpText *proxy = text_tool->proxy;
+               gdouble   fx    = (x2 - x1) / MAX (1, gimp_item_get_width  (item));
+               gdouble   fy    = (y2 - y1) / MAX (1, gimp_item_get_height (item));
+diff --git a/menus/dialogs-menuitems.ui.in b/menus/dialogs-menuitems.ui.in
+index 16598a3..780971a 100644
+--- a/menus/dialogs-menuitems.ui.in
++++ b/menus/dialogs-menuitems.ui.in
+@@ -16,6 +16,8 @@
+     <item><attribute name="action">@GROUP@.dialogs-paragraph</attribute></item>
+     <item><attribute name="action">@GROUP@.dialogs-glyphs</attribute></item>
+     <item><attribute name="action">@GROUP@.dialogs-text-styles</attribute></item>
++    <item><attribute name="action">@GROUP@.dialogs-fonts-preview</attribute></item>
++    <item><attribute name="action">@GROUP@.dialogs-document-texts</attribute></item>
+     <item><attribute name="action">@GROUP@.dialogs-cursor</attribute></item>
+     <item><attribute name="action">@GROUP@.dialogs-sample-points</attribute></item>
+     <item><attribute name="action">@GROUP@.dialogs-symmetry</attribute></item>
+-- 
+2.53.0
+

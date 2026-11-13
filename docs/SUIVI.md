@@ -7,7 +7,7 @@ Plan complet : lots 0 à 6, idées en plus, calendrier de 17 étapes (voir l'his
 | 1 | 3.16.2 | Fin de la revue de code | ✅ livrée |
 | 2 | 3.17.0 | Apparence I (variantes, rem, accent, densité, polices, menu) | ✅ livrée |
 | 3 | 3.17.1 | Apparence II (préférences, espaces de travail, barre d'outils, écran d'accueil) | ✅ livrée |
-| 4 | 3.18.0 | Refonte de l'outil Texte | à faire |
+| 4 | 3.18.0 | Refonte de l'outil Texte | ✅ livrée |
 | 5 | 3.19.0 | PSD I | à faire |
 | 6 | 3.19.1 | PSD II | à faire |
 | 7 | 3.20.0 | Vectoriel I (PDF/AI) | à faire |
@@ -65,3 +65,30 @@ Plan complet : lots 0 à 6, idées en plus, calendrier de 17 étapes (voir l'his
 - **Écran d'accueil** :
   - affiché au démarrage ;
   - onglet Créer : 7 documents en un clic (Par défaut, A4, Instagram, Story, Bannière, 4K, Toile), vignettes plus grandes pour les images récentes.
+
+## 3.18.0 — Refonte de l'outil Texte
+
+- **Sélection** : un seul surlignage bleu par ligne, au lieu d'un carré par caractère.
+- **Plus de barre de style flottante sur le canevas** (désactivée par défaut). Ses réglages sont dans la barre d'options :
+  - police et taille ;
+  - couleur ;
+  - gras, italique, souligné, barré (G / I / S / B) ;
+  - alignement ;
+  - approche et interlignage ;
+  - cadre ;
+  - déformation ;
+  - panneaux.
+- **Poignées** : sur un texte de point (cadre dynamique), elles mettent le texte à l'échelle. Sur un texte de paragraphe, elles redimensionnent le cadre, et Ctrl met à l'échelle.
+- **Sélecteur de polices avec aperçu complet** (bouton ▾ du panneau Caractère) :
+  - chaque police est dessinée dans sa propre face, avec le texte du calque comme échantillon ;
+  - recherche et filtre par catégorie ;
+  - aperçu en direct sur le calque au survol et aux flèches.
+- **Nouveaux panneaux** :
+  - « Polices » : toutes les polices en rendu réel ;
+  - « Textes du document » : la liste des calques de texte ; un clic sélectionne le calque et passe en édition.
+- **Effets en un clic** dans le panneau Caractère : style de calque, contour, dégradé.
+- L'espace de travail Typographie affiche ces panneaux.
+
+**Reporté** :
+- curseurs des axes des polices variables. Les instances nommées sont déjà listées. Reporté à l'étape 17 ;
+- dérive de Ctrl+poignée sur un texte avec effets.
