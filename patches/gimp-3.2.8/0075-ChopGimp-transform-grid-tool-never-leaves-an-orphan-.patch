@@ -1,0 +1,72 @@
+From 86a298c4d5bb302b627e6609ac477c8f44104349 Mon Sep 17 00:00:00 2001
+From: ChopGimp <mathieu.redon@proton.me>
+Date: Fri, 13 Nov 2026 22:00:57 +0100
+Subject: [PATCH 75/75] ChopGimp: transform grid tool never leaves an orphan
+ grid bound to the tool options (crash on Ctrl while transforming)
+
+---
+ app/tools/gimptransformgridtool.c | 29 +++++++++++++++++++++++++++--
+ 1 file changed, 27 insertions(+), 2 deletions(-)
+
+diff --git a/app/tools/gimptransformgridtool.c b/app/tools/gimptransformgridtool.c
+index affc9c9..6cd9d6d 100644
+--- a/app/tools/gimptransformgridtool.c
++++ b/app/tools/gimptransformgridtool.c
+@@ -316,11 +316,33 @@ gimp_transform_grid_tool_init (GimpTransformGridTool *tg_tool)
+   tg_tool->strokes = g_ptr_array_new ();
+ }
+ 
++/*  ChopGimp: release the on-canvas grid. Its properties are bound to the
++ *  (shared) tool options: a grid left alive after its tool is gone keeps
++ *  receiving the options' changes (e.g. Ctrl/Shift constraints while
++ *  hovering another grid) and called its "changed" handler on the dead
++ *  tool → crash. Disconnect every handler pointing at the tool first.
++ */
++static void
++chopgimp_transform_grid_release_widget (GimpTransformGridTool *tg_tool)
++{
++  if (! tg_tool->widget)
++    return;
++
++  g_signal_handlers_disconnect_by_data (tg_tool->widget, tg_tool);
++
++  if (GIMP_DRAW_TOOL (tg_tool)->widget == tg_tool->widget)
++    gimp_draw_tool_set_widget (GIMP_DRAW_TOOL (tg_tool), NULL);
++
++  g_clear_object (&tg_tool->widget);
++}
++
+ static void
+ gimp_transform_grid_tool_finalize (GObject *object)
+ {
+   GimpTransformGridTool *tg_tool = GIMP_TRANSFORM_GRID_TOOL (object);
+ 
++  chopgimp_transform_grid_release_widget (tg_tool);
++
+   g_clear_object (&tg_tool->gui);
+   g_clear_pointer (&tg_tool->strokes, g_ptr_array_unref);
+ 
+@@ -389,7 +411,10 @@ gimp_transform_grid_tool_initialize (GimpTool     *tool,
+   /*  Recalculate the tool's transformation matrix  */
+   gimp_transform_tool_recalc_matrix (tr_tool, display);
+ 
+-  /*  Get the on-canvas gui  */
++  /*  Get the on-canvas gui (ChopGimp: never overwrite a live one)  */
++  if (tg_tool->widget && gimp_draw_tool_is_active (GIMP_DRAW_TOOL (tool)))
++    gimp_draw_tool_stop (GIMP_DRAW_TOOL (tool));
++  chopgimp_transform_grid_release_widget (tg_tool);
+   tg_tool->widget = gimp_transform_grid_tool_get_widget (tg_tool);
+ 
+   gimp_transform_grid_tool_hide_selected_objects (tg_tool, objects);
+@@ -1183,7 +1208,7 @@ gimp_transform_grid_tool_halt (GimpTransformGridTool *tg_tool)
+     gimp_draw_tool_stop (GIMP_DRAW_TOOL (tg_tool));
+ 
+   gimp_draw_tool_set_widget (GIMP_DRAW_TOOL (tg_tool), NULL);
+-  g_clear_object (&tg_tool->widget);
++  chopgimp_transform_grid_release_widget (tg_tool);
+ 
+   g_clear_pointer (&tg_tool->filters, g_hash_table_unref);
+   g_clear_pointer (&tg_tool->preview_drawables, g_list_free);
+-- 
+2.53.0
+

@@ -9,7 +9,8 @@ Plan complet : lots 0 à 6, idées en plus, calendrier de 17 étapes (voir l'his
 | 3 | 3.17.1 | Apparence II (préférences, espaces de travail, barre d'outils, écran d'accueil) | ✅ livrée |
 | 4 | 3.18.0 | Refonte de l'outil Texte | ✅ livrée |
 | 5 | 3.19.0 | PSD I | ✅ livrée |
-| 6 | 3.19.1 | PSD II | à faire |
+| 5 bis | 3.19.1 | Traceur de plantage + correctif (hors plan) | ✅ livrée |
+| 6 | 3.19.2 | PSD II | à faire |
 | 7 | 3.20.0 | Vectoriel I (PDF/AI) | à faire |
 | 8 | 3.20.1 | Vectoriel II (EPS, SVG, aperçus, Placer) | à faire |
 | 9 | 3.20.2 | Vectoriel III (SVG natif, export SVG) | à faire |
@@ -118,3 +119,20 @@ Plan complet : lots 0 à 6, idées en plus, calendrier de 17 étapes (voir l'his
 - calques de réglage et de remplissage ;
 - objets dynamiques ;
 - contour intérieur ou extérieur d'une forme, rendu centré.
+
+## 3.19.1 — Traceur de plantage (hors plan)
+
+- **Journal de session** : la sortie de ChopGimp et de ses plug-ins est copiée, horodatée, dans `<dossier GIMP>/logs/session-AAAAMMJJ-HHMMSS.log`. Les 10 dernières sessions sont gardées. Les actions, les plug-ins lancés et les images ouvertes y sont notés.
+- **Rapport de plantage fiable** (`app/chopgimp-crash.c`) :
+  - il est écrit pour SIGSEGV, SIGBUS, SIGFPE, SIGILL et SIGABRT, quel que soit le fil, avant le traitement de GIMP ;
+  - il n'utilise que des appels sûrs dans un signal, et une pile de secours ;
+  - il contient le signal, le fil, la pile des plug-ins en cours, les 16 dernières actions, les images ouvertes, la mémoire, la pile d'appels et la fin du journal ;
+  - il est enregistré dans `CrashLog/chopgimp-crash-*.txt`.
+- **Au démarrage suivant**, une fenêtre « ChopGimp s'est arrêté brutalement » propose de copier le rapport ou d'ouvrir le dossier.
+- **`tools/crash_symbolize.sh <rapport> [commit Debug]`** traduit la pile en fonction, fichier et ligne, avec les symboles de l'extension `org.cen_na.ChopGimp.Debug` (via eu-addr2line).
+- **Test** : `CHOPGIMP_CRASH_TEST=N` (ou `tN` pour un fil de calcul) fait planter volontairement, pour le banc de test uniquement.
+- **Plantage corrigé** : Ctrl ou Maj pendant une transformation, après le passage Déplacement → Transformation. Une ancienne grille restait liée aux réglages de l'outil et appelait son outil détruit (`gimp_transform_grid_tool_widget_changed`). Les grilles sont maintenant toujours libérées et débranchées.
+- **Import PSD** :
+  - procédure de vignette propre au plug-in (l'erreur au démarrage disparaît) ;
+  - une police de remplacement mémorisée qui est un alias (Sans-serif) est reconnue.
+- **Barre d'options de la transformation** : libellés lisibles pour les contraintes.

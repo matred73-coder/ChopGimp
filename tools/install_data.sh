@@ -17,6 +17,7 @@ PLUG="$DEST/lib/gimp/3.0/plug-ins"
 TMP="$(mktemp -d)"
 
 echo "== ChopGimp $(cat "$SRC/VERSION") → $DEST"
+mkdir -p "$DEST/share/chopgimp" && install -m 644 "$SRC/VERSION" "$DEST/share/chopgimp/VERSION"   # lu par le traceur de plantage
 
 # 1. Générateurs (fichiers dérivés)
 python3 "$SRC/tools/build_layout.py"

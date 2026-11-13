@@ -974,7 +974,10 @@
                         "../patches/gimp-3.2.8/0070-ChopGimp-end-of-review-docks-own-window-re-clamp-sty.patch",
                         "../patches/gimp-3.2.8/0071-ChopGimp-appearance-variants-palettes-accent-density.patch",
                         "../patches/gimp-3.2.8/0072-ChopGimp-workspaces-edit-toolbar-Apparence-preferenc.patch",
-                        "../patches/gimp-3.2.8/0073-ChopGimp-text-tool-rework-line-highlights-no-canvas-.patch"
+                        "../patches/gimp-3.2.8/0073-ChopGimp-text-tool-rework-line-highlights-no-canvas-.patch",
+                        "../patches/gimp-3.2.8/0074-ChopGimp-session-log-and-async-signal-safe-crash-rep.patch",
+                        "../patches/gimp-3.2.8/0075-ChopGimp-transform-grid-tool-never-leaves-an-orphan-.patch",
+                        "../patches/gimp-3.2.8/0076-ChopGimp-crash-report-keeps-the-stack-of-running-plu.patch"
                     ]
                 }
             ],

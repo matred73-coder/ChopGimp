@@ -37,6 +37,7 @@ sys.path.insert(0, HERE)
 import psdparse  # noqa: E402
 
 PROC = "file-chopgimp-psd-load"
+PROC_THUMB = "file-chopgimp-psd-load-thumb"
 ORIGINALS = "⟲ Originaux (pixels Photoshop)"
 SETTINGS = "chopgimp-psd.json"
 DEFAULT_FONT = "Sans-serif"
@@ -135,8 +136,11 @@ class Fonts:
         return None
 
     def _lookup(self, psname):
-        if psname in self.memory and self._find(self.memory[psname]):
-            return self._find(self.memory[psname]), True
+        if psname in self.memory:
+            chosen = self.memory[psname]
+            hit = self._find(chosen)
+            if hit or Gimp.Font.get_by_name(chosen):    # alias (Sans-serif…) compris
+                return hit or chosen, True
         if psname in self.ps:
             fam, style = self.ps[psname]
             hit = self._find(fam + " " + style, *(fam + " " + r for r in self.REGULAR)
@@ -715,11 +719,25 @@ def load(procedure, run_mode, file, metadata, flags, config, data):
     ]), flags
 
 
+def thumbnail(procedure, file, size, config, data):
+    """Vignette : celle de l'import de GIMP (image composite du PSD)."""
+    res = pdb_run("file-psd-load-thumb", file=file, **{"thumb-size": size})
+    if res is None or res.index(0) != Gimp.PDBStatusType.SUCCESS:
+        return procedure.new_return_values(Gimp.PDBStatusType.EXECUTION_ERROR,
+                                           GLib.Error("Vignette PSD impossible"))
+    return res
+
+
 class ChopGimpPSD(Gimp.PlugIn):
     def do_query_procedures(self):
-        return [PROC]
+        return [PROC, PROC_THUMB]
 
     def do_create_procedure(self, name):
+        if name == PROC_THUMB:
+            procedure = Gimp.ThumbnailProcedure.new(self, name, Gimp.PDBProcType.PLUGIN, thumbnail, None)
+            procedure.set_documentation("Vignette d'un PSD/PSB", "Délègue à file-psd-load-thumb.", name)
+            procedure.set_attribution("ChopGimp", "ChopGimp", "2026")
+            return procedure
         procedure = Gimp.LoadProcedure.new(self, name, Gimp.PDBProcType.PLUGIN, load, None)
         procedure.set_menu_label("Photoshop (calques modifiables)")
         procedure.set_documentation("Ouvre un PSD/PSB en gardant textes, formes et effets modifiables",
@@ -730,7 +748,7 @@ class ChopGimpPSD(Gimp.PlugIn):
         procedure.set_extensions("psd,psb")
         procedure.set_magics("0,string,8BPS")
         procedure.set_priority(-1)
-        procedure.set_thumbnail_loader("file-psd-load-thumb")
+        procedure.set_thumbnail_loader(PROC_THUMB)
         return procedure
 
 
