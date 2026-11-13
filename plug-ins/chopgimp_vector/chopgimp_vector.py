@@ -72,7 +72,10 @@ def copy_vector_style(src, dst):
                            ("get_stroke_dash_pattern", "set_stroke_dash_pattern"),
                            ("get_stroke_dash_offset", "set_stroke_dash_offset")]:
         try:
-            getattr(dst, setter)(getattr(src, getter)())
+            value = getattr(src, getter)()
+            if getter == "get_stroke_dash_pattern" and isinstance(value, tuple):
+                value = value[-1]          # (ok, tirets)
+            getattr(dst, setter)(value)
         except Exception:
             pass
     dst.set_opacity(src.get_opacity())
@@ -159,6 +162,11 @@ def pathfinder(image, drawables, op):
     if op == 4:
         res = call("chopgimp-path-divide", paths=bottom_first)
         n = res.index(1) if res else 0
+        if n == 0:
+            # rien à diviser (chemins ouverts, échec du calcul) : on ne
+            # touche pas aux formes
+            remove_paths(image, temp)
+            return "Impossible de diviser ces formes (chemins fermés nécessaires)."
         pieces = image.get_paths()[:n]
         group = Gimp.GroupLayer.new(image, "Division")
         image.insert_layer(group, top.get_parent(), image.get_item_position(top))
@@ -239,10 +247,10 @@ def contour(image, drawables, name, A):
             before = call("chopgimp-path-info", path=path).index(1)
             res = call("chopgimp-path-simplify", path=path, tolerance=A("tolerance"))
             if res and res.index(1):
-                image.insert_path(res.index(1), None, 0)
-                after = call("chopgimp-path-info", path=res.index(1)).index(1)
-                image.remove_path(res.index(1))
-                report.append("%d → %d nœuds" % (before, after))
+                # (le chemin résultat n'est inséré qu'une fois, plus bas)
+                info = call("chopgimp-path-info", path=res.index(1))
+                if info:
+                    report.append("%d → %d nœuds" % (before, info.index(1)))
         elif name == "chopgimp-contour-round":
             res = call("chopgimp-path-round-corners", path=path, radius=A("radius"),
                        **{"selected-only": False})

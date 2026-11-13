@@ -157,9 +157,18 @@ class PhotoGimpPS(Gimp.PlugIn):
                 for l in layers:
                     add_filter(l, op, label, props, color)
             elif name == "photogimp-style-clear":
+                # seulement les filtres de style (pas le flou, les courbes…
+                # posés par l'utilisateur)
+                labels = {v[0] for v in STYLES.values()}
                 for l in layers:
                     for f in list(l.get_filters() or []):
-                        f.delete()
+                        n = f.get_name() or ""
+                        if n in labels or n.startswith("Style : "):
+                            f.delete()
+                    try:
+                        l.detach_parasite("chopgimp-style")
+                    except Exception:
+                        pass
             elif name in ADJUST:
                 if not layers:
                     return fail(procedure, "Sélectionnez un calque.")
@@ -186,6 +195,17 @@ class PhotoGimpPS(Gimp.PlugIn):
     # composition « Écrêter à l'arrière-plan » sur le calque écrêté.
     def clipping_toggle(self, image, layer):
         parent = layer.get_parent()
+        if (parent and parent.get_name().startswith(CLIP_GROUP_PREFIX) and
+                layer.get_composite_mode() != Gimp.LayerCompositeMode.CLIP_TO_BACKDROP):
+            # C'est la base : défaire tout l'écrêtage (sinon les calques
+            # écrêtés n'auraient plus rien sur quoi s'afficher)
+            gparent = parent.get_parent()
+            pos = image.get_item_position(parent)
+            for c in reversed(list(parent.get_children())):
+                c.set_composite_mode(Gimp.LayerCompositeMode.AUTO)
+                image.reorder_item(c, gparent, pos + 1)
+            image.remove_layer(parent)
+            return None
         if parent and parent.get_name().startswith(CLIP_GROUP_PREFIX):
             # Annuler : sortir le calque du groupe, défaire le groupe s'il ne reste que la base
             layer.set_composite_mode(Gimp.LayerCompositeMode.AUTO)

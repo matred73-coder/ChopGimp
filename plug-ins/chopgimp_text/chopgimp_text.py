@@ -45,8 +45,18 @@ def fail(procedure, msg):
         GLib.Error.new_literal(GLib.quark_from_string("chopgimp"), msg, 0))
 
 
+def is_live_text(d):
+    """Un calque de texte encore modifiable (pas pixellisé)."""
+    if not isinstance(d, Gimp.TextLayer):
+        return False
+    try:
+        return not d.is_rasterized()
+    except Exception:
+        return True
+
+
 def text_layers(drawables):
-    return [d for d in drawables if isinstance(d, Gimp.TextLayer)]
+    return [d for d in drawables if is_live_text(d)]
 
 
 def walk(layers):
@@ -221,10 +231,16 @@ def fx_dialog(title, layer, rows, make_spec):
             return False
         pending[0] = GLib.timeout_add(120, run)
 
-    for _, widget in rows:
+    def connect_all(widget):
         for sig in ("value-changed", "changed", "toggled"):
             if GObject.signal_lookup(sig, type(widget)):
                 widget.connect(sig, preview)
+        if isinstance(widget, Gtk.Box):          # ex. les boutons radio
+            for child in widget.get_children():
+                connect_all(child)
+
+    for _, widget in rows:
+        connect_all(widget)
     dialog.show_all()
     preview()
     resp = dialog.run()
@@ -338,7 +354,7 @@ def find_replace_dialog(image):
         count = layers = 0
         image.undo_group_start()
         for layer in walk(image.get_layers()):
-            if not isinstance(layer, Gimp.TextLayer):
+            if not is_live_text(layer):
                 continue
             text = layer.get_text() or ""
             new, n = rx.subn(repl.get_text().replace("\\", "\\\\"), text)
