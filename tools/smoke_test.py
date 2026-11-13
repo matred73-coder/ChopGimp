@@ -466,7 +466,12 @@ try:
         psd_path = os.path.join(TMP, "test.psd")
         runpy.run_path(os.path.join(repo, "tools", "fixtures", "make_psd.py"))["write"](psd_path)
         im = Gimp.file_load(Gimp.RunMode.NONINTERACTIVE, Gio.File.new_for_path(psd_path))
-        top = {l.get_name(): l for l in im.get_layers()}
+        def walk_all(ls):
+            for l in ls:
+                yield l
+                if isinstance(l, Gimp.GroupLayer) and not l.get_name().startswith("⟲"):
+                    yield from walk_all(l.get_children())
+        top = {l.get_name(): l for l in walk_all(im.get_layers())}
         texts = [l for l in top.values() if isinstance(l, Gimp.TextLayer)]
         report(len(texts) == 3, "PSD : 3 textes modifiables", ", ".join(sorted(l.get_name() for l in texts)))
         titre = top.get("Titre")
@@ -485,11 +490,43 @@ try:
         report(photo is not None and photo.get_mask() is not None and
                any(p.get_name().startswith("Masque vectoriel") for p in im.get_paths()),
                "PSD : masque vectoriel → masque + chemin")
-        fx = [f.get_name() for f in (top["Effets"].get_filters() or [])] if "Effets" in top else []
+        fx = [f.get_name() for f in (top["Effets"].get_filters() or []) if f.get_name().startswith("Style : ")] if "Effets" in top else []
         report(len(fx) == 3, "PSD : effets lfx2 → styles ChopGimp", ", ".join(fx))
         orig = [l for l in im.get_layers() if l.get_name().startswith("⟲")]
-        report(len(orig) == 1 and not orig[0].get_visible() and len(orig[0].get_children()) == 4,
-               "PSD : originaux gardés dans un groupe masqué")
+        report(len(orig) == 1 and not orig[0].get_visible() and len(orig[0].get_children()) == 10,
+               "PSD : originaux gardés dans un groupe masqué",
+               str(len(orig[0].get_children())) if orig else "absent")
+        ops = {n: [f.get_operation_name() for f in (l.get_filters() or [])] for n, l in top.items()}
+        report("gimp:levels" in ops.get("◐ Niveaux", []) and "gimp:curves" in ops.get("◐ Courbes", []) and
+               "gimp:hue-saturation" in ops.get("◐ Teinte", []),
+               "PSD : réglages Niveaux, Courbes, Teinte → filtres modifiables")
+        report("gimp:brightness-contrast" in ops.get("Effets", []),
+               "PSD : réglage écrêté → filtre sur le calque de base")
+        fill = top.get("Remplissage")
+        report(isinstance(fill, Gimp.VectorLayer) and abs(fill.get_opacity() - 30.2) < 1,
+               "PSD : calque de remplissage → calque vectoriel")
+        logo = top.get("Logo")
+        report(isinstance(logo, Gimp.LinkLayer) and logo.get_offsets()[1:] == (20, 520),
+               "PSD : objet dynamique → calque lié placé",
+               str(logo.get_offsets()[1:]) if logo else "absent")
+        # aller-retour : export PSD (formes + textes modifiables) puis réimport
+        out_psd = os.path.join(TMP, "aller-retour.psd")
+        ep = pdb.lookup_procedure("file-psd-export")
+        ecfg = ep.create_config()
+        ecfg.set_property("run-mode", Gimp.RunMode.NONINTERACTIVE)
+        ecfg.set_property("image", im)
+        ecfg.set_property("file", Gio.File.new_for_path(out_psd))
+        ecfg.set_property("editable-shapes", True)
+        ecfg.set_property("editable-text", True)
+        ep.run(ecfg)
+        im2 = Gimp.file_load(Gimp.RunMode.NONINTERACTIVE, Gio.File.new_for_path(out_psd))
+        all2 = {l.get_name(): l for l in walk_all(im2.get_layers())}
+        report(isinstance(all2.get("Rectangle"), Gimp.VectorLayer) and
+               all2["Rectangle"].get_enable_stroke(),
+               "PSD : aller-retour, forme toujours vectorielle", type(all2.get("Rectangle")).__name__)
+        report(isinstance(all2.get("Police absente"), Gimp.TextLayer) and
+               all2["Police absente"].get_text() == "Police absente",
+               "PSD : aller-retour, texte toujours modifiable", type(all2.get("Police absente")).__name__)
         par = im.get_parasite("chopgimp-psd-report")
         txt = bytes(b & 255 for b in par.get_data()).decode() if par else ""
         report("FooBarSans-Regular" in txt, "PSD : police absente signalée dans le rapport")

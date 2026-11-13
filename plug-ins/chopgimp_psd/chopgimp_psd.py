@@ -22,6 +22,7 @@ import json
 import math
 import os
 import re
+import struct
 import subprocess
 import sys
 
@@ -30,7 +31,7 @@ gi.require_version("Gimp", "3.0")
 gi.require_version("GimpUi", "3.0")
 gi.require_version("Gtk", "3.0")
 gi.require_version("Gegl", "0.4")
-from gi.repository import Gimp, GimpUi, Gegl, GLib, GObject, Gtk
+from gi.repository import Gimp, GimpUi, Gegl, Gio, GLib, GObject, Gtk
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
@@ -496,6 +497,232 @@ def apply_effects(image, L, layer, fx, psd, report):
             report.ignore(L.name, label)
 
 
+# ─── calques de réglage → filtres modifiables ───────────────────────────
+
+ADJ_PREFIX = "◐ "
+
+
+def new_filter(drawable, op, name, props):
+    f = Gimp.DrawableFilter.new(drawable, op, name)
+    cfg = f.get_config()
+    for k, v in props.items():
+        try:
+            cfg.set_property(k, v)
+        except (TypeError, ValueError):
+            pass
+    f.update()
+    drawable.append_filter(f)
+    return f
+
+
+def gimp_curve(points):
+    c = Gimp.Curve.new()
+    c.set_curve_type(Gimp.CurveType.SMOOTH)
+    c.clear_points()
+    for x, y in sorted(points):
+        c.add_point(max(0.0, min(1.0, x / 255.0)), max(0.0, min(1.0, y / 255.0)))
+    return c
+
+
+CHANNELS = [Gimp.HistogramChannel.VALUE, Gimp.HistogramChannel.RED,
+            Gimp.HistogramChannel.GREEN, Gimp.HistogramChannel.BLUE]
+
+
+def adjustment_filters(target, adj, name):
+    """Pose le réglage Photoshop comme filtre(s) non destructif(s) sur target.
+    → (nombre de filtres, texte d'approximation ou None)."""
+    k = adj["kind"]
+    n, approx = 0, None
+    if k == "levels":
+        for ch, (ilo, ihi, olo, ohi, g) in zip(CHANNELS, adj["records"]):
+            if (ilo, ihi, olo, ohi, round(g, 2)) == (0, 255, 0, 255, 1.0):
+                continue
+            new_filter(target, "gimp:levels", name, {
+                "channel": ch, "low-input": ilo / 255.0, "high-input": ihi / 255.0,
+                "gamma": max(0.1, min(10.0, g)), "low-output": olo / 255.0, "high-output": ohi / 255.0})
+            n += 1
+    elif k == "curves":
+        for ch, pts in sorted(adj["curves"].items()):
+            if len(pts) < 2 or all(a == b for a, b in pts):
+                continue
+            new_filter(target, "gimp:curves", name, {"channel": CHANNELS[ch], "curve": gimp_curve(pts)})
+            n += 1
+    elif k == "brightness":
+        new_filter(target, "gimp:brightness-contrast", name, {
+            "brightness": max(-1.0, min(1.0, adj["brightness"] / 150.0)),
+            "contrast": max(-1.0, min(1.0, adj["contrast"] / 100.0))})
+        n = 1
+        approx = "luminosité/contraste : échelle de GIMP, rendu proche"
+    elif k == "hue-saturation":
+        new_filter(target, "gimp:hue-saturation", name, {
+            "hue": adj["hue"] / 180.0, "saturation": adj["saturation"] / 100.0,
+            "lightness": adj["lightness"] / 100.0})
+        n = 1
+    elif k == "colorize":
+        new_filter(target, "gimp:colorize", name, {
+            "hue": (adj["hue"] % 360) / 360.0, "saturation": adj["saturation"] / 100.0,
+            "lightness": adj["lightness"] / 100.0})
+        n = 1
+    elif k == "color-balance":
+        for rng, vals in ((Gimp.TransferMode.SHADOWS, adj["shadows"]),
+                          (Gimp.TransferMode.MIDTONES, adj["midtones"]),
+                          (Gimp.TransferMode.HIGHLIGHTS, adj["highlights"])):
+            if any(vals):
+                new_filter(target, "gimp:color-balance", name, {
+                    "range": rng, "cyan-red": vals[0] / 100.0, "magenta-green": vals[1] / 100.0,
+                    "yellow-blue": vals[2] / 100.0, "preserve-luminosity": adj["preserve"]})
+                n += 1
+    elif k == "invert":
+        new_filter(target, "gegl:invert-gamma", name, {})
+        n = 1
+    elif k == "posterize":
+        new_filter(target, "gimp:posterize", name, {"levels": max(2, adj["levels"])})
+        n = 1
+    elif k == "threshold":
+        new_filter(target, "gimp:threshold", name, {"low": adj["level"] / 255.0, "high": 1.0})
+        n = 1
+    elif k == "exposure":
+        new_filter(target, "gegl:exposure", name, {"exposure": adj["exposure"],
+                                                   "black-level": adj["offset"]})
+        n = 1
+        if abs(adj["gamma"] - 1.0) > 1e-3:
+            new_filter(target, "gimp:levels", name, {"gamma": 1.0 / max(0.1, adj["gamma"])})
+            n = 2
+    elif k == "black-white":
+        tot = adj["red"] + adj["green"] + adj["blue"] or 1.0
+        new_filter(target, "gegl:mono-mixer", name, {
+            "red": adj["red"] / tot, "green": adj["green"] / tot, "blue": adj["blue"] / tot,
+            "preserve-luminosity": False})
+        n = 1
+        approx = "noir et blanc : 3 couleurs sur 6 (jaune, cyan, magenta ignorés)"
+        if adj["tint"]:
+            approx += ", teinte ignorée"
+    elif k == "channel-mixer":
+        rows = adj["rows"]
+        if adj["mono"]:
+            r = rows[0]
+            new_filter(target, "gegl:mono-mixer", name, {"red": r[0] / 100.0, "green": r[1] / 100.0,
+                                                         "blue": r[2] / 100.0})
+        else:
+            props = {}
+            for i, out in enumerate("rgb"):
+                for j, inn in enumerate("rgb"):
+                    props["%s%s-gain" % (out, inn)] = rows[i][j] / 100.0
+            new_filter(target, "gegl:channel-mixer", name, props)
+        n = 1
+    elif k == "vibrance":
+        new_filter(target, "gegl:saturation", name, {
+            "scale": max(0.0, 1.0 + (adj["vibrance"] * 0.5 + adj["saturation"]) / 100.0)})
+        n = 1
+        approx = "vibrance rendue par une saturation"
+    return n, approx
+
+
+def build_adjustment(image, L, adj, layers_below, report):
+    """Un calque de réglage Photoshop agit sur ce qui est dessous :
+    écrêté → filtre sur le calque de base ; sinon groupe « ◐ » qui contient
+    les calques du dessous (comme Calque > Nouveau calque de réglage)."""
+    name = L.name
+    if adj is None or adj["kind"] == "unsupported":
+        report.ignore(name, "réglage %s non repris" % (adj or {}).get("key", "?"))
+        return None
+    layer = L.gimp
+    parent = layer.get_parent()
+    sibs = list(parent.get_children() if parent else image.get_layers())
+    idx = sibs.index(layer)
+    below = sibs[idx + 1:]
+    if L.clipping and below:
+        target = below[0]
+        created = None
+    else:
+        if not below:
+            report.ignore(name, "réglage sans rien en dessous")
+            return None
+        created = Gimp.GroupLayer.new(image, ADJ_PREFIX + name)
+        image.insert_layer(created, parent, image.get_item_position(below[0]))
+        for l in below:
+            image.reorder_item(l, created, len(created.get_children()))
+        target = created
+    n, approx = adjustment_filters(target, adj, name)
+    if n == 0:
+        report.ok(name, "réglage neutre (aucun effet)")
+    else:
+        for f in target.get_filters() or []:
+            if f.get_name() == name:
+                f.set_opacity(L.opacity / 255.0)
+                f.set_visible(L.visible)
+        report.ok(name, "réglage modifiable (%s)" % adj["kind"])
+    if approx:
+        report.approximate(name, approx)
+    if layer.get_mask() is not None:
+        report.approximate(name, "masque du réglage non repris (le réglage agit partout)")
+    return created
+
+
+# ─── calque de remplissage couleur → calque vectoriel ───────────────────
+
+def build_fill(image, L, report):
+    sh = L.shape()
+    if sh is not None and sh.paths:
+        return None                     # forme : traitée par build_shape
+    data = L.blocks.get("SoCo")
+    if data is None:
+        report.approximate(L.name, "remplissage %s : pixels gardés"
+                           % ("dégradé" if "GdFl" in L.blocks else "motif"))
+        return None
+    try:
+        rgb = psdparse._color(psdparse.descriptor_block(data, 0))
+    except (ValueError, struct.error):
+        rgb = None
+    if rgb is None:
+        return None
+    w, h = image.get_width(), image.get_height()
+    path = Gimp.Path.new(image, L.name)
+    path.stroke_new_from_points(Gimp.PathStrokeType.BEZIER,
+                                [0, 0, 0, 0, 0, 0, w, 0, w, 0, w, 0, w, h, w, h, w, h, 0, h, 0, h, 0, h],
+                                True)
+    image.insert_path(path, None, -1)
+    vl = Gimp.VectorLayer.new(image, path)
+    vl.set_name(L.name)
+    vl.set_enable_fill(True)
+    vl.set_fill_color(gegl_color(rgb))
+    vl.set_enable_stroke(False)
+    image.insert_layer(vl, L.gimp.get_parent(), image.get_item_position(L.gimp))
+    vl.refresh()
+    report.ok(L.name, "calque de remplissage couleur modifiable")
+    return vl
+
+
+# ─── objets dynamiques → calques liés ───────────────────────────────────
+
+def build_smart(image, L, so, files, cache_dir, report):
+    entry = files.get(so["uid"])
+    if entry is None:
+        report.ignore(L.name, "objet dynamique lié à un fichier externe (pixels gardés)")
+        return None
+    fname, data = entry
+    safe = re.sub(r"[^\w.\- ]", "_", fname or "objet") or "objet"
+    os.makedirs(cache_dir, exist_ok=True)
+    path = os.path.join(cache_dir, "%s_%s" % (re.sub(r"\W", "", so["uid"])[:12], safe))
+    with open(path, "wb") as f:
+        f.write(data)
+    try:
+        ll = Gimp.LinkLayer.new(image, Gio.File.new_for_path(path))
+    except Exception as e:
+        report.ignore(L.name, "objet dynamique illisible (%s)" % e)
+        return None
+    if ll is None:
+        report.ignore(L.name, "objet dynamique illisible")
+        return None
+    ll.set_name(L.name)
+    image.insert_layer(ll, L.gimp.get_parent(), image.get_item_position(L.gimp))
+    c = so["corners"]
+    if len(c) == 8:
+        ll.transform_perspective(c[0], c[1], c[2], c[3], c[6], c[7], c[4], c[5])
+    report.ok(L.name, "objet dynamique → calque lié (%s, extrait dans le cache)" % fname)
+    return ll
+
+
 # ─── assemblage ─────────────────────────────────────────────────────────
 
 def pdb_run(name, **kw):
@@ -550,6 +777,13 @@ class Originals:
                 nm.edit_fill(Gimp.FillType.FOREGROUND)
                 Gimp.context_pop()
             Gimp.Selection.none(self.image)
+        self.stash(layer)
+
+    def stash(self, layer):
+        if self.group is None:
+            self.group = Gimp.GroupLayer.new(self.image, ORIGINALS)
+            self.image.insert_layer(self.group, None, 0)
+            self.group.set_visible(False)
         self.image.reorder_item(layer, self.group, 0)
         layer.set_visible(True)
         layer.set_name("⟲ " + layer.get_name())
@@ -557,30 +791,34 @@ class Originals:
 
 def convert(image, path, run_mode, report):
     psd = psdparse.parse(path)
+    # identifiant Photoshop → calque GIMP ; l'import de GIMP donne parfois
+    # le même identifiant au groupe d'écrêtage qu'il crée : le vrai calque
+    # l'emporte sur le groupe
     by_id = {}
     for lay in walk(image.get_layers()):
-        by_id.setdefault(lay.get_tattoo(), lay)
+        t = lay.get_tattoo()
+        if t not in by_id or (isinstance(by_id[t], Gimp.GroupLayer) and
+                              not isinstance(lay, Gimp.GroupLayer)):
+            by_id[t] = lay
 
     res = image.get_resolution()[2] if hasattr(image, "get_resolution") else 72.0
-    todo = []
+    todo, adjustments = [], []
     for L in psd.layers:
         if L.section in (1, 2, 3) or L.id not in by_id:
             continue
         L.gimp = by_id[L.id]
+        adj = L.adjustment()
+        if adj is not None:
+            adjustments.append((L, adj))
+            continue
         t = L.text() if "TySh" in L.blocks else None
         sh = L.shape() if ("vmsk" in L.blocks or "vsms" in L.blocks) else None
+        so = L.smart_object()
+        fill = any(k in L.blocks for k in ("SoCo", "GdFl", "PtFl")) and not (sh and sh.is_shape)
         fx = L.effects()
-        if t or sh or fx:
-            todo.append((L, t, sh, fx))
-        for k, label in (("SoLd", "objet dynamique"), ("PlLd", "objet dynamique"),
-                         ("brit", "réglage luminosité"), ("levl", "réglage niveaux"),
-                         ("curv", "réglage courbes"), ("hue2", "réglage teinte/saturation"),
-                         ("blnc", "réglage balance des couleurs"), ("GdFl", "calque de dégradé"),
-                         ("PtFl", "calque de motif")):
-            if k in L.blocks and not (sh and k in ("GdFl", "PtFl")):
-                report.ignore(L.name, label + " (pixels gardés, prévu en 3.19.1)")
-                break
-    if not todo:
+        if t or sh or fx or so or fill:
+            todo.append((L, t, sh, fx, so, fill))
+    if not todo and not adjustments:
         return psd
 
     settings = settings_load()
@@ -589,7 +827,7 @@ def convert(image, path, run_mode, report):
     # polices absentes : choix d'un remplacement avant de construire
     if run_mode == Gimp.RunMode.INTERACTIVE:
         missing = []
-        for L, t, _, _ in todo:
+        for L, t, *_ in todo:
             for _, st in (t.runs if t else []):
                 ps = st.get("font")
                 if ps and ps not in missing and not fonts.lookup(ps)[1]:
@@ -604,14 +842,23 @@ def convert(image, path, run_mode, report):
                 settings_save(settings)
 
     keep = Originals(image)
-    for L, t, sh, fx in todo:
+    files = None
+    cache_dir = os.path.join(Gimp.directory(), "psd-objets",
+                             re.sub(r"[^\w.\- ]", "_", os.path.basename(path)))
+    for L, t, sh, fx, so, fill in todo:
         new = None
         try:
             if t:
                 new = build_text(image, L, t, fonts, report, res)
+            elif so:
+                if files is None:
+                    files = psdparse.linked_files(psd)
+                new = build_smart(image, L, so, files, cache_dir, report)
             elif sh and sh.is_shape:
                 new = build_shape(image, L, sh, report)
-            elif sh:
+            elif fill:
+                new = build_fill(image, L, report)
+            if sh and not sh.is_shape:
                 apply_vector_mask(image, L, sh, report)
         except Exception as e:      # un calque raté ne bloque pas les autres
             report.ignore(L.name, "conversion impossible (%s)" % e)
@@ -626,6 +873,15 @@ def convert(image, path, run_mode, report):
                 apply_effects(image, L, target, fx, psd, report)
             except Exception as e:
                 report.ignore(L.name, "effets (%s)" % e)
+
+    # réglages en dernier, du bas vers le haut : chacun regroupe ce qui est
+    # en dessous de lui (y compris les réglages déjà convertis)
+    for L, adj in adjustments:
+        try:
+            build_adjustment(image, L, adj, None, report)
+            keep.stash(L.gimp)
+        except Exception as e:
+            report.ignore(L.name, "réglage (%s)" % e)
     return psd
 
 

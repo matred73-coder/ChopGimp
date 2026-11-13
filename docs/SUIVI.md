@@ -11,7 +11,7 @@ Plan complet : lots 0 à 6, idées en plus, calendrier de 17 étapes (voir l'his
 | 5 | 3.19.0 | PSD I | ✅ livrée |
 | 5 bis | 3.19.1 | Traceur de plantage + correctif (hors plan) | ✅ livrée |
 | 5 ter | 3.19.2 | Retours d'utilisation (remplissage, filtres, styles, sélection auto) | ✅ livrée |
-| 6 | 3.19.3 | PSD II | à faire |
+| 6 | 3.19.3 | PSD II | ✅ livrée |
 | 7 | 3.20.0 | Vectoriel I (PDF/AI) | à faire |
 | 8 | 3.20.1 | Vectoriel II (EPS, SVG, aperçus, Placer) | à faire |
 | 9 | 3.20.2 | Vectoriel III (SVG natif, export SVG) | à faire |
@@ -174,3 +174,25 @@ Signalés le 2026-11-13 en utilisant ChopGimp sur une affiche (scan 2480×3510) 
 - **Fenêtres de plug-ins passant derrière ChopGimp** (par exemple « Polices absentes » à l'ouverture d'un PSD), qui donnaient l'impression d'un logiciel figé. Toutes sont maintenant rattachées à la fenêtre de l'image (`libgimp/gimpui.c`).
 - **Rapport de plantage** : les plug-ins terminés ne restent plus « en cours ».
 - **Barre d'options de la sélection rectangulaire** : libellés lisibles.
+
+## 3.19.3 — Import PSD II et export PSD
+
+- **Calques de réglage → filtres modifiables** :
+  - Niveaux (par couche, avec gamma) et Courbes (vraie courbe par couche) ;
+  - Luminosité/Contraste, Teinte/Saturation, Coloriser, Balance des couleurs (tons foncés, moyens, clairs) ;
+  - Négatif, Isohélie, Seuil, Exposition, Mélangeur de couches ;
+  - Noir et blanc (3 couleurs sur 6) et Vibrance, rendus de façon approchée.
+- **Placement des réglages** :
+  - comme dans Photoshop, un réglage agit sur ce qui est en dessous : il devient un groupe « ◐ nom » contenant les calques du dessous, avec le filtre ;
+  - un réglage écrêté devient un filtre sur son calque de base ;
+  - l'opacité et la visibilité du réglage sont reprises.
+- **Calques de remplissage** : la couleur unie devient un calque vectoriel couvrant l'image ; un dégradé ou un motif garde ses pixels, avec une mention dans le rapport.
+- **Objets dynamiques incorporés** (`lnk2`/`lnkD`) : le fichier est extrait dans `<dossier GIMP>/psd-objets/<fichier>/` et devient un **calque lié**, placé d'après les 4 coins de la transformation.
+- **Identifiants Photoshop** : quand l'import de GIMP donne le même identifiant à son groupe d'écrêtage qu'au calque, c'est le vrai calque qui est retenu.
+- **Export PSD** (`plug-ins/file-psd/psd-chopgimp.c`) :
+  - les calques vectoriels sont écrits comme **calques de forme** Photoshop (tracé, fond uni, contour) ;
+  - option « **Textes modifiables (expérimental)** », désactivée par défaut : les calques de texte sont écrits comme calques de texte Photoshop, avec une mise en forme simple ;
+  - nombres écrits avec un point, quelle que soit la langue (l'export en français écrivait « 36,0 »).
+- **6 nouveaux tests**, dont l'aller-retour PSD (forme et texte relus modifiables) : 72 tests.
+
+**À vérifier dans Photoshop** : l'export des textes, que je ne peux pas tester ici.

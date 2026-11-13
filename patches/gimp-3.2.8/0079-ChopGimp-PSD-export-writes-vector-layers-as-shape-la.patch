@@ -1,0 +1,690 @@
+From 997598ff4618e148059f73417f1aca806e0e2f42 Mon Sep 17 00:00:00 2001
+From: ChopGimp <mathieu.redon@proton.me>
+Date: Sat, 14 Nov 2026 00:29:54 +0100
+Subject: [PATCH] ChopGimp: PSD export writes vector layers as shape layers
+ (vmsk/vscg/vstk) and, optionally, text layers (TySh)
+
+---
+ plug-ins/file-psd/meson.build    |   1 +
+ plug-ins/file-psd/psd-chopgimp.c | 556 +++++++++++++++++++++++++++++++
+ plug-ins/file-psd/psd-chopgimp.h |  13 +
+ plug-ins/file-psd/psd-export.c   |  14 +-
+ plug-ins/file-psd/psd.c          |  14 +
+ 5 files changed, 597 insertions(+), 1 deletion(-)
+ create mode 100644 plug-ins/file-psd/psd-chopgimp.c
+ create mode 100644 plug-ins/file-psd/psd-chopgimp.h
+
+diff --git a/plug-ins/file-psd/meson.build b/plug-ins/file-psd/meson.build
+index 6d07c9b..2efbc5e 100644
+--- a/plug-ins/file-psd/meson.build
++++ b/plug-ins/file-psd/meson.build
+@@ -5,6 +5,7 @@ plugin_sourcecode = [
+   'psd-layer-res-load.c',
+   'psd-load.c',
+   'psd-export.c',
++  'psd-chopgimp.c',
+   'psd-thumb-load.c',
+   'psd-util.c',
+   'psd.c',
+diff --git a/plug-ins/file-psd/psd-chopgimp.c b/plug-ins/file-psd/psd-chopgimp.c
+new file mode 100644
+index 0000000..d5165fb
+--- /dev/null
++++ b/plug-ins/file-psd/psd-chopgimp.c
+@@ -0,0 +1,556 @@
++/*
++ * ChopGimp — PSD export of editable layers
++ *
++ * This program is free software: you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation; either version 3 of the License, or
++ * (at your option) any later version.
++ *
++ * Extra layer information blocks so that Photoshop sees:
++ *  - vector layers as shape layers (vmsk + vscg/SoCo + vstk);
++ *  - text layers as type layers (TySh with a minimal EngineData) —
++ *    optional, off by default (Photoshop can't be tested here).
++ * The rendered pixels are still written, so a reader that ignores these
++ * blocks gets exactly the image.
++ * Formats: Adobe « Photoshop File Formats » (descriptor version 16, path
++ * records of 26 bytes, EngineData).
++ */
++
++#include "config.h"
++
++#include <math.h>
++#include <string.h>
++
++#include <libgimp/gimp.h>
++#include <pango/pango.h>
++
++#include "psd-chopgimp.h"
++
++
++/*  big-endian byte buffer  */
++
++static void
++put32 (GByteArray *b, guint32 v)
++{
++  guint8 d[4] = { v >> 24, v >> 16, v >> 8, v };
++
++  g_byte_array_append (b, d, 4);
++}
++
++static void
++put16 (GByteArray *b, guint16 v)
++{
++  guint8 d[2] = { v >> 8, v };
++
++  g_byte_array_append (b, d, 2);
++}
++
++static void
++put_double (GByteArray *b, gdouble v)
++{
++  union { gdouble d; guint64 u; } x = { .d = v };
++  guint8 d[8];
++  gint   i;
++
++  for (i = 0; i < 8; i++)
++    d[i] = x.u >> (56 - 8 * i);
++  g_byte_array_append (b, d, 8);
++}
++
++static void
++put_raw (GByteArray *b, const gchar *s)
++{
++  g_byte_array_append (b, (const guint8 *) s, strlen (s));
++}
++
++static void
++put_key (GByteArray *b, const gchar *k)
++{
++  if (strlen (k) == 4)
++    {
++      put32 (b, 0);
++      put_raw (b, k);
++    }
++  else
++    {
++      put32 (b, strlen (k));
++      put_raw (b, k);
++    }
++}
++
++static void
++put_ustr (GByteArray *b, const gchar *utf8)
++{
++  glong      n = 0;
++  gunichar2 *u = g_utf8_to_utf16 (utf8 ? utf8 : "", -1, NULL, &n, NULL);
++  glong      i;
++
++  put32 (b, n + 1);
++  for (i = 0; i < n; i++)
++    put16 (b, u[i]);
++  put16 (b, 0);
++  g_free (u);
++}
++
++/*  descriptor items  */
++
++static void
++desc_begin (GByteArray *b, const gchar *cls, gint n_items)
++{
++  put_ustr (b, "");
++  put_key (b, cls);
++  put32 (b, n_items);
++}
++
++static void
++item_bool (GByteArray *b, const gchar *k, gboolean v)
++{
++  guint8 c = v ? 1 : 0;
++
++  put_key (b, k);
++  put_raw (b, "bool");
++  g_byte_array_append (b, &c, 1);
++}
++
++static void
++item_long (GByteArray *b, const gchar *k, gint32 v)
++{
++  put_key (b, k);
++  put_raw (b, "long");
++  put32 (b, v);
++}
++
++static void
++item_doub (GByteArray *b, const gchar *k, gdouble v)
++{
++  put_key (b, k);
++  put_raw (b, "doub");
++  put_double (b, v);
++}
++
++static void
++item_unit (GByteArray *b, const gchar *k, const gchar *unit, gdouble v)
++{
++  put_key (b, k);
++  put_raw (b, "UntF");
++  put_raw (b, unit);
++  put_double (b, v);
++}
++
++static void
++item_enum (GByteArray *b, const gchar *k, const gchar *type, const gchar *v)
++{
++  put_key (b, k);
++  put_raw (b, "enum");
++  put_key (b, type);
++  put_key (b, v);
++}
++
++static void
++item_text (GByteArray *b, const gchar *k, const gchar *v)
++{
++  put_key (b, k);
++  put_raw (b, "TEXT");
++  put_ustr (b, v);
++}
++
++static void
++item_color (GByteArray *b, const gchar *k, GeglColor *color)
++{
++  gdouble rgba[4] = { 0, 0, 0, 1 };
++
++  if (color)
++    gegl_color_get_pixel (color, babl_format ("R'G'B'A double"), rgba);
++
++  put_key (b, k);
++  put_raw (b, "Objc");
++  desc_begin (b, "RGBC", 3);
++  item_doub (b, "Rd  ", CLAMP (rgba[0], 0, 1) * 255.0);
++  item_doub (b, "Grn ", CLAMP (rgba[1], 0, 1) * 255.0);
++  item_doub (b, "Bl  ", CLAMP (rgba[2], 0, 1) * 255.0);
++}
++
++static gboolean
++write_block (GOutputStream *output,
++             const gchar   *key,
++             GByteArray    *data,
++             GError       **error)
++{
++  GByteArray *head = g_byte_array_new ();
++  gboolean    ok;
++
++  if (data->len & 1)
++    {
++      guint8 z = 0;
++
++      g_byte_array_append (data, &z, 1);
++    }
++  put_raw (head, "8BIM");
++  put_raw (head, key);
++  put32 (head, data->len);
++
++  ok = g_output_stream_write_all (output, head->data, head->len, NULL, NULL, error) &&
++       g_output_stream_write_all (output, data->data, data->len, NULL, NULL, error);
++
++  g_byte_array_free (head, TRUE);
++  return ok;
++}
++
++
++/*  shapes  */
++
++static void
++put_fixed (GByteArray *b, gdouble v, gdouble size)
++{
++  put32 (b, (guint32) (gint32) floor (v / size * 16777216.0 + 0.5));
++}
++
++static void
++put_knot (GByteArray   *b,
++          guint16       selector,
++          const gdouble pts[6],     /* in x,y  anchor x,y  out x,y */
++          gdouble       w,
++          gdouble       h)
++{
++  gint i;
++
++  put16 (b, selector);
++  for (i = 0; i < 3; i++)
++    {
++      put_fixed (b, pts[i * 2 + 1], h);
++      put_fixed (b, pts[i * 2],     w);
++    }
++}
++
++static GByteArray *
++path_records (GimpPath *path,
++              gdouble   w,
++              gdouble   h)
++{
++  GByteArray *b = g_byte_array_new ();
++  gint       *strokes;
++  gsize       n_strokes, s;
++  guint8      zero[24] = { 0 };
++
++  put32 (b, 3);                 /*  version  */
++  put32 (b, 0);                 /*  flags  */
++  put16 (b, 6);                 /*  fill rule record  */
++  g_byte_array_append (b, zero, 24);
++
++  strokes = gimp_path_get_strokes (path, &n_strokes);
++
++  for (s = 0; s < n_strokes; s++)
++    {
++      gdouble  *points   = NULL;
++      gsize     n_points = 0;
++      gboolean  closed   = FALSE;
++      gsize     n_knots, k;
++
++      if (gimp_path_stroke_get_points (path, strokes[s], &n_points, &points, &closed) !=
++          GIMP_PATH_STROKE_TYPE_BEZIER || n_points < 6)
++        {
++          g_free (points);
++          continue;
++        }
++
++      n_knots = n_points / 6;     /*  (in, anchor, out) × (x, y)  */
++
++      put16 (b, closed ? 0 : 3);
++      put16 (b, n_knots);
++      g_byte_array_append (b, zero, 22);
++
++      for (k = 0; k < n_knots; k++)
++        put_knot (b, closed ? 1 : 4, points + k * 6, w, h);
++
++      g_free (points);
++    }
++  g_free (strokes);
++
++  return b;
++}
++
++static const gchar *
++cap_name (GimpCapStyle cap)
++{
++  switch (cap)
++    {
++    case GIMP_CAP_ROUND:  return "strokeStyleRoundCap";
++    case GIMP_CAP_SQUARE: return "strokeStyleSquareCap";
++    default:              return "strokeStyleButtCap";
++    }
++}
++
++static const gchar *
++join_name (GimpJoinStyle join)
++{
++  switch (join)
++    {
++    case GIMP_JOIN_ROUND: return "strokeStyleRoundJoin";
++    case GIMP_JOIN_BEVEL: return "strokeStyleBevelJoin";
++    default:              return "strokeStyleMiterJoin";
++    }
++}
++
++static gboolean
++write_shape (GOutputStream *output,
++             GimpImage     *image,
++             GimpLayer     *layer,
++             GError       **error)
++{
++  GimpVectorLayer *vl   = GIMP_VECTOR_LAYER (layer);
++  GimpPath        *path = gimp_vector_layer_get_path (vl);
++  GByteArray      *b;
++  GeglColor       *fill, *stroke;
++  gboolean         ok;
++
++  if (! path)
++    return TRUE;
++
++  fill   = gimp_vector_layer_get_fill_color (vl);
++  stroke = gimp_vector_layer_get_stroke_color (vl);
++
++  /*  fill content: solid color  */
++  b = g_byte_array_new ();
++  put_raw (b, "SoCo");
++  put32 (b, 16);
++  desc_begin (b, "null", 1);
++  item_color (b, "Clr ", fill);
++  ok = write_block (output, "vscg", b, error);
++  g_byte_array_free (b, TRUE);
++
++  /*  outline  */
++  if (ok)
++    {
++      b = path_records (path, gimp_image_get_width (image), gimp_image_get_height (image));
++      ok = write_block (output, "vmsk", b, error);
++      g_byte_array_free (b, TRUE);
++    }
++
++  /*  stroke  */
++  if (ok)
++    {
++      b = g_byte_array_new ();
++      put32 (b, 2);
++      put32 (b, 16);
++      desc_begin (b, "strokeStyle", 13);
++      item_long (b, "strokeStyleVersion", 2);
++      item_bool (b, "strokeEnabled", gimp_vector_layer_get_enable_stroke (vl));
++      item_bool (b, "fillEnabled", gimp_vector_layer_get_enable_fill (vl));
++      item_unit (b, "strokeStyleLineWidth", "#Pxl", gimp_vector_layer_get_stroke_width (vl));
++      item_unit (b, "strokeStyleLineDashOffset", "#Pnt", 0.0);
++      item_doub (b, "strokeStyleMiterLimit", gimp_vector_layer_get_stroke_miter_limit (vl));
++      item_enum (b, "strokeStyleLineCapType", "strokeStyleLineCapType",
++                 cap_name (gimp_vector_layer_get_stroke_cap_style (vl)));
++      item_enum (b, "strokeStyleLineJoinType", "strokeStyleLineJoinType",
++                 join_name (gimp_vector_layer_get_stroke_join_style (vl)));
++      item_enum (b, "strokeStyleLineAlignment", "strokeStyleLineAlignment",
++                 "strokeStyleAlignCenter");
++      item_enum (b, "strokeStyleBlendMode", "BlnM", "Nrml");
++      item_unit (b, "strokeStyleOpacity", "#Prc", 100.0);
++      put_key (b, "strokeStyleContent");
++      put_raw (b, "Objc");
++      desc_begin (b, "solidColorLayer", 1);
++      item_color (b, "Clr ", stroke);
++      item_doub (b, "strokeStyleResolution", 72.0);
++      ok = write_block (output, "vstk", b, error);
++      g_byte_array_free (b, TRUE);
++    }
++
++  g_clear_object (&fill);
++  g_clear_object (&stroke);
++
++  return ok;
++}
++
++
++/*  text  */
++
++static void
++ed_str (GString *s, const gchar *utf8)
++{
++  glong      n = 0;
++  gunichar2 *u = g_utf8_to_utf16 (utf8 ? utf8 : "", -1, NULL, &n, NULL);
++  glong      i;
++
++  g_string_append (s, "(\xfe\xff");
++  for (i = 0; i < n; i++)
++    {
++      guint8 c[2] = { u[i] >> 8, u[i] & 0xff };
++      gint   j;
++
++      for (j = 0; j < 2; j++)
++        {
++          if (c[j] == '(' || c[j] == ')' || c[j] == '\\')
++            g_string_append_c (s, '\\');
++          g_string_append_c (s, c[j]);
++        }
++    }
++  g_string_append_c (s, ')');
++  g_free (u);
++}
++
++static gboolean
++write_text (GOutputStream *output,
++            GimpImage     *image,
++            GimpLayer     *layer,
++            GError       **error)
++{
++  GimpTextLayer *tl    = GIMP_TEXT_LAYER (layer);
++  gchar         *text  = gimp_text_layer_get_text (tl);
++  GimpFont      *font  = gimp_text_layer_get_font (tl);
++  GimpUnit      *unit  = NULL;
++  gdouble        size  = gimp_text_layer_get_font_size (tl, &unit);
++  GeglColor     *color = gimp_text_layer_get_color (tl);
++  gdouble        rgba[4] = { 0, 0, 0, 1 };
++  gint           x, y;
++  gint           just;
++  gchar         *psname;
++  gchar         *ps_text;
++  GString       *ed;
++  GByteArray    *b;
++  gboolean       ok;
++  gdouble        top;
++
++  if (! text)        /*  rich text (markup): only the plain text is kept  */
++    {
++      gchar *markup = gimp_text_layer_get_markup (tl);
++
++      if (markup && pango_parse_markup (markup, -1, 0, NULL, &text, NULL, NULL))
++        ;
++      g_free (markup);
++      if (! text)
++        return TRUE;
++    }
++
++  if (color)
++    gegl_color_get_pixel (color, babl_format ("R'G'B'A double"), rgba);
++
++  switch (gimp_text_layer_get_justification (tl))
++    {
++    case GIMP_TEXT_JUSTIFY_RIGHT:  just = 1; break;
++    case GIMP_TEXT_JUSTIFY_CENTER: just = 2; break;
++    case GIMP_TEXT_JUSTIFY_FILL:   just = 3; break;
++    default:                       just = 0; break;
++    }
++
++  /*  PostScript name: family and style without spaces, "-" between  */
++  {
++    const gchar *fname = font ? gimp_resource_get_name (GIMP_RESOURCE (font)) : "ArialMT";
++    gchar      **words = g_strsplit (fname, " ", -1);
++    GString     *ps    = g_string_new (NULL);
++    gint         i, n  = g_strv_length (words);
++
++    for (i = 0; i < n; i++)
++      {
++        static const gchar *styles[] = { "Bold", "Italic", "Oblique", "Light", "Medium",
++                                          "Black", "Regular", "Book", "Thin", "Semibold",
++                                          "Heavy", NULL };
++
++        if (i > 0 && g_strv_contains (styles, words[i]) &&
++            ! (i > 1 && g_strv_contains (styles, words[i - 1])))
++          g_string_append_c (ps, '-');
++        g_string_append (ps, words[i]);
++      }
++    psname = g_string_free (ps, FALSE);
++    g_strfreev (words);
++  }
++
++  ps_text = g_strdup_printf ("%s\r", text);
++  g_strdelimit (ps_text, "\n", '\r');
++
++  ed = g_string_new ("\n\n<<\n/EngineDict <<\n/Editor << /Text ");
++  ed_str (ed, ps_text);
++  {
++    /*  numbers with a dot whatever the locale (EngineData is not localized)  */
++    gchar fs[G_ASCII_DTOSTR_BUF_SIZE], r[G_ASCII_DTOSTR_BUF_SIZE];
++    gchar g[G_ASCII_DTOSTR_BUF_SIZE], bl[G_ASCII_DTOSTR_BUF_SIZE];
++
++    g_ascii_formatd (fs, sizeof (fs), "%.4f", size);
++    g_ascii_formatd (r,  sizeof (r),  "%.5f", rgba[0]);
++    g_ascii_formatd (g,  sizeof (g),  "%.5f", rgba[1]);
++    g_ascii_formatd (bl, sizeof (bl), "%.5f", rgba[2]);
++
++    g_string_append_printf (ed,
++                            " >>\n/ParagraphRun << /RunArray [ << /ParagraphSheet << /Properties"
++                            " << /Justification %d >> >> >> ] /RunLengthArray [ %d ] >>\n"
++                            "/StyleRun << /RunArray [ << /StyleSheet << /StyleSheetData << /Font 0"
++                            " /FontSize %s /AutoLeading true /Tracking 0"
++                            " /FillColor << /Type 1 /Values [ 1.0 %s %s %s ] >> >> >> >> ]"
++                            " /RunLengthArray [ %d ] >>\n"
++                            "/Rendered << /Shapes << /Children [ << /ShapeType 0 >> ] >> >>\n>>\n"
++                            "/ResourceDict << /FontSet [ << /Name ",
++                            just, (gint) g_utf8_strlen (ps_text, -1),
++                            fs, r, g, bl,
++                            (gint) g_utf8_strlen (ps_text, -1));
++  }
++  ed_str (ed, psname);
++  g_string_append (ed, " /Script 0 /FontType 1 >> ] /StyleSheetSet [ << /Name ");
++  ed_str (ed, "Normal RGB");
++  g_string_append (ed, " /StyleSheetData << /Font 0 >> >> ] >>\n>>\n");
++
++  gimp_drawable_get_offsets (GIMP_DRAWABLE (layer), &x, &y);
++  top = -size;     /*  baseline of the first line, about one size down  */
++
++  b = g_byte_array_new ();
++  put16 (b, 1);
++  put_double (b, 1.0); put_double (b, 0.0); put_double (b, 0.0); put_double (b, 1.0);
++  put_double (b, x);
++  put_double (b, y - top);
++  put16 (b, 50);
++  put32 (b, 16);
++  desc_begin (b, "TxLr", 7);
++  item_text (b, "Txt ", ps_text);
++  item_enum (b, "textGridding", "textGridding", "None");
++  item_enum (b, "Ornt", "Ornt", "Hrzn");
++  item_enum (b, "AntA", "Annt", "antiAliasSharp");
++  put_key (b, "bounds");
++  put_raw (b, "Objc");
++  desc_begin (b, "bounds", 4);
++  item_unit (b, "Left", "#Pnt", 0.0);
++  item_unit (b, "Top ", "#Pnt", top);
++  item_unit (b, "Rght", "#Pnt", gimp_drawable_get_width (GIMP_DRAWABLE (layer)));
++  item_unit (b, "Btom", "#Pnt", gimp_drawable_get_height (GIMP_DRAWABLE (layer)) + top);
++  item_long (b, "TextIndex", 0);
++  put_key (b, "EngineData");
++  put_raw (b, "tdta");
++  put32 (b, ed->len);
++  g_byte_array_append (b, (const guint8 *) ed->str, ed->len);
++  put16 (b, 1);                 /*  warp: none  */
++  put32 (b, 16);
++  desc_begin (b, "warp", 5);
++  item_enum (b, "warpStyle", "warpStyle", "warpNone");
++  item_doub (b, "warpValue", 0.0);
++  item_doub (b, "warpPerspective", 0.0);
++  item_doub (b, "warpPerspectiveOther", 0.0);
++  item_enum (b, "warpRotate", "Ornt", "Hrzn");
++  put32 (b, 0); put32 (b, 0); put32 (b, 0); put32 (b, 0);
++
++  ok = write_block (output, "TySh", b, error);
++
++  g_byte_array_free (b, TRUE);
++  g_string_free (ed, TRUE);
++  g_free (ps_text);
++  g_free (psname);
++  g_free (text);
++  g_clear_object (&color);
++
++  return ok;
++}
++
++
++gboolean
++chopgimp_psd_write_editable (GOutputStream *output,
++                             GimpImage     *image,
++                             GimpLayer     *layer,
++                             gboolean       shapes,
++                             gboolean       texts,
++                             GError       **error)
++{
++  if (shapes && gimp_item_is_vector_layer (GIMP_ITEM (layer)))
++    return write_shape (output, image, layer, error);
++
++  if (texts && gimp_item_is_text_layer (GIMP_ITEM (layer)))
++    return write_text (output, image, layer, error);
++
++  return TRUE;
++}
+diff --git a/plug-ins/file-psd/psd-chopgimp.h b/plug-ins/file-psd/psd-chopgimp.h
+new file mode 100644
+index 0000000..f3b7abf
+--- /dev/null
++++ b/plug-ins/file-psd/psd-chopgimp.h
+@@ -0,0 +1,13 @@
++/* ChopGimp — PSD export of editable layers (see psd-chopgimp.c) */
++
++#ifndef __PSD_CHOPGIMP_H__
++#define __PSD_CHOPGIMP_H__
++
++gboolean chopgimp_psd_write_editable (GOutputStream *output,
++                                      GimpImage     *image,
++                                      GimpLayer     *layer,
++                                      gboolean       shapes,
++                                      gboolean       texts,
++                                      GError       **error);
++
++#endif
+diff --git a/plug-ins/file-psd/psd-export.c b/plug-ins/file-psd/psd-export.c
+index 2198a85..75dea1b 100644
+--- a/plug-ins/file-psd/psd-export.c
++++ b/plug-ins/file-psd/psd-export.c
+@@ -78,6 +78,7 @@
+ #include "psd.h"
+ #include "psd-util.h"
+ #include "psd-export.h"
++#include "psd-chopgimp.h"
+ 
+ #include "libgimp/stdplugins-intl.h"
+ 
+@@ -129,6 +130,8 @@ typedef struct PsdResourceOptions
+   gboolean  clipping_path;
+   gchar    *clipping_path_name;
+   gdouble   clipping_path_flatness;
++  gboolean  editable_shapes;   /* ChopGimp: vector layers as shape layers */
++  gboolean  editable_text;     /* ChopGimp: text layers as type layers    */
+ } PSDResourceOptions;
+ 
+ static PSD_Image_Data PSDImageData;
+@@ -1720,6 +1723,13 @@ save_layer_and_mask (GOutputStream       *output,
+       WRITE_RETURN (gint16, output, 0, "sheet color unused value", ;);
+       WRITE_RETURN (gint16, output, 0, "sheet color unused value", ;);
+ 
++      /* ChopGimp: shapes and texts stay editable in Photoshop */
++      if (psd_layer->type == PSD_LAYER_TYPE_LAYER &&
++          ! chopgimp_psd_write_editable (output, image, psd_layer->layer,
++                                         options->editable_shapes,
++                                         options->editable_text, error))
++        return FALSE;
++
+       /* Group layer section divider */
+       if (psd_layer->type != PSD_LAYER_TYPE_LAYER)
+         {
+@@ -2358,6 +2368,8 @@ export_image (GFile          *file,
+                 "clippingpath",         &resource_options.clipping_path,
+                 "clippingpathname",     &resource_options.clipping_path_name,
+                 "clippingpathflatness", &resource_options.clipping_path_flatness,
++                "editable-shapes",      &resource_options.editable_shapes,
++                "editable-text",        &resource_options.editable_text,
+                 NULL);
+ 
+   IFDBG(1) g_debug ("Function: export_image");
+@@ -2984,7 +2996,7 @@ save_dialog (GimpImage     *image,
+   gtk_label_set_line_wrap (GTK_LABEL (label), TRUE);
+ 
+   gimp_procedure_dialog_fill (GIMP_PROCEDURE_DIALOG (dialog),
+-                              "compat-notice", NULL);
++                              "compat-notice", "editable-shapes", "editable-text", NULL);
+   g_free (text);
+ 
+   gtk_widget_set_visible (dialog, TRUE);
+diff --git a/plug-ins/file-psd/psd.c b/plug-ins/file-psd/psd.c
+index ccffe9e..c97f709 100644
+--- a/plug-ins/file-psd/psd.c
++++ b/plug-ins/file-psd/psd.c
+@@ -298,6 +298,20 @@ psd_create_procedure (GimpPlugIn  *plug_in,
+                                            FALSE,
+                                            G_PARAM_READWRITE);
+ 
++      gimp_procedure_add_boolean_argument (procedure, "editable-shapes",
++                                           "Formes _modifiables (calques de forme Photoshop)",
++                                           "Les calques vectoriels sont écrits comme calques de forme "
++                                           "(tracé, fond, contour), modifiables dans Photoshop.",
++                                           TRUE,
++                                           G_PARAM_READWRITE);
++      gimp_procedure_add_boolean_argument (procedure, "editable-text",
++                                           "_Textes modifiables (expérimental)",
++                                           "Les calques de texte sont écrits comme calques de texte "
++                                           "Photoshop (mise en forme simple). Expérimental : à vérifier "
++                                           "dans Photoshop.",
++                                           FALSE,
++                                           G_PARAM_READWRITE);
++
+       gimp_procedure_add_boolean_argument (procedure, "duotone",
+                                            _("Export as _Duotone"),
+                                            _("Export as a Duotone PSD file if Duotone color space information "
+-- 
+2.53.0
+

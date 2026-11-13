@@ -271,7 +271,10 @@ def parse_engine_data(data):
             try:
                 return float(tok)
             except ValueError:
-                return tok
+                try:                       # écrit avec une virgule (paramètres régionaux)
+                    return float(tok.replace(",", "."))
+                except ValueError:
+                    return tok
 
     return value()
 
@@ -594,6 +597,9 @@ class PSD:
         self.global_angle = 120
         self.global_altitude = 30
         self.resolution = 72.0
+        self.path = None
+        self.linked_blocks = []       # (position, longueur) des fichiers incorporés
+        self.doc_blocks = {}
 
 
 def _read_layer_info(r, psd, end):
@@ -664,6 +670,7 @@ def parse(path):
         if head[:4] != b"8BPS":
             raise ValueError("pas un fichier PSD")
         psd = PSD()
+        psd.path = path
         (psd.version, ) = struct.unpack(">H", head[4:6])
         psd.height, psd.width = struct.unpack(">II", head[14:22])
         psd.depth, psd.mode = struct.unpack(">HH", head[22:26])
@@ -697,7 +704,9 @@ def parse(path):
                 ln8 = psb and key in LENGTH8_KEYS
                 bl = struct.unpack(">Q" if ln8 else ">I", f.read(8 if ln8 else 4))[0]
                 start = f.tell()
-                if key in ("Lr16", "Lr32", "Layr") and not psd.layers:
+                if key in ("lnk2", "lnkD", "lnk3", "lnkE"):
+                    psd.linked_blocks.append((start, bl))
+                elif key in ("Lr16", "Lr32", "Layr") and not psd.layers:
                     sub = f.read(min(bl, 64 << 20))
                     psd.layers = _read_layer_info(Reader(sub), psd, len(sub))
                 elif bl < (4 << 20):
@@ -725,3 +734,171 @@ def _read_resources(r, psd):
         psd.global_altitude = struct.unpack(">i", psd.resources[1049][:4])[0]
     if 1005 in psd.resources:
         psd.resolution = struct.unpack(">I", psd.resources[1005][:4])[0] / 65536.0
+
+
+# ─── calques de réglage ─────────────────────────────────────────────────
+
+ADJUST_KEYS = ("levl", "curv", "brit", "CgEd", "hue2", "hue ", "blnc", "nvrt", "post", "thrs",
+               "expA", "blwh", "mixr", "vibA", "selc", "phfl", "grdm", "clrL")
+
+
+def _i16(b, o):
+    return struct.unpack(">h", b[o:o + 2])[0]
+
+
+def parse_adjustment(key, data):
+    """→ dict décrivant le réglage (« kind » + valeurs), ou None si illisible.
+    Les valeurs sont celles de Photoshop (pas encore converties)."""
+    try:
+        if key == "levl":
+            recs = []
+            for i in range(4):                      # RVB, R, V, B
+                o = 2 + i * 10
+                if o + 10 > len(data):
+                    break
+                ilo, ihi, olo, ohi, g = struct.unpack(">5h", data[o:o + 10])
+                recs.append((ilo, ihi, olo, ohi, g / 100.0))
+            return {"kind": "levels", "records": recs}
+        if key == "curv":
+            r = Reader(data)
+            r.u8()
+            version = r.u16()
+            curves = {}
+            if version in (1, 4):
+                bits = r.u32()
+                for ch in range(32):
+                    if bits & (1 << ch):
+                        n = r.u16()
+                        pts = []
+                        for _ in range(n):
+                            out_, in_ = r.i16(), r.i16()
+                            pts.append((in_, out_))
+                        if ch < 4:
+                            curves[ch] = pts
+            return {"kind": "curves", "curves": curves}
+        if key == "brit":
+            return {"kind": "brightness", "brightness": _i16(data, 0), "contrast": _i16(data, 2),
+                    "legacy": True}
+        if key == "CgEd":
+            d = descriptor_block(data, 4) if data[:4] == b"\x00\x00\x00\x10" else descriptor_block(data)
+            return {"kind": "brightness", "brightness": float(d.get("Brgh", 0)),
+                    "contrast": float(d.get("Cntr", 0)), "legacy": bool(d.get("useLegacy", False))}
+        if key in ("hue2", "hue "):
+            r = Reader(data)
+            r.u16()
+            colorize = r.u8() == 1
+            r.u8()
+            ch, cs, cl = r.i16(), r.i16(), r.i16()
+            mh, ms, ml = r.i16(), r.i16(), r.i16()
+            if colorize:
+                return {"kind": "colorize", "hue": ch, "saturation": cs, "lightness": cl}
+            return {"kind": "hue-saturation", "hue": mh, "saturation": ms, "lightness": ml}
+        if key == "blnc":
+            v = struct.unpack(">9h", data[:18])
+            return {"kind": "color-balance", "shadows": v[0:3], "midtones": v[3:6],
+                    "highlights": v[6:9], "preserve": bool(data[18]) if len(data) > 18 else True}
+        if key == "nvrt":
+            return {"kind": "invert"}
+        if key == "post":
+            return {"kind": "posterize", "levels": _i16(data, 0)}
+        if key == "thrs":
+            return {"kind": "threshold", "level": _i16(data, 0)}
+        if key == "expA":
+            _, exposure, offset, gamma = struct.unpack(">Hfff", data[:14])
+            return {"kind": "exposure", "exposure": exposure, "offset": offset, "gamma": gamma}
+        if key == "blwh":
+            d = descriptor_block(data)
+            return {"kind": "black-white", "red": float(d.get("Rd  ", 40)), "yellow": float(d.get("Yllw", 60)),
+                    "green": float(d.get("Grn ", 40)), "cyan": float(d.get("Cyn ", 60)),
+                    "blue": float(d.get("Bl  ", 20)), "magenta": float(d.get("Mgnt", 80)),
+                    "tint": bool(d.get("useTint", False))}
+        if key == "mixr":
+            v = struct.unpack(">2H20h", data[:44])
+            mono = v[1] == 1
+            rows = [v[2 + i * 5: 2 + i * 5 + 5] for i in range(4)]
+            return {"kind": "channel-mixer", "mono": mono, "rows": rows}
+        if key == "vibA":
+            d = descriptor_block(data)
+            return {"kind": "vibrance", "vibrance": float(d.get("vibrance", 0)),
+                    "saturation": float(d.get("Strt", 0))}
+    except (ValueError, struct.error, IndexError):
+        return None
+    return {"kind": "unsupported", "key": key}
+
+
+def layer_adjustment(layer):
+    for key in ADJUST_KEYS:
+        if key in layer.blocks:
+            return parse_adjustment(key, layer.blocks[key])
+    return None
+
+
+Layer.adjustment = layer_adjustment
+
+
+# ─── objets dynamiques ──────────────────────────────────────────────────
+
+
+def smart_object(layer):
+    """→ dict (uid, transform [8 coins], taille) ou None (SoLd / PlLd)."""
+    try:
+        if "SoLd" in layer.blocks:
+            data = layer.blocks["SoLd"]
+            d = descriptor_block(data[4:], 4)          # 'soLD' + version + 16
+            corners = [float(v) for v in d.get("Trnf", [])][:8]
+            size = d.get("Sz  ", {})
+            return {"uid": str(d.get("Idnt", "")), "corners": corners,
+                    "width": float(size.get("Wdth", 0)) if isinstance(size, dict) else 0.0,
+                    "height": float(size.get("Hght", 0)) if isinstance(size, dict) else 0.0}
+        if "PlLd" in layer.blocks:
+            r = Reader(layer.blocks["PlLd"])
+            r.read(4)
+            r.u32()
+            uid = r.pascal(1)
+            r.u32(); r.u32(); r.u32(); r.u32()
+            corners = list(r.fmt("8d"))
+            return {"uid": uid, "corners": corners, "width": 0.0, "height": 0.0}
+    except (ValueError, struct.error, KeyError):
+        return None
+    return None
+
+
+Layer.smart_object = smart_object
+
+
+def linked_files(psd):
+    """Fichiers incorporés (lnk2/lnkD) : {uid: (nom d'origine, octets)}."""
+    out = {}
+    if not psd.path:
+        return out
+    with open(psd.path, "rb") as f:
+        for pos, length in psd.linked_blocks:
+            end = pos + length
+            f.seek(pos)
+            while f.tell() + 8 < end:
+                start = f.tell()
+                (n, ) = struct.unpack(">Q", f.read(8))
+                if n <= 0 or start + 8 + n > end:
+                    break
+                head = f.read(min(n, 4096))
+                try:
+                    r = Reader(head)
+                    kind = r.read(4)
+                    r.u32()                              # version
+                    uid = r.pascal(1)
+                    name = r.unicode()
+                    r.read(4); r.read(4)                 # type, créateur
+                    dlen = r.u64()
+                    has_desc = r.u8()
+                    if has_desc:
+                        r.u32()
+                        read_descriptor(r)
+                    if kind == b"liFD" and dlen > 0:
+                        f.seek(start + 8 + r.pos)
+                        out[uid] = (name, f.read(dlen))
+                except (ValueError, struct.error):
+                    pass
+                nxt = start + 8 + n
+                nxt += (4 - nxt % 4) % 4
+                f.seek(nxt)
+    return out

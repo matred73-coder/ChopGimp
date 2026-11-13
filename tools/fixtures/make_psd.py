@@ -13,6 +13,12 @@ Calques (du bas vers le haut) :
   5  « Rectangle »       calque de forme : fond vert, contour noir 4 px centré
   6  « Photo masquée »   pixels orange + masque vectoriel (losange)
   7  « Effets »          pixels bleus + ombre portée, contour, incrustation couleur
+  8  « Contraste »       réglage Luminosité/Contraste écrêté sur « Effets »
+  9  « Remplissage »     calque de remplissage couleur (bleu clair, opacité 30 %)
+ 10  « Logo »            objet dynamique : PNG 40×40 incorporé (lnk2), placé en 20,520
+ 11  « Courbes »         réglage Courbes (point 128 → 160)
+ 12  « Teinte »          réglage Teinte/Saturation (+30°)
+ 13  « Niveaux »         réglage Niveaux (gamma 1,4)
 
 Le contenu en pixels des calques de texte et de forme est un simple
 aplat : c'est l'import ChopGimp qui doit reconstruire la version
@@ -22,6 +28,7 @@ EngineData, enregistrements de chemin de 26 octets).
 import math
 import struct
 import sys
+import zlib
 
 W, H = 800, 600
 
@@ -191,8 +198,33 @@ def pascal(name):
 
 
 class L:
-    def __init__(self, name, lid, rect, color, blocks=(), alpha=255):
+    def __init__(self, name, lid, rect, color, blocks=(), alpha=255, opacity=255, clip=0):
         self.name, self.lid, self.rect, self.color, self.blocks, self.alpha = name, lid, rect, color, blocks, alpha
+        self.opacity, self.clip = opacity, clip
+
+
+def png(w, h, rgb):
+    raw = b"".join(b"\x00" + bytes(rgb) * w for _ in range(h))
+
+    def chunk(t, d):
+        return struct.pack(">I", len(d)) + t + d + struct.pack(">I", zlib.crc32(t + d) & 0xffffffff)
+    return (b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", w, h, 8, 2, 0, 0, 0)) +
+            chunk(b"IDAT", zlib.compress(raw)) + chunk(b"IEND", b""))
+
+
+LOGO_UID = "c0ffee00-0000-4000-8000-000000000001"
+
+
+def lnk2_block():
+    data = png(40, 40, (250, 200, 0))
+    uid = LOGO_UID.encode()
+    item = (b"liFD" + struct.pack(">I", 2) + bytes([len(uid)]) + uid +
+            struct.pack(">I", 8) + "logo.png".encode("utf-16-be") +
+            b"png " + b"8BIM" + struct.pack(">Q", len(data)) + b"\x00" + data)
+    item = struct.pack(">Q", len(item)) + item
+    while len(item) % 4:
+        item += b"\x00"
+    return block("lnk2", item)
 
 
 def build():
@@ -259,6 +291,23 @@ def build():
     layers.append(L("Effets", 7, (300, 500, 480, 570), (30, 80, 200), [
         block("lfx2", struct.pack(">II", 0, 16) + desc(fx)),
     ]))
+    # réglages et remplissage (sans pixels utiles)
+    layers.append(L("Contraste", 8, (0, 0, 0, 0), (0, 0, 0), [
+        block("brit", struct.pack(">hhhB", 40, 30, 127, 0))], clip=1))
+    layers.append(L("Remplissage", 9, (0, 0, W, H), (150, 200, 255), [
+        block("SoCo", struct.pack(">I", 16) + desc(Obj("null", {"Clr ": rgb(150, 200, 255)})))],
+        opacity=77))
+    so = Obj("null", {"Idnt": LOGO_UID, "placed": LOGO_UID, "PgNm": 1, "totalPages": 1,
+                      "Trnf": [20.0, 520.0, 60.0, 520.0, 60.0, 560.0, 20.0, 560.0],
+                      "Sz  ": Obj("Pnt ", {"Wdth": 40.0, "Hght": 40.0})})
+    layers.append(L("Logo", 10, (20, 520, 60, 560), (250, 200, 0), [
+        block("SoLd", b"soLD" + struct.pack(">II", 4, 16) + desc(so))]))
+    curv = struct.pack(">BHI", 0, 1, 1) + struct.pack(">H", 3) + struct.pack(">6h", 0, 0, 160, 128, 255, 255)
+    layers.append(L("Courbes", 11, (0, 0, 0, 0), (0, 0, 0), [block("curv", curv)]))
+    hue2 = struct.pack(">HBB", 2, 0, 0) + struct.pack(">6h", 0, 25, 0, 30, 0, 0) + b"\x00" * 84
+    layers.append(L("Teinte", 12, (0, 0, 0, 0), (0, 0, 0), [block("hue2", hue2)]))
+    levl = struct.pack(">H", 2) + struct.pack(">5h", 0, 255, 0, 255, 140) + struct.pack(">5h", 0, 255, 0, 255, 100) * 28
+    layers.append(L("Niveaux", 13, (0, 0, 0, 0), (0, 0, 0), [block("levl", levl)]))
     return layers
 
 
@@ -274,7 +323,7 @@ def write(path):
         rec = struct.pack(">4i", t, l, b, r) + struct.pack(">H", len(chdata))
         for cid, d in chdata:
             rec += struct.pack(">hI", cid, len(d))
-        rec += b"8BIMnorm" + bytes([255, 0, 0, 0])
+        rec += b"8BIMnorm" + bytes([ly.opacity, ly.clip, 0, 0])
         extra = struct.pack(">I", 0) + struct.pack(">I", 0) + pascal(ly.name)
         extra += block("luni", struct.pack(">I", len(ly.name)) + ly.name.encode("utf-16-be"))
         extra += block("lyid", struct.pack(">I", ly.lid))
@@ -287,7 +336,7 @@ def write(path):
     if len(info) % 2:
         info += b"\x00"
     layer_info = struct.pack(">I", len(info)) + info
-    lm = layer_info + struct.pack(">I", 0)
+    lm = layer_info + struct.pack(">I", 0) + lnk2_block()
 
     res = b"8BIM" + struct.pack(">H", 1005) + b"\x00\x00" + struct.pack(">I", 16) + \
         struct.pack(">IHHIHH", 72 << 16, 1, 1, 72 << 16, 1, 1)
