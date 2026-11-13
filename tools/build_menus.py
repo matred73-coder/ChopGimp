@@ -93,7 +93,7 @@ image = get["_Image"][:2] + reglages + get["_Image"][2:]
 PANNEAUX = [["dialogs-layers", "dialogs-channels", "dialogs-paths"],
             ["dialogs-colors", "dialogs-palettes", "dialogs-gradients", "dialogs-patterns",
              "dialogs-brushes", "dialogs-fonts"],
-            ["dialogs-character", "dialogs-paragraph"],
+            ["dialogs-character", "dialogs-paragraph", "dialogs-glyphs", "dialogs-text-styles"],
             ["dialogs-undo-history", "dialogs-navigation", "dialogs-histogram", "dialogs-cursor"]]
 panneaux = []
 for sec in PANNEAUX:
@@ -110,6 +110,14 @@ texte = """    <submenu>
         <item><attribute name="action">app.dialogs-fonts</attribute></item>
         <item><attribute name="action">app.dialogs-character</attribute></item>
         <item><attribute name="action">app.dialogs-paragraph</attribute></item>
+        <item><attribute name="action">app.dialogs-glyphs</attribute></item>
+        <item><attribute name="action">app.dialogs-text-styles</attribute></item>
+      </section>
+      <section>
+        <item><attribute name="action">app.chopgimp-text-warp</attribute></item>
+        <item><attribute name="action">app.chopgimp-text-on-path</attribute></item>
+        <item><attribute name="action">app.chopgimp-text-in-shape</attribute></item>
+        <item><attribute name="action">app.chopgimp-text-fx-clear</attribute></item>
       </section>
       <section>
         <item><attribute name="action">app.chopgimp-text-outline</attribute></item>

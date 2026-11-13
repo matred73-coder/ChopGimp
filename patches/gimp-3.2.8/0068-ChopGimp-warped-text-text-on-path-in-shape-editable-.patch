@@ -1,0 +1,4607 @@
+From 3e8c0d012f8171418c512fa77ca523f018cc5887 Mon Sep 17 00:00:00 2001
+From: ChopGimp <mathieu.redon@proton.me>
+Date: Fri, 13 Nov 2026 13:49:59 +0100
+Subject: [PATCH] ChopGimp: warped text, text on path / in shape, editable
+ transforms, Photoshop text keys
+
+---
+ app/actions/dialogs-actions.c     |   16 +
+ app/dialogs/chopgimp-textpanels.c |  901 +++++++++++++++-
+ app/dialogs/chopgimp-textpanels.h |    8 +
+ app/dialogs/dialogs.c             |    8 +
+ app/pdb/chopgimp-cmds.c           |   74 ++
+ app/text/chopgimp-textfx.c        | 1579 +++++++++++++++++++++++++++++
+ app/text/chopgimp-textfx.h        |   53 +
+ app/text/gimptext.c               |   44 +-
+ app/text/gimptext.h               |    2 +
+ app/text/gimptextlayer.c          |  247 ++++-
+ app/text/gimptextlayer.h          |    2 +
+ app/text/gimptextlayout.c         |   16 +
+ app/text/meson.build              |    1 +
+ app/tools/gimptexttool-editor.c   |   51 +
+ app/tools/gimptexttool.c          |  416 +++++++-
+ app/widgets/chopgimp-rc.c         |   24 +
+ app/widgets/chopgimp-rc.h         |    5 +
+ app/widgets/chopgimp-spell.c      |  476 +++++++++
+ app/widgets/chopgimp-spell.h      |   25 +
+ app/widgets/gimptextproxy.c       |   32 +-
+ app/widgets/meson.build           |    1 +
+ menus/dialogs-menuitems.ui.in     |    2 +
+ 22 files changed, 3960 insertions(+), 23 deletions(-)
+ create mode 100644 app/text/chopgimp-textfx.c
+ create mode 100644 app/text/chopgimp-textfx.h
+ create mode 100644 app/widgets/chopgimp-spell.c
+ create mode 100644 app/widgets/chopgimp-spell.h
+
+diff --git a/app/actions/dialogs-actions.c b/app/actions/dialogs-actions.c
+index 71b493f..c47b15c 100644
+--- a/app/actions/dialogs-actions.c
++++ b/app/actions/dialogs-actions.c
+@@ -156,6 +156,22 @@ const GimpStringActionEntry dialogs_dockable_actions[] =
+     "chopgimp-paragraph",
+     GIMP_HELP_TOOL_TEXT },
+ 
++  { "dialogs-glyphs", "gimp-font",
++    NC_("dialogs-action", "_Glyphes"),
++    NC_("dialogs-action", "_Glyphes"),
++    { NULL },
++    NC_("dialogs-action", "Ouvrir le panneau Glyphes (caractères spéciaux de la police)"),
++    "chopgimp-glyphs",
++    GIMP_HELP_TOOL_TEXT },
++
++  { "dialogs-text-styles", "gimp-tool-text",
++    NC_("dialogs-action", "_Styles de texte"),
++    NC_("dialogs-action", "_Styles de texte"),
++    { NULL },
++    NC_("dialogs-action", "Ouvrir le panneau Styles de texte"),
++    "chopgimp-text-styles",
++    GIMP_HELP_TOOL_TEXT },
++
+   { "dialogs-cursor", GIMP_ICON_CURSOR,
+     NC_("dialogs-action", "_Pointer Dialog"),
+     NC_("dialogs-action", "_Pointer"),
+diff --git a/app/dialogs/chopgimp-textpanels.c b/app/dialogs/chopgimp-textpanels.c
+index bb35b3f..c6d3d48 100644
+--- a/app/dialogs/chopgimp-textpanels.c
++++ b/app/dialogs/chopgimp-textpanels.c
+@@ -24,6 +24,7 @@
+ 
+ #include "config.h"
+ 
++#include <stdio.h>
+ #include <string.h>
+ 
+ #include <gegl.h>
+@@ -41,6 +42,7 @@
+ #include "core/gimpcontext.h"
+ #include "core/gimpdatafactory.h"
+ #include "core/gimpimage.h"
++#include "core/gimpimage-undo.h"
+ 
+ #include "text/gimpfont.h"
+ #include "text/gimptext.h"
+@@ -48,6 +50,9 @@
+ 
+ #include "widgets/gimpeditor.h"
+ #include "widgets/gimptextbuffer.h"
++#include "widgets/chopgimp-rc.h"
++
++#include "text/chopgimp-textfx.h"
+ 
+ #include "tools/tools-types.h"
+ #include "tools/gimptexttool.h"
+@@ -77,6 +82,10 @@ typedef struct
+   GtkWidget     *baseline;
+   GtkWidget     *color;
+ 
++  GtkWidget     *favorite;
++  GimpFont      *preview_font;   /* font before a hover preview */
++  gboolean       preview_chosen;
++
+   /*  Paragraph  */
+   GtkWidget     *indent;
+   GtkWidget     *box_mode;
+@@ -217,16 +226,248 @@ layer_set_int (Panel *panel, const gchar *undo_desc, const gchar *prop, gint val
+ 
+ /* ─── character operations ─────────────────────────────────────────── */
+ 
++static GimpFont *
++font_by_name (Gimp *gimp, const gchar *name)
++{
++  return GIMP_FONT (gimp_container_get_child_by_name (gimp_data_factory_get_container (gimp->font_factory),
++                                                      name));
++}
++
+ static void
+-font_activate (GtkEntry *entry, Panel *panel)
++font_list_add (const gchar *key, const gchar *name, gboolean front, gint max)
++{
++  gchar    **old  = chopgimp_rc_get_strings ("fonts", key);
++  GPtrArray *list = g_ptr_array_new ();
++  gint       i;
++
++  if (front)
++    g_ptr_array_add (list, (gpointer) name);
++
++  for (i = 0; old[i] && (gint) list->len < max; i++)
++    if (strcmp (old[i], name))
++      g_ptr_array_add (list, old[i]);
++
++  if (! front)
++    g_ptr_array_add (list, (gpointer) name);
++
++  g_ptr_array_add (list, NULL);
++  chopgimp_rc_set_strings ("fonts", key, (const gchar * const *) list->pdata);
++
++  g_ptr_array_free (list, TRUE);
++  g_strfreev (old);
++}
++
++static void
++font_list_remove (const gchar *key, const gchar *name)
++{
++  gchar    **old  = chopgimp_rc_get_strings ("fonts", key);
++  GPtrArray *list = g_ptr_array_new ();
++  gint       i;
++
++  for (i = 0; old[i]; i++)
++    if (strcmp (old[i], name))
++      g_ptr_array_add (list, old[i]);
++
++  g_ptr_array_add (list, NULL);
++  chopgimp_rc_set_strings ("fonts", key, (const gchar * const *) list->pdata);
++
++  g_ptr_array_free (list, TRUE);
++  g_strfreev (old);
++}
++
++static gboolean
++font_is_favorite (const gchar *name)
++{
++  gchar  **favs = chopgimp_rc_get_strings ("fonts", "favorites");
++  gboolean fav  = name && g_strv_contains ((const gchar * const *) favs, name);
++
++  g_strfreev (favs);
++
++  return fav;
++}
++
++static void
++font_apply (Panel *panel, const gchar *name)
+ {
+   Target t;
+ 
+-  if (panel->updating || ! target_begin (panel, &t))
++  if (! name || ! *name || ! target_begin (panel, &t))
+     return;
+ 
+-  gimp_text_buffer_set_font (t.buffer, &t.start, &t.end, gtk_entry_get_text (entry));
++  gimp_text_buffer_set_font (t.buffer, &t.start, &t.end, name);
+   target_end (&t, _("Police"));
++
++  font_list_add ("recent", name, TRUE, 8);
++}
++
++static void
++font_activate (GtkEntry *entry, Panel *panel)
++{
++  if (! panel->updating)
++    font_apply (panel, gtk_entry_get_text (entry));
++}
++
++static void
++favorite_update (Panel *panel)
++{
++  if (panel->favorite)
++    gtk_button_set_label (GTK_BUTTON (panel->favorite),
++                          font_is_favorite (gtk_entry_get_text (GTK_ENTRY (panel->font))) ?
++                          "★" : "☆");
++}
++
++static void
++favorite_clicked (GtkButton *button, Panel *panel)
++{
++  const gchar *name = gtk_entry_get_text (GTK_ENTRY (panel->font));
++
++  if (! name || ! *name)
++    return;
++
++  if (font_is_favorite (name))
++    font_list_remove ("favorites", name);
++  else
++    font_list_add ("favorites", name, FALSE, 200);
++
++  favorite_update (panel);
++}
++
++/*  hover preview: the whole layer shows the font, without undo  */
++static gboolean
++font_preview_possible (Panel *panel)
++{
++  GimpTextTool *tool = panel_text_tool (panel->gimp);
++
++  return ! (tool && gtk_text_buffer_get_has_selection (GTK_TEXT_BUFFER (tool->buffer))) &&
++         panel_layer (panel) != NULL;
++}
++
++static void
++font_item_select (GtkMenuItem *item, Panel *panel)
++{
++  GimpTextLayer *layer = panel_layer (panel);
++  GimpFont      *font  = font_by_name (panel->gimp,
++                                       g_object_get_data (G_OBJECT (item), "font"));
++
++  if (! font || ! font_preview_possible (panel))
++    return;
++
++  if (! panel->preview_font)
++    panel->preview_font = g_object_ref (gimp_text_layer_get_text (layer)->font);
++
++  g_object_set (gimp_text_layer_get_text (layer), "font", font, NULL);
++  layer_flush (layer);
++}
++
++static void
++font_preview_restore (Panel *panel)
++{
++  GimpTextLayer *layer = panel_layer (panel);
++
++  if (panel->preview_font)
++    {
++      if (layer)
++        {
++          g_object_set (gimp_text_layer_get_text (layer), "font", panel->preview_font, NULL);
++          layer_flush (layer);
++        }
++      g_clear_object (&panel->preview_font);
++    }
++}
++
++static void
++font_item_activate (GtkMenuItem *item, Panel *panel)
++{
++  const gchar *name = g_object_get_data (G_OBJECT (item), "font");
++
++  panel->preview_chosen = TRUE;
++  font_preview_restore (panel);
++
++  panel->updating = TRUE;
++  gtk_entry_set_text (GTK_ENTRY (panel->font), name);
++  panel->updating = FALSE;
++
++  font_apply (panel, name);
++  favorite_update (panel);
++}
++
++static void
++font_menu_deactivate (GtkMenuShell *menu, Panel *panel)
++{
++  if (! panel->preview_chosen)
++    font_preview_restore (panel);
++}
++
++static void
++font_menu_add_section (Panel *panel, GtkWidget *menu, const gchar *title, const gchar *key)
++{
++  gchar    **names = chopgimp_rc_get_strings ("fonts", key);
++  GtkWidget *item;
++  gint       i;
++
++  item = gtk_menu_item_new_with_label (title);
++  gtk_widget_set_sensitive (item, FALSE);
++  gtk_menu_shell_append (GTK_MENU_SHELL (menu), item);
++
++  for (i = 0; names[i]; i++)
++    {
++      GimpFont *font = font_by_name (panel->gimp, names[i]);
++      gchar    *markup;
++
++      if (! font)
++        continue;
++
++      markup = g_markup_printf_escaped ("<span font_desc=\"%s 12\">%s</span>",
++                                        gimp_font_get_lookup_name (font), names[i]);
++      item = gtk_menu_item_new_with_label ("");
++      gtk_label_set_markup (GTK_LABEL (gtk_bin_get_child (GTK_BIN (item))), markup);
++      g_free (markup);
++
++      g_object_set_data_full (G_OBJECT (item), "font", g_strdup (names[i]), g_free);
++      g_signal_connect (item, "select",   G_CALLBACK (font_item_select),   panel);
++      g_signal_connect (item, "activate", G_CALLBACK (font_item_activate), panel);
++      gtk_menu_shell_append (GTK_MENU_SHELL (menu), item);
++    }
++
++  if (! names[0])
++    {
++      item = gtk_menu_item_new_with_label (_("   (vide)"));
++      gtk_widget_set_sensitive (item, FALSE);
++      gtk_menu_shell_append (GTK_MENU_SHELL (menu), item);
++    }
++
++  g_strfreev (names);
++}
++
++static gboolean
++font_menu_destroy (gpointer menu)
++{
++  gtk_widget_destroy (menu);
++  return G_SOURCE_REMOVE;
++}
++
++static void
++font_menu_hidden (GtkWidget *menu, Panel *panel)
++{
++  g_idle_add (font_menu_destroy, menu);
++}
++
++static void
++font_menu_clicked (GtkButton *button, Panel *panel)
++{
++  GtkWidget *menu = gtk_menu_new ();
++
++  panel->preview_chosen = FALSE;
++
++  font_menu_add_section (panel, menu, _("★ Favoris"), "favorites");
++  gtk_menu_shell_append (GTK_MENU_SHELL (menu), gtk_separator_menu_item_new ());
++  font_menu_add_section (panel, menu, _("Récentes"), "recent");
++
++  g_signal_connect (menu, "deactivate", G_CALLBACK (font_menu_deactivate), panel);
++  g_signal_connect (menu, "hide", G_CALLBACK (font_menu_hidden), panel);
++  gtk_widget_show_all (menu);
++  gtk_menu_popup_at_widget (GTK_MENU (menu), GTK_WIDGET (button),
++                            GDK_GRAVITY_SOUTH_WEST, GDK_GRAVITY_NORTH_WEST, NULL);
+ }
+ 
+ static void
+@@ -487,8 +728,24 @@ toggle_clicked (GtkButton *button, Panel *panel)
+ static void
+ justify_clicked (GtkButton *button, Panel *panel)
+ {
+-  layer_set_int (panel, _("Alignement"), "justify",
+-                 GPOINTER_TO_INT (g_object_get_data (G_OBJECT (button), "justify")));
++  GimpTextLayer *layer = panel_layer (panel);
++  const gchar   *last  = g_object_get_data (G_OBJECT (button), "last");
++
++  if (! layer)
++    return;
++
++  gimp_text_layer_set (layer, _("Alignement"),
++                       "justify",
++                       GPOINTER_TO_INT (g_object_get_data (G_OBJECT (button), "justify")),
++                       "chopgimp-para", last,
++                       NULL);
++  layer_flush (layer);
++}
++
++static void
++rc_toggled (GtkToggleButton *toggle, const gchar *key)
++{
++  chopgimp_rc_set_boolean ("text", key, gtk_toggle_button_get_active (toggle));
+ }
+ 
+ static void
+@@ -552,6 +809,7 @@ panel_refresh (Panel *panel)
+ 
+   if (panel->font && text->font)
+     gtk_entry_set_text (GTK_ENTRY (panel->font), gimp_object_get_name (text->font));
++  favorite_update (panel);
+ 
+   spin_set (panel->size,     text->font_size);
+   spin_set (panel->leading,  text->line_spacing);
+@@ -646,6 +904,7 @@ panel_free (Panel *panel)
+ {
+   if (panel->refresh_id)
+     g_source_remove (panel->refresh_id);
++  g_clear_object (&panel->preview_font);
+   g_free (panel);
+ }
+ 
+@@ -685,7 +944,25 @@ panel_new (Gimp *gimp, gboolean paragraph)
+                                          "gimp-font");
+       g_object_unref (completion);
+       g_signal_connect (panel->font, "activate", G_CALLBACK (font_activate), panel);
+-      gtk_grid_attach (GTK_GRID (grid), panel->font, 0, 0, 4, 1);
++      gtk_widget_set_hexpand (panel->font, TRUE);
++      {
++        GtkWidget *row  = gtk_box_new (GTK_ORIENTATION_HORIZONTAL, 2);
++        GtkWidget *menu = gtk_button_new_from_icon_name ("pan-down-symbolic",
++                                                         GTK_ICON_SIZE_BUTTON);
++
++        panel->favorite = gtk_button_new_with_label ("☆");
++        gtk_widget_set_tooltip_text (panel->favorite,
++                                     _("Ajouter / retirer la police des favoris"));
++        g_signal_connect (panel->favorite, "clicked", G_CALLBACK (favorite_clicked), panel);
++        gtk_widget_set_tooltip_text (menu, _("Polices favorites et récentes "
++                                             "(aperçu au survol)"));
++        g_signal_connect (menu, "clicked", G_CALLBACK (font_menu_clicked), panel);
++
++        gtk_box_pack_start (GTK_BOX (row), panel->font, TRUE, TRUE, 0);
++        gtk_box_pack_start (GTK_BOX (row), menu, FALSE, FALSE, 0);
++        gtk_box_pack_start (GTK_BOX (row), panel->favorite, FALSE, FALSE, 0);
++        gtk_grid_attach (GTK_GRID (grid), row, 0, 0, 4, 1);
++      }
+ 
+       panel->size     = spin_new (panel, 1, 1000, 1, 1, G_CALLBACK (size_changed));
+       panel->leading  = spin_new (panel, -500, 500, 1, 1, G_CALLBACK (leading_changed));
+@@ -719,22 +996,28 @@ panel_new (Gimp *gimp, gboolean paragraph)
+     }
+   else
+     {
+-      static const struct { gint justify; const gchar *icon; const gchar *tip; } aligns[] =
++      static const struct { gint justify; const gchar *last; const gchar *icon; const gchar *tip; } aligns[] =
+       {
+-        { GIMP_TEXT_JUSTIFY_LEFT,   "format-justify-left",   N_("Aligner à gauche") },
+-        { GIMP_TEXT_JUSTIFY_CENTER, "format-justify-center", N_("Centrer") },
+-        { GIMP_TEXT_JUSTIFY_RIGHT,  "format-justify-right",  N_("Aligner à droite") },
+-        { GIMP_TEXT_JUSTIFY_FILL,   "format-justify-fill",   N_("Justifier (dernière ligne à gauche)") },
++        { GIMP_TEXT_JUSTIFY_LEFT,   NULL,          "format-justify-left",   N_("Aligner à gauche") },
++        { GIMP_TEXT_JUSTIFY_CENTER, NULL,          "format-justify-center", N_("Centrer") },
++        { GIMP_TEXT_JUSTIFY_RIGHT,  NULL,          "format-justify-right",  N_("Aligner à droite") },
++        { GIMP_TEXT_JUSTIFY_FILL,   NULL,          "format-justify-fill",   N_("Justifier, dernière ligne à gauche") },
++        { GIMP_TEXT_JUSTIFY_FILL,   "last=center", "format-justify-fill",   N_("Justifier, dernière ligne centrée") },
++        { GIMP_TEXT_JUSTIFY_FILL,   "last=right",  "format-justify-fill",   N_("Justifier, dernière ligne à droite") },
++        { GIMP_TEXT_JUSTIFY_FILL,   "last=all",    "format-justify-fill",   N_("Tout justifier") },
+       };
++      static const gchar *marks[] = { NULL, NULL, NULL, "◧", "◫", "◨", "■" };
+       GtkWidget *row = gtk_box_new (GTK_ORIENTATION_HORIZONTAL, 2);
+ 
+       for (guint i = 0; i < G_N_ELEMENTS (aligns); i++)
+         {
+-          GtkWidget *b = gtk_button_new_from_icon_name (aligns[i].icon, GTK_ICON_SIZE_BUTTON);
++          GtkWidget *b = marks[i] ? gtk_button_new_with_label (marks[i]) :
++                         gtk_button_new_from_icon_name (aligns[i].icon, GTK_ICON_SIZE_BUTTON);
+ 
+           gtk_widget_set_tooltip_text (b, _(aligns[i].tip));
+           gtk_widget_set_hexpand (b, TRUE);
+           g_object_set_data (G_OBJECT (b), "justify", GINT_TO_POINTER (aligns[i].justify));
++          g_object_set_data (G_OBJECT (b), "last", (gpointer) aligns[i].last);
+           g_signal_connect (b, "clicked", G_CALLBACK (justify_clicked), panel);
+           gtk_box_pack_start (GTK_BOX (row), b, TRUE, TRUE, 0);
+         }
+@@ -751,6 +1034,20 @@ panel_new (Gimp *gimp, gboolean paragraph)
+       gtk_toggle_button_set_active (GTK_TOGGLE_BUTTON (panel->hyphens), TRUE);
+       g_signal_connect (panel->hyphens, "toggled", G_CALLBACK (hyphens_toggled), panel);
+       gtk_grid_attach (GTK_GRID (grid), panel->hyphens, 0, 3, 2, 1);
++
++      {
++        GtkWidget *quotes = gtk_check_button_new_with_label (_("Guillemets typographiques (« » ’)"));
++        GtkWidget *spell  = gtk_check_button_new_with_label (_("Vérifier l'orthographe pendant la saisie"));
++
++        gtk_toggle_button_set_active (GTK_TOGGLE_BUTTON (quotes),
++                                      chopgimp_rc_get_boolean ("text", "smart-quotes", TRUE));
++        gtk_toggle_button_set_active (GTK_TOGGLE_BUTTON (spell),
++                                      chopgimp_rc_get_boolean ("text", "spell-check", TRUE));
++        g_signal_connect (quotes, "toggled", G_CALLBACK (rc_toggled), (gpointer) "smart-quotes");
++        g_signal_connect (spell,  "toggled", G_CALLBACK (rc_toggled), (gpointer) "spell-check");
++        gtk_grid_attach (GTK_GRID (grid), quotes, 0, 4, 2, 1);
++        gtk_grid_attach (GTK_GRID (grid), spell,  0, 5, 2, 1);
++      }
+     }
+ 
+   gtk_box_pack_start (GTK_BOX (editor), box, TRUE, TRUE, 0);
+@@ -781,3 +1078,583 @@ chopgimp_paragraph_panel_new (GimpDialogFactory *factory,
+ {
+   return panel_new (context->gimp, TRUE);
+ }
++
++
++/* ─── Glyphes ──────────────────────────────────────────────────────── */
++
++typedef struct
++{
++  Gimp       *gimp;
++  GtkWidget  *combo;
++  GtkWidget  *flow;
++  gchar      *font;        /* lookup name of the font shown */
++  guint       refresh_id;
++} Glyphs;
++
++static const struct { const gchar *name; gunichar first, last; } glyph_ranges[] =
++{
++  { N_("Ponctuation et espaces"),  0x2010, 0x205E },
++  { N_("Latin étendu"),            0x00A1, 0x017F },
++  { N_("Symboles monétaires"),     0x20A0, 0x20C0 },
++  { N_("Exposants et indices"),    0x2070, 0x209C },
++  { N_("Symboles de lettres"),     0x2100, 0x214F },
++  { N_("Fractions et chiffres"),   0x2150, 0x218B },
++  { N_("Flèches"),                 0x2190, 0x21FF },
++  { N_("Mathématiques"),           0x2200, 0x22FF },
++  { N_("Formes géométriques"),     0x25A0, 0x25FF },
++  { N_("Symboles divers"),         0x2600, 0x26FF },
++  { N_("Dingbats"),                0x2700, 0x27BF },
++  { N_("Grec"),                    0x0370, 0x03FF },
++  { N_("Ligatures et formes"),     0xFB00, 0xFB06 },
++};
++
++static void
++glyph_insert (GtkButton *button, Glyphs *g)
++{
++  const gchar  *str  = g_object_get_data (G_OBJECT (button), "glyph");
++  GimpTool     *tool = tool_manager_get_active (g->gimp);
++
++  if (GIMP_IS_TEXT_TOOL (tool) && GIMP_TEXT_TOOL (tool)->layer)
++    {
++      GtkTextBuffer *buffer = GTK_TEXT_BUFFER (GIMP_TEXT_TOOL (tool)->buffer);
++
++      gtk_text_buffer_begin_user_action (buffer);
++      gtk_text_buffer_delete_selection (buffer, TRUE, TRUE);
++      gimp_text_buffer_insert (GIMP_TEXT_TOOL (tool)->buffer, str);
++      gtk_text_buffer_end_user_action (buffer);
++    }
++  else
++    {
++      GimpTextLayer *layer = panel_text_layer (g->gimp);
++      GimpText      *text;
++
++      if (layer && (text = gimp_text_layer_get_text (layer)))
++        {
++          GimpTextBuffer *buffer = gimp_text_buffer_new ();
++          GtkTextIter     end;
++          gchar          *markup;
++
++          if (text->markup)
++            gimp_text_buffer_set_markup (buffer, text->markup);
++          else
++            gimp_text_buffer_set_text (buffer, text->text);
++
++          gtk_text_buffer_get_end_iter (GTK_TEXT_BUFFER (buffer), &end);
++          gtk_text_buffer_insert (GTK_TEXT_BUFFER (buffer), &end, str, -1);
++
++          markup = gimp_text_buffer_get_markup (buffer);
++          gimp_text_layer_set (layer, _("Insérer un glyphe"), "markup", markup, NULL);
++          g_free (markup);
++          g_object_unref (buffer);
++          layer_flush (layer);
++        }
++    }
++}
++
++static void
++glyphs_fill (Glyphs *g)
++{
++  gint                  r = gtk_combo_box_get_active (GTK_COMBO_BOX (g->combo));
++  PangoContext         *context;
++  PangoFontDescription *desc;
++  PangoFont            *font;
++  GList                *children, *list;
++  gunichar              c;
++
++  children = gtk_container_get_children (GTK_CONTAINER (g->flow));
++  for (list = children; list; list = list->next)
++    gtk_widget_destroy (list->data);
++  g_list_free (children);
++
++  if (r < 0)
++    return;
++
++  context = gtk_widget_get_pango_context (g->flow);
++  desc    = pango_font_description_from_string (g->font ? g->font : "Sans");
++  font    = pango_context_load_font (context, desc);
++
++  for (c = glyph_ranges[r].first; c <= glyph_ranges[r].last; c++)
++    {
++      GtkWidget *button, *label;
++      gchar      utf8[8] = { 0, };
++      gchar     *markup, *tip, *esc;
++
++      if (! g_unichar_isdefined (c) || g_unichar_iszerowidth (c) ||
++          g_unichar_type (c) == G_UNICODE_SPACE_SEPARATOR ||
++          (font && ! pango_font_has_char (font, c)))
++        continue;
++
++      g_unichar_to_utf8 (c, utf8);
++      esc    = g_markup_escape_text (utf8, -1);
++      markup = g_strdup_printf ("<span font_desc=\"%s 16\">%s</span>",
++                                g->font ? g->font : "Sans", esc);
++      tip    = g_strdup_printf ("U+%04X", c);
++
++      label  = gtk_label_new (NULL);
++      gtk_label_set_markup (GTK_LABEL (label), markup);
++      button = gtk_button_new ();
++      gtk_button_set_relief (GTK_BUTTON (button), GTK_RELIEF_NONE);
++      gtk_container_add (GTK_CONTAINER (button), label);
++      gtk_widget_set_size_request (button, 34, 34);
++      gtk_widget_set_tooltip_text (button, tip);
++      g_object_set_data_full (G_OBJECT (button), "glyph", g_strdup (utf8), g_free);
++      g_signal_connect (button, "clicked", G_CALLBACK (glyph_insert), g);
++      gtk_container_add (GTK_CONTAINER (g->flow), button);
++
++      g_free (esc);
++      g_free (markup);
++      g_free (tip);
++    }
++
++  if (font)
++    g_object_unref (font);
++  pango_font_description_free (desc);
++
++  gtk_widget_show_all (g->flow);
++}
++
++static gboolean
++glyphs_refresh (Glyphs *g)
++{
++  GimpTool      *tool  = tool_manager_get_active (g->gimp);
++  GimpTextLayer *layer = (GIMP_IS_TEXT_TOOL (tool) && GIMP_TEXT_TOOL (tool)->layer) ?
++                         GIMP_TEXT_TOOL (tool)->layer : panel_text_layer (g->gimp);
++  const gchar   *font  = NULL;
++  GimpText      *text;
++
++  if (layer && (text = gimp_text_layer_get_text (layer)) && text->font)
++    font = gimp_font_get_lookup_name (text->font);
++
++  if (font && g_strcmp0 (font, g->font))
++    {
++      g_free (g->font);
++      g->font = g_strdup (font);
++      glyphs_fill (g);
++    }
++
++  return G_SOURCE_CONTINUE;
++}
++
++static void
++glyphs_free (Glyphs *g)
++{
++  if (g->refresh_id)
++    g_source_remove (g->refresh_id);
++  g_free (g->font);
++  g_free (g);
++}
++
++GtkWidget *
++chopgimp_glyphs_panel_new (GimpDialogFactory *factory,
++                           GimpContext       *context,
++                           GimpUIManager     *ui_manager,
++                           gint               view_size)
++{
++  Glyphs    *g      = g_new0 (Glyphs, 1);
++  GtkWidget *editor = g_object_new (GIMP_TYPE_EDITOR, NULL);
++  GtkWidget *box    = gtk_box_new (GTK_ORIENTATION_VERTICAL, 4);
++  GtkWidget *scroll = gtk_scrolled_window_new (NULL, NULL);
++
++  g->gimp  = context->gimp;
++  g->combo = gtk_combo_box_text_new ();
++
++  for (guint i = 0; i < G_N_ELEMENTS (glyph_ranges); i++)
++    gtk_combo_box_text_append_text (GTK_COMBO_BOX_TEXT (g->combo), _(glyph_ranges[i].name));
++  gtk_combo_box_set_active (GTK_COMBO_BOX (g->combo), 0);
++  g_signal_connect_swapped (g->combo, "changed", G_CALLBACK (glyphs_fill), g);
++
++  g->flow = gtk_flow_box_new ();
++  gtk_flow_box_set_selection_mode (GTK_FLOW_BOX (g->flow), GTK_SELECTION_NONE);
++  gtk_flow_box_set_max_children_per_line (GTK_FLOW_BOX (g->flow), 30);
++  gtk_flow_box_set_homogeneous (GTK_FLOW_BOX (g->flow), TRUE);
++  gtk_scrolled_window_set_policy (GTK_SCROLLED_WINDOW (scroll),
++                                  GTK_POLICY_NEVER, GTK_POLICY_AUTOMATIC);
++  gtk_container_add (GTK_CONTAINER (scroll), g->flow);
++
++  gtk_container_set_border_width (GTK_CONTAINER (box), 4);
++  gtk_box_pack_start (GTK_BOX (box), g->combo, FALSE, FALSE, 0);
++  gtk_box_pack_start (GTK_BOX (box), scroll, TRUE, TRUE, 0);
++  gtk_box_pack_start (GTK_BOX (editor), box, TRUE, TRUE, 0);
++  gtk_widget_show_all (box);
++
++  glyphs_fill (g);
++
++  g->refresh_id = g_timeout_add (600, (GSourceFunc) glyphs_refresh, g);
++  g_object_set_data_full (G_OBJECT (editor), "chopgimp-glyphs", g,
++                          (GDestroyNotify) glyphs_free);
++
++  return editor;
++}
++
++
++/* ─── Styles de texte ──────────────────────────────────────────────── */
++
++typedef struct
++{
++  Gimp      *gimp;
++  GtkWidget *list;
++  GtkWidget *name;
++  Panel     *panel;        /* for the target helpers */
++} Styles;
++
++static const gchar *style_attrs[] = { "text_transform", "variant", "font_features",
++                                      "baseline_shift", "font_scale", NULL };
++
++static gchar *
++styles_path (void)
++{
++  return g_build_filename (gimp_directory (), "chopgimp-text-styles", NULL);
++}
++
++static GKeyFile *
++styles_load (void)
++{
++  GKeyFile *kf   = g_key_file_new ();
++  gchar    *path = styles_path ();
++
++  g_key_file_load_from_file (kf, path, G_KEY_FILE_NONE, NULL);
++  g_free (path);
++
++  return kf;
++}
++
++static void
++styles_save (GKeyFile *kf)
++{
++  gchar *path = styles_path ();
++
++  g_key_file_save_to_file (kf, path, NULL);
++  g_free (path);
++}
++
++static void
++styles_fill (Styles *st)
++{
++  GKeyFile *kf     = styles_load ();
++  gchar   **groups = g_key_file_get_groups (kf, NULL);
++  GList    *children, *list;
++  gint      i;
++
++  children = gtk_container_get_children (GTK_CONTAINER (st->list));
++  for (list = children; list; list = list->next)
++    gtk_widget_destroy (list->data);
++  g_list_free (children);
++
++  for (i = 0; groups[i]; i++)
++    {
++      gchar     *font  = g_key_file_get_string (kf, groups[i], "font", NULL);
++      gchar     *color = g_key_file_get_string (kf, groups[i], "color", NULL);
++      GimpFont  *f     = font ? font_by_name (st->gimp, font) : NULL;
++      GtkWidget *label = gtk_label_new (NULL);
++      gchar     *markup;
++
++      markup = g_markup_printf_escaped ("<span font_desc=\"%s 13\" foreground=\"%s\">%s</span>"
++                                        "  <small>%s</small>",
++                                        f ? gimp_font_get_lookup_name (f) : "Sans",
++                                        color ? color : "#000000",
++                                        groups[i], font ? font : "");
++      gtk_label_set_markup (GTK_LABEL (label), markup);
++      gtk_label_set_xalign (GTK_LABEL (label), 0.0);
++      g_object_set_data_full (G_OBJECT (label), "style", g_strdup (groups[i]), g_free);
++      gtk_container_add (GTK_CONTAINER (st->list), label);
++
++      g_free (markup);
++      g_free (font);
++      g_free (color);
++    }
++
++  gtk_widget_show_all (st->list);
++  g_strfreev (groups);
++  g_key_file_unref (kf);
++}
++
++static const gchar *
++styles_selected (Styles *st)
++{
++  GtkListBoxRow *row = gtk_list_box_get_selected_row (GTK_LIST_BOX (st->list));
++
++  if (! row)
++    return NULL;
++
++  return g_object_get_data (G_OBJECT (gtk_bin_get_child (GTK_BIN (row))), "style");
++}
++
++/*  the style of the selection (or of the layer)  */
++static void
++styles_capture (Styles *st, const gchar *name)
++{
++  Target    t;
++  GKeyFile *kf;
++  GimpText *text;
++  gdouble   xres, yres;
++  guchar    rgb[3];
++  gchar    *hex;
++  gint      i;
++
++  if (! name || ! *name || ! target_begin (st->panel, &t))
++    return;
++
++  text = gimp_text_layer_get_text (t.layer);
++  gimp_image_get_resolution (gimp_item_get_image (GIMP_ITEM (t.layer)), &xres, &yres);
++
++  kf = styles_load ();
++  g_key_file_remove_group (kf, name, NULL);
++
++  g_key_file_set_string (kf, name, "font", gimp_object_get_name (text->font));
++  g_key_file_set_double (kf, name, "size",
++                         gimp_units_to_pixels (text->font_size, text->unit, yres));
++  gegl_color_get_pixel (text->color, babl_format ("R'G'B' u8"), rgb);
++  hex = g_strdup_printf ("#%02x%02x%02x", rgb[0], rgb[1], rgb[2]);
++  g_key_file_set_string (kf, name, "color", hex);
++  g_free (hex);
++  g_key_file_set_double  (kf, name, "tracking", text->letter_spacing);
++  g_key_file_set_double  (kf, name, "leading",  text->line_spacing);
++  g_key_file_set_integer (kf, name, "justify",  text->justify);
++
++  for (i = 0; style_attrs[i]; i++)
++    {
++      const gchar *v = gimp_text_buffer_get_iter_attr (t.buffer, &t.start, style_attrs[i]);
++
++      if (v)
++        g_key_file_set_string (kf, name, style_attrs[i], v);
++    }
++
++  styles_save (kf);
++  g_key_file_unref (kf);
++
++  if (t.temporary)
++    g_object_unref (t.buffer);
++
++  styles_fill (st);
++}
++
++static void
++styles_apply (Styles *st, const gchar *name)
++{
++  GKeyFile     *kf;
++  GimpTextTool *tool = panel_text_tool (st->gimp);
++  gboolean      selection;
++  Target        t;
++  gchar        *font, *color;
++  gdouble       size, xres, yres;
++  GimpImage    *image;
++  GeglColor    *gcolor = NULL;
++  gint          i;
++
++  if (! name)
++    return;
++
++  kf = styles_load ();
++  if (! g_key_file_has_group (kf, name))
++    {
++      g_key_file_unref (kf);
++      return;
++    }
++
++  selection = tool && gtk_text_buffer_get_has_selection (GTK_TEXT_BUFFER (tool->buffer));
++
++  if (! target_begin (st->panel, &t))
++    {
++      g_key_file_unref (kf);
++      return;
++    }
++
++  image = gimp_item_get_image (GIMP_ITEM (t.layer));
++  gimp_image_get_resolution (image, &xres, &yres);
++
++  font  = g_key_file_get_string (kf, name, "font", NULL);
++  color = g_key_file_get_string (kf, name, "color", NULL);
++  size  = g_key_file_get_double (kf, name, "size", NULL);
++
++  if (color)
++    {
++      gcolor = gegl_color_new (NULL);
++      gegl_color_set_rgba (gcolor, 0, 0, 0, 1);
++      {
++        guint r = 0, g = 0, b = 0;
++
++        if (sscanf (color, "#%02x%02x%02x", &r, &g, &b) == 3)
++          {
++            guchar rgb[3] = { r, g, b };
++
++            gegl_color_set_pixel (gcolor, babl_format ("R'G'B' u8"), rgb);
++          }
++      }
++    }
++
++  gimp_image_undo_group_start (image, GIMP_UNDO_GROUP_TEXT, _("Style de texte"));
++
++  if (selection)
++    {
++      /*  character style on the selected characters  */
++      if (font)
++        gimp_text_buffer_set_font (t.buffer, &t.start, &t.end, font);
++      if (size > 0)
++        gimp_text_buffer_set_size (t.buffer, &t.start, &t.end,
++                                   PANGO_SCALE * gimp_units_to_points (size, gimp_unit_pixel (), yres));
++      if (gcolor)
++        gimp_text_buffer_set_color (t.buffer, &t.start, &t.end, gcolor);
++    }
++  else
++    {
++      GimpFont *f = font ? font_by_name (st->gimp, font) : NULL;
++
++      if (t.temporary)
++        {
++          g_object_unref (t.buffer);
++          t.temporary = FALSE;
++        }
++
++      /*  paragraph style on the whole layer  */
++      if (f)
++        gimp_text_layer_set (t.layer, NULL, "font", f, NULL);
++      if (size > 0)
++        gimp_text_layer_set (t.layer, NULL, "font-size", size, "unit", gimp_unit_pixel (), NULL);
++      if (gcolor)
++        gimp_text_layer_set (t.layer, NULL, "color", gcolor, NULL);
++      gimp_text_layer_set (t.layer, NULL,
++                           "letter-spacing", g_key_file_get_double (kf, name, "tracking", NULL),
++                           "line-spacing",   g_key_file_get_double (kf, name, "leading", NULL),
++                           "justify",        g_key_file_get_integer (kf, name, "justify", NULL),
++                           NULL);
++
++      /*  … and the character attributes on all of it  */
++      target_begin (st->panel, &t);
++      gtk_text_buffer_get_bounds (GTK_TEXT_BUFFER (t.buffer), &t.start, &t.end);
++    }
++
++  for (i = 0; style_attrs[i]; i++)
++    {
++      gchar *v = g_key_file_get_string (kf, name, style_attrs[i], NULL);
++
++      gimp_text_buffer_set_attr (t.buffer, &t.start, &t.end, style_attrs[i], v);
++      g_free (v);
++    }
++
++  target_end (&t, NULL);
++
++  gimp_image_undo_group_end (image);
++  gimp_image_flush (image);
++
++  g_clear_object (&gcolor);
++  g_free (font);
++  g_free (color);
++  g_key_file_unref (kf);
++}
++
++static void
++styles_new_clicked (GtkButton *button, Styles *st)
++{
++  const gchar *name = gtk_entry_get_text (GTK_ENTRY (st->name));
++
++  if (name && *name)
++    {
++      styles_capture (st, name);
++      gtk_entry_set_text (GTK_ENTRY (st->name), "");
++    }
++}
++
++static void
++styles_redefine_clicked (GtkButton *button, Styles *st)
++{
++  styles_capture (st, styles_selected (st));
++}
++
++static void
++styles_apply_clicked (GtkButton *button, Styles *st)
++{
++  styles_apply (st, styles_selected (st));
++}
++
++static void
++styles_row_activated (GtkListBox *box, GtkListBoxRow *row, Styles *st)
++{
++  styles_apply (st, styles_selected (st));
++}
++
++static void
++styles_delete_clicked (GtkButton *button, Styles *st)
++{
++  const gchar *name = styles_selected (st);
++
++  if (name)
++    {
++      GKeyFile *kf = styles_load ();
++
++      g_key_file_remove_group (kf, name, NULL);
++      styles_save (kf);
++      g_key_file_unref (kf);
++      styles_fill (st);
++    }
++}
++
++static void
++styles_free (Styles *st)
++{
++  panel_free (st->panel);
++  g_free (st);
++}
++
++GtkWidget *
++chopgimp_text_styles_panel_new (GimpDialogFactory *factory,
++                                GimpContext       *context,
++                                GimpUIManager     *ui_manager,
++                                gint               view_size)
++{
++  Styles    *st     = g_new0 (Styles, 1);
++  GtkWidget *editor = g_object_new (GIMP_TYPE_EDITOR, NULL);
++  GtkWidget *box    = gtk_box_new (GTK_ORIENTATION_VERTICAL, 4);
++  GtkWidget *scroll = gtk_scrolled_window_new (NULL, NULL);
++  GtkWidget *row    = gtk_box_new (GTK_ORIENTATION_HORIZONTAL, 2);
++  GtkWidget *add;
++  static const struct { const gchar *icon; const gchar *tip; GCallback cb; } buttons[] =
++  {
++    { "object-select-symbolic",  N_("Appliquer le style (ou double-clic) : à la sélection en cours "
++                                    "d'édition, sinon à tout le calque"), G_CALLBACK (styles_apply_clicked) },
++    { "view-refresh-symbolic",   N_("Redéfinir le style d'après le texte sélectionné"),
++                                 G_CALLBACK (styles_redefine_clicked) },
++    { "edit-delete-symbolic",    N_("Supprimer le style"), G_CALLBACK (styles_delete_clicked) },
++  };
++
++  st->gimp        = context->gimp;
++  st->panel       = g_new0 (Panel, 1);
++  st->panel->gimp = context->gimp;
++
++  st->list = gtk_list_box_new ();
++  gtk_list_box_set_activate_on_single_click (GTK_LIST_BOX (st->list), FALSE);
++  g_signal_connect (st->list, "row-activated", G_CALLBACK (styles_row_activated), st);
++  gtk_scrolled_window_set_policy (GTK_SCROLLED_WINDOW (scroll),
++                                  GTK_POLICY_NEVER, GTK_POLICY_AUTOMATIC);
++  gtk_container_add (GTK_CONTAINER (scroll), st->list);
++
++  st->name = gtk_entry_new ();
++  gtk_entry_set_placeholder_text (GTK_ENTRY (st->name), _("Nom du nouveau style"));
++  g_signal_connect_swapped (st->name, "activate", G_CALLBACK (styles_new_clicked), st);
++  add = gtk_button_new_from_icon_name ("list-add-symbolic", GTK_ICON_SIZE_BUTTON);
++  gtk_widget_set_tooltip_text (add, _("Créer un style d'après le texte sélectionné"));
++  g_signal_connect (add, "clicked", G_CALLBACK (styles_new_clicked), st);
++  gtk_box_pack_start (GTK_BOX (row), st->name, TRUE, TRUE, 0);
++  gtk_box_pack_start (GTK_BOX (row), add, FALSE, FALSE, 0);
++
++  gtk_container_set_border_width (GTK_CONTAINER (box), 4);
++  gtk_box_pack_start (GTK_BOX (box), row, FALSE, FALSE, 0);
++  gtk_box_pack_start (GTK_BOX (box), scroll, TRUE, TRUE, 0);
++
++  for (guint i = 0; i < G_N_ELEMENTS (buttons); i++)
++    {
++      GtkWidget *b = gimp_editor_add_button (GIMP_EDITOR (editor), buttons[i].icon,
++                                             _(buttons[i].tip), NULL,
++                                             NULL, NULL, NULL);
++      g_signal_connect (b, "clicked", buttons[i].cb, st);
++    }
++
++  gtk_box_pack_start (GTK_BOX (editor), box, TRUE, TRUE, 0);
++  gtk_widget_show_all (box);
++
++  styles_fill (st);
++
++  g_object_set_data_full (G_OBJECT (editor), "chopgimp-styles", st,
++                          (GDestroyNotify) styles_free);
++
++  return editor;
++}
+diff --git a/app/dialogs/chopgimp-textpanels.h b/app/dialogs/chopgimp-textpanels.h
+index 00c17bb..bdec237 100644
+--- a/app/dialogs/chopgimp-textpanels.h
++++ b/app/dialogs/chopgimp-textpanels.h
+@@ -12,3 +12,11 @@ GtkWidget * chopgimp_paragraph_panel_new (GimpDialogFactory *factory,
+                                           GimpContext       *context,
+                                           GimpUIManager     *ui_manager,
+                                           gint               view_size);
++GtkWidget * chopgimp_glyphs_panel_new      (GimpDialogFactory *factory,
++                                            GimpContext       *context,
++                                            GimpUIManager     *ui_manager,
++                                            gint               view_size);
++GtkWidget * chopgimp_text_styles_panel_new (GimpDialogFactory *factory,
++                                            GimpContext       *context,
++                                            GimpUIManager     *ui_manager,
++                                            gint               view_size);
+diff --git a/app/dialogs/dialogs.c b/app/dialogs/dialogs.c
+index 2ab7fb4..4aa3d19 100644
+--- a/app/dialogs/dialogs.c
++++ b/app/dialogs/dialogs.c
+@@ -334,6 +334,14 @@ static const GimpDialogFactoryEntry entries[] =
+             N_("Paragraphe"), N_("Paragraphe (texte)"), "format-justify-left",
+             GIMP_HELP_TOOL_TEXT,
+             chopgimp_paragraph_panel_new, 0, TRUE),
++  DOCKABLE ("chopgimp-glyphs",
++            N_("Glyphes"), N_("Glyphes (caractères spéciaux)"), "gimp-font",
++            GIMP_HELP_TOOL_TEXT,
++            chopgimp_glyphs_panel_new, 0, TRUE),
++  DOCKABLE ("chopgimp-text-styles",
++            N_("Styles de texte"), N_("Styles de caractère et de paragraphe"), "gimp-tool-text",
++            GIMP_HELP_TOOL_TEXT,
++            chopgimp_text_styles_panel_new, 0, TRUE),
+   DOCKABLE ("gimp-cursor-view",
+             N_("Pointer"), N_("Pointer Information"), GIMP_ICON_CURSOR,
+             GIMP_HELP_POINTER_INFO_DIALOG,
+diff --git a/app/pdb/chopgimp-cmds.c b/app/pdb/chopgimp-cmds.c
+index ebe0cc3..4871a50 100644
+--- a/app/pdb/chopgimp-cmds.c
++++ b/app/pdb/chopgimp-cmds.c
+@@ -35,6 +35,9 @@
+ #include "path/gimppath.h"
+ #include "path/chopgimp-geom.h"
+ 
++#include "text/gimptext.h"
++#include "text/gimptextlayer.h"
++
+ #include "gimppdb.h"
+ #include "gimpprocedure.h"
+ #include "chopgimp-cmds.h"
+@@ -246,6 +249,52 @@ nodes_invoker (GimpProcedure         *procedure,
+   return return_vals;
+ }
+ 
++static GimpValueArray *
++text_fx_set_invoker (GimpProcedure         *procedure,
++                     Gimp                  *gimp,
++                     GimpContext           *context,
++                     GimpProgress          *progress,
++                     const GimpValueArray  *args,
++                     GError               **error)
++{
++  GimpTextLayer *layer     = ARG_OBJECT (0);
++  const gchar   *spec      = g_value_get_string (gimp_value_array_index (args, 1));
++  gboolean       push_undo = ARG_BOOL (2);
++  GimpText      *text      = gimp_text_layer_get_text (layer);
++
++  if (! text || ! gimp_item_is_attached (GIMP_ITEM (layer)))
++    return gimp_procedure_get_return_values (procedure, FALSE, NULL);
++
++  if (spec && ! *spec)
++    spec = NULL;
++
++  if (push_undo)
++    gimp_text_layer_set (layer, _("Effet de texte"), "chopgimp-fx", spec, NULL);
++  else
++    g_object_set (text, "chopgimp-fx", spec, NULL);
++
++  return gimp_procedure_get_return_values (procedure, TRUE, NULL);
++}
++
++static GimpValueArray *
++text_fx_get_invoker (GimpProcedure         *procedure,
++                     Gimp                  *gimp,
++                     GimpContext           *context,
++                     GimpProgress          *progress,
++                     const GimpValueArray  *args,
++                     GError               **error)
++{
++  GimpTextLayer  *layer = ARG_OBJECT (0);
++  GimpText       *text  = gimp_text_layer_get_text (layer);
++  GimpValueArray *return_vals;
++
++  return_vals = gimp_procedure_get_return_values (procedure, TRUE, NULL);
++  g_value_set_string (gimp_value_array_index (return_vals, 1),
++                      text && text->chopgimp_fx ? text->chopgimp_fx : "");
++
++  return return_vals;
++}
++
+ 
+ static GimpProcedure *
+ chopgimp_procedure (GimpPDB          *pdb,
+@@ -385,4 +434,29 @@ register_chopgimp_procs (GimpPDB *pdb)
+                                                             FALSE, GIMP_PARAM_READWRITE));
+   gimp_pdb_register_procedure (pdb, p);
+   g_object_unref (p);
++
++  p = chopgimp_procedure (pdb, text_fx_set_invoker, "chopgimp-text-fx-set",
++                          "Text effect of a text layer, which stays editable: "
++                          "warp=<style>;bend=50;hdist=0;vdist=0;vertical=0 | "
++                          "path=<tattoo>;start=0;flip=0;shift=0 | shape=<tattoo>;inset=0 | "
++                          "empty (none).  Without undo for live previews.");
++  gimp_procedure_add_argument (p, gimp_param_spec_text_layer ("layer", "layer", "Text layer",
++                                                              FALSE, GIMP_PARAM_READWRITE));
++  gimp_procedure_add_argument (p, gimp_param_spec_string ("spec", "spec", "Effect",
++                                                          FALSE, TRUE, FALSE, NULL,
++                                                          GIMP_PARAM_READWRITE));
++  gimp_procedure_add_argument (p, g_param_spec_boolean ("push-undo", "push-undo", "Undoable",
++                                                        TRUE, GIMP_PARAM_READWRITE));
++  gimp_pdb_register_procedure (pdb, p);
++  g_object_unref (p);
++
++  p = chopgimp_procedure (pdb, text_fx_get_invoker, "chopgimp-text-fx-get",
++                          "Text effect of a text layer (empty: none).");
++  gimp_procedure_add_argument (p, gimp_param_spec_text_layer ("layer", "layer", "Text layer",
++                                                              FALSE, GIMP_PARAM_READWRITE));
++  gimp_procedure_add_return_value (p, gimp_param_spec_string ("spec", "spec", "Effect",
++                                                              FALSE, TRUE, FALSE, NULL,
++                                                              GIMP_PARAM_READWRITE));
++  gimp_pdb_register_procedure (pdb, p);
++  g_object_unref (p);
+ }
+diff --git a/app/text/chopgimp-textfx.c b/app/text/chopgimp-textfx.c
+new file mode 100644
+index 0000000..536b5b2
+--- /dev/null
++++ b/app/text/chopgimp-textfx.c
+@@ -0,0 +1,1579 @@
++/* GIMP - The GNU Image Manipulation Program
++ * chopgimp-textfx.c — ChopGimp: warped text (the 15 Photoshop styles),
++ * text on a path, text in a shape, and transformations that keep the
++ * text editable.
++ *
++ * The text is turned into glyph outlines (one outline per glyph, keeping
++ * the colour of its run), the outlines are flattened, moved, and filled
++ * with cairo.  The text layer stays a text layer: the effect is the
++ * "chopgimp-fx" property of its GimpText, so it is undoable, saved in
++ * the XCF and re-applied whenever the text changes.
++ *
++ * This program is free software: you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation; either version 3 of the License, or
++ * (at your option) any later version.
++ */
++
++#include "config.h"
++
++#include <math.h>
++#include <stdio.h>
++#include <string.h>
++
++#include <cairo.h>
++#include <gegl.h>
++#include <gdk-pixbuf/gdk-pixbuf.h>
++#include <pango/pangocairo.h>
++
++#include "libgimpbase/gimpbase.h"
++#include "libgimpmath/gimpmath.h"
++
++#include "text-types.h"
++#include "path/path-types.h"
++
++#include "core/gimpdrawable.h"
++#include "core/gimpimage.h"
++#include "core/gimpitem.h"
++#include "core/gimprasterizable.h"
++
++#include "path/gimppath.h"
++#include "path/gimpstroke.h"
++#include "path/gimpvectorlayer.h"
++
++#include "gimptext.h"
++#include "gimptextlayer.h"
++#include "gimptextlayout.h"
++#include "chopgimp-textfx.h"
++
++
++#define SHIFT_PARASITE "chopgimp-text-shift"
++#define SEG_MAX        1.5   /* longest flattened segment before warping */
++
++
++typedef struct
++{
++  gdouble x, y;
++} Pt;
++
++typedef struct
++{
++  GArray   *pts;   /* Pt */
++  gdouble   gx;    /* centre of its glyph (rigid placement on a path)  */
++  gboolean  bend;  /* underline / strikethrough: bent point by point   */
++} Sub;
++
++typedef struct
++{
++  gdouble    r, g, b;
++  GPtrArray *subs;
++} Piece;
++
++typedef enum
++{
++  FX_MATRIX,
++  FX_WARP,
++  FX_PATH,
++  FX_SHAPE
++} FxMode;
++
++struct _ChopGimpTextFx
++{
++  FxMode     mode;
++  GPtrArray *pieces;
++  gint       ox, oy;          /* layer-local (matrix, warp) or image (path, shape) */
++  gint       width, height;
++  gboolean   absolute;
++  gint       anchor_x, anchor_y;
++  gint       new_x, new_y;
++};
++
++
++static const gchar *warp_styles[] =
++{
++  "arc", "arc-lower", "arc-upper", "arch", "bulge", "shell-lower",
++  "shell-upper", "flag", "wave", "fish", "rise", "fisheye", "inflate",
++  "squeeze", "twist", NULL
++};
++
++
++/*  spec  */
++
++gchar *
++chopgimp_text_fx_get_value (const gchar *spec,
++                            const gchar *key)
++{
++  gchar  **items;
++  gchar   *value = NULL;
++  gint     i;
++
++  if (! spec || ! *spec)
++    return NULL;
++
++  items = g_strsplit (spec, ";", -1);
++
++  for (i = 0; items[i] && ! value; i++)
++    {
++      gchar *eq = strchr (items[i], '=');
++
++      if (eq && (gsize) (eq - items[i]) == strlen (key) &&
++          ! strncmp (items[i], key, eq - items[i]))
++        value = g_strdup (eq + 1);
++    }
++
++  g_strfreev (items);
++
++  return value;
++}
++
++static gdouble
++spec_double (const gchar *spec,
++             const gchar *key,
++             gdouble      def)
++{
++  gchar   *v = chopgimp_text_fx_get_value (spec, key);
++  gdouble  d = v ? g_ascii_strtod (v, NULL) : def;
++
++  g_free (v);
++
++  return d;
++}
++
++const gchar **
++chopgimp_text_fx_warp_styles (void)
++{
++  return warp_styles;
++}
++
++
++/*  outlines  */
++
++static void
++sub_free (Sub *sub)
++{
++  g_array_unref (sub->pts);
++  g_free (sub);
++}
++
++static void
++piece_free (Piece *piece)
++{
++  g_ptr_array_unref (piece->subs);
++  g_free (piece);
++}
++
++static Piece *
++fx_piece (ChopGimpTextFx *fx,
++          gdouble         r,
++          gdouble         g,
++          gdouble         b)
++{
++  Piece *piece;
++
++  if (fx->pieces->len)
++    {
++      piece = g_ptr_array_index (fx->pieces, fx->pieces->len - 1);
++
++      if (piece->r == r && piece->g == g && piece->b == b)
++        return piece;
++    }
++
++  piece       = g_new0 (Piece, 1);
++  piece->r    = r;
++  piece->g    = g;
++  piece->b    = b;
++  piece->subs = g_ptr_array_new_with_free_func ((GDestroyNotify) sub_free);
++
++  g_ptr_array_add (fx->pieces, piece);
++
++  return piece;
++}
++
++/*  takes the current path of cr, in device coordinates  */
++static void
++fx_take_path (Piece    *piece,
++              cairo_t  *cr,
++              gdouble   gx,
++              gboolean  bend)
++{
++  cairo_matrix_t  m;
++  cairo_path_t   *path;
++  Sub            *sub = NULL;
++  gdouble         gy  = 0.0;
++  gint            i;
++
++  cairo_user_to_device (cr, &gx, &gy);
++
++  cairo_get_matrix (cr, &m);
++  cairo_identity_matrix (cr);
++  path = cairo_copy_path_flat (cr);
++  cairo_set_matrix (cr, &m);
++
++  for (i = 0; i < path->num_data; i += path->data[i].header.length)
++    {
++      cairo_path_data_t *d = &path->data[i];
++      Pt                 pt;
++
++      switch (d->header.type)
++        {
++        case CAIRO_PATH_MOVE_TO:
++          sub       = g_new0 (Sub, 1);
++          sub->pts  = g_array_new (FALSE, FALSE, sizeof (Pt));
++          sub->gx   = gx;
++          sub->bend = bend;
++          g_ptr_array_add (piece->subs, sub);
++          /* fall through */
++        case CAIRO_PATH_LINE_TO:
++          if (! sub)
++            break;
++          pt.x = d[1].point.x;
++          pt.y = d[1].point.y;
++          g_array_append_val (sub->pts, pt);
++          break;
++
++        default:
++          break;
++        }
++    }
++
++  cairo_path_destroy (path);
++  cairo_new_path (cr);
++}
++
++/*  all runs of a layout (or of its first line), at the current matrix  */
++static void
++fx_collect (ChopGimpTextFx *fx,
++            cairo_t        *cr,
++            PangoLayout    *pl,
++            gboolean        first_line_only)
++{
++  PangoLayoutIter *iter  = pango_layout_get_iter (pl);
++  PangoLayoutLine *first = pango_layout_get_line_readonly (pl, 0);
++
++  do
++    {
++      PangoLayoutRun   *run = pango_layout_iter_get_run_readonly (iter);
++      PangoRectangle    log;
++      PangoColor        color = { 0, 0, 0 };
++      gint              underline = PANGO_UNDERLINE_NONE;
++      gboolean          strike    = FALSE;
++      PangoFont        *font;
++      Piece            *piece;
++      GSList           *list;
++      gdouble           x, y, base;
++      gint              i;
++
++      if (first_line_only &&
++          pango_layout_iter_get_line_readonly (iter) != first)
++        break;
++
++      if (! run)
++        continue;
++
++      font = run->item->analysis.font;
++
++      pango_layout_iter_get_run_extents (iter, NULL, &log);
++
++      base = (gdouble) pango_layout_iter_get_baseline (iter) / PANGO_SCALE;
++      x    = (gdouble) log.x / PANGO_SCALE;
++      y    = base - (gdouble) run->y_offset / PANGO_SCALE;
++
++      for (list = run->item->analysis.extra_attrs; list; list = list->next)
++        {
++          PangoAttribute *attr = list->data;
++
++          switch ((gint) attr->klass->type)
++            {
++            case PANGO_ATTR_FOREGROUND:
++              color = ((PangoAttrColor *) attr)->color;
++              break;
++            case PANGO_ATTR_UNDERLINE:
++              underline = ((PangoAttrInt *) attr)->value;
++              break;
++            case PANGO_ATTR_STRIKETHROUGH:
++              strike = ((PangoAttrInt *) attr)->value;
++              break;
++            default:
++              break;
++            }
++        }
++
++      piece = fx_piece (fx,
++                        color.red   / 65535.0,
++                        color.green / 65535.0,
++                        color.blue  / 65535.0);
++
++      for (i = 0; i < run->glyphs->num_glyphs; i++)
++        {
++          PangoGlyphInfo   info  = run->glyphs->glyphs[i];
++          gint             zero  = 0;
++          PangoGlyphString single;
++          gdouble          w     = (gdouble) info.geometry.width / PANGO_SCALE;
++
++          if (info.glyph != PANGO_GLYPH_EMPTY &&
++              ! (info.glyph & PANGO_GLYPH_UNKNOWN_FLAG))
++            {
++              single.num_glyphs  = 1;
++              single.glyphs      = &info;
++              single.log_clusters = &zero;
++              single.space       = 1;
++
++              cairo_new_path (cr);
++              cairo_move_to (cr, x, y);
++              pango_cairo_glyph_string_path (cr, font, &single);
++
++              fx_take_path (piece, cr, x + w / 2.0, FALSE);
++            }
++
++          x += w;
++        }
++
++      if (underline != PANGO_UNDERLINE_NONE || strike)
++        {
++          PangoFontMetrics *metrics = pango_font_get_metrics (font, NULL);
++          gdouble           rx      = (gdouble) log.x     / PANGO_SCALE;
++          gdouble           rw      = (gdouble) log.width / PANGO_SCALE;
++
++          if (underline != PANGO_UNDERLINE_NONE)
++            {
++              gdouble pos   = pango_font_metrics_get_underline_position  (metrics);
++              gdouble thick = pango_font_metrics_get_underline_thickness (metrics);
++
++              cairo_new_path (cr);
++              cairo_rectangle (cr, rx, y - pos / PANGO_SCALE,
++                               rw, MAX (1.0, thick / PANGO_SCALE));
++              fx_take_path (piece, cr, rx + rw / 2.0, TRUE);
++            }
++
++          if (strike)
++            {
++              gdouble pos   = pango_font_metrics_get_strikethrough_position  (metrics);
++              gdouble thick = pango_font_metrics_get_strikethrough_thickness (metrics);
++
++              cairo_new_path (cr);
++              cairo_rectangle (cr, rx, y - pos / PANGO_SCALE,
++                               rw, MAX (1.0, thick / PANGO_SCALE));
++              fx_take_path (piece, cr, rx + rw / 2.0, TRUE);
++            }
++
++          pango_font_metrics_unref (metrics);
++        }
++    }
++  while (pango_layout_iter_next_run (iter));
++
++  pango_layout_iter_free (iter);
++}
++
++static void
++fx_subdivide (ChopGimpTextFx *fx,
++              gboolean        bend_only)
++{
++  gint p, s;
++
++  for (p = 0; p < fx->pieces->len; p++)
++    {
++      Piece *piece = g_ptr_array_index (fx->pieces, p);
++
++      for (s = 0; s < piece->subs->len; s++)
++        {
++          Sub    *sub = g_ptr_array_index (piece->subs, s);
++          GArray *out;
++          gint    i, n = sub->pts->len;
++
++          if ((bend_only && ! sub->bend) || n < 2)
++            continue;
++
++          out = g_array_sized_new (FALSE, FALSE, sizeof (Pt), n * 2);
++
++          for (i = 0; i < n; i++)
++            {
++              Pt      a = g_array_index (sub->pts, Pt, i);
++              Pt      b = g_array_index (sub->pts, Pt, (i + 1) % n);
++              gdouble len = hypot (b.x - a.x, b.y - a.y);
++              gint    k, steps = MAX (1, (gint) ceil (len / SEG_MAX));
++
++              for (k = 0; k < steps; k++)
++                {
++                  Pt q;
++
++                  q.x = a.x + (b.x - a.x) * k / steps;
++                  q.y = a.y + (b.y - a.y) * k / steps;
++                  g_array_append_val (out, q);
++                }
++            }
++
++          g_array_unref (sub->pts);
++          sub->pts = out;
++        }
++    }
++}
++
++static gboolean
++fx_bounds (ChopGimpTextFx *fx,
++           gdouble        *x1,
++           gdouble        *y1,
++           gdouble        *x2,
++           gdouble        *y2)
++{
++  gboolean any = FALSE;
++  gint     p, s, i;
++
++  *x1 = *y1 =  G_MAXDOUBLE;
++  *x2 = *y2 = -G_MAXDOUBLE;
++
++  for (p = 0; p < fx->pieces->len; p++)
++    {
++      Piece *piece = g_ptr_array_index (fx->pieces, p);
++
++      for (s = 0; s < piece->subs->len; s++)
++        {
++          Sub *sub = g_ptr_array_index (piece->subs, s);
++
++          for (i = 0; i < sub->pts->len; i++)
++            {
++              Pt pt = g_array_index (sub->pts, Pt, i);
++
++              *x1 = MIN (*x1, pt.x);
++              *y1 = MIN (*y1, pt.y);
++              *x2 = MAX (*x2, pt.x);
++              *y2 = MAX (*y2, pt.y);
++              any = TRUE;
++            }
++        }
++    }
++
++  return any;
++}
++
++
++/*  warp (Photoshop « Déformer le texte »)  */
++
++typedef struct
++{
++  gint     style;
++  gdouble  bend, hdist, vdist;
++  gboolean vertical;
++  gdouble  cx, cy, hw, hh;
++} Warp;
++
++static void
++warp_point (const Warp *w,
++            gdouble    *px,
++            gdouble    *py)
++{
++  gdouble x  = *px, y = *py;
++  gdouble cx = w->cx, cy = w->cy, hw = w->hw, hh = w->hh;
++  gdouble b  = w->bend;
++  gdouble u, v, dv = 0.0;
++
++  if (w->vertical)
++    {
++      gdouble t;
++
++      t = x;  x  = y;  y  = t;
++      t = cx; cx = cy; cy = t;
++      t = hw; hw = hh; hh = t;
++    }
++
++  u = (x - cx) / hw;
++  v = (y - cy) / hh;
++
++  /*  perspective-like distortions  */
++  v *= 1.0 + w->hdist * u * 0.5;
++  u *= 1.0 - w->vdist * v * 0.5;
++
++  switch (w->style)
++    {
++    case 0: /* arc */
++      {
++        gdouble theta = fabs (b) * G_PI;
++
++        if (theta > 1e-4)
++          {
++            gdouble R   = (2.0 * hw) / theta;
++            gdouble phi = u * theta / 2.0;
++            gdouble yy  = v * hh;
++
++            if (b > 0)
++              {
++                gdouble r = R - yy;
++
++                x = cx + r * sin (phi);
++                y = cy + R - r * cos (phi);
++              }
++            else
++              {
++                gdouble r = R + yy;
++
++                x = cx + r * sin (phi);
++                y = cy - R + r * cos (phi);
++              }
++            goto done;
++          }
++      }
++      break;
++
++    case 1: /* arc lower */
++      dv = b * (1.0 - u * u) * (1.0 + v) / 2.0;
++      break;
++
++    case 2: /* arc upper */
++      dv = -b * (1.0 - u * u) * (1.0 - v) / 2.0;
++      break;
++
++    case 3: /* arch */
++      dv = -b * (1.0 - u * u);
++      break;
++
++    case 4: /* bulge */
++      dv = b * (1.0 - u * u) * v;
++      break;
++
++    case 5: /* shell lower */
++      dv = b * (1.0 - u * u) * (1.0 + v) / 2.0 * 1.2 -
++           b * u * u * (1.0 - v) / 2.0 * 0.4;
++      break;
++
++    case 6: /* shell upper */
++      dv = -b * (1.0 - u * u) * (1.0 - v) / 2.0 * 1.2 +
++           b * u * u * (1.0 + v) / 2.0 * 0.4;
++      break;
++
++    case 7: /* flag */
++      dv = -b * 0.6 * sin (G_PI * u);
++      break;
++
++    case 8: /* wave */
++      dv = -b * 0.6 * sin (G_PI * u + v * 0.9);
++      break;
++
++    case 9: /* fish */
++      dv = b * v * 0.8 * sin (G_PI * (u + 1.0) * 0.75);
++      break;
++
++    case 10: /* rise */
++      dv = -b * 0.8 * sin (G_PI * u / 2.0);
++      break;
++
++    case 11: /* fisheye: radial power, no folding */
++      {
++        gdouble r = sqrt (u * u + v * v);
++
++        if (r > 1e-9 && r < 1.0)
++          {
++            gdouble f = pow (r, 1.0 / (1.0 + 0.8 * b) - 1.0);
++
++            u *= f;
++            v *= f;
++          }
++      }
++      break;
++
++    case 12: /* inflate */
++      {
++        gdouble nu = u + b * 0.12 * sin (G_PI * u) * (1.0 - v * v);
++        gdouble nv = v * (1.0 + b * 0.45 * (1.0 - u * u));
++
++        u = nu;
++        v = nv;
++      }
++      break;
++
++    case 13: /* squeeze */
++      {
++        gdouble nu = u - b * 0.10 * sin (G_PI * u) * v * v;
++        gdouble nv = v * (1.0 - b * 0.45 * (1.0 - u * u));
++
++        u = nu;
++        v = nv;
++      }
++      break;
++
++    case 14: /* twist */
++      {
++        gdouble ax = u * hw, ay = v * hh;
++        gdouble r  = hypot (ax, ay) / MAX (hw, hh);
++        gdouble a  = b * G_PI / 2.0 * MAX (0.0, 1.0 - r);
++        gdouble c  = cos (a), s = sin (a);
++
++        u = (ax * c - ay * s) / hw;
++        v = (ax * s + ay * c) / hh;
++      }
++      break;
++
++    default:
++      break;
++    }
++
++  x = cx + u * hw;
++  y = cy + (v + dv) * hh;
++
++ done:
++  if (w->vertical)
++    {
++      *px = y;
++      *py = x;
++    }
++  else
++    {
++      *px = x;
++      *py = y;
++    }
++}
++
++static void
++fx_warp (ChopGimpTextFx *fx,
++         const gchar    *spec)
++{
++  gchar   *style = chopgimp_text_fx_get_value (spec, "warp");
++  Warp     w     = { 0, };
++  gdouble  x1, y1, x2, y2;
++  gint     p, s, i;
++
++  w.style = 0;
++  for (i = 0; warp_styles[i]; i++)
++    if (! g_strcmp0 (style, warp_styles[i]))
++      w.style = i;
++  g_free (style);
++
++  w.bend     = CLAMP (spec_double (spec, "bend",  50.0), -100, 100) / 100.0;
++  w.hdist    = CLAMP (spec_double (spec, "hdist",  0.0), -100, 100) / 100.0;
++  w.vdist    = CLAMP (spec_double (spec, "vdist",  0.0), -100, 100) / 100.0;
++  w.vertical = spec_double (spec, "vertical", 0.0) != 0.0;
++
++  if (! fx_bounds (fx, &x1, &y1, &x2, &y2))
++    return;
++
++  w.cx = (x1 + x2) / 2.0;
++  w.cy = (y1 + y2) / 2.0;
++  w.hw = MAX ((x2 - x1) / 2.0, 1.0);
++  w.hh = MAX ((y2 - y1) / 2.0, 1.0);
++
++  fx_subdivide (fx, FALSE);
++
++  for (p = 0; p < fx->pieces->len; p++)
++    {
++      Piece *piece = g_ptr_array_index (fx->pieces, p);
++
++      for (s = 0; s < piece->subs->len; s++)
++        {
++          Sub *sub = g_ptr_array_index (piece->subs, s);
++
++          for (i = 0; i < sub->pts->len; i++)
++            {
++              Pt *pt = &g_array_index (sub->pts, Pt, i);
++
++              warp_point (&w, &pt->x, &pt->y);
++            }
++        }
++    }
++}
++
++
++/*  paths  */
++
++static GArray *
++stroke_polyline (GimpStroke *stroke,
++                 gboolean   *closed)
++{
++  GArray *coords = gimp_stroke_interpolate (stroke, 0.2, closed);
++  GArray *pts;
++  gint    i;
++
++  if (! coords)
++    return NULL;
++
++  pts = g_array_new (FALSE, FALSE, sizeof (Pt));
++
++  for (i = 0; i < coords->len; i++)
++    {
++      GimpCoords *c = &g_array_index (coords, GimpCoords, i);
++      Pt          pt = { c->x, c->y };
++
++      if (pts->len)
++        {
++          Pt last = g_array_index (pts, Pt, pts->len - 1);
++
++          if (hypot (pt.x - last.x, pt.y - last.y) < 1e-6)
++            continue;
++        }
++
++      g_array_append_val (pts, pt);
++    }
++
++  g_array_free (coords, TRUE);
++
++  if (pts->len < 2)
++    {
++      g_array_unref (pts);
++      return NULL;
++    }
++
++  return pts;
++}
++
++typedef struct
++{
++  GArray   *pts;
++  gdouble  *len;     /* cumulative length at each point */
++  gdouble   total;
++  gboolean  closed;
++} Line;
++
++static void
++line_sample (const Line *line,
++             gdouble     s,
++             Pt         *p,
++             Pt         *t)
++{
++  gint    n = line->pts->len;
++  gint    lo, hi;
++  Pt      a, b;
++  gdouble seg, f;
++
++  if (line->closed && line->total > 0)
++    {
++      s = fmod (s, line->total);
++      if (s < 0)
++        s += line->total;
++    }
++
++  if (s <= 0)
++    {
++      lo = 0;
++    }
++  else if (s >= line->total)
++    {
++      lo = n - 2;
++    }
++  else
++    {
++      lo = 0;
++      hi = n - 1;
++
++      while (hi - lo > 1)
++        {
++          gint mid = (lo + hi) / 2;
++
++          if (line->len[mid] <= s)
++            lo = mid;
++          else
++            hi = mid;
++        }
++    }
++
++  a   = g_array_index (line->pts, Pt, lo);
++  b   = g_array_index (line->pts, Pt, lo + 1);
++  seg = MAX (line->len[lo + 1] - line->len[lo], 1e-9);
++  f   = (s - line->len[lo]) / seg;   /* may be < 0 or > 1: extrapolation */
++
++  p->x = a.x + (b.x - a.x) * f;
++  p->y = a.y + (b.y - a.y) * f;
++  t->x = (b.x - a.x) / seg;
++  t->y = (b.y - a.y) / seg;
++}
++
++static gboolean
++fx_on_path (ChopGimpTextFx *fx,
++            GimpPath       *path,
++            const gchar    *spec,
++            PangoLayout    *pl,
++            GimpText       *text)
++{
++  GimpStroke     *stroke = gimp_path_stroke_get_next (path, NULL);
++  Line            line   = { 0, };
++  PangoRectangle  logical;
++  gdouble         start, shift, s0, base;
++  gboolean        flip;
++  gint            p, s, i;
++
++  if (! stroke)
++    return FALSE;
++
++  line.pts = stroke_polyline (stroke, &line.closed);
++  if (! line.pts)
++    return FALSE;
++
++  flip  = spec_double (spec, "flip",  0.0) != 0.0;
++  start = spec_double (spec, "start", 0.0) / 100.0;
++  shift = spec_double (spec, "shift", 0.0);
++
++  if (flip)
++    {
++      GArray *rev = g_array_sized_new (FALSE, FALSE, sizeof (Pt), line.pts->len);
++
++      for (i = line.pts->len - 1; i >= 0; i--)
++        g_array_append_val (rev, g_array_index (line.pts, Pt, i));
++
++      g_array_unref (line.pts);
++      line.pts = rev;
++    }
++
++  line.len    = g_new (gdouble, line.pts->len);
++  line.len[0] = 0.0;
++
++  for (i = 1; i < line.pts->len; i++)
++    {
++      Pt a = g_array_index (line.pts, Pt, i - 1);
++      Pt b = g_array_index (line.pts, Pt, i);
++
++      line.len[i] = line.len[i - 1] + hypot (b.x - a.x, b.y - a.y);
++    }
++
++  line.total = line.len[line.pts->len - 1];
++
++  pango_layout_get_pixel_extents (pl, NULL, &logical);
++  base = (gdouble) pango_layout_get_baseline (pl) / PANGO_SCALE;
++
++  switch (text->justify)
++    {
++    case GIMP_TEXT_JUSTIFY_CENTER:
++      s0 = (line.total - logical.width) / 2.0 + start * line.total;
++      break;
++    case GIMP_TEXT_JUSTIFY_RIGHT:
++      s0 = line.total - logical.width - start * line.total;
++      break;
++    default:
++      s0 = start * line.total;
++      break;
++    }
++
++  fx_subdivide (fx, TRUE);
++
++  for (p = 0; p < fx->pieces->len; p++)
++    {
++      Piece *piece = g_ptr_array_index (fx->pieces, p);
++
++      for (s = 0; s < piece->subs->len; s++)
++        {
++          Sub *sub = g_ptr_array_index (piece->subs, s);
++          Pt   P, T, N;
++
++          if (! sub->bend)
++            {
++              line_sample (&line, s0 + sub->gx, &P, &T);
++              N.x =  T.y;
++              N.y = -T.x;
++            }
++
++          for (i = 0; i < sub->pts->len; i++)
++            {
++              Pt     *pt = &g_array_index (sub->pts, Pt, i);
++              gdouble dx, dy;
++
++              if (sub->bend)
++                {
++                  line_sample (&line, s0 + pt->x, &P, &T);
++                  N.x =  T.y;
++                  N.y = -T.x;
++                  dx  = 0.0;
++                }
++              else
++                {
++                  dx = pt->x - sub->gx;
++                }
++
++              dy = base - pt->y + shift;
++
++              pt->x = P.x + dx * T.x + dy * N.x;
++              pt->y = P.y + dx * T.y + dy * N.y;
++            }
++        }
++    }
++
++  g_free (line.len);
++  g_array_unref (line.pts);
++
++  return TRUE;
++}
++
++
++/*  text in a shape  */
++
++static gint
++cmp_double (gconstpointer a,
++            gconstpointer b)
++{
++  gdouble x = *(const gdouble *) a, y = *(const gdouble *) b;
++
++  return (x > y) - (x < y);
++}
++
++/*  even-odd intervals of the shape on the horizontal line at y  */
++static GArray *
++shape_intervals (GPtrArray *polys,
++                 gdouble    y)
++{
++  GArray *xs  = g_array_new (FALSE, FALSE, sizeof (gdouble));
++  GArray *out = g_array_new (FALSE, FALSE, sizeof (gdouble));
++  gint    p, i;
++
++  for (p = 0; p < polys->len; p++)
++    {
++      GArray *pts = g_ptr_array_index (polys, p);
++      gint    n   = pts->len;
++
++      for (i = 0; i < n; i++)
++        {
++          Pt a = g_array_index (pts, Pt, i);
++          Pt b = g_array_index (pts, Pt, (i + 1) % n);
++
++          if ((a.y <= y && b.y > y) || (b.y <= y && a.y > y))
++            {
++              gdouble x = a.x + (y - a.y) * (b.x - a.x) / (b.y - a.y);
++
++              g_array_append_val (xs, x);
++            }
++        }
++    }
++
++  g_array_sort (xs, cmp_double);
++
++  for (i = 0; i + 1 < xs->len; i += 2)
++    {
++      g_array_append_val (out, g_array_index (xs, gdouble, i));
++      g_array_append_val (out, g_array_index (xs, gdouble, i + 1));
++    }
++
++  g_array_unref (xs);
++
++  return out;
++}
++
++static GArray *
++intervals_intersect (GArray *a,
++                     GArray *b)
++{
++  GArray *out = g_array_new (FALSE, FALSE, sizeof (gdouble));
++  gint    i, j;
++
++  for (i = 0; i + 1 < a->len; i += 2)
++    for (j = 0; j + 1 < b->len; j += 2)
++      {
++        gdouble lo = MAX (g_array_index (a, gdouble, i),
++                          g_array_index (b, gdouble, j));
++        gdouble hi = MIN (g_array_index (a, gdouble, i + 1),
++                          g_array_index (b, gdouble, j + 1));
++
++        if (hi > lo)
++          {
++            g_array_append_val (out, lo);
++            g_array_append_val (out, hi);
++          }
++      }
++
++  return out;
++}
++
++static gboolean
++shape_span (GPtrArray *polys,
++            gdouble    y1,
++            gdouble    y2,
++            gdouble    inset,
++            gdouble   *x1,
++            gdouble   *x2)
++{
++  const gdouble f[3] = { 0.02, 0.5, 0.98 };
++  GArray       *acc  = NULL;
++  gdouble       best = 0.0;
++  gint          k, i;
++
++  for (k = 0; k < 3; k++)
++    {
++      GArray *cur = shape_intervals (polys, y1 + (y2 - y1) * f[k]);
++
++      if (acc)
++        {
++          GArray *tmp = intervals_intersect (acc, cur);
++
++          g_array_unref (acc);
++          g_array_unref (cur);
++          acc = tmp;
++        }
++      else
++        {
++          acc = cur;
++        }
++    }
++
++  for (i = 0; i + 1 < acc->len; i += 2)
++    {
++      gdouble lo = g_array_index (acc, gdouble, i)     + inset;
++      gdouble hi = g_array_index (acc, gdouble, i + 1) - inset;
++
++      if (hi - lo > best)
++        {
++          best = hi - lo;
++          *x1  = lo;
++          *x2  = hi;
++        }
++    }
++
++  g_array_unref (acc);
++
++  return best > 0.0;
++}
++
++static gboolean
++fx_in_shape (ChopGimpTextFx *fx,
++             cairo_t        *cr,
++             GimpPath       *path,
++             const gchar    *spec,
++             PangoLayout    *src)
++{
++  GPtrArray     *polys = g_ptr_array_new_with_free_func ((GDestroyNotify) g_array_unref);
++  GimpStroke    *stroke;
++  const gchar   *txt   = pango_layout_get_text (src);
++  PangoAttrList *attrs = pango_layout_get_attributes (src);
++  gdouble        inset = spec_double (spec, "inset", 0.0);
++  gdouble        spacing = (gdouble) pango_layout_get_spacing (src) / PANGO_SCALE;
++  gdouble        top = G_MAXDOUBLE, bottom = -G_MAXDOUBLE;
++  gdouble        y;
++  gint           total = strlen (txt);
++  gint           pos   = 0;
++  gint           i, guard = 0;
++
++  for (stroke = gimp_path_stroke_get_next (path, NULL);
++       stroke;
++       stroke = gimp_path_stroke_get_next (path, stroke))
++    {
++      gboolean  closed;
++      GArray   *pts = stroke_polyline (stroke, &closed);
++
++      if (! pts)
++        continue;
++
++      for (i = 0; i < pts->len; i++)
++        {
++          Pt pt = g_array_index (pts, Pt, i);
++
++          top    = MIN (top,    pt.y);
++          bottom = MAX (bottom, pt.y);
++        }
++
++      g_ptr_array_add (polys, pts);
++    }
++
++  if (! polys->len)
++    {
++      g_ptr_array_unref (polys);
++      return FALSE;
++    }
++
++  y = top + inset;
++
++  while (pos < total && guard++ < 10000)
++    {
++      PangoLayout     *pl = pango_layout_copy (src);
++      PangoLayoutLine *l0;
++      PangoRectangle   ink, log;
++      gdouble          lh, x1, x2;
++      gint             len;
++
++      pango_layout_set_text (pl, txt + pos, -1);
++
++      if (attrs)
++        {
++          PangoAttrList *a = pango_attr_list_copy (attrs);
++
++          pango_attr_list_update (a, 0, pos, 0);
++          pango_layout_set_attributes (pl, a);
++          pango_attr_list_unref (a);
++        }
++
++      pango_layout_set_width (pl, -1);
++      l0 = pango_layout_get_line_readonly (pl, 0);
++      pango_layout_line_get_pixel_extents (l0, &ink, &log);
++      lh = MAX (1, log.height);
++
++      if (y + lh > bottom - inset)
++        {
++          g_object_unref (pl);
++          break;
++        }
++
++      if (! shape_span (polys, y, y + lh, inset, &x1, &x2) ||
++          x2 - x1 < lh * 0.6)
++        {
++          y += MAX (1.0, lh / 4.0);
++          g_object_unref (pl);
++          continue;
++        }
++
++      pango_layout_set_width (pl, pango_units_from_double (x2 - x1));
++      l0  = pango_layout_get_line_readonly (pl, 0);
++      len = l0->length;
++
++      cairo_save (cr);
++      cairo_translate (cr, x1, y);
++      fx_collect (fx, cr, pl, TRUE);
++      cairo_restore (cr);
++
++      pango_layout_line_get_pixel_extents (l0, &ink, &log);
++      lh = MAX (1, log.height);
++
++      pos += len;
++      if (pos < total && txt[pos] == '\r')
++        pos++;
++      if (pos < total && txt[pos] == '\n')
++        pos++;
++      else if (len == 0)
++        pos = g_utf8_next_char (txt + pos) - txt;
++
++      y += lh + spacing;
++
++      g_object_unref (pl);
++    }
++
++  g_ptr_array_unref (polys);
++
++  return TRUE;
++}
++
++
++/*  placement bookkeeping: how far the layer was moved from its anchor  */
++
++static void
++get_shift (GimpItem *item,
++           gint     *dx,
++           gint     *dy)
++{
++  const GimpParasite *parasite = gimp_item_parasite_find (item, SHIFT_PARASITE);
++
++  *dx = *dy = 0;
++
++  if (parasite)
++    {
++      guint32       size;
++      const gchar  *data = gimp_parasite_get_data (parasite, &size);
++      gchar        *str  = g_strndup (data, size);
++
++      if (sscanf (str, "%d %d", dx, dy) != 2)
++        *dx = *dy = 0;
++
++      g_free (str);
++    }
++}
++
++static void
++set_shift (GimpItem *item,
++           gint      dx,
++           gint      dy)
++{
++  if (dx == 0 && dy == 0)
++    {
++      if (gimp_item_parasite_find (item, SHIFT_PARASITE))
++        gimp_item_parasite_detach (item, SHIFT_PARASITE, FALSE);
++    }
++  else
++    {
++      gchar        *str = g_strdup_printf ("%d %d", dx, dy);
++      GimpParasite *parasite;
++
++      parasite = gimp_parasite_new (SHIFT_PARASITE, GIMP_PARASITE_PERSISTENT,
++                                    strlen (str) + 1, str);
++      gimp_item_parasite_attach (item, parasite, FALSE);
++      gimp_parasite_free (parasite);
++      g_free (str);
++    }
++}
++
++static void
++fx_unshift (GimpTextLayer *layer)
++{
++  GimpItem *item = GIMP_ITEM (layer);
++  gint      dx, dy;
++
++  get_shift (item, &dx, &dy);
++
++  if (dx || dy)
++    {
++      if (gimp_item_is_attached (item))
++        gimp_drawable_update (GIMP_DRAWABLE (item), 0, 0, -1, -1);
++
++      gimp_item_set_offset (item,
++                            gimp_item_get_offset_x (item) - dx,
++                            gimp_item_get_offset_y (item) - dy);
++      set_shift (item, 0, 0);
++    }
++}
++
++
++/*  following the path  */
++
++static gboolean
++fx_refresh_idle (gpointer data)
++{
++  GimpTextLayer *layer = data;
++
++  g_object_set_data (G_OBJECT (layer), "chopgimp-fx-idle", NULL);
++
++  if (gimp_item_is_attached (GIMP_ITEM (layer)))
++    gimp_text_layer_chopgimp_refresh (layer);
++
++  g_object_unref (layer);
++
++  return G_SOURCE_REMOVE;
++}
++
++static void
++fx_path_thaw (GimpPath      *path,
++              GimpTextLayer *layer)
++{
++  if (g_object_get_data (G_OBJECT (layer), "chopgimp-fx-idle"))
++    return;
++
++  g_object_set_data (G_OBJECT (layer), "chopgimp-fx-idle", GINT_TO_POINTER (1));
++  g_idle_add (fx_refresh_idle, g_object_ref (layer));
++}
++
++static void
++fx_follow (GimpTextLayer *layer,
++           GimpPath      *path)
++{
++  GimpPath *old = g_object_get_data (G_OBJECT (layer), "chopgimp-fx-path");
++
++  if (old == path)
++    return;
++
++  if (old)
++    g_signal_handlers_disconnect_by_func (old, fx_path_thaw, layer);
++
++  if (path)
++    g_signal_connect_object (path, "thaw", G_CALLBACK (fx_path_thaw), layer, 0);
++
++  g_object_set_data_full (G_OBJECT (layer), "chopgimp-fx-path",
++                          path ? g_object_ref (path) : NULL,
++                          path ? g_object_unref : NULL);
++}
++
++
++/*  public  */
++
++GimpPath *
++chopgimp_text_fx_find_path (GimpImage  *image,
++                            GimpTattoo  tattoo)
++{
++  GimpPath *path = gimp_image_get_path_by_tattoo (image, tattoo);
++  GList    *layers, *list;
++
++  if (path || ! tattoo)
++    return path;
++
++  /*  the path of a vector layer  */
++  layers = gimp_image_get_layer_list (image);
++
++  for (list = layers; list && ! path; list = list->next)
++    if (GIMP_IS_VECTOR_LAYER (list->data))
++      {
++        GimpPath *p = gimp_vector_layer_get_path (list->data);
++
++        if (p && gimp_item_get_tattoo (GIMP_ITEM (p)) == tattoo)
++          path = p;
++      }
++
++  g_list_free (layers);
++
++  return path;
++}
++
++ChopGimpTextFx *
++chopgimp_text_fx_build (GimpTextLayer  *layer,
++                        GimpTextLayout *layout)
++{
++  GimpText        *text  = layer->text;
++  const gchar     *spec  = text->chopgimp_fx;
++  GimpImage       *image = gimp_item_get_image (GIMP_ITEM (layer));
++  ChopGimpTextFx  *fx;
++  GimpPath        *path  = NULL;
++  FxMode           mode;
++  gchar           *v;
++  cairo_surface_t *surface;
++  cairo_t         *cr;
++  PangoLayout     *pl;
++  gboolean         ok    = TRUE;
++  gdouble          x1, y1, x2, y2, pad;
++  const GimpMatrix2 *m   = &text->transformation;
++
++  if ((v = chopgimp_text_fx_get_value (spec, "warp")) && strcmp (v, "none"))
++    mode = FX_WARP;
++  else if (g_free (v), (v = chopgimp_text_fx_get_value (spec, "path")))
++    mode = FX_PATH;
++  else if ((v = chopgimp_text_fx_get_value (spec, "shape")))
++    mode = FX_SHAPE;
++  else if (fabs (m->coeff[0][0] - 1.0) > 1e-6 || fabs (m->coeff[0][1]) > 1e-6 ||
++           fabs (m->coeff[1][0])       > 1e-6 || fabs (m->coeff[1][1] - 1.0) > 1e-6)
++    mode = FX_MATRIX;
++  else
++    {
++      fx_follow (layer, NULL);
++      fx_unshift (layer);
++      return NULL;
++    }
++
++  if (mode == FX_PATH || mode == FX_SHAPE)
++    {
++      path = chopgimp_text_fx_find_path (image, (GimpTattoo) atoi (v));
++    }
++  g_free (v);
++
++  fx_follow (layer, path);
++
++  if (((mode == FX_PATH || mode == FX_SHAPE) && ! path) ||
++      text->base_dir == GIMP_TEXT_DIRECTION_TTB_RTL         ||
++      text->base_dir == GIMP_TEXT_DIRECTION_TTB_RTL_UPRIGHT ||
++      text->base_dir == GIMP_TEXT_DIRECTION_TTB_LTR         ||
++      text->base_dir == GIMP_TEXT_DIRECTION_TTB_LTR_UPRIGHT)
++    {
++      fx_unshift (layer);
++      return NULL;
++    }
++
++  fx         = g_new0 (ChopGimpTextFx, 1);
++  fx->mode   = mode;
++  fx->pieces = g_ptr_array_new_with_free_func ((GDestroyNotify) piece_free);
++  fx->absolute = (mode == FX_PATH || mode == FX_SHAPE);
++
++  surface = cairo_image_surface_create (CAIRO_FORMAT_A8, 1, 1);
++  cr      = cairo_create (surface);
++  pl      = gimp_text_layout_get_pango_layout (layout);
++
++  switch (mode)
++    {
++    case FX_MATRIX:
++    case FX_WARP:
++      {
++        cairo_matrix_t trafo;
++        gint           x, y;
++
++        gimp_text_layout_get_offsets (layout, &x, &y);
++        cairo_translate (cr, x, y);
++        gimp_text_layout_get_transform (layout, &trafo);
++        cairo_transform (cr, &trafo);
++
++        fx_collect (fx, cr, pl, FALSE);
++
++        cairo_identity_matrix (cr);
++
++        if (mode == FX_WARP)
++          fx_warp (fx, spec);
++      }
++      break;
++
++    case FX_PATH:
++      fx_collect (fx, cr, pl, FALSE);
++      ok = fx_on_path (fx, path, spec, pl, text);
++      break;
++
++    case FX_SHAPE:
++      ok = fx_in_shape (fx, cr, path, spec, pl);
++      break;
++    }
++
++  cairo_destroy (cr);
++  cairo_surface_destroy (surface);
++
++  if (! ok || ! fx_bounds (fx, &x1, &y1, &x2, &y2))
++    {
++      chopgimp_text_fx_free (fx);
++      fx_unshift (layer);
++      return NULL;
++    }
++
++  pad = 2.0;
++  if (text->outline != GIMP_TEXT_OUTLINE_NONE)
++    pad += text->outline_width;
++
++  fx->ox     = (gint) floor (x1 - pad);
++  fx->oy     = (gint) floor (y1 - pad);
++  fx->width  = (gint) ceil  (x2 + pad) - fx->ox;
++  fx->height = (gint) ceil  (y2 + pad) - fx->oy;
++
++  return fx;
++}
++
++gboolean
++chopgimp_text_fx_get_size (ChopGimpTextFx *fx,
++                           gint           *width,
++                           gint           *height)
++{
++  *width  = fx->width;
++  *height = fx->height;
++
++  return (fx->width > 0 && fx->height > 0);
++}
++
++void
++chopgimp_text_fx_get_offset (ChopGimpTextFx *fx,
++                             GimpTextLayer  *layer,
++                             gint           *x,
++                             gint           *y)
++{
++  GimpItem *item = GIMP_ITEM (layer);
++  gint      dx, dy;
++
++  get_shift (item, &dx, &dy);
++
++  fx->anchor_x = gimp_item_get_offset_x (item) - dx;
++  fx->anchor_y = gimp_item_get_offset_y (item) - dy;
++
++  if (fx->absolute)
++    {
++      fx->new_x = fx->ox;
++      fx->new_y = fx->oy;
++    }
++  else
++    {
++      fx->new_x = fx->anchor_x + fx->ox;
++      fx->new_y = fx->anchor_y + fx->oy;
++    }
++
++  *x = fx->new_x;
++  *y = fx->new_y;
++}
++
++void
++chopgimp_text_fx_get_anchor (GimpTextLayer *layer,
++                             gint          *x,
++                             gint          *y)
++{
++  GimpItem *item = GIMP_ITEM (layer);
++  gint      dx, dy;
++
++  get_shift (item, &dx, &dy);
++
++  *x = gimp_item_get_offset_x (item) - dx;
++  *y = gimp_item_get_offset_y (item) - dy;
++}
++
++void
++chopgimp_text_fx_placed (ChopGimpTextFx *fx,
++                         GimpTextLayer  *layer)
++{
++  set_shift (GIMP_ITEM (layer),
++             fx->new_x - fx->anchor_x,
++             fx->new_y - fx->anchor_y);
++}
++
++static void
++fx_append_path (ChopGimpTextFx *fx,
++                cairo_t        *cr,
++                Piece          *only)
++{
++  gint p, s, i;
++
++  for (p = 0; p < fx->pieces->len; p++)
++    {
++      Piece *piece = g_ptr_array_index (fx->pieces, p);
++
++      if (only && piece != only)
++        continue;
++
++      for (s = 0; s < piece->subs->len; s++)
++        {
++          Sub *sub = g_ptr_array_index (piece->subs, s);
++
++          for (i = 0; i < sub->pts->len; i++)
++            {
++              Pt pt = g_array_index (sub->pts, Pt, i);
++
++              if (i == 0)
++                cairo_move_to (cr, pt.x, pt.y);
++              else
++                cairo_line_to (cr, pt.x, pt.y);
++            }
++
++          cairo_close_path (cr);
++        }
++    }
++}
++
++static void
++fx_stroke (ChopGimpTextFx *fx,
++           cairo_t        *cr,
++           GimpTextLayout *layout,
++           GimpText       *text)
++{
++  const Babl *format = gimp_text_layout_get_format (layout, "double");
++  gdouble     color[3];
++
++  gegl_color_get_pixel (text->outline_foreground, format, color);
++  if (babl_space_is_gray (babl_format_get_space (format)))
++    color[1] = color[2] = color[0];
++
++  cairo_save (cr);
++
++  cairo_set_source_rgba (cr, color[0], color[1], color[2], 1.0);
++  cairo_set_antialias (cr, text->outline_antialias ?
++                       CAIRO_ANTIALIAS_GRAY : CAIRO_ANTIALIAS_NONE);
++  cairo_set_line_join (cr,
++                       text->outline_join_style == GIMP_JOIN_MITER ? CAIRO_LINE_JOIN_MITER :
++                       text->outline_join_style == GIMP_JOIN_ROUND ? CAIRO_LINE_JOIN_ROUND :
++                       CAIRO_LINE_JOIN_BEVEL);
++  cairo_set_miter_limit (cr, text->outline_miter_limit);
++  cairo_set_line_width (cr, text->outline_width * 2);
++
++  if (text->outline_direction == GIMP_TEXT_OUTLINE_DIRECTION_INNER)
++    {
++      cairo_new_path (cr);
++      fx_append_path (fx, cr, NULL);
++      cairo_clip (cr);
++    }
++
++  cairo_new_path (cr);
++  fx_append_path (fx, cr, NULL);
++  cairo_stroke (cr);
++
++  cairo_restore (cr);
++}
++
++void
++chopgimp_text_fx_draw (ChopGimpTextFx *fx,
++                       cairo_t        *cr,
++                       GimpTextLayout *layout)
++{
++  GimpText *text   = gimp_text_layout_get_text (layout);
++  gboolean  fill   = text->outline != GIMP_TEXT_OUTLINE_STROKE_ONLY;
++  gboolean  stroke = text->outline != GIMP_TEXT_OUTLINE_NONE;
++  gboolean  under  = stroke && fill &&
++                     text->outline_direction == GIMP_TEXT_OUTLINE_DIRECTION_OUTER;
++  gint      p;
++
++  cairo_save (cr);
++
++  cairo_translate (cr, -fx->ox, -fx->oy);
++  cairo_set_fill_rule (cr, CAIRO_FILL_RULE_WINDING);
++  cairo_set_antialias (cr, text->antialias ?
++                       CAIRO_ANTIALIAS_GRAY : CAIRO_ANTIALIAS_NONE);
++
++  if (under)
++    fx_stroke (fx, cr, layout, text);
++
++  if (fill)
++    {
++      for (p = 0; p < fx->pieces->len; p++)
++        {
++          Piece *piece = g_ptr_array_index (fx->pieces, p);
++
++          cairo_new_path (cr);
++          fx_append_path (fx, cr, piece);
++          cairo_set_source_rgba (cr, piece->r, piece->g, piece->b, 1.0);
++          cairo_fill (cr);
++        }
++    }
++
++  if (stroke && ! under)
++    fx_stroke (fx, cr, layout, text);
++
++  cairo_restore (cr);
++}
++
++void
++chopgimp_text_fx_free (ChopGimpTextFx *fx)
++{
++  if (! fx)
++    return;
++
++  g_ptr_array_unref (fx->pieces);
++  g_free (fx);
++}
+diff --git a/app/text/chopgimp-textfx.h b/app/text/chopgimp-textfx.h
+new file mode 100644
+index 0000000..794c928
+--- /dev/null
++++ b/app/text/chopgimp-textfx.h
+@@ -0,0 +1,53 @@
++/* GIMP - The GNU Image Manipulation Program
++ * chopgimp-textfx.h — ChopGimp: warped text, text on a path, text in a
++ * shape, and transformations that keep the text editable.
++ *
++ * This program is free software: you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation; either version 3 of the License, or
++ * (at your option) any later version.
++ */
++
++#pragma once
++
++#include <cairo.h>
++
++typedef struct _ChopGimpTextFx ChopGimpTextFx;
++
++/*  The effect is described by the "chopgimp-fx" property of GimpText:
++ *
++ *    warp=arc;bend=50;hdist=0;vdist=0;vertical=0
++ *    path=<tattoo>;start=0;flip=0;shift=0
++ *    shape=<tattoo>;inset=0
++ *
++ *  A non-identity transformation matrix also goes through this
++ *  renderer, so the layer grows to the transformed text.
++ */
++
++ChopGimpTextFx * chopgimp_text_fx_build    (GimpTextLayer  *layer,
++                                            GimpTextLayout *layout);
++gboolean         chopgimp_text_fx_get_size (ChopGimpTextFx *fx,
++                                            gint           *width,
++                                            gint           *height);
++void             chopgimp_text_fx_get_offset (ChopGimpTextFx *fx,
++                                            GimpTextLayer  *layer,
++                                            gint           *x,
++                                            gint           *y);
++void             chopgimp_text_fx_placed   (ChopGimpTextFx *fx,
++                                            GimpTextLayer  *layer);
++void             chopgimp_text_fx_draw     (ChopGimpTextFx *fx,
++                                            cairo_t        *cr,
++                                            GimpTextLayout *layout);
++void             chopgimp_text_fx_free     (ChopGimpTextFx *fx);
++
++void             chopgimp_text_fx_get_anchor (GimpTextLayer *layer,
++                                              gint          *x,
++                                              gint          *y);
++
++GimpPath       * chopgimp_text_fx_find_path  (GimpImage     *image,
++                                              GimpTattoo     tattoo);
++
++/*  helpers for the user interface  */
++gchar          * chopgimp_text_fx_get_value (const gchar   *spec,
++                                             const gchar   *key);
++const gchar   ** chopgimp_text_fx_warp_styles (void);
+diff --git a/app/text/gimptext.c b/app/text/gimptext.c
+index d704d93..1e2561b 100644
+--- a/app/text/gimptext.c
++++ b/app/text/gimptext.c
+@@ -91,7 +91,9 @@ enum
+   PROP_OUTLINE_DASH_OFFSET,
+   PROP_OUTLINE_DASH_INFO,
+   /* for backward compatibility */
+-  PROP_HINTING
++  PROP_HINTING,
++  PROP_CHOPGIMP_FX,
++  PROP_CHOPGIMP_PARA
+ };
+ 
+ enum
+@@ -396,6 +398,22 @@ gimp_text_class_init (GimpTextClass *klass)
+                                                                  GIMP_PARAM_STATIC_STRINGS |
+                                                                  GIMP_CONFIG_PARAM_FLAGS));
+ 
++  /*  ChopGimp: warp / text on path / text in shape (chopgimp-textfx.c).
++   *  Not serialized while empty, so plain texts stay GIMP-compatible.
++   */
++  GIMP_CONFIG_PROP_STRING (object_class, PROP_CHOPGIMP_FX,
++                           "chopgimp-fx",
++                           NULL, NULL,
++                           NULL,
++                           GIMP_PARAM_STATIC_STRINGS);
++
++  /*  ChopGimp: paragraph options (last line of justified text…)  */
++  GIMP_CONFIG_PROP_STRING (object_class, PROP_CHOPGIMP_PARA,
++                           "chopgimp-para",
++                           NULL, NULL,
++                           NULL,
++                           GIMP_PARAM_STATIC_STRINGS);
++
+   /*  the old hinting options have been replaced by 'hint-style'  */
+   GIMP_CONFIG_PROP_BOOLEAN (object_class, PROP_HINTING,
+                             "hinting",
+@@ -435,6 +453,8 @@ gimp_text_finalize (GObject *object)
+   g_clear_pointer (&text->text,     g_free);
+   g_clear_pointer (&text->markup,   g_free);
+   g_clear_pointer (&text->language, g_free);
++  g_clear_pointer (&text->chopgimp_fx, g_free);
++  g_clear_pointer (&text->chopgimp_para, g_free);
+   g_clear_object (&text->font);
+   g_clear_object (&text->color);
+   g_clear_object (&text->outline_foreground);
+@@ -482,6 +502,12 @@ gimp_text_get_property (GObject      *object,
+     case PROP_BASE_DIR_AUTO:
+       g_value_set_boolean (value, text->base_dir_auto);
+       break;
++    case PROP_CHOPGIMP_FX:
++      g_value_set_string (value, text->chopgimp_fx);
++      break;
++    case PROP_CHOPGIMP_PARA:
++      g_value_set_string (value, text->chopgimp_para);
++      break;
+     case PROP_LANGUAGE:
+       g_value_set_string (value, text->language);
+       break;
+@@ -631,6 +657,12 @@ gimp_text_set_property (GObject      *object,
+     case PROP_KERNING:
+       text->kerning = g_value_get_boolean (value);
+       break;
++    case PROP_CHOPGIMP_FX:
++      g_set_str (&text->chopgimp_fx, g_value_get_string (value));
++      break;
++    case PROP_CHOPGIMP_PARA:
++      g_set_str (&text->chopgimp_para, g_value_get_string (value));
++      break;
+     case PROP_LANGUAGE:
+       g_set_str (&text->language, g_value_get_string (value));
+       break;
+@@ -804,6 +836,16 @@ gimp_text_serialize_property (GimpConfig       *config,
+                               GParamSpec       *pspec,
+                               GimpConfigWriter *writer)
+ {
++  if (property_id == PROP_CHOPGIMP_FX || property_id == PROP_CHOPGIMP_PARA)
++    {
++      const gchar *fx = g_value_get_string (value);
++
++      if (! fx || ! *fx)
++        return TRUE;   /* nothing written */
++
++      return FALSE;    /* default serialization */
++    }
++
+   if (property_id == PROP_OUTLINE_PATTERN)
+     {
+       GimpObject *serialize_obj = g_value_get_object (value);
+diff --git a/app/text/gimptext.h b/app/text/gimptext.h
+index 4c773a1..2d5015a 100644
+--- a/app/text/gimptext.h
++++ b/app/text/gimptext.h
+@@ -46,6 +46,8 @@ struct _GimpText
+   GimpTextHintStyle         hint_style;
+   gboolean                  kerning;
+   gchar                    *language;
++  gchar                    *chopgimp_fx;   /* ChopGimp text effects */
++  gchar                    *chopgimp_para; /* ChopGimp paragraph options */
+   GimpTextDirection         base_dir;
+   gboolean                  base_dir_auto;
+   GeglColor                *color;
+diff --git a/app/text/gimptextlayer.c b/app/text/gimptextlayer.c
+index 4548a54..2e01818 100644
+--- a/app/text/gimptextlayer.c
++++ b/app/text/gimptextlayer.c
+@@ -20,6 +20,7 @@
+ 
+ #include "config.h"
+ 
++#include <math.h>
+ #include <string.h>
+ 
+ #include <cairo.h>
+@@ -30,6 +31,7 @@
+ #include "libgimpbase/gimpbase.h"
+ #include "libgimpcolor/gimpcolor.h"
+ #include "libgimpconfig/gimpconfig.h"
++#include "libgimpmath/gimpmath.h"
+ 
+ #include "text-types.h"
+ 
+@@ -46,6 +48,8 @@
+ #include "core/gimpimage-color-profile.h"
+ #include "core/gimpimage-undo.h"
+ #include "core/gimpimage-undo-push.h"
++#include "core/gimp-transform-utils.h"
++#include "core/gimplayermask.h"
+ #include "core/gimpparasitelist.h"
+ #include "core/gimppattern.h"
+ #include "core/gimprasterizable.h"
+@@ -54,6 +58,7 @@
+ #include "gimptext.h"
+ #include "gimptextlayer.h"
+ #include "gimptextlayout.h"
++#include "chopgimp-textfx.h"
+ #include "gimptextlayout-render.h"
+ 
+ #include "gimp-intl.h"
+@@ -123,8 +128,35 @@ static void       gimp_text_layer_convert_type   (GimpLayer         *layer,
+                                                   GimpProgress      *progress);
+ 
+ static void       gimp_text_layer_text_changed   (GimpTextLayer     *layer);
++static void       chopgimp_text_layer_scale      (GimpItem          *item,
++                                                  gint               new_width,
++                                                  gint               new_height,
++                                                  gint               new_offset_x,
++                                                  gint               new_offset_y,
++                                                  GimpInterpolationType interpolation,
++                                                  GimpProgress      *progress);
++static void       chopgimp_text_layer_flip       (GimpItem          *item,
++                                                  GimpContext       *context,
++                                                  GimpOrientationType flip_type,
++                                                  gdouble            axis,
++                                                  gboolean           clip_result);
++static void       chopgimp_text_layer_rotate     (GimpItem          *item,
++                                                  GimpContext       *context,
++                                                  GimpRotationType   rotate_type,
++                                                  gdouble            center_x,
++                                                  gdouble            center_y,
++                                                  gboolean           clip_result);
++static void       chopgimp_text_layer_transform  (GimpItem          *item,
++                                                  GimpContext       *context,
++                                                  const GimpMatrix3 *matrix,
++                                                  GimpTransformDirection direction,
++                                                  GimpInterpolationType interpolation,
++                                                  GimpTransformResize clip_result,
++                                                  GimpProgress      *progress,
++                                                  gboolean           push_undo);
+ static gboolean   gimp_text_layer_render         (GimpTextLayer     *layer);
+ static void       gimp_text_layer_render_layout  (GimpTextLayer     *layer,
++                                                  ChopGimpTextFx    *fx,
+                                                   GimpTextLayout    *layout);
+ 
+ 
+@@ -158,6 +190,12 @@ gimp_text_layer_class_init (GimpTextLayerClass *klass)
+   item_class->duplicate             = gimp_text_layer_duplicate;
+   item_class->rename                = gimp_rasterizable_rename;
+ 
++  /*  ChopGimp: transformations keep the text editable  */
++  item_class->scale                 = chopgimp_text_layer_scale;
++  item_class->flip                  = chopgimp_text_layer_flip;
++  item_class->rotate                = chopgimp_text_layer_rotate;
++  item_class->transform             = chopgimp_text_layer_transform;
++
+ #if 0
+   item_class->scale                 = gimp_text_layer_scale;
+   item_class->flip                  = gimp_text_layer_flip;
+@@ -758,6 +796,9 @@ gimp_text_layer_render (GimpTextLayer *layer)
+   gint            width;
+   gint            height;
+   GError         *error = NULL;
++  ChopGimpTextFx *fx    = NULL;
++  gint            fx_x  = 0;
++  gint            fx_y  = 0;
+ 
+   if (! layer->text)
+     return FALSE;
+@@ -786,11 +827,20 @@ gimp_text_layer_render (GimpTextLayer *layer)
+       g_error_free (error);
+     }
+ 
++  /*  ChopGimp: warp, text on path / in shape, transformations  */
++  fx = layout ? chopgimp_text_fx_build (layer, layout) : NULL;
++
++  if (fx)
++    chopgimp_text_fx_get_offset (fx, layer, &fx_x, &fx_y);
++
+   g_object_freeze_notify (G_OBJECT (drawable));
+ 
+-  if (gimp_text_layout_get_size (layout, &width, &height) &&
++  if ((fx ? chopgimp_text_fx_get_size (fx, &width, &height) :
++            gimp_text_layout_get_size (layout, &width, &height)) &&
+       (width  != gimp_item_get_width  (item) ||
+        height != gimp_item_get_height (item) ||
++       (fx && (fx_x != gimp_item_get_offset_x (item) ||
++               fx_y != gimp_item_get_offset_y (item))) ||
+        gimp_text_layer_get_format (layer) !=
+        gimp_drawable_get_format (drawable)))
+     {
+@@ -798,7 +848,12 @@ gimp_text_layer_render (GimpTextLayer *layer)
+ 
+       new_buffer = gegl_buffer_new (GEGL_RECTANGLE (0, 0, width, height),
+                                     gimp_text_layer_get_format (layer));
+-      gimp_drawable_set_buffer (drawable, FALSE, NULL, new_buffer);
++      if (fx)
++        gimp_drawable_set_buffer_full (drawable, FALSE, NULL, new_buffer,
++                                       GEGL_RECTANGLE (fx_x, fx_y, 0, 0),
++                                       TRUE);
++      else
++        gimp_drawable_set_buffer (drawable, FALSE, NULL, new_buffer);
+       g_object_unref (new_buffer);
+ 
+       if (gimp_layer_get_mask (GIMP_LAYER (layer)))
+@@ -830,8 +885,13 @@ gimp_text_layer_render (GimpTextLayer *layer)
+   gimp_rasterizable_auto_rename (GIMP_RASTERIZABLE (layer), NULL, name);
+   g_free (name);
+ 
++  if (fx)
++    chopgimp_text_fx_placed (fx, layer);
++
+   if (width > 0 && height > 0)
+-    gimp_text_layer_render_layout (layer, layout);
++    gimp_text_layer_render_layout (layer, fx, layout);
++
++  chopgimp_text_fx_free (fx);
+ 
+   g_object_unref (layout);
+ 
+@@ -957,6 +1017,7 @@ gimp_temp_buf_create_cairo_surface (GimpTempBuf *temp_buf)
+ 
+ static void
+ gimp_text_layer_render_layout (GimpTextLayer  *layer,
++                               ChopGimpTextFx *fx,
+                                GimpTextLayout *layout)
+ {
+   GimpDrawable       *drawable = GIMP_DRAWABLE (layer);
+@@ -993,6 +1054,12 @@ gimp_text_layer_render_layout (GimpTextLayer  *layer,
+     }
+ 
+   cr = cairo_create (surface);
++  if (fx)
++    {
++      chopgimp_text_fx_draw (fx, cr, layout);
++    }
++  else
++    {
+   if (layer->text->outline != GIMP_TEXT_OUTLINE_STROKE_ONLY)
+     {
+       cairo_save (cr);
+@@ -1075,6 +1142,7 @@ gimp_text_layer_render_layout (GimpTextLayer  *layer,
+           cairo_restore (cr);
+         }
+     }
++    }
+ 
+   cairo_destroy (cr);
+ 
+@@ -1109,3 +1177,176 @@ gimp_text_layer_render_layout (GimpTextLayer  *layer,
+ 
+   gimp_drawable_update (drawable, 0, 0, width, height);
+ }
++
++
++/*  ChopGimp: re-render after an outside change (the path of a text on
++ *  path was edited).  No undo: the text itself did not change.
++ */
++void
++gimp_text_layer_chopgimp_refresh (GimpTextLayer *layer)
++{
++  g_return_if_fail (GIMP_IS_TEXT_LAYER (layer));
++
++  if (! layer->text ||
++      gimp_rasterizable_is_rasterized (GIMP_RASTERIZABLE (layer)))
++    return;
++
++  gimp_text_layer_render (layer);
++  gimp_image_flush (gimp_item_get_image (GIMP_ITEM (layer)));
++}
++
++
++/*  ChopGimp: an affine transformation becomes part of the text matrix,
++ *  the layer stays an editable text layer (Photoshop behaviour).
++ *  Returns FALSE when the pixels have to be transformed instead.
++ */
++static gboolean
++chopgimp_text_layer_apply_matrix (GimpTextLayer     *layer,
++                                  const GimpMatrix3 *matrix,
++                                  gboolean           push_undo)
++{
++  GimpItem       *item  = GIMP_ITEM (layer);
++  GimpImage      *image = gimp_item_get_image (item);
++  GimpText       *text  = layer->text;
++  GimpTextLayout *layout;
++  GimpMatrix2     lin;
++  gchar          *mode;
++  gdouble         xres, yres;
++  gdouble         px, py, nx, ny;
++  gint            ex, ey, ax, ay, bx, by;
++
++  if (! text || ! gimp_item_is_attached (item) ||
++      gimp_rasterizable_is_rasterized (GIMP_RASTERIZABLE (layer)) ||
++      gimp_layer_get_mask (GIMP_LAYER (layer))                    ||
++      ! gimp_matrix3_is_affine (matrix))
++    return FALSE;
++
++  /*  text on a path or in a shape follows its path, not a matrix  */
++  if ((mode = chopgimp_text_fx_get_value (text->chopgimp_fx, "path")) ||
++      (mode = chopgimp_text_fx_get_value (text->chopgimp_fx, "shape")))
++    {
++      g_free (mode);
++      return FALSE;
++    }
++
++  gimp_image_get_resolution (image, &xres, &yres);
++  layout = gimp_text_layout_new (text, image, xres, yres, NULL);
++  if (! layout)
++    return FALSE;
++  gimp_text_layout_get_offsets (layout, &ex, &ey);
++  g_object_unref (layout);
++
++  /*  where the origin of the text is now, and where it must go  */
++  chopgimp_text_fx_get_anchor (layer, &ax, &ay);
++  px = ax + ex;
++  py = ay + ey;
++  gimp_matrix3_transform_point (matrix, px, py, &nx, &ny);
++
++  lin.coeff[0][0] = matrix->coeff[0][0] * text->transformation.coeff[0][0] +
++                    matrix->coeff[0][1] * text->transformation.coeff[1][0];
++  lin.coeff[0][1] = matrix->coeff[0][0] * text->transformation.coeff[0][1] +
++                    matrix->coeff[0][1] * text->transformation.coeff[1][1];
++  lin.coeff[1][0] = matrix->coeff[1][0] * text->transformation.coeff[0][0] +
++                    matrix->coeff[1][1] * text->transformation.coeff[1][0];
++  lin.coeff[1][1] = matrix->coeff[1][0] * text->transformation.coeff[0][1] +
++                    matrix->coeff[1][1] * text->transformation.coeff[1][1];
++
++  if (push_undo)
++    gimp_text_layer_set (layer, NULL, "transformation", &lin, NULL);
++  else
++    g_object_set (text, "transformation", &lin, NULL);
++
++  chopgimp_text_fx_get_anchor (layer, &bx, &by);
++
++  gimp_item_translate (item,
++                       floor (nx - ex - bx + 0.5),
++                       floor (ny - ey - by + 0.5),
++                       push_undo);
++
++  return TRUE;
++}
++
++static void
++chopgimp_text_layer_transform (GimpItem               *item,
++                               GimpContext            *context,
++                               const GimpMatrix3      *matrix,
++                               GimpTransformDirection  direction,
++                               GimpInterpolationType   interpolation,
++                               GimpTransformResize     clip_result,
++                               GimpProgress           *progress,
++                               gboolean                push_undo)
++{
++  GimpMatrix3 m = *matrix;
++
++  if (direction == GIMP_TRANSFORM_BACKWARD)
++    gimp_matrix3_invert (&m);
++
++  if (! chopgimp_text_layer_apply_matrix (GIMP_TEXT_LAYER (item), &m, push_undo))
++    GIMP_ITEM_CLASS (parent_class)->transform (item, context, matrix, direction,
++                                               interpolation, clip_result,
++                                               progress, push_undo);
++}
++
++static void
++chopgimp_text_layer_flip (GimpItem            *item,
++                          GimpContext         *context,
++                          GimpOrientationType  flip_type,
++                          gdouble              axis,
++                          gboolean             clip_result)
++{
++  GimpMatrix3 m;
++
++  gimp_matrix3_identity (&m);
++  gimp_transform_matrix_flip (&m, flip_type, axis);
++
++  if (! chopgimp_text_layer_apply_matrix (GIMP_TEXT_LAYER (item), &m,
++                                          gimp_item_is_attached (item)))
++    GIMP_ITEM_CLASS (parent_class)->flip (item, context, flip_type, axis,
++                                          clip_result);
++}
++
++static void
++chopgimp_text_layer_rotate (GimpItem         *item,
++                            GimpContext      *context,
++                            GimpRotationType  rotate_type,
++                            gdouble           center_x,
++                            gdouble           center_y,
++                            gboolean          clip_result)
++{
++  GimpMatrix3 m;
++
++  gimp_matrix3_identity (&m);
++  gimp_transform_matrix_rotate (&m, rotate_type, center_x, center_y);
++
++  if (! chopgimp_text_layer_apply_matrix (GIMP_TEXT_LAYER (item), &m,
++                                          gimp_item_is_attached (item)))
++    GIMP_ITEM_CLASS (parent_class)->rotate (item, context, rotate_type,
++                                            center_x, center_y, clip_result);
++}
++
++static void
++chopgimp_text_layer_scale (GimpItem              *item,
++                           gint                   new_width,
++                           gint                   new_height,
++                           gint                   new_offset_x,
++                           gint                   new_offset_y,
++                           GimpInterpolationType  interpolation,
++                           GimpProgress          *progress)
++{
++  GimpMatrix3 m;
++  gdouble     sx = (gdouble) new_width  / MAX (1, gimp_item_get_width  (item));
++  gdouble     sy = (gdouble) new_height / MAX (1, gimp_item_get_height (item));
++
++  /*  image scaling: the whole image is resampled, keep the default  */
++  gimp_matrix3_identity (&m);
++  gimp_matrix3_translate (&m, -gimp_item_get_offset_x (item),
++                              -gimp_item_get_offset_y (item));
++  gimp_matrix3_scale (&m, sx, sy);
++  gimp_matrix3_translate (&m, new_offset_x, new_offset_y);
++
++  if (! chopgimp_text_layer_apply_matrix (GIMP_TEXT_LAYER (item), &m,
++                                          gimp_item_is_attached (item)))
++    GIMP_ITEM_CLASS (parent_class)->scale (item, new_width, new_height,
++                                           new_offset_x, new_offset_y,
++                                           interpolation, progress);
++}
+diff --git a/app/text/gimptextlayer.h b/app/text/gimptextlayer.h
+index e3d719e..4face1b 100644
+--- a/app/text/gimptextlayer.h
++++ b/app/text/gimptextlayer.h
+@@ -90,3 +90,5 @@ void        gimp_text_layer_get_style_overlay_offset
+                                         (GimpTextLayer *layer,
+                                          gdouble       *offset_x,
+                                          gdouble       *offset_y);
++
++void       gimp_text_layer_chopgimp_refresh (GimpTextLayer *layer);
+diff --git a/app/text/gimptextlayout.c b/app/text/gimptextlayout.c
+index a9b9439..e1ce2a7 100644
+--- a/app/text/gimptextlayout.c
++++ b/app/text/gimptextlayout.c
+@@ -43,6 +43,7 @@
+ 
+ #include "gimptext.h"
+ #include "gimptextlayout.h"
++#include "chopgimp-textfx.h"
+ 
+ #include "gimp-intl.h"
+ 
+@@ -186,6 +187,21 @@ gimp_text_layout_new (GimpText     *text,
+       break;
+     }
+ 
++  /*  ChopGimp: justified text, last line left / centred / right / justified  */
++  if (text->justify == GIMP_TEXT_JUSTIFY_FILL && text->chopgimp_para)
++    {
++      gchar *last = chopgimp_text_fx_get_value (text->chopgimp_para, "last");
++
++      if (! g_strcmp0 (last, "center"))
++        alignment = PANGO_ALIGN_CENTER;
++      else if (! g_strcmp0 (last, "right"))
++        alignment = PANGO_ALIGN_RIGHT;
++      else if (! g_strcmp0 (last, "all"))
++        pango_layout_set_justify_last_line (layout->layout, TRUE);
++
++      g_free (last);
++    }
++
+   pango_layout_set_alignment (layout->layout, alignment);
+ 
+   switch (text->box_mode)
+diff --git a/app/text/meson.build b/app/text/meson.build
+index 82104cb..5ccfcb7 100644
+--- a/app/text/meson.build
++++ b/app/text/meson.build
+@@ -27,6 +27,7 @@ libapptext_sources = [
+   'gimptext.c',
+   'gimptextlayer-transform.c',
+   'gimptextlayer-xcf.c',
++  'chopgimp-textfx.c',
+   'gimptextlayer.c',
+   'gimptextlayout-render.c',
+   'gimptextlayout.c',
+diff --git a/app/tools/gimptexttool-editor.c b/app/tools/gimptexttool-editor.c
+index a8fb5f4..904810a 100644
+--- a/app/tools/gimptexttool-editor.c
++++ b/app/tools/gimptexttool-editor.c
+@@ -52,6 +52,7 @@
+ #include "widgets/gimptextproxy.h"
+ #include "widgets/gimptextstyleeditor.h"
+ #include "widgets/gimpwidgets-utils.h"
++#include "widgets/chopgimp-rc.h"
+ 
+ #include "display/gimpdisplay.h"
+ #include "display/gimpdisplayshell.h"
+@@ -571,10 +572,39 @@ gimp_text_tool_editor_key_press (GimpTextTool *text_tool,
+     case GDK_KEY_Return:
+     case GDK_KEY_KP_Enter:
+     case GDK_KEY_ISO_Enter:
++      /*  ChopGimp: Ctrl+Enter or Enter of the keypad validates the
++       *  text, as in Photoshop.
++       */
++      if (kevent->keyval == GDK_KEY_KP_Enter ||
++          (kevent->state & primary_mask))
++        {
++          gimp_text_tool_reset_im_context (text_tool);
++          gimp_tool_control (GIMP_TOOL (text_tool), GIMP_TOOL_ACTION_COMMIT,
++                             GIMP_TOOL (text_tool)->display);
++          gimp_tool_control (GIMP_TOOL (text_tool), GIMP_TOOL_ACTION_HALT,
++                             GIMP_TOOL (text_tool)->display);
++          break;
++        }
+       gimp_text_tool_reset_im_context (text_tool);
+       gimp_text_tool_enter_text (text_tool, "\n");
+       break;
+ 
++    case GDK_KEY_Up:
++    case GDK_KEY_Down:
++      /*  ChopGimp: Alt+↑ / Alt+↓ change the leading (Photoshop)  */
++      if ((kevent->state & gimp_get_all_modifiers_mask ()) == GDK_MOD1_MASK)
++        {
++          GimpTextOptions *options = GIMP_TEXT_TOOL_GET_OPTIONS (text_tool);
++          gdouble          spacing;
++
++          g_object_get (options, "line-spacing", &spacing, NULL);
++          spacing += (kevent->keyval == GDK_KEY_Up) ? -2.0 : 2.0;
++          g_object_set (options, "line-spacing", spacing, NULL);
++          break;
++        }
++      retval = FALSE;
++      break;
++
+     case GDK_KEY_Tab:
+     case GDK_KEY_KP_Tab:
+     case GDK_KEY_ISO_Left_Tab:
+@@ -1528,6 +1558,27 @@ gimp_text_tool_enter_text (GimpTextTool *text_tool,
+                                         insert_tags, remove_tags);
+     }
+ 
++  /*  ChopGimp: typographic quotes and apostrophes  */
++  if ((! strcmp (str, "'") || ! strcmp (str, "\"")) &&
++      chopgimp_rc_get_boolean ("text", "smart-quotes", TRUE))
++    {
++      GtkTextIter cursor;
++      gunichar    prev = 0;
++
++      gtk_text_buffer_get_iter_at_mark (buffer, &cursor,
++                                        gtk_text_buffer_get_insert (buffer));
++      if (gtk_text_iter_backward_char (&cursor))
++        prev = gtk_text_iter_get_char (&cursor);
++
++      if (! strcmp (str, "'"))
++        str = "\u2019";
++      else if (prev == 0 || g_unichar_isspace (prev) || prev == '(' ||
++               prev == '[' || prev == 0x2019)
++        str = "\u00ab\u00a0";   /* « */
++      else
++        str = "\u00a0\u00bb";   /* » */
++    }
++
+   gimp_text_buffer_insert (text_tool->buffer, str);
+ 
+   gtk_text_buffer_end_user_action (buffer);
+diff --git a/app/tools/gimptexttool.c b/app/tools/gimptexttool.c
+index 3876c1a..fe4d2fd 100644
+--- a/app/tools/gimptexttool.c
++++ b/app/tools/gimptexttool.c
+@@ -22,6 +22,9 @@
+ 
+ #include "config.h"
+ 
++#include <math.h>
++#include <string.h>
++
+ #include <gegl.h>
+ #include <gtk/gtk.h>
+ 
+@@ -62,6 +65,9 @@
+ #include "path/gimpstroke.h"
+ #include "path/gimppath.h"
+ #include "path/gimppath-warp.h"
++#include "path/gimpvectorlayer.h"
++
++#include "text/chopgimp-textfx.h"
+ 
+ #include "widgets/gimpdialogfactory.h"
+ #include "widgets/gimpdockcontainer.h"
+@@ -71,8 +77,10 @@
+ #include "widgets/gimptextstyleeditor.h"
+ #include "widgets/gimpuimanager.h"
+ #include "widgets/gimpviewabledialog.h"
++#include "widgets/chopgimp-spell.h"
+ 
+ #include "display/gimpcanvasgroup.h"
++#include "display/gimpcanvasitem.h"
+ #include "display/gimpdisplay.h"
+ #include "display/gimpdisplayshell.h"
+ #include "display/gimptoolrectangle.h"
+@@ -383,6 +391,69 @@ gimp_text_tool_control (GimpTool       *tool,
+   GIMP_TOOL_CLASS (parent_class)->control (tool, action, display);
+ }
+ 
++/*  ChopGimp: a click on a path starts a text on that path, a click in a
++ *  vector shape starts a text that fills the shape (Photoshop).
++ */
++static gdouble
++chopgimp_path_distance (GimpPath *path,
++                        gdouble   x,
++                        gdouble   y)
++{
++  GimpStroke *stroke = NULL;
++  gdouble     best   = G_MAXDOUBLE;
++
++  while ((stroke = gimp_path_stroke_get_next (path, stroke)))
++    {
++      GimpCoords coords = GIMP_COORDS_DEFAULT_VALUES;
++      gdouble    dist;
++
++      coords.x = x;
++      coords.y = y;
++      dist = gimp_stroke_nearest_point_get (stroke, &coords, 1.0,
++                                            NULL, NULL, NULL, NULL);
++      if (dist >= 0.0)
++        best = MIN (best, dist);
++    }
++
++  return best;
++}
++
++static gchar *
++chopgimp_text_tool_fx_at (GimpImage        *image,
++                          GimpDisplayShell *shell,
++                          const GimpCoords *coords)
++{
++  gdouble    eps = 6.0 / MAX (shell->scale_x, 1e-6);
++  GimpPath  *path;
++  GimpLayer *layer;
++  GList     *list;
++
++  path = gimp_image_pick_path (image, coords->x, coords->y, eps, eps);
++
++  for (list = gimp_image_get_selected_paths (image); list && ! path; list = list->next)
++    if (chopgimp_path_distance (list->data, coords->x, coords->y) < eps)
++      path = list->data;
++
++  if (path)
++    return g_strdup_printf ("path=%u;start=0;flip=0;shift=0",
++                            gimp_item_get_tattoo (GIMP_ITEM (path)));
++
++  layer = gimp_image_pick_layer (image, coords->x, coords->y, NULL);
++
++  if (GIMP_IS_VECTOR_LAYER (layer) &&
++      (path = gimp_vector_layer_get_path (GIMP_VECTOR_LAYER (layer))))
++    {
++      if (chopgimp_path_distance (path, coords->x, coords->y) < eps)
++        return g_strdup_printf ("path=%u;start=0;flip=0;shift=0",
++                                gimp_item_get_tattoo (GIMP_ITEM (path)));
++
++      return g_strdup_printf ("shape=%u;inset=6",
++                              gimp_item_get_tattoo (GIMP_ITEM (path)));
++    }
++
++  return NULL;
++}
++
+ static void
+ gimp_text_tool_button_press (GimpTool            *tool,
+                              const GimpCoords    *coords,
+@@ -428,6 +499,17 @@ gimp_text_tool_button_press (GimpTool            *tool,
+ 
+   rectangle = GIMP_TOOL_RECTANGLE (text_tool->widget);
+ 
++  if (press_type == GIMP_BUTTON_PRESS_NORMAL)
++    g_object_set_data_full (G_OBJECT (text_tool), "chopgimp-new-fx",
++                            chopgimp_text_tool_fx_at (image,
++                                                      gimp_display_get_shell (display),
++                                                      coords),
++                            g_free);
++
++  /*  ChopGimp: Ctrl + handle scales the text (Photoshop)  */
++  g_object_set_data (G_OBJECT (text_tool), "chopgimp-scale-text",
++                     GINT_TO_POINTER ((state & GDK_CONTROL_MASK) != 0));
++
+   if (press_type == GIMP_BUTTON_PRESS_NORMAL)
+     {
+       gimp_tool_control_activate (tool->control);
+@@ -528,6 +610,16 @@ gimp_text_tool_button_press (GimpTool            *tool,
+           x = coords->x - gimp_item_get_offset_x (item);
+           y = coords->y - gimp_item_get_offset_y (item);
+ 
++          /*  ChopGimp: a transformed text is drawn from its anchor  */
++          if (GIMP_IS_TEXT_LAYER (item))
++            {
++              gint ax, ay;
++
++              chopgimp_text_fx_get_anchor (GIMP_TEXT_LAYER (item), &ax, &ay);
++              x = coords->x - ax;
++              y = coords->y - ay;
++            }
++
+           drawable = drawables->data;
+         }
+       g_list_free (drawables);
+@@ -745,9 +837,12 @@ gimp_text_tool_motion (GimpTool         *tool,
+     }
+   else
+     {
+-      GimpItem *item = GIMP_ITEM (text_tool->layer);
+-      gdouble   x    = coords->x - gimp_item_get_offset_x (item);
+-      gdouble   y    = coords->y - gimp_item_get_offset_y (item);
++      gint      ax, ay;
++      gdouble   x, y;
++
++      chopgimp_text_fx_get_anchor (text_tool->layer, &ax, &ay);
++      x = coords->x - ax;
++      y = coords->y - ay;
+ 
+       gimp_text_tool_editor_motion (text_tool, x, y);
+     }
+@@ -847,6 +942,167 @@ gimp_text_tool_cursor_update (GimpTool         *tool,
+     }
+ }
+ 
++static gboolean chopgimp_text_tool_has_fx (GimpTextTool *text_tool);
++
++/*  ChopGimp: right click on a misspelled word: suggestions  */
++typedef struct
++{
++  GimpTextTool *text_tool;
++  gint          start;
++  gint          end;
++  gchar        *word;
++  gchar        *lang;
++} SpellFix;
++
++static void
++spell_fix_free (SpellFix *fix)
++{
++  g_free (fix->word);
++  g_free (fix->lang);
++  g_free (fix);
++}
++
++static void
++spell_replace (GtkMenuItem *item,
++               SpellFix    *fix)
++{
++  GtkTextBuffer *buffer = GTK_TEXT_BUFFER (fix->text_tool->buffer);
++  const gchar   *repl   = g_object_get_data (G_OBJECT (item), "chopgimp-word");
++  GtkTextIter    start, end;
++
++  gimp_text_buffer_get_iter_at_index (fix->text_tool->buffer, &start, fix->start, TRUE);
++  gimp_text_buffer_get_iter_at_index (fix->text_tool->buffer, &end,   fix->end,   TRUE);
++
++  gtk_text_buffer_begin_user_action (buffer);
++  gtk_text_buffer_delete (buffer, &start, &end);
++  gtk_text_buffer_insert (buffer, &start, repl, -1);
++  gtk_text_buffer_end_user_action (buffer);
++}
++
++static void
++spell_learn (GtkMenuItem *item,
++             SpellFix    *fix)
++{
++  chopgimp_spell_learn (fix->lang, fix->word,
++                        GPOINTER_TO_INT (g_object_get_data (G_OBJECT (item), "permanent")));
++  gimp_draw_tool_pause (GIMP_DRAW_TOOL (fix->text_tool));
++  gimp_draw_tool_resume (GIMP_DRAW_TOOL (fix->text_tool));
++}
++
++static gboolean
++spell_menu_destroy (gpointer menu)
++{
++  gtk_widget_destroy (menu);
++  return G_SOURCE_REMOVE;
++}
++
++static void
++spell_menu_deactivate (GtkMenuShell *menu)
++{
++  g_idle_add (spell_menu_destroy, menu);
++}
++
++static gboolean
++chopgimp_text_tool_spell_popup (GimpTextTool     *text_tool,
++                                const GimpCoords *coords,
++                                GimpDisplay      *display)
++{
++  GimpDisplayShell *shell = gimp_display_get_shell (display);
++  PangoLayout      *layout;
++  const gchar      *text;
++  gdouble           x, y;
++  gint              offset_x, offset_y, off_x, off_y;
++  gint              index, trailing, start, end;
++  gchar            *word;
++  gchar           **suggestions;
++  GtkWidget        *menu, *item;
++  SpellFix         *fix;
++  gint              i;
++
++  if (! text_tool->layer || ! text_tool->layout || ! text_tool->layer->text ||
++      ! chopgimp_spell_enabled () || chopgimp_text_tool_has_fx (text_tool))
++    return FALSE;
++
++  layout = gimp_text_layout_get_pango_layout (text_tool->layout);
++  text   = pango_layout_get_text (layout);
++
++  gimp_text_layout_get_offsets (text_tool->layout, &offset_x, &offset_y);
++  chopgimp_text_fx_get_anchor (text_tool->layer, &off_x, &off_y);
++
++  x = coords->x - off_x - offset_x;
++  y = coords->y - off_y - offset_y;
++  gimp_text_layout_untransform_point (text_tool->layout, &x, &y);
++
++  if (! pango_layout_xy_to_index (layout, x * PANGO_SCALE, y * PANGO_SCALE,
++                                  &index, &trailing) ||
++      ! chopgimp_spell_word_at (text, index, &start, &end))
++    return FALSE;
++
++  word = g_strndup (text + start, end - start);
++
++  if (! chopgimp_spell_is_wrong (text_tool->layer->text->language, word))
++    {
++      g_free (word);
++      return FALSE;
++    }
++
++  fix            = g_new0 (SpellFix, 1);
++  fix->text_tool = text_tool;
++  fix->start     = start;
++  fix->end       = end;
++  fix->word      = word;
++  fix->lang      = g_strdup (text_tool->layer->text->language);
++
++  menu = gtk_menu_new ();
++  g_object_set_data_full (G_OBJECT (menu), "chopgimp-fix", fix,
++                          (GDestroyNotify) spell_fix_free);
++
++  suggestions = chopgimp_spell_suggest (fix->lang, word);
++
++  for (i = 0; suggestions[i]; i++)
++    {
++      item = gtk_menu_item_new ();
++      gtk_container_add (GTK_CONTAINER (item), gtk_label_new (NULL));
++      {
++        gchar *markup = g_markup_printf_escaped ("<b>%s</b>", suggestions[i]);
++        gtk_label_set_markup (GTK_LABEL (gtk_bin_get_child (GTK_BIN (item))), markup);
++        gtk_label_set_xalign (GTK_LABEL (gtk_bin_get_child (GTK_BIN (item))), 0.0);
++        g_free (markup);
++      }
++      g_object_set_data_full (G_OBJECT (item), "chopgimp-word",
++                              g_strdup (suggestions[i]), g_free);
++      g_signal_connect (item, "activate", G_CALLBACK (spell_replace), fix);
++      gtk_menu_shell_append (GTK_MENU_SHELL (menu), item);
++    }
++
++  if (! suggestions[0])
++    {
++      item = gtk_menu_item_new_with_label (_("(aucune suggestion)"));
++      gtk_widget_set_sensitive (item, FALSE);
++      gtk_menu_shell_append (GTK_MENU_SHELL (menu), item);
++    }
++
++  g_strfreev (suggestions);
++
++  gtk_menu_shell_append (GTK_MENU_SHELL (menu), gtk_separator_menu_item_new ());
++
++  item = gtk_menu_item_new_with_label (_("Ajouter au dictionnaire"));
++  g_object_set_data (G_OBJECT (item), "permanent", GINT_TO_POINTER (TRUE));
++  g_signal_connect (item, "activate", G_CALLBACK (spell_learn), fix);
++  gtk_menu_shell_append (GTK_MENU_SHELL (menu), item);
++
++  item = gtk_menu_item_new_with_label (_("Ignorer"));
++  g_signal_connect (item, "activate", G_CALLBACK (spell_learn), fix);
++  gtk_menu_shell_append (GTK_MENU_SHELL (menu), item);
++
++  gtk_widget_show_all (menu);
++  gtk_menu_attach_to_widget (GTK_MENU (menu), shell->canvas, NULL);
++  g_signal_connect (menu, "deactivate", G_CALLBACK (spell_menu_deactivate), NULL);
++  gtk_menu_popup_at_pointer (GTK_MENU (menu), NULL);
++
++  return TRUE;
++}
++
+ static GimpUIManager *
+ gimp_text_tool_get_popup (GimpTool         *tool,
+                           const GimpCoords *coords,
+@@ -857,6 +1113,9 @@ gimp_text_tool_get_popup (GimpTool         *tool,
+   GimpTextTool      *text_tool = GIMP_TEXT_TOOL (tool);
+   GimpToolRectangle *rectangle = GIMP_TOOL_RECTANGLE (text_tool->widget);
+ 
++  if (chopgimp_text_tool_spell_popup (text_tool, coords, display))
++    return NULL;
++
+   if (rectangle &&
+       gimp_tool_rectangle_point_in_rectangle (rectangle,
+                                               coords->x,
+@@ -878,6 +1137,109 @@ gimp_text_tool_get_popup (GimpTool         *tool,
+   return NULL;
+ }
+ 
++/*  ChopGimp: misspelled words underlined in red (layout coordinates
++ *  → image coordinates as for the selection).
++ */
++static gboolean
++chopgimp_text_tool_has_fx (GimpTextTool *text_tool)
++{
++  const gchar *fx = text_tool->layer->text->chopgimp_fx;
++
++  return fx && (strstr (fx, "warp=") || strstr (fx, "path=") || strstr (fx, "shape="));
++}
++
++static void
++chopgimp_text_tool_draw_spelling (GimpDrawTool *draw_tool)
++{
++  GimpTextTool     *text_tool = GIMP_TEXT_TOOL (draw_tool);
++  GimpDisplayShell *shell;
++  PangoLayout      *layout;
++  const gchar      *text;
++  GArray           *bad;
++  GtkTextIter       cursor;
++  gint              cursor_index;
++  gint              offset_x, offset_y, off_x, off_y;
++  gdouble           step, amp;
++  gint              i;
++  GimpTextDirection direction = gimp_text_tool_get_direction (text_tool);
++
++  if (! GIMP_TOOL (draw_tool)->display || ! text_tool->layout ||
++      (direction != GIMP_TEXT_DIRECTION_LTR && direction != GIMP_TEXT_DIRECTION_RTL) ||
++      chopgimp_text_tool_has_fx (text_tool))
++    return;
++
++  layout = gimp_text_layout_get_pango_layout (text_tool->layout);
++  text   = pango_layout_get_text (layout);
++  bad    = chopgimp_spell_misspelled (text, text_tool->layer->text->language);
++
++  if (! bad)
++    return;
++
++  shell = gimp_display_get_shell (GIMP_TOOL (draw_tool)->display);
++  step  = 3.0 / MAX (shell->scale_x, 1e-6);
++  amp   = 1.2 / MAX (shell->scale_y, 1e-6);
++
++  gtk_text_buffer_get_iter_at_mark (GTK_TEXT_BUFFER (text_tool->buffer), &cursor,
++                                    gtk_text_buffer_get_insert (GTK_TEXT_BUFFER (text_tool->buffer)));
++  cursor_index = gimp_text_buffer_get_iter_index (text_tool->buffer, &cursor, TRUE);
++
++  gimp_text_layout_get_offsets (text_tool->layout, &offset_x, &offset_y);
++  chopgimp_text_fx_get_anchor (text_tool->layer, &off_x, &off_y);
++
++  for (i = 0; i + 1 < bad->len; i += 2)
++    {
++      gint            s = g_array_index (bad, gint, i);
++      gint            e = g_array_index (bad, gint, i + 1);
++      PangoRectangle  a, b;
++      gdouble         x1, x2, y, x;
++      GimpVector2    *pts;
++      gint            n = 0, max;
++      GimpCanvasItem *item;
++      GeglColor      *red;
++
++      /*  the word being typed is not marked  */
++      if (cursor_index >= s && cursor_index <= e)
++        continue;
++
++      pango_layout_index_to_pos (layout, s, &a);
++      pango_layout_index_to_pos (layout,
++                                 g_utf8_prev_char (text + e) - text, &b);
++
++      if (a.y != b.y)
++        continue;
++
++      x1 = (gdouble) MIN (a.x, b.x + b.width) / PANGO_SCALE;
++      x2 = (gdouble) MAX (a.x, b.x + b.width) / PANGO_SCALE;
++      y  = (gdouble) (a.y + a.height) / PANGO_SCALE - amp;
++
++      max = (gint) ((x2 - x1) / step) + 3;
++      pts = g_new (GimpVector2, max);
++
++      for (x = x1; x <= x2 && n < max; x += step, n++)
++        {
++          gdouble px = x, py = y + ((n % 2) ? -amp : amp) * 0.5;
++
++          gimp_text_layout_transform_point (text_tool->layout, &px, &py);
++          pts[n].x = px + offset_x + off_x;
++          pts[n].y = py + offset_y + off_y;
++        }
++
++      if (n > 1)
++        {
++          item = gimp_draw_tool_add_pen (draw_tool, pts, n,
++                                         gimp_get_user_context (GIMP_TOOL (draw_tool)->tool_info->gimp),
++                                         GIMP_ACTIVE_COLOR_FOREGROUND, 1);
++          red = gegl_color_new ("#e01b24");
++          g_object_set (item, "color", red, NULL);
++          g_object_unref (red);
++        }
++
++      g_free (pts);
++    }
++
++  g_array_unref (bad);
++}
++
+ static void
+ gimp_text_tool_draw (GimpDrawTool *draw_tool)
+ {
+@@ -916,7 +1278,7 @@ gimp_text_tool_draw (GimpDrawTool *draw_tool)
+                                              text_tool->overwrite_mode,
+                                              &cursor_rect);
+ 
+-      gimp_item_get_offset (GIMP_ITEM (text_tool->layer), &off_x, &off_y);
++      chopgimp_text_fx_get_anchor (text_tool->layer, &off_x, &off_y);
+       cursor_rect.x += off_x;
+       cursor_rect.y += off_y;
+ 
+@@ -929,6 +1291,8 @@ gimp_text_tool_draw (GimpDrawTool *draw_tool)
+       gimp_canvas_item_set_highlight (item, TRUE);
+     }
+ 
++  chopgimp_text_tool_draw_spelling (draw_tool);
++
+   gimp_text_tool_editor_update_im_cursor (text_tool);
+ }
+ 
+@@ -964,7 +1328,7 @@ gimp_text_tool_draw_selection (GimpDrawTool *draw_tool)
+ 
+   gimp_text_layout_get_size (text_tool->layout, &width, &height);
+ 
+-  gimp_item_get_offset (GIMP_ITEM (text_tool->layer), &off_x, &off_y);
++  chopgimp_text_fx_get_anchor (text_tool->layer, &off_x, &off_y);
+   offset_x += off_x;
+   offset_y += off_y;
+ 
+@@ -1192,6 +1556,30 @@ gimp_text_tool_rectangle_change_complete (GimpToolRectangle *rectangle,
+ 
+           gimp_image_get_resolution (text_tool->image, &xres, &yres);
+ 
++          if (g_object_get_data (G_OBJECT (text_tool), "chopgimp-scale-text"))
++            {
++              /*  ChopGimp: Ctrl + handle — scale the type, not the box  */
++              GimpText *proxy = text_tool->proxy;
++              gdouble   fx    = (x2 - x1) / MAX (1, gimp_item_get_width  (item));
++              gdouble   fy    = (y2 - y1) / MAX (1, gimp_item_get_height (item));
++              gdouble   f     = (fabs (fx - 1.0) > fabs (fy - 1.0)) ? fx : fy;
++
++              f = CLAMP (f, 0.05, 20.0);
++
++              g_object_set (proxy,
++                            "font-size",      proxy->font_size      * f,
++                            "letter-spacing", proxy->letter_spacing * f,
++                            "line-spacing",   proxy->line_spacing   * f,
++                            "indent",         proxy->indent         * f,
++                            NULL);
++
++              if (proxy->box_mode == GIMP_TEXT_BOX_FIXED)
++                g_object_set (proxy,
++                              "box-width",  proxy->box_width  * f,
++                              "box-height", proxy->box_height * f,
++                              NULL);
++            }
++          else
+           g_object_set (text_tool->proxy,
+                         "box-mode",   GIMP_TEXT_BOX_FIXED,
+                         "box-width",  gimp_pixels_to_units (x2 - x1,
+@@ -1618,6 +2006,8 @@ gimp_text_tool_create_layer (GimpTextTool *text_tool,
+   gdouble    x1, y1;
+   gdouble    x2, y2;
+ 
++  gboolean   fresh_text = (text == NULL);
++
+   gimp_text_tool_block_drawing (text_tool);
+ 
+   if (text)
+@@ -1652,6 +2042,16 @@ gimp_text_tool_create_layer (GimpTextTool *text_tool,
+       text = gimp_config_duplicate (GIMP_CONFIG (text_tool->proxy));
+     }
+ 
++  {
++    const gchar *fx = g_object_get_data (G_OBJECT (text_tool), "chopgimp-new-fx");
++
++    /*  only a brand new text (not a copy of a modified text layer)  */
++    if (fx && ! text_tool->text_box_fixed && fresh_text)
++      g_object_set (text, "chopgimp-fx", fx, NULL);
++    else
++      g_object_set_data (G_OBJECT (text_tool), "chopgimp-new-fx", NULL);
++  }
++
+   layer = gimp_text_layer_new (image, text);
+ 
+   g_object_unref (text);
+@@ -1723,6 +2123,12 @@ gimp_text_tool_create_layer (GimpTextTool *text_tool,
+       gimp_text_tool_frame_item (text_tool);
+     }
+ 
++  if (g_object_get_data (G_OBJECT (text_tool), "chopgimp-new-fx"))
++    {
++      g_object_set_data (G_OBJECT (text_tool), "chopgimp-new-fx", NULL);
++      gimp_text_layer_chopgimp_refresh (GIMP_TEXT_LAYER (layer));
++    }
++
+   gimp_image_undo_group_end (image);
+ 
+   gimp_image_flush (image);
+diff --git a/app/widgets/chopgimp-rc.c b/app/widgets/chopgimp-rc.c
+index 0fa2fbb..e9dd240 100644
+--- a/app/widgets/chopgimp-rc.c
++++ b/app/widgets/chopgimp-rc.c
+@@ -91,3 +91,27 @@ chopgimp_rc_set_boolean (const gchar *group,
+ 
+   g_free (path);
+ }
++
++gchar **
++chopgimp_rc_get_strings (const gchar *group,
++                         const gchar *key)
++{
++  gchar **list = g_key_file_get_string_list (chopgimp_rc_get (), group, key,
++                                             NULL, NULL);
++
++  return list ? list : g_new0 (gchar *, 1);
++}
++
++void
++chopgimp_rc_set_strings (const gchar         *group,
++                         const gchar         *key,
++                         const gchar * const *list)
++{
++  gchar *path = chopgimp_rc_path ();
++
++  g_key_file_set_string_list (chopgimp_rc_get (), group, key, list,
++                              g_strv_length ((gchar **) list));
++  g_key_file_save_to_file (chopgimp_rc, path, NULL);
++
++  g_free (path);
++}
+diff --git a/app/widgets/chopgimp-rc.h b/app/widgets/chopgimp-rc.h
+index fbdc909..c6b4035 100644
+--- a/app/widgets/chopgimp-rc.h
++++ b/app/widgets/chopgimp-rc.h
+@@ -15,3 +15,8 @@ gboolean   chopgimp_rc_get_boolean (const gchar *group,
+ void       chopgimp_rc_set_boolean (const gchar *group,
+                                     const gchar *key,
+                                     gboolean     value);
++gchar   ** chopgimp_rc_get_strings (const gchar         *group,
++                                    const gchar         *key);
++void       chopgimp_rc_set_strings (const gchar         *group,
++                                    const gchar         *key,
++                                    const gchar * const *list);
+diff --git a/app/widgets/chopgimp-spell.c b/app/widgets/chopgimp-spell.c
+new file mode 100644
+index 0000000..1c4a915
+--- /dev/null
++++ b/app/widgets/chopgimp-spell.c
+@@ -0,0 +1,476 @@
++/* GIMP - The GNU Image Manipulation Program
++ * chopgimp-spell.c — ChopGimp: spell checking of texts (Hunspell).
++ *
++ * libhunspell is loaded at run time (it is part of the GNOME runtime),
++ * the French dictionary is shipped in /app/share/hunspell.  The words
++ * the user adds are kept in ${gimp_dir}/chopgimp-dictionary-<lang>.
++ *
++ * This program is free software: you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation; either version 3 of the License, or
++ * (at your option) any later version.
++ */
++
++#include "config.h"
++
++#include <string.h>
++
++#include <gio/gio.h>
++#include <gmodule.h>
++
++#include "libgimpbase/gimpbase.h"
++
++#include "chopgimp-rc.h"
++#include "chopgimp-spell.h"
++
++
++typedef gpointer (* CreateFunc)   (const gchar *aff, const gchar *dic);
++typedef gint     (* SpellFunc)    (gpointer h, const gchar *word);
++typedef gint     (* SuggestFunc)  (gpointer h, gchar ***list, const gchar *word);
++typedef void     (* FreeListFunc) (gpointer h, gchar ***list, gint n);
++typedef gint     (* AddFunc)      (gpointer h, const gchar *word);
++typedef gchar  * (* EncodingFunc) (gpointer h);
++
++static struct
++{
++  gboolean     tried;
++  GModule     *module;
++  CreateFunc   create;
++  SpellFunc    spell;
++  SuggestFunc  suggest;
++  FreeListFunc free_list;
++  AddFunc      add;
++  EncodingFunc encoding;
++} hun;
++
++typedef struct
++{
++  gpointer    handle;
++  gchar      *encoding;   /* NULL: UTF-8 */
++  gchar      *key;
++  GHashTable *cache;      /* word → GINT_TO_POINTER (1 ok / 2 wrong) */
++} Dict;
++
++static GHashTable *dicts = NULL;   /* key → Dict (or NULL: unavailable) */
++
++
++static gboolean
++hun_load (void)
++{
++  if (hun.tried)
++    return hun.module != NULL;
++
++  hun.tried  = TRUE;
++  hun.module = g_module_open ("libhunspell-1.7.so.0", G_MODULE_BIND_LAZY);
++
++  if (! hun.module)
++    return FALSE;
++
++  if (! g_module_symbol (hun.module, "Hunspell_create",    (gpointer *) &hun.create)    ||
++      ! g_module_symbol (hun.module, "Hunspell_spell",     (gpointer *) &hun.spell)     ||
++      ! g_module_symbol (hun.module, "Hunspell_suggest",   (gpointer *) &hun.suggest)   ||
++      ! g_module_symbol (hun.module, "Hunspell_free_list", (gpointer *) &hun.free_list) ||
++      ! g_module_symbol (hun.module, "Hunspell_add",       (gpointer *) &hun.add)       ||
++      ! g_module_symbol (hun.module, "Hunspell_get_dic_encoding",
++                         (gpointer *) &hun.encoding))
++    {
++      g_module_close (hun.module);
++      hun.module = NULL;
++    }
++
++  return hun.module != NULL;
++}
++
++static gchar *
++lang_key (const gchar *lang)
++{
++  const gchar * const *names;
++  gchar               *key;
++
++  if (! lang || ! *lang)
++    {
++      names = g_get_language_names ();
++      lang  = names[0];
++    }
++
++  key = g_ascii_strdown (lang, 2);
++
++  if (strlen (key) < 2 || ! g_ascii_isalpha (key[0]))
++    {
++      g_free (key);
++      key = g_strdup ("fr");
++    }
++
++  return key;
++}
++
++static gchar *
++personal_path (const gchar *key)
++{
++  gchar *name = g_strdup_printf ("chopgimp-dictionary-%s", key);
++  gchar *path = g_build_filename (gimp_directory (), name, NULL);
++
++  g_free (name);
++
++  return path;
++}
++
++static gchar *
++to_dict (Dict        *dict,
++         const gchar *word)
++{
++  if (! dict->encoding)
++    return g_strdup (word);
++
++  return g_convert (word, -1, dict->encoding, "UTF-8", NULL, NULL, NULL);
++}
++
++static Dict *
++dict_get (const gchar *lang)
++{
++  static const gchar *dirs[] = { "/app/share/hunspell", "/usr/share/hunspell",
++                                 "/usr/share/myspell", NULL };
++  gchar *key;
++  Dict  *dict;
++  gint   d, c;
++
++  if (! hun_load ())
++    return NULL;
++
++  if (! dicts)
++    dicts = g_hash_table_new (g_str_hash, g_str_equal);
++
++  key = lang_key (lang);
++
++  if (g_hash_table_contains (dicts, key))
++    {
++      dict = g_hash_table_lookup (dicts, key);
++      g_free (key);
++      return dict;
++    }
++
++  dict = NULL;
++
++  {
++    gchar *full = g_strdup_printf ("%s_%c%c", key,
++                                   g_ascii_toupper (key[0]), g_ascii_toupper (key[1]));
++    const gchar *candidates[] = { key, full,
++                                  ! strcmp (key, "en") ? "en_US" : NULL,
++                                  ! strcmp (key, "en") ? "en_GB" : NULL,
++                                  NULL };
++
++    for (c = 0; candidates[c] && ! dict; c++)
++      for (d = 0; dirs[d] && ! dict; d++)
++        {
++          gchar *aff = g_strdup_printf ("%s/%s.aff", dirs[d], candidates[c]);
++          gchar *dic = g_strdup_printf ("%s/%s.dic", dirs[d], candidates[c]);
++
++          if (g_file_test (aff, G_FILE_TEST_EXISTS) &&
++              g_file_test (dic, G_FILE_TEST_EXISTS))
++            {
++              gpointer handle = hun.create (aff, dic);
++
++              if (handle)
++                {
++                  const gchar *enc = hun.encoding (handle);
++
++                  dict         = g_new0 (Dict, 1);
++                  dict->handle = handle;
++                  dict->key    = g_strdup (key);
++                  dict->cache  = g_hash_table_new_full (g_str_hash, g_str_equal,
++                                                        g_free, NULL);
++                  if (enc && g_ascii_strcasecmp (enc, "UTF-8") &&
++                      g_ascii_strcasecmp (enc, "UTF8"))
++                    dict->encoding = g_strdup (enc);
++                }
++            }
++
++          g_free (aff);
++          g_free (dic);
++        }
++
++    g_free (full);
++  }
++
++  if (dict)
++    {
++      gchar  *path = personal_path (key);
++      gchar  *contents;
++
++      if (g_file_get_contents (path, &contents, NULL, NULL))
++        {
++          gchar **words = g_strsplit (contents, "\n", -1);
++
++          for (c = 0; words[c]; c++)
++            if (*words[c])
++              {
++                gchar *w = to_dict (dict, words[c]);
++
++                if (w)
++                  hun.add (dict->handle, w);
++                g_free (w);
++              }
++
++          g_strfreev (words);
++          g_free (contents);
++        }
++
++      g_free (path);
++    }
++
++  g_hash_table_insert (dicts, key, dict);
++
++  return dict;
++}
++
++gboolean
++chopgimp_spell_enabled (void)
++{
++  return chopgimp_rc_get_boolean ("text", "spell-check", TRUE);
++}
++
++static gboolean
++word_ok (Dict        *dict,
++         const gchar *word)
++{
++  gpointer cached = g_hash_table_lookup (dict->cache, word);
++  gchar   *w;
++  gboolean ok;
++
++  if (cached)
++    return GPOINTER_TO_INT (cached) == 1;
++
++  w  = to_dict (dict, word);
++  ok = w ? (hun.spell (dict->handle, w) != 0) : TRUE;
++
++  /*  typographic apostrophe: also try the ASCII one  */
++  if (! ok && strstr (word, "’"))
++    {
++      gchar **parts = g_strsplit (word, "’", -1);
++      gchar  *ascii = g_strjoinv ("'", parts);
++
++      g_free (w);
++      w  = to_dict (dict, ascii);
++      ok = w ? (hun.spell (dict->handle, w) != 0) : TRUE;
++
++      g_free (ascii);
++      g_strfreev (parts);
++    }
++
++  g_free (w);
++
++  g_hash_table_insert (dict->cache, g_strdup (word), GINT_TO_POINTER (ok ? 1 : 2));
++
++  return ok;
++}
++
++static gboolean
++is_word_char (gunichar c)
++{
++  return g_unichar_isalpha (c) || g_unichar_ismark (c);
++}
++
++static gboolean
++is_joiner (gunichar c)
++{
++  return c == '\'' || c == 0x2019 || c == '-';
++}
++
++/*  next word of text from pos: its byte range  */
++static gboolean
++next_word (const gchar *text,
++           gint         pos,
++           gint        *start,
++           gint        *end)
++{
++  const gchar *p = text + pos;
++
++  while (*p && ! is_word_char (g_utf8_get_char (p)))
++    p = g_utf8_next_char (p);
++
++  if (! *p)
++    return FALSE;
++
++  *start = p - text;
++
++  while (*p)
++    {
++      gunichar c = g_utf8_get_char (p);
++
++      if (is_word_char (c))
++        {
++          p = g_utf8_next_char (p);
++        }
++      else if (is_joiner (c))
++        {
++          const gchar *n = g_utf8_next_char (p);
++
++          if (*n && is_word_char (g_utf8_get_char (n)))
++            p = n;
++          else
++            break;
++        }
++      else
++        {
++          break;
++        }
++    }
++
++  *end = p - text;
++
++  return TRUE;
++}
++
++static gboolean
++word_needs_check (const gchar *word)
++{
++  const gchar *p;
++  gboolean     all_upper = TRUE;
++
++  if (g_utf8_strlen (word, -1) < 2)
++    return FALSE;
++
++  for (p = word; *p; p = g_utf8_next_char (p))
++    {
++      gunichar c = g_utf8_get_char (p);
++
++      if (g_unichar_isdigit (c))
++        return FALSE;
++      if (g_unichar_islower (c))
++        all_upper = FALSE;
++    }
++
++  /*  acronyms (« CEN », « GIMP ») are not checked  */
++  return ! all_upper;
++}
++
++GArray *
++chopgimp_spell_misspelled (const gchar *text,
++                           const gchar *lang)
++{
++  Dict   *dict;
++  GArray *bad;
++  gint    pos = 0, start, end;
++
++  if (! text || ! chopgimp_spell_enabled () || ! (dict = dict_get (lang)))
++    return NULL;
++
++  bad = g_array_new (FALSE, FALSE, sizeof (gint));
++
++  while (next_word (text, pos, &start, &end))
++    {
++      gchar *word = g_strndup (text + start, end - start);
++
++      if (word_needs_check (word) && ! word_ok (dict, word))
++        {
++          g_array_append_val (bad, start);
++          g_array_append_val (bad, end);
++        }
++
++      g_free (word);
++      pos = end;
++    }
++
++  return bad;
++}
++
++gboolean
++chopgimp_spell_word_at (const gchar *text,
++                        gint         index,
++                        gint        *start,
++                        gint        *end)
++{
++  gint pos = 0;
++
++  while (next_word (text, pos, start, end))
++    {
++      if (index >= *start && index <= *end)
++        return TRUE;
++
++      pos = *end;
++    }
++
++  return FALSE;
++}
++
++gboolean
++chopgimp_spell_is_wrong (const gchar *lang,
++                         const gchar *word)
++{
++  Dict *dict = dict_get (lang);
++
++  return dict && word_needs_check (word) && ! word_ok (dict, word);
++}
++
++gchar **
++chopgimp_spell_suggest (const gchar *lang,
++                        const gchar *word)
++{
++  Dict      *dict = dict_get (lang);
++  GPtrArray *out  = g_ptr_array_new ();
++  gchar    **list = NULL;
++  gchar     *w;
++  gint       n, i;
++
++  if (dict && (w = to_dict (dict, word)))
++    {
++      n = hun.suggest (dict->handle, &list, w);
++
++      for (i = 0; i < n && out->len < 8; i++)
++        {
++          gchar *s = dict->encoding ?
++                     g_convert (list[i], -1, "UTF-8", dict->encoding, NULL, NULL, NULL) :
++                     g_strdup (list[i]);
++          if (s)
++            g_ptr_array_add (out, s);
++        }
++
++      if (list)
++        hun.free_list (dict->handle, &list, n);
++
++      g_free (w);
++    }
++
++  g_ptr_array_add (out, NULL);
++
++  return (gchar **) g_ptr_array_free (out, FALSE);
++}
++
++void
++chopgimp_spell_learn (const gchar *lang,
++                      const gchar *word,
++                      gboolean     permanent)
++{
++  Dict  *dict = dict_get (lang);
++  gchar *w;
++
++  if (! dict)
++    return;
++
++  if ((w = to_dict (dict, word)))
++    hun.add (dict->handle, w);
++  g_free (w);
++
++  g_hash_table_insert (dict->cache, g_strdup (word), GINT_TO_POINTER (1));
++
++  if (permanent)
++    {
++      gchar         *path = personal_path (dict->key);
++      GFile         *file = g_file_new_for_path (path);
++      GOutputStream *out  = G_OUTPUT_STREAM (g_file_append_to (file, G_FILE_CREATE_NONE,
++                                                               NULL, NULL));
++
++      if (out)
++        {
++          gchar *line = g_strconcat (word, "\n", NULL);
++
++          g_output_stream_write_all (out, line, strlen (line), NULL, NULL, NULL);
++          g_output_stream_close (out, NULL, NULL);
++          g_object_unref (out);
++          g_free (line);
++        }
++
++      g_object_unref (file);
++      g_free (path);
++    }
++}
+diff --git a/app/widgets/chopgimp-spell.h b/app/widgets/chopgimp-spell.h
+new file mode 100644
+index 0000000..c24ddff
+--- /dev/null
++++ b/app/widgets/chopgimp-spell.h
+@@ -0,0 +1,25 @@
++/* GIMP - The GNU Image Manipulation Program
++ * chopgimp-spell.h — ChopGimp: spell checking of texts (Hunspell)
++ *
++ * This program is free software: you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation; either version 3 of the License, or
++ * (at your option) any later version.
++ */
++
++#pragma once
++
++gboolean   chopgimp_spell_enabled    (void);
++GArray   * chopgimp_spell_misspelled (const gchar *text,
++                                      const gchar *lang);   /* gint pairs */
++gboolean   chopgimp_spell_word_at    (const gchar *text,
++                                      gint         index,
++                                      gint        *start,
++                                      gint        *end);
++gboolean   chopgimp_spell_is_wrong   (const gchar *lang,
++                                      const gchar *word);
++gchar   ** chopgimp_spell_suggest    (const gchar *lang,
++                                      const gchar *word);
++void       chopgimp_spell_learn      (const gchar *lang,
++                                      const gchar *word,
++                                      gboolean     permanent);
+diff --git a/app/widgets/gimptextproxy.c b/app/widgets/gimptextproxy.c
+index eeab3b2..37bd691 100644
+--- a/app/widgets/gimptextproxy.c
++++ b/app/widgets/gimptextproxy.c
+@@ -109,12 +109,40 @@ gimp_text_proxy_class_init (GimpTextProxyClass *klass)
+                                 "change-size", 1,
+                                 G_TYPE_DOUBLE, -1.0);
+ 
+-  gtk_binding_entry_add_signal (binding_set, GDK_KEY_Up, GDK_MOD1_MASK,
++  /*  ChopGimp: Photoshop keys — Shift+Alt+↑↓ moves the baseline
++   *  (Alt+↑↓ changes the leading, see gimptexttool-editor.c),
++   *  Ctrl+Shift+< > changes the size.
++   */
++  gtk_binding_entry_add_signal (binding_set, GDK_KEY_Up,
++                                GDK_MOD1_MASK | GDK_SHIFT_MASK,
+                                 "change-baseline", 1,
+                                 G_TYPE_DOUBLE, 1.0);
+-  gtk_binding_entry_add_signal (binding_set, GDK_KEY_Down, GDK_MOD1_MASK,
++  gtk_binding_entry_add_signal (binding_set, GDK_KEY_Down,
++                                GDK_MOD1_MASK | GDK_SHIFT_MASK,
+                                 "change-baseline", 1,
+                                 G_TYPE_DOUBLE, -1.0);
++  {
++    const guint bigger[]  = { GDK_KEY_greater, GDK_KEY_period };
++    const guint smaller[] = { GDK_KEY_less, GDK_KEY_comma };
++    gint        i;
++
++    for (i = 0; i < 2; i++)
++      {
++        gtk_binding_entry_add_signal (binding_set, bigger[i],
++                                      GDK_CONTROL_MASK | GDK_SHIFT_MASK,
++                                      "change-size", 1,
++                                      G_TYPE_DOUBLE, 2.0);
++        gtk_binding_entry_add_signal (binding_set, smaller[i],
++                                      GDK_CONTROL_MASK | GDK_SHIFT_MASK,
++                                      "change-size", 1,
++                                      G_TYPE_DOUBLE, -2.0);
++      }
++    /*  AZERTY: « < » without Shift  */
++    gtk_binding_entry_add_signal (binding_set, GDK_KEY_less,
++                                  GDK_CONTROL_MASK,
++                                  "change-size", 1,
++                                  G_TYPE_DOUBLE, -2.0);
++  }
+ 
+   gtk_binding_entry_add_signal (binding_set, GDK_KEY_Left, GDK_MOD1_MASK,
+                                 "change-kerning", 1,
+diff --git a/app/widgets/meson.build b/app/widgets/meson.build
+index 3aedc1f..f1f0822 100644
+--- a/app/widgets/meson.build
++++ b/app/widgets/meson.build
+@@ -257,6 +257,7 @@ libappwidgets_sources = [
+   'gimpviewrendererbrush.c',
+   'gimpviewrendererbuffer.c',
+   'chopgimp-rc.c',
++  'chopgimp-spell.c',
+   'gimpviewrendererdrawable.c',
+   'gimpviewrendererfont.c',
+   'gimpviewrenderergradient.c',
+diff --git a/menus/dialogs-menuitems.ui.in b/menus/dialogs-menuitems.ui.in
+index 8b83194..16598a3 100644
+--- a/menus/dialogs-menuitems.ui.in
++++ b/menus/dialogs-menuitems.ui.in
+@@ -14,6 +14,8 @@
+     <item><attribute name="action">@GROUP@.dialogs-undo-history</attribute></item>
+     <item><attribute name="action">@GROUP@.dialogs-character</attribute></item>
+     <item><attribute name="action">@GROUP@.dialogs-paragraph</attribute></item>
++    <item><attribute name="action">@GROUP@.dialogs-glyphs</attribute></item>
++    <item><attribute name="action">@GROUP@.dialogs-text-styles</attribute></item>
+     <item><attribute name="action">@GROUP@.dialogs-cursor</attribute></item>
+     <item><attribute name="action">@GROUP@.dialogs-sample-points</attribute></item>
+     <item><attribute name="action">@GROUP@.dialogs-symmetry</attribute></item>
+-- 
+2.53.0
+

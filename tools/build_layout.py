@@ -94,6 +94,8 @@ def sessionrc():
     props = book(250, [dockable("gimp-undo-history"),
                        dockable("chopgimp-character"),
                        dockable("chopgimp-paragraph"),
+                       dockable("chopgimp-glyphs"),
+                       dockable("chopgimp-text-styles"),
                        dockable("gimp-brush-grid"),
                        dockable("gimp-cursor-view", extra=['(frame-1-mode "pixel")', '(frame-2-mode "rgb-percent")'])])
     layers = book(330, [dockable("gimp-layer-list", tab="name", preview=64),

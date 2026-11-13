@@ -8,6 +8,13 @@ ChopGimp — commandes de texte (façon Illustrator / Photoshop).
   Calque > Texte > Créer un tracé de travail          chemin, texte conservé
   Calque > Texte > Rechercher et remplacer…           dans tous les calques de texte
   Calque > Texte > Texte de remplissage               Lorem ipsum
+  Calque > Texte > Déformer le texte…                 15 styles Photoshop
+  Calque > Texte > Texte sur le tracé…                suit un chemin
+  Calque > Texte > Texte dans la forme…               remplit une forme
+  Calque > Texte > Supprimer l'effet de texte
+
+Le texte reste modifiable : l'effet est une propriété du calque de texte
+(rendu par app/text/chopgimp-textfx.c).
 """
 import re
 import sys
@@ -127,6 +134,177 @@ def outline_letters(image, layers):
     image.set_selected_layers(groups_out)
 
 
+# ─── effets de texte (déformation, tracé, forme) ───────────────────────
+
+WARP_STYLES = [
+    ("none", "Sans"), ("arc", "Arc"), ("arc-lower", "Arc inférieur"),
+    ("arc-upper", "Arc supérieur"), ("arch", "Arche"), ("bulge", "Renflement"),
+    ("shell-lower", "Coquille inférieure"), ("shell-upper", "Coquille supérieure"),
+    ("flag", "Drapeau"), ("wave", "Onde"), ("fish", "Poisson"), ("rise", "Montée"),
+    ("fisheye", "Œil de poisson"), ("inflate", "Gonflement"), ("squeeze", "Compression"),
+    ("twist", "Torsion"),
+]
+
+
+def call(name, **kw):
+    p = Gimp.get_pdb().lookup_procedure(name)
+    cfg = p.create_config()
+    for k, v in kw.items():
+        cfg.set_property(k, v)
+    res = p.run(cfg)
+    if res.index(0) != Gimp.PDBStatusType.SUCCESS:
+        return None
+    return res
+
+
+def fx_get(layer):
+    res = call("chopgimp-text-fx-get", layer=layer)
+    return (res.index(1) if res else "") or ""
+
+
+def fx_set(layer, spec, undo):
+    call("chopgimp-text-fx-set", layer=layer, spec=spec or "", push_undo=undo)
+    Gimp.displays_flush()
+
+
+def spec_parse(spec):
+    out = {}
+    for item in (spec or "").split(";"):
+        if "=" in item:
+            k, v = item.split("=", 1)
+            out[k] = v
+    return out
+
+
+def spec_join(d):
+    return ";".join("%s=%s" % (k, v) for k, v in d.items())
+
+
+def target_path(image, drawables):
+    """Le chemin visé : chemin sélectionné, sinon celui d'un calque
+    vectoriel sélectionné."""
+    paths = image.get_selected_paths()
+    if paths:
+        return paths[0]
+    for d in drawables:
+        if isinstance(d, Gimp.VectorLayer):
+            return d.get_path()
+    return None
+
+
+def fx_dialog(title, layer, rows, make_spec):
+    """rows: [(libellé, widget)] ; make_spec() → texte de l'effet.
+    Aperçu en direct sans annulation, validé avec annulation."""
+    GimpUi.init("chopgimp_text")
+    original = fx_get(layer)
+    dialog = GimpUi.Dialog(title=title, role="chopgimp-text-fx", modal=True)
+    dialog.add_button("_Annuler", Gtk.ResponseType.CANCEL)
+    dialog.add_button("_OK", Gtk.ResponseType.OK)
+    grid = Gtk.Grid(row_spacing=8, column_spacing=10, margin=12)
+    dialog.get_content_area().pack_start(grid, True, True, 0)
+    for r, (label, widget) in enumerate(rows):
+        if label:
+            grid.attach(Gtk.Label(label=label, xalign=1), 0, r, 1, 1)
+            grid.attach(widget, 1, r, 1, 1)
+        else:
+            grid.attach(widget, 0, r, 2, 1)
+
+    pending = [0]
+
+    def preview(*_):
+        if pending[0]:
+            GLib.source_remove(pending[0])
+
+        def run():
+            pending[0] = 0
+            fx_set(layer, make_spec(), False)
+            return False
+        pending[0] = GLib.timeout_add(120, run)
+
+    for _, widget in rows:
+        for sig in ("value-changed", "changed", "toggled"):
+            if GObject.signal_lookup(sig, type(widget)):
+                widget.connect(sig, preview)
+    dialog.show_all()
+    preview()
+    resp = dialog.run()
+    if pending[0]:
+        GLib.source_remove(pending[0])
+    spec = make_spec()
+    dialog.destroy()
+    fx_set(layer, original, False)          # état initial, sans annulation
+    if resp == Gtk.ResponseType.OK and spec != original:
+        fx_set(layer, spec, True)           # une seule étape d'annulation
+
+
+def slider(lo, hi, value, step=1):
+    adj = Gtk.Adjustment(value=value, lower=lo, upper=hi, step_increment=step,
+                         page_increment=step * 10)
+    sc = Gtk.Scale(orientation=Gtk.Orientation.HORIZONTAL, adjustment=adj,
+                   digits=0, hexpand=True)
+    sc.set_size_request(260, -1)
+    sc.set_value_pos(Gtk.PositionType.RIGHT)
+    return sc
+
+
+def warp_dialog(layer):
+    cur = spec_parse(fx_get(layer))
+    combo = Gtk.ComboBoxText()
+    for key, label in WARP_STYLES:
+        combo.append(key, label)
+    combo.set_active_id(cur.get("warp", "arc") if "warp" in cur else "arc")
+    horiz = Gtk.RadioButton(label="Horizontale")
+    vert = Gtk.RadioButton(label="Verticale", group=horiz)
+    vert.set_active(cur.get("vertical", "0") == "1")
+    orient = Gtk.Box(spacing=12)
+    orient.pack_start(horiz, False, False, 0)
+    orient.pack_start(vert, False, False, 0)
+    bend = slider(-100, 100, float(cur.get("bend", 50)))
+    hd = slider(-100, 100, float(cur.get("hdist", 0)))
+    vd = slider(-100, 100, float(cur.get("vdist", 0)))
+
+    def make():
+        style = combo.get_active_id()
+        if style == "none":
+            return ""
+        return spec_join({"warp": style, "bend": int(bend.get_value()),
+                          "hdist": int(hd.get_value()), "vdist": int(vd.get_value()),
+                          "vertical": int(vert.get_active())})
+
+    fx_dialog("Déformer le texte", layer,
+              [("Style :", combo), ("", orient), ("Inflexion (%) :", bend),
+               ("Distorsion horizontale (%) :", hd), ("Distorsion verticale (%) :", vd)],
+              make)
+
+
+def path_dialog(layer, path):
+    cur = spec_parse(fx_get(layer))
+    tattoo = path.get_tattoo()
+    start = slider(-100, 100, float(cur.get("start", 0)) if "path" in cur else 0)
+    shift = slider(-500, 500, float(cur.get("shift", 0)) if "path" in cur else 0)
+    flip = Gtk.CheckButton(label="Faire passer de l'autre côté du tracé")
+    flip.set_active("path" in cur and cur.get("flip") == "1")
+
+    def make():
+        return spec_join({"path": tattoo, "start": int(start.get_value()),
+                          "flip": int(flip.get_active()), "shift": int(shift.get_value())})
+
+    fx_dialog("Texte sur le tracé", layer,
+              [("Départ (% du tracé) :", start), ("Décalage de la ligne de base (px) :", shift),
+               ("", flip)], make)
+
+
+def shape_dialog(layer, path):
+    cur = spec_parse(fx_get(layer))
+    tattoo = path.get_tattoo()
+    inset = slider(0, 500, float(cur.get("inset", 6)) if "shape" in cur else 6)
+
+    def make():
+        return spec_join({"shape": tattoo, "inset": int(inset.get_value())})
+
+    fx_dialog("Texte dans la forme", layer, [("Marge intérieure (px) :", inset)], make)
+
+
 # ─── rechercher / remplacer ─────────────────────────────────────────────
 
 def find_replace_dialog(image):
@@ -198,7 +376,14 @@ PROCS = {
     "chopgimp-text-work-path": ("Créer un tracé de travail", [TXT, TXT_L]),
     "chopgimp-text-find-replace": ("Rechercher et remplacer…", [TXT]),
     "chopgimp-text-lorem": ("Texte de remplissage (Lorem ipsum)", [TXT]),
+    "chopgimp-text-warp": ("Déformer le texte…", [TXT, TXT_L]),
+    "chopgimp-text-on-path": ("Texte sur le tracé…", [TXT, TXT_L]),
+    "chopgimp-text-in-shape": ("Texte dans la forme…", [TXT, TXT_L]),
+    "chopgimp-text-fx-clear": ("Supprimer l'effet de texte", [TXT, TXT_L]),
 }
+
+FX_PROCS = ("chopgimp-text-warp", "chopgimp-text-on-path", "chopgimp-text-in-shape",
+            "chopgimp-text-fx-clear")
 
 
 class ChopGimpText(Gimp.PlugIn):
@@ -227,8 +412,31 @@ class ChopGimpText(Gimp.PlugIn):
         name = procedure.get_name()
         layers = text_layers(drawables)
         if name in ("chopgimp-text-outline", "chopgimp-text-outline-letters",
-                    "chopgimp-text-work-path") and not layers:
+                    "chopgimp-text-work-path") + FX_PROCS and not layers:
             return fail(procedure, "Sélectionnez un calque de texte.")
+        if name in FX_PROCS:
+            layer = layers[0]
+            if name == "chopgimp-text-fx-clear":
+                fx_set(layer, "", True)
+                return ok(procedure)
+            if name == "chopgimp-text-warp":
+                if run_mode == Gimp.RunMode.INTERACTIVE:
+                    warp_dialog(layer)
+                else:
+                    fx_set(layer, "warp=arc;bend=50", True)
+                return ok(procedure)
+            path = target_path(image, drawables)
+            if path is None:
+                return fail(procedure, "Sélectionnez aussi un chemin (panneau Chemins) "
+                                       "ou un calque vectoriel.")
+            if run_mode != Gimp.RunMode.INTERACTIVE:
+                key = "path" if name == "chopgimp-text-on-path" else "shape"
+                fx_set(layer, "%s=%d" % (key, path.get_tattoo()), True)
+            elif name == "chopgimp-text-on-path":
+                path_dialog(layer, path)
+            else:
+                shape_dialog(layer, path)
+            return ok(procedure)
         if name == "chopgimp-text-find-replace":
             if run_mode == Gimp.RunMode.INTERACTIVE:
                 find_replace_dialog(image)

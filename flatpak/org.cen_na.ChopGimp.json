@@ -968,7 +968,8 @@
                         "../patches/gimp-3.2.8/0064-ChopGimp-zoom-cursor-symbol-without-stretched-edges.patch",
                         "../patches/gimp-3.2.8/0065-ChopGimp-Character-and-Paragraph-panels-selection-or.patch",
                         "../patches/gimp-3.2.8/0066-ChopGimp-Move-tool-receives-double-clicks-edit-text-.patch",
-                        "../patches/gimp-3.2.8/0067-ChopGimp-double-click-on-a-text-picks-it-by-its-fram.patch"
+                        "../patches/gimp-3.2.8/0067-ChopGimp-double-click-on-a-text-picks-it-by-its-fram.patch",
+                        "../patches/gimp-3.2.8/0068-ChopGimp-warped-text-text-on-path-in-shape-editable-.patch"
                     ]
                 }
             ],

@@ -11,5 +11,8 @@ ChopGimp est un logiciel libre (GPL-3.0-ou-ultérieure) fondé sur :
   (Liam P. White, Tavmjong Bah, Alexander Brock ; GPL-2.0-ou-ultérieure), dans
   `app/path/chopgimp-inkscape-pathstroke.cc`. https://inkscape.org
 - **boost**, **GSL**, **double-conversion** — dépendances de lib2geom.
+- **Dictionnaire orthographique français « classique »** (Olivier R., Dicollecte /
+  Grammalecte ; MPL-2.0), dans `data/hunspell/`, et **Hunspell** (bibliothèque
+  du runtime GNOME) pour la vérification d'orthographe des textes.
 
 Icônes, thème, outils et plug-ins ChopGimp : originaux, GPL-3.0-ou-ultérieure.

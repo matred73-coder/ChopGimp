@@ -379,6 +379,86 @@ try:
     except Exception as e:
         report(False, "Texte", repr(e)[:200])
 
+    # 3h. Texte : déformation, texte sur tracé / dans une forme, transformations
+    try:
+        im = Gimp.Image.new(1000, 700, Gimp.ImageBaseType.RGB)
+        bg = Gimp.Layer.new(im, "Fond", 1000, 700, Gimp.ImageType.RGB_IMAGE, 100, Gimp.LayerMode.NORMAL)
+        im.insert_layer(bg, None, 0)
+        font = Gimp.Font.get_by_name("Sans-serif") or Gimp.context_get_font()
+
+        def fx(layer, spec):
+            return run("chopgimp-text-fx-set", layer=layer, spec=spec, **{"push-undo": True})
+
+        t = Gimp.TextLayer.new(im, "Bonjour ChopGimp", font, 60.0, Gimp.Unit.pixel())
+        im.insert_layer(t, None, 0)
+        t.set_offsets(100, 100)
+        h0, off0 = t.get_height(), t.get_offsets()[1:]
+        fx(t, "warp=arc;bend=50")
+        h1 = t.get_height()
+        okk = (h1 > h0 * 1.3 and isinstance(t, Gimp.TextLayer) and
+               run("chopgimp-text-fx-get", layer=t).index(1).startswith("warp=arc"))
+        fx(t, "")
+        report(okk and t.get_height() == h0 and t.get_offsets()[1:] == off0,
+               "Texte : déformation « arc » (texte modifiable, retour exact)",
+               "hauteur %d → %d" % (h0, h1))
+
+        styles = ["arc-lower", "arc-upper", "arch", "bulge", "shell-lower", "shell-upper", "flag",
+                  "wave", "fish", "rise", "fisheye", "inflate", "squeeze", "twist"]
+        bad = []
+        for st in styles:
+            fx(t, "warp=%s;bend=60;hdist=10;vdist=-10" % st)
+            if t.get_width() < 50 or t.get_height() < 20:
+                bad.append(st)
+        fx(t, "")
+        report(not bad, "Texte : 15 styles de déformation rendus", " ".join(bad))
+
+        path = Gimp.Path.new(im, "courbe")
+        im.insert_path(path, None, 0)
+        sid = path.bezier_stroke_new_moveto(100, 600)
+        path.bezier_stroke_cubicto(sid, 300, 300, 700, 300, 900, 600)
+        fx(t, "path=%d;start=0;flip=0;shift=0" % path.get_tattoo())
+        x, y = t.get_offsets()[1:]
+        okk = t.get_height() > 150 and 50 < x < 200 and 250 < y < 450
+        report(okk, "Texte : texte sur tracé", "%dx%d @ %d,%d" % (t.get_width(), t.get_height(), x, y))
+        fx(t, "")
+
+        ell = Gimp.Path.new(im, "forme")
+        im.insert_path(ell, None, 0)
+        ell.bezier_stroke_new_ellipse(500, 350, 250, 200, 0)
+        t2 = Gimp.TextLayer.new(im, "Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do "
+                                    "eiusmod tempor incididunt ut labore et dolore magna aliqua.",
+                                font, 24.0, Gimp.Unit.pixel())
+        im.insert_layer(t2, None, 0)
+        fx(t2, "shape=%d;inset=4" % ell.get_tattoo())
+        x, y = t2.get_offsets()[1:]
+        okk = t2.get_width() <= 500 and 250 <= x and x + t2.get_width() <= 760 and t2.get_height() > 60
+        report(okk, "Texte : texte dans une forme",
+               "%dx%d @ %d,%d" % (t2.get_width(), t2.get_height(), x, y))
+
+        t3 = Gimp.TextLayer.new(im, "Rotation", font, 50.0, Gimp.Unit.pixel())
+        im.insert_layer(t3, None, 0)
+        t3.set_offsets(300, 300)
+        w0, h0 = t3.get_width(), t3.get_height()
+        t3.transform_rotate(0.6, True, 0, 0)
+        okk = isinstance(t3, Gimp.TextLayer) and t3.get_text() == "Rotation" and t3.get_height() > h0 * 1.5
+        t3.transform_scale(300, 300, 700, 500)
+        report(okk and abs(t3.get_width() - 400) <= 8,
+               "Texte : rotation / mise à l'échelle sans pixelliser",
+               "%dx%d → %dx%d" % (w0, h0, t3.get_width(), t3.get_height()))
+
+        fx(t, "warp=flag;bend=40")
+        xcf = os.path.join(TMP, "texte-fx.xcf")
+        os.makedirs(TMP, exist_ok=True)
+        Gimp.file_save(Gimp.RunMode.NONINTERACTIVE, im, Gio.File.new_for_path(xcf), None)
+        im2 = Gimp.file_load(Gimp.RunMode.NONINTERACTIVE, Gio.File.new_for_path(xcf))
+        specs = [run("chopgimp-text-fx-get", layer=l).index(1)
+                 for l in im2.get_layers() if isinstance(l, Gimp.TextLayer)]
+        report(any(sp.startswith("warp=flag") for sp in specs) and
+               any(sp.startswith("shape=") for sp in specs),
+               "Texte : effets conservés dans le XCF", " | ".join(specs))
+    except Exception as e:
+        report(False, "Texte (effets)", repr(e)[:200])
+
     # 4. Réglages d'usine présents (thème, icônes, menus, raccourcis)
     data = Gimp.data_directory()
     sysconf = Gimp.sysconf_directory()

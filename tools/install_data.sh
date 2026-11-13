@@ -44,6 +44,11 @@ for i in "$SRC/icons/PS-Line/overlay/scalable/apps/"chopgimp-panel-*.svg \
     install -m 644 "$i" "$DATA/icons/hicolor/scalable/actions/"
 done
 
+# 3b'. Dictionnaire français (Hunspell, Dicollecte « classique », MPL 2.0)
+#      pour la vérification d'orthographe des textes (app/widgets/chopgimp-spell.c)
+mkdir -p "$DEST/share/hunspell"
+cp "$SRC/data/hunspell/fr.aff" "$SRC/data/hunspell/fr.dic" "$DEST/share/hunspell/"
+
 # 3c. Curseurs « façon Photoshop » (un par outil, tools/build_cursors.py),
 #     chargés par app/widgets/gimpcursor.c depuis cursors/chopgimp
 mkdir -p "$DATA/cursors/chopgimp"
