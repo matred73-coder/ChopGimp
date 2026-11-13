@@ -1,0 +1,1127 @@
+From 525c9bdf9b4d10d5674c347766b9562d039922a0 Mon Sep 17 00:00:00 2001
+From: ChopGimp <mathieu.redon@proton.me>
+Date: Fri, 13 Nov 2026 09:23:17 +0100
+Subject: [PATCH] ChopGimp: Shape Builder and Direct Selection (A) tools,
+ rubber-band node selection, Pathfinder and node buttons in the options bar
+
+---
+ app/display/gimpoptionsbar.c          |  89 +++-
+ app/display/gimptoolpath.c            | 114 ++++-
+ app/path/chopgimp-geom.cc             |  14 +-
+ app/path/chopgimp-geom.h              |   3 +
+ app/pdb/chopgimp-cmds.c               |  19 +-
+ app/tools/chopgimp-shapebuildertool.c | 595 ++++++++++++++++++++++++++
+ app/tools/chopgimp-shapebuildertool.h |  23 +
+ app/tools/gimp-tools.c                |   3 +
+ app/tools/gimppathtool.c              |   6 +
+ app/tools/meson.build                 |   1 +
+ 10 files changed, 856 insertions(+), 11 deletions(-)
+ create mode 100644 app/tools/chopgimp-shapebuildertool.c
+ create mode 100644 app/tools/chopgimp-shapebuildertool.h
+
+diff --git a/app/display/gimpoptionsbar.c b/app/display/gimpoptionsbar.c
+index bed8d28..7f6262a 100644
+--- a/app/display/gimpoptionsbar.c
++++ b/app/display/gimpoptionsbar.c
+@@ -164,14 +164,93 @@ static const BarSpec bar_specs[] =
+   { "gimp-shape-tool",             { "shape-type", "corner-radius", "sides", "star-ratio",
+                                      "enable-fill", "fill-foreground", "@fill-opacity",
+                                      "enable-stroke", "stroke-foreground", "stroke-width",
+-                                     "@stroke-opacity", "@stroke-dash", NULL } },
++                                     "@stroke-opacity", "@stroke-dash", "@pathfinder", NULL } },
++  { "gimp-shape-builder-tool",     { "@pathfinder", NULL } },
++  { "gimp-direct-select-tool",     { "@nodes", "@pathfinder", NULL } },
+   { "gimp-path-tool",              { "path-edit-mode", "path-polygonal",
+                                      "enable-fill", "fill-foreground", "@fill-opacity",
+                                      "enable-stroke", "stroke-foreground", "stroke-width",
+                                      "@stroke-opacity", "@stroke-dash",
+-                                     "@vector-layer", NULL } },
++                                     "@vector-layer", "@pathfinder", NULL } },
+ };
+ 
++/*  ChopGimp: rows of icon buttons running an action (plug-in procedures
++ *  of chopgimp_vector.py): { action, icon, tooltip }
++ */
++static const gchar *const chopgimp_pathfinder_buttons[] =
++{
++  "chopgimp-pathfinder-union",     "chopgimp-pf-union",     N_("Pathfinder : réunir les formes sélectionnées"),
++  "chopgimp-pathfinder-minus",     "chopgimp-pf-minus",     N_("Pathfinder : soustraire les formes du dessus"),
++  "chopgimp-pathfinder-intersect", "chopgimp-pf-intersect", N_("Pathfinder : intersection"),
++  "chopgimp-pathfinder-exclude",   "chopgimp-pf-exclude",   N_("Pathfinder : exclure les chevauchements"),
++  "chopgimp-pathfinder-divide",    "chopgimp-pf-divide",    N_("Pathfinder : diviser en morceaux"),
++  NULL
++};
++
++static const gchar *const chopgimp_nodes_buttons[] =
++{
++  "chopgimp-nodes-corner",          "chopgimp-node-corner",    N_("Nœud angulaire"),
++  "chopgimp-nodes-smooth",          "chopgimp-node-smooth",    N_("Nœud doux"),
++  "chopgimp-nodes-symmetric",       "chopgimp-node-symmetric", N_("Nœud symétrique"),
++  "chopgimp-nodes-auto",            "chopgimp-node-auto",      N_("Nœud automatique"),
++  "chopgimp-nodes-line",            "chopgimp-node-line",      N_("Segments en lignes droites"),
++  "chopgimp-nodes-curve",           "chopgimp-node-curve",     N_("Segments en courbes"),
++  "chopgimp-nodes-align-left",      "chopgimp-node-align-left",    N_("Aligner les nœuds à gauche"),
++  "chopgimp-nodes-align-hcenter",   "chopgimp-node-align-hcenter", N_("Aligner les nœuds au centre (vertical)"),
++  "chopgimp-nodes-align-top",       "chopgimp-node-align-top",     N_("Aligner les nœuds en haut"),
++  "chopgimp-nodes-align-vcenter",   "chopgimp-node-align-vcenter", N_("Aligner les nœuds au centre (horizontal)"),
++  "chopgimp-nodes-distribute-h",    "chopgimp-node-distribute-h",  N_("Répartir les nœuds horizontalement"),
++  "chopgimp-nodes-join",            "chopgimp-node-join",      N_("Joindre deux extrémités"),
++  "chopgimp-nodes-break",           "chopgimp-node-break",     N_("Couper le chemin aux nœuds"),
++  "chopgimp-nodes-delete",          "chopgimp-node-delete",    N_("Supprimer les nœuds en gardant la forme"),
++  "chopgimp-nodes-round",           "chopgimp-node-round",     N_("Arrondir les coins sélectionnés…"),
++  NULL
++};
++
++static void
++gimp_options_bar_action_clicked (GtkWidget   *button,
++                                 const gchar *action_name)
++{
++  GApplication *app    = g_application_get_default ();
++  GAction      *action = NULL;
++
++  if (G_IS_ACTION_MAP (app))
++    action = g_action_map_lookup_action (G_ACTION_MAP (app), action_name);
++
++  if (action && g_action_get_enabled (action))
++    g_action_activate (action, NULL);
++  else
++    gdk_display_beep (gtk_widget_get_display (button));
++}
++
++static GtkWidget *
++gimp_options_bar_action_row (const gchar *const *buttons)
++{
++  GtkWidget *row = gtk_box_new (GTK_ORIENTATION_HORIZONTAL, 0);
++
++  for (gint i = 0; buttons[i]; i += 3)
++    {
++      const gchar *names[] = { buttons[i + 1], "image-missing", NULL };
++      GIcon       *icon    = g_themed_icon_new_from_names ((gchar **) names, -1);
++      GtkWidget   *button  = gtk_button_new ();
++      GtkWidget   *image   = gtk_image_new_from_gicon (icon, GTK_ICON_SIZE_MENU);
++
++      g_object_unref (icon);
++      gtk_container_add (GTK_CONTAINER (button), image);
++      gtk_button_set_relief (GTK_BUTTON (button), GTK_RELIEF_NONE);
++      gtk_widget_set_can_focus (button, FALSE);
++      gimp_help_set_help_data (button, gettext (buttons[i + 2]), NULL);
++      g_signal_connect (button, "clicked",
++                        G_CALLBACK (gimp_options_bar_action_clicked),
++                        (gpointer) buttons[i]);
++      gtk_box_pack_start (GTK_BOX (row), button, FALSE, FALSE, 0);
++    }
++
++  gtk_widget_show_all (row);
++
++  return row;
++}
++
+ 
+ static void   gimp_options_bar_tool_changed (GimpContext  *context,
+                                              GimpToolInfo *tool_info,
+@@ -602,6 +681,12 @@ gimp_options_bar_widget (GObject     *options,
+       return w;
+     }
+ 
++  if (! strcmp (prop, "@pathfinder"))
++    return gimp_options_bar_action_row (chopgimp_pathfinder_buttons);
++
++  if (! strcmp (prop, "@nodes"))
++    return gimp_options_bar_action_row (chopgimp_nodes_buttons);
++
+   if (! strcmp (prop, "@vector-layer"))
+     {
+       w = gtk_button_new_with_label (_("Créer un calque vectoriel"));
+diff --git a/app/display/gimptoolpath.c b/app/display/gimptoolpath.c
+index f324069..2fb1ca7 100644
+--- a/app/display/gimptoolpath.c
++++ b/app/display/gimptoolpath.c
+@@ -50,6 +50,7 @@
+ 
+ #include "gimpcanvashandle.h"
+ #include "gimpcanvasitem-utils.h"
++#include "gimpcanvasrectangle.h"
+ #include "gimpcanvasline.h"
+ #include "gimpcanvaspath.h"
+ #include "gimpdisplay.h"
+@@ -82,6 +83,7 @@ typedef enum
+   VECTORS_CONNECT_STROKES,
+   VECTORS_DELETE_SEGMENT,
+   VECTORS_CONVERT_EDGE,
++  VECTORS_RUBBER_BAND,      /* ChopGimp: select nodes in a rectangle */
+   VECTORS_FINISHED
+ } GimpPathFunction;
+ 
+@@ -90,7 +92,8 @@ enum
+   PROP_0,
+   PROP_PATH,
+   PROP_EDIT_MODE,
+-  PROP_POLYGONAL
++  PROP_POLYGONAL,
++  PROP_DIRECT_SELECT
+ };
+ 
+ enum
+@@ -132,6 +135,13 @@ struct _GimpToolPathPrivate
+ 
+   GimpCanvasItem       *canvas_path;
+   GList                *items;
++
++  /*  ChopGimp « Direct Selection »: a drag in an empty area selects
++   *  the nodes inside a rectangle instead of creating a new stroke
++   */
++  gboolean              direct_select;
++  gdouble               rb_x0, rb_y0, rb_x1, rb_y1;
++  GimpCanvasItem       *rb_rect;
+ };
+ 
+ 
+@@ -292,6 +302,13 @@ gimp_tool_path_class_init (GimpToolPathClass *klass)
+                                                          FALSE,
+                                                          GIMP_PARAM_READWRITE |
+                                                          G_PARAM_CONSTRUCT));
++
++  g_object_class_install_property (object_class, PROP_DIRECT_SELECT,
++                                   g_param_spec_boolean ("direct-select",
++                                                         NULL, NULL,
++                                                         FALSE,
++                                                         GIMP_PARAM_READWRITE |
++                                                         G_PARAM_CONSTRUCT));
+ }
+ 
+ static void
+@@ -311,6 +328,9 @@ gimp_tool_path_constructed (GObject *object)
+ 
+   private->canvas_path = gimp_tool_widget_add_path (widget, NULL);
+ 
++  private->rb_rect = gimp_tool_widget_add_rectangle (widget, 0, 0, 0, 0, FALSE);
++  gimp_canvas_item_set_visible (private->rb_rect, FALSE);
++
+   gimp_tool_path_changed (widget);
+ }
+ 
+@@ -344,6 +364,9 @@ gimp_tool_path_set_property (GObject      *object,
+     case PROP_POLYGONAL:
+       private->polygonal = g_value_get_boolean (value);
+       break;
++    case PROP_DIRECT_SELECT:
++      private->direct_select = g_value_get_boolean (value);
++      break;
+ 
+     default:
+       G_OBJECT_WARN_INVALID_PROPERTY_ID (object, property_id, pspec);
+@@ -371,6 +394,9 @@ gimp_tool_path_get_property (GObject    *object,
+     case PROP_POLYGONAL:
+       g_value_set_boolean (value, private->polygonal);
+       break;
++    case PROP_DIRECT_SELECT:
++      g_value_set_boolean (value, private->direct_select);
++      break;
+ 
+     default:
+       G_OBJECT_WARN_INVALID_PROPERTY_ID (object, property_id, pspec);
+@@ -577,6 +603,19 @@ gimp_tool_path_button_press (GimpToolWidget      *widget,
+   if (private->function == VECTORS_FINISHED)
+     return 0;
+ 
++  /*  ChopGimp: start of a selection rectangle  */
++  if (private->function == VECTORS_RUBBER_BAND)
++    {
++      private->rb_x0 = private->rb_x1 = coords->x;
++      private->rb_y0 = private->rb_y1 = coords->y;
++      private->saved_state = state;
++
++      gimp_canvas_rectangle_set (private->rb_rect, coords->x, coords->y, 0, 0);
++      gimp_canvas_item_set_visible (private->rb_rect, TRUE);
++
++      return 1;
++    }
++
+   g_return_val_if_fail (private->path  != NULL                   ||
+                         private->function == VECTORS_SELECT_PATH ||
+                         private->function == VECTORS_CREATE_PATH, 0);
+@@ -945,6 +984,51 @@ gimp_tool_path_button_release (GimpToolWidget        *widget,
+   GimpToolPath        *tool_path = GIMP_TOOL_PATH (widget);
+   GimpToolPathPrivate *private   = tool_path->private;
+ 
++  if (private->function == VECTORS_RUBBER_BAND)
++    {
++      gimp_canvas_item_set_visible (private->rb_rect, FALSE);
++
++      if (private->path && release_type != GIMP_BUTTON_RELEASE_CANCEL)
++        {
++          gdouble     x1 = MIN (private->rb_x0, private->rb_x1);
++          gdouble     y1 = MIN (private->rb_y0, private->rb_y1);
++          gdouble     x2 = MAX (private->rb_x0, private->rb_x1);
++          gdouble     y2 = MAX (private->rb_y0, private->rb_y1);
++          gboolean    extend = (private->saved_state &
++                                gimp_get_extend_selection_mask ()) != 0;
++          GimpStroke *stroke = NULL;
++
++          gimp_path_freeze (private->path);
++
++          while ((stroke = gimp_path_stroke_get_next (private->path, stroke)))
++            {
++              GList *list;
++
++              for (list = stroke->anchors->head; list; list = list->next)
++                {
++                  GimpAnchor *a = list->data;
++                  gboolean    in;
++
++                  if (a->type != GIMP_ANCHOR_ANCHOR)
++                    continue;
++
++                  in = (a->position.x >= x1 && a->position.x <= x2 &&
++                        a->position.y >= y1 && a->position.y <= y2);
++
++                  if (in)
++                    a->selected = TRUE;
++                  else if (! extend)
++                    a->selected = FALSE;
++                }
++            }
++
++          gimp_path_thaw (private->path);
++        }
++
++      private->function = VECTORS_FINISHED;
++      return;
++    }
++
+   private->function = VECTORS_FINISHED;
+ 
+   if (private->have_undo)
+@@ -975,6 +1059,19 @@ gimp_tool_path_motion (GimpToolWidget   *widget,
+   if (private->function == VECTORS_FINISHED)
+     return;
+ 
++  if (private->function == VECTORS_RUBBER_BAND)
++    {
++      private->rb_x1 = coords->x;
++      private->rb_y1 = coords->y;
++
++      gimp_canvas_rectangle_set (private->rb_rect,
++                                 MIN (private->rb_x0, private->rb_x1),
++                                 MIN (private->rb_y0, private->rb_y1),
++                                 fabs (private->rb_x1 - private->rb_x0),
++                                 fabs (private->rb_y1 - private->rb_y0));
++      return;
++    }
++
+   position.x = coords->x;
+   position.y = coords->y;
+ 
+@@ -1094,6 +1191,9 @@ gimp_tool_path_hit (GimpToolWidget   *widget,
+     case VECTORS_CONVERT_EDGE:
+       return GIMP_HIT_DIRECT;
+ 
++    case VECTORS_RUBBER_BAND:
++      return GIMP_HIT_INDIRECT;
++
+     case VECTORS_CREATE_PATH:
+     case VECTORS_CREATE_STROKE:
+     case VECTORS_ADD_ANCHOR:
+@@ -1118,6 +1218,13 @@ gimp_tool_path_hover (GimpToolWidget   *widget,
+ 
+   private->function = gimp_tool_path_get_function (tool_path, coords, state);
+ 
++  /*  ChopGimp « Direct Selection »: empty area → selection rectangle  */
++  if (private->direct_select && private->path &&
++      (private->function == VECTORS_CREATE_STROKE ||
++       private->function == VECTORS_ADD_ANCHOR    ||
++       private->function == VECTORS_SELECT_PATH))
++    private->function = VECTORS_RUBBER_BAND;
++
+   gimp_tool_path_update_status (tool_path, state, proximity);
+ }
+ 
+@@ -1703,6 +1810,11 @@ gimp_tool_path_update_status (GimpToolPath    *tool_path,
+       status = _("Click to make this node angular");
+       break;
+ 
++    case VECTORS_RUBBER_BAND:
++      status = _("Glisser : sélectionner les nœuds dans un cadre (Maj : ajouter, "
++                 "flèches : déplacer)");
++      break;
++
+     case VECTORS_FINISHED:
+       status = _("Clicking here does nothing, try clicking on path elements.");
+       break;
+diff --git a/app/path/chopgimp-geom.cc b/app/path/chopgimp-geom.cc
+index 83968ca..ca3186c 100644
+--- a/app/path/chopgimp-geom.cc
++++ b/app/path/chopgimp-geom.cc
+@@ -335,10 +335,12 @@ pv_area (const Geom::PathVector &pv)
+ 
+       closed.close (true);
+       Geom::centroid (closed.toPwSb (), c, a);
+-      total += a;
++
++      /*  each region counts, whatever the direction of its outline  */
++      total += std::fabs (a);
+     }
+ 
+-  return std::fabs (total);
++  return total;
+ }
+ 
+ /* ─── booleans (Pathfinder) ────────────────────────────────────────── */
+@@ -919,6 +921,14 @@ chopgimp_geom_count_nodes (GimpPath *path)
+   return n;
+ }
+ 
++extern "C" gboolean
++chopgimp_geom_contains (GimpPath *path,
++                        gdouble   x,
++                        gdouble   y)
++{
++  return shape_of (path).winding (Point (x, y)) != 0;
++}
++
+ extern "C" gdouble
+ chopgimp_geom_area (GimpPath *path)
+ {
+diff --git a/app/path/chopgimp-geom.h b/app/path/chopgimp-geom.h
+index fcfb91c..f43a636 100644
+--- a/app/path/chopgimp-geom.h
++++ b/app/path/chopgimp-geom.h
+@@ -82,6 +82,9 @@ GimpPath  * chopgimp_geom_round_corners (GimpPath        *path,
+ GimpPath  * chopgimp_geom_reverse       (GimpPath        *path);
+ 
+ gint        chopgimp_geom_count_nodes   (GimpPath        *path);
++gboolean    chopgimp_geom_contains      (GimpPath        *path,
++                                         gdouble          x,
++                                         gdouble          y);
+ gdouble     chopgimp_geom_area          (GimpPath        *path);
+ 
+ /*  modifies @path in place (the caller pushes the undo step)  */
+diff --git a/app/pdb/chopgimp-cmds.c b/app/pdb/chopgimp-cmds.c
+index fbd2431..ebe0cc3 100644
+--- a/app/pdb/chopgimp-cmds.c
++++ b/app/pdb/chopgimp-cmds.c
+@@ -95,18 +95,24 @@ divide_invoker (GimpProcedure         *procedure,
+   GimpPath      **pieces;
+   gint            n_pieces = 0;
+   GimpValueArray *return_vals;
++  GimpImage      *image;
+ 
+   if (n < 1)
+     return gimp_procedure_get_return_values (procedure, FALSE, NULL);
+ 
++  image  = gimp_item_get_image (GIMP_ITEM (paths[0]));
+   pieces = chopgimp_geom_divide (paths, n, &n_pieces);
+ 
+-  return_vals = gimp_procedure_get_return_values (procedure, TRUE, NULL);
+-  g_value_set_boxed (gimp_value_array_index (return_vals, 1), pieces);
+-
+-  /*  the array is copied, its paths are kept (inserted by the caller)  */
++  /*  the pieces are added on top of the paths of the image, the first
++   *  one at the top (core object arrays are not readable from Python)
++   */
++  for (gint i = n_pieces - 1; i >= 0; i--)
++    gimp_image_add_path (image, pieces[i], GIMP_IMAGE_ACTIVE_PARENT, 0, TRUE);
+   g_free (pieces);
+ 
++  return_vals = gimp_procedure_get_return_values (procedure, TRUE, NULL);
++  g_value_set_int (gimp_value_array_index (return_vals, 1), n_pieces);
++
+   return return_vals;
+ }
+ 
+@@ -298,9 +304,10 @@ register_chopgimp_procs (GimpPDB *pdb)
+   g_object_unref (p);
+ 
+   p = chopgimp_procedure (pdb, divide_invoker, "chopgimp-path-divide",
+-                          "Pathfinder « Divide »: every region of the arrangement of the paths.");
++                          "Pathfinder « Divide »: every region of the arrangement of the paths. "
++                          "The pieces are added at the top of the paths of the image.");
+   gimp_procedure_add_argument (p, paths_arg ("paths"));
+-  gimp_procedure_add_return_value (p, paths_arg ("pieces"));
++  gimp_procedure_add_return_value (p, int_arg ("n-pieces", 0, G_MAXINT, 0));
+   gimp_pdb_register_procedure (pdb, p);
+   g_object_unref (p);
+ 
+diff --git a/app/tools/chopgimp-shapebuildertool.c b/app/tools/chopgimp-shapebuildertool.c
+new file mode 100644
+index 0000000..498fe35
+--- /dev/null
++++ b/app/tools/chopgimp-shapebuildertool.c
+@@ -0,0 +1,595 @@
++/* GIMP - The GNU Image Manipulation Program
++ * Copyright (C) 1995 Spencer Kimball and Peter Mattis
++ *
++ * chopgimp-shapebuildertool.c — ChopGimp: Shape Builder (Illustrator) and
++ * Direct Selection (A) tools.
++ *
++ * Shape Builder: the selected shapes (vector layers) are cut into all the
++ * regions they make; dragging across regions merges them into one shape,
++ * Alt+drag deletes them. The geometry is computed by lib2geom (Inkscape),
++ * see app/path/chopgimp-geom.cc.
++ *
++ * Direct Selection: the Paths tool where a drag in an empty area selects
++ * the nodes inside a rectangle (GimpToolPath « direct-select »).
++ *
++ * This program is free software: you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation; either version 3 of the License, or
++ * (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License
++ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
++ */
++
++#include "config.h"
++
++#include <gegl.h>
++#include <gtk/gtk.h>
++
++#include "libgimpconfig/gimpconfig.h"
++#include "libgimpwidgets/gimpwidgets.h"
++
++#include "tools-types.h"
++
++#include "core/gimp.h"
++#include "core/gimpcontext.h"
++#include "core/gimpimage.h"
++#include "core/gimpimage-undo.h"
++#include "core/gimpitemstack.h"
++#include "core/gimpstrokeoptions.h"
++#include "core/gimptooloptions.h"
++#include "core/gimpundostack.h"
++
++#include "paint/gimppaintoptions.h" /* GIMP_PAINT_OPTIONS_CONTEXT_MASK */
++
++#include "path/gimppath.h"
++#include "path/gimpvectorlayer.h"
++#include "path/gimpvectorlayeroptions.h"
++#include "path/chopgimp-geom.h"
++
++#include "widgets/gimphelp-ids.h"
++
++#include "display/gimpcanvasitem.h"
++#include "display/gimpcanvaspath.h"
++#include "display/gimpdisplay.h"
++#include "display/gimpdisplayshell.h"
++
++#include "chopgimp-shapebuildertool.h"
++#include "gimppathoptions.h"
++#include "gimppathtool.h"
++#include "gimptoolcontrol.h"
++#include "gimptooloptions-gui.h"
++
++#include "gimp-intl.h"
++
++
++/* ─── Shape Builder ────────────────────────────────────────────────── */
++
++typedef struct
++{
++  GimpDrawTool  parent_instance;
++
++  GimpImage    *image;
++  gint64        stamp;      /* image state the regions were computed for */
++  GList        *layers;     /* input vector layers, top first            */
++  GPtrArray    *regions;    /* GimpPath *, unattached                    */
++  GArray       *picked;     /* gint: indices into regions                */
++  gint          hover;
++  gboolean      erase;
++} GimpShapeBuilderTool;
++
++typedef struct
++{
++  GimpDrawToolClass  parent_class;
++} GimpShapeBuilderToolClass;
++
++G_DEFINE_TYPE (GimpShapeBuilderTool, gimp_shape_builder_tool, GIMP_TYPE_DRAW_TOOL)
++
++#define MAX_SHAPES 12
++
++
++void
++gimp_shape_builder_tool_register (GimpToolRegisterCallback  callback,
++                                  gpointer                  data)
++{
++  (* callback) (GIMP_TYPE_SHAPE_BUILDER_TOOL,
++                GIMP_TYPE_TOOL_OPTIONS,
++                gimp_tool_options_empty_gui,
++                0,
++                "gimp-shape-builder-tool",
++                _("Bâtisseur de formes"),
++                _("Bâtisseur de formes : glissez sur les zones des formes sélectionnées "
++                  "pour les fusionner, Alt pour les supprimer"),
++                N_("_Bâtisseur de formes"), NULL,
++                NULL, "gimp-tool-path",
++                "chopgimp-tool-shape-builder",
++                data);
++}
++
++static void
++shape_builder_clear (GimpShapeBuilderTool *sb)
++{
++  g_list_free_full (sb->layers, g_object_unref);
++  sb->layers = NULL;
++
++  if (sb->regions)
++    g_ptr_array_set_size (sb->regions, 0);
++
++  g_array_set_size (sb->picked, 0);
++  sb->hover = -1;
++  sb->image = NULL;
++  sb->stamp = 0;
++}
++
++static gint64
++shape_builder_stamp (GimpImage *image)
++{
++  GimpUndo *undo  = gimp_undo_stack_peek (gimp_image_get_undo_stack (image));
++  gint64    stamp = (gint64) (gintptr) undo * 31 + 7;
++  GList    *iter;
++
++  for (iter = gimp_image_get_selected_layers (image); iter; iter = iter->next)
++    stamp = stamp * 131 + (gint64) (gintptr) iter->data;
++
++  return stamp;
++}
++
++/*  the regions of the selected vector layers, computed again when the
++ *  image or the selection changed
++ */
++static void
++shape_builder_update_regions (GimpShapeBuilderTool *sb,
++                              GimpImage            *image)
++{
++  GList     *iter;
++  GimpPath **paths;
++  GimpPath **pieces;
++  gint       n = 0, n_pieces = 0;
++
++  if (sb->image == image && sb->stamp == shape_builder_stamp (image))
++    return;
++
++  shape_builder_clear (sb);
++  sb->image = image;
++  sb->stamp = shape_builder_stamp (image);
++
++  /*  selected layers come top first  */
++  for (iter = gimp_image_get_selected_layers (image); iter; iter = iter->next)
++    if (GIMP_IS_VECTOR_LAYER (iter->data) &&
++        g_list_length (sb->layers) < MAX_SHAPES)
++      sb->layers = g_list_append (sb->layers, g_object_ref (iter->data));
++
++  if (! sb->layers)
++    return;
++
++  paths = g_new0 (GimpPath *, g_list_length (sb->layers));
++  for (iter = sb->layers; iter; iter = iter->next)
++    paths[n++] = gimp_vector_layer_get_path (iter->data);
++
++  pieces = chopgimp_geom_divide (paths, n, &n_pieces);
++
++  for (gint i = 0; i < n_pieces; i++)
++    g_ptr_array_add (sb->regions, pieces[i]);
++
++  g_free (pieces);
++  g_free (paths);
++}
++
++static gint
++shape_builder_region_at (GimpShapeBuilderTool *sb,
++                         gdouble               x,
++                         gdouble               y)
++{
++  /*  the smallest region under the pointer  */
++  gint    best      = -1;
++  gdouble best_area = G_MAXDOUBLE;
++
++  for (guint i = 0; i < sb->regions->len; i++)
++    {
++      GimpPath *r = g_ptr_array_index (sb->regions, i);
++
++      if (chopgimp_geom_contains (r, x, y))
++        {
++          gdouble a = chopgimp_geom_area (r);
++
++          if (a < best_area)
++            {
++              best      = i;
++              best_area = a;
++            }
++        }
++    }
++
++  return best;
++}
++
++static gboolean
++shape_builder_picked (GimpShapeBuilderTool *sb,
++                      gint                  index)
++{
++  for (guint i = 0; i < sb->picked->len; i++)
++    if (g_array_index (sb->picked, gint, i) == index)
++      return TRUE;
++
++  return FALSE;
++}
++
++/*  the input layer that gives its style to a region: the topmost one
++ *  covering most of it
++ */
++static GimpVectorLayer *
++shape_builder_owner (GimpShapeBuilderTool *sb,
++                     GimpPath             *region)
++{
++  gdouble area = MAX (1.0, chopgimp_geom_area (region));
++  GList  *iter;
++
++  for (iter = sb->layers; iter; iter = iter->next)
++    {
++      GimpPath *both[2] = { region, gimp_vector_layer_get_path (iter->data) };
++      GimpPath *inter   = chopgimp_geom_boolean (both, 2, CHOPGIMP_BOOL_INTERSECTION);
++      gboolean  covers  = inter && chopgimp_geom_area (inter) > 0.5 * area;
++
++      g_clear_object (&inter);
++
++      if (covers)
++        return iter->data;
++    }
++
++  return sb->layers->data;
++}
++
++static GimpLayer *
++shape_builder_new_layer (GimpImage       *image,
++                         GimpPath        *path,
++                         GimpVectorLayer *style,
++                         GimpContext     *context,
++                         GimpLayer       *parent,
++                         gint             position)
++{
++  GimpVectorLayer        *layer;
++  GimpVectorLayerOptions *src = gimp_vector_layer_get_options (style);
++  GimpVectorLayerOptions *dst;
++
++  gimp_object_set_name (GIMP_OBJECT (path), gimp_object_get_name (style));
++  gimp_image_add_path (image, path, NULL, -1, TRUE);
++
++  layer = gimp_vector_layer_new (image, path, context);
++  dst   = gimp_vector_layer_get_options (layer);
++
++  g_object_set (dst,
++                "enable-fill",   src->enable_fill,
++                "enable-stroke", src->enable_stroke,
++                NULL);
++  gimp_config_sync (G_OBJECT (src->fill_options),   G_OBJECT (dst->fill_options),   0);
++  gimp_config_sync (G_OBJECT (src->stroke_options), G_OBJECT (dst->stroke_options), 0);
++
++  gimp_object_set_name (GIMP_OBJECT (layer), gimp_object_get_name (style));
++  gimp_layer_set_opacity (GIMP_LAYER (layer),
++                          gimp_layer_get_opacity (GIMP_LAYER (style)), FALSE);
++
++  gimp_image_add_layer (image, GIMP_LAYER (layer), parent, position, TRUE);
++  gimp_vector_layer_refresh (layer);
++
++  return GIMP_LAYER (layer);
++}
++
++static void
++shape_builder_apply (GimpShapeBuilderTool *sb,
++                     GimpDisplay          *display)
++{
++  GimpImage   *image   = sb->image;
++  GimpContext *context = gimp_get_user_context (image->gimp);
++  GimpLayer   *top     = sb->layers->data;
++  GimpLayer   *parent  = gimp_layer_get_parent (top);
++  gint         pos     = gimp_item_get_index (GIMP_ITEM (top));
++  GimpLayer   *merged  = NULL;
++  GList       *iter;
++
++  if (! sb->picked->len)
++    return;
++
++  gimp_image_undo_group_start (image, GIMP_UNDO_GROUP_MISC,
++                               _("Bâtisseur de formes"));
++
++  /*  the regions left alone keep the style of their shape  */
++  for (guint i = 0; i < sb->regions->len; i++)
++    {
++      GimpPath *r = g_ptr_array_index (sb->regions, i);
++
++      if (shape_builder_picked (sb, i))
++        continue;
++
++      shape_builder_new_layer (image,
++                               GIMP_PATH (gimp_item_duplicate (GIMP_ITEM (r), GIMP_TYPE_PATH)),
++                               shape_builder_owner (sb, r), context, parent, pos);
++    }
++
++  if (! sb->erase)
++    {
++      GimpPath **picked = g_new0 (GimpPath *, sb->picked->len);
++      GimpPath  *shape;
++
++      for (guint i = 0; i < sb->picked->len; i++)
++        picked[i] = g_ptr_array_index (sb->regions, g_array_index (sb->picked, gint, i));
++
++      shape = chopgimp_geom_boolean (picked, sb->picked->len, CHOPGIMP_BOOL_UNION);
++
++      if (shape)
++        merged = shape_builder_new_layer (image, shape,
++                                          shape_builder_owner (sb, picked[0]),
++                                          context, parent, pos);
++      g_free (picked);
++    }
++
++  for (iter = sb->layers; iter; iter = iter->next)
++    gimp_image_remove_layer (image, iter->data, TRUE, NULL);
++
++  if (merged)
++    {
++      GList *sel = g_list_prepend (NULL, merged);
++
++      gimp_image_set_selected_layers (image, sel);
++      g_list_free (sel);
++    }
++
++  gimp_image_undo_group_end (image);
++  gimp_image_flush (image);
++
++  shape_builder_clear (sb);
++}
++
++static void
++shape_builder_redraw (GimpShapeBuilderTool *sb,
++                      GimpDisplay          *display)
++{
++  GimpDrawTool *draw_tool = GIMP_DRAW_TOOL (sb);
++
++  gimp_draw_tool_pause (draw_tool);
++
++  if (gimp_draw_tool_is_active (draw_tool) && draw_tool->display != display)
++    gimp_draw_tool_stop (draw_tool);
++
++  if (! gimp_draw_tool_is_active (draw_tool))
++    gimp_draw_tool_start (draw_tool, display);
++
++  gimp_draw_tool_resume (draw_tool);
++}
++
++static void
++gimp_shape_builder_tool_oper_update (GimpTool         *tool,
++                                     const GimpCoords *coords,
++                                     GdkModifierType   state,
++                                     gboolean          proximity,
++                                     GimpDisplay      *display)
++{
++  GimpShapeBuilderTool *sb    = (GimpShapeBuilderTool *) tool;
++  GimpImage            *image = gimp_display_get_image (display);
++  gint                  hover;
++
++  if (! image)
++    return;
++
++  shape_builder_update_regions (sb, image);
++
++  hover = proximity ? shape_builder_region_at (sb, coords->x, coords->y) : -1;
++
++  if (! sb->layers)
++    gimp_tool_replace_status (tool, display,
++                              _("Sélectionnez au moins une forme (calques vectoriels)"));
++  else
++    gimp_tool_replace_status (tool, display,
++                              _("Glisser : fusionner les zones — Alt+glisser : les supprimer"));
++
++  if (hover != sb->hover || ! gimp_draw_tool_is_active (GIMP_DRAW_TOOL (tool)))
++    {
++      sb->hover = hover;
++      shape_builder_redraw (sb, display);
++    }
++}
++
++static void
++gimp_shape_builder_tool_button_press (GimpTool            *tool,
++                                      const GimpCoords    *coords,
++                                      guint32              time,
++                                      GdkModifierType      state,
++                                      GimpButtonPressType  press_type,
++                                      GimpDisplay         *display)
++{
++  GimpShapeBuilderTool *sb    = (GimpShapeBuilderTool *) tool;
++  GimpImage            *image = gimp_display_get_image (display);
++  gint                  r;
++
++  if (press_type != GIMP_BUTTON_PRESS_NORMAL || ! image)
++    return;
++
++  shape_builder_update_regions (sb, image);
++
++  if (! sb->layers)
++    {
++      gimp_tool_message_literal (tool, display,
++                                 _("Sélectionnez les formes à combiner "
++                                   "(calques vectoriels, Maj+clic dans le panneau Calques)."));
++      return;
++    }
++
++  tool->display = display;
++  sb->erase     = (state & GDK_MOD1_MASK) != 0;
++  g_array_set_size (sb->picked, 0);
++
++  r = shape_builder_region_at (sb, coords->x, coords->y);
++  if (r >= 0)
++    g_array_append_val (sb->picked, r);
++
++  gimp_tool_control_activate (tool->control);
++  shape_builder_redraw (sb, display);
++}
++
++static void
++gimp_shape_builder_tool_motion (GimpTool         *tool,
++                                const GimpCoords *coords,
++                                guint32           time,
++                                GdkModifierType   state,
++                                GimpDisplay      *display)
++{
++  GimpShapeBuilderTool *sb = (GimpShapeBuilderTool *) tool;
++  gint                  r  = shape_builder_region_at (sb, coords->x, coords->y);
++
++  sb->hover = r;
++
++  if (r >= 0 && ! shape_builder_picked (sb, r))
++    g_array_append_val (sb->picked, r);
++
++  shape_builder_redraw (sb, display);
++}
++
++static void
++gimp_shape_builder_tool_button_release (GimpTool              *tool,
++                                        const GimpCoords      *coords,
++                                        guint32                time,
++                                        GdkModifierType        state,
++                                        GimpButtonReleaseType  release_type,
++                                        GimpDisplay           *display)
++{
++  GimpShapeBuilderTool *sb = (GimpShapeBuilderTool *) tool;
++
++  gimp_tool_control_halt (tool->control);
++
++  gimp_draw_tool_pause (GIMP_DRAW_TOOL (sb));
++
++  if (release_type != GIMP_BUTTON_RELEASE_CANCEL && sb->picked->len)
++    shape_builder_apply (sb, display);
++
++  g_array_set_size (sb->picked, 0);
++  gimp_draw_tool_resume (GIMP_DRAW_TOOL (sb));
++}
++
++static void
++gimp_shape_builder_tool_draw (GimpDrawTool *draw_tool)
++{
++  GimpShapeBuilderTool *sb    = (GimpShapeBuilderTool *) draw_tool;
++  GimpDisplayShell     *shell = gimp_display_get_shell (draw_tool->display);
++
++  if (! sb->regions)
++    return;
++
++  for (guint i = 0; i < sb->regions->len; i++)
++    {
++      GimpPath       *r      = g_ptr_array_index (sb->regions, i);
++      gboolean        picked = shape_builder_picked (sb, i);
++      gboolean        hover  = ((gint) i == sb->hover);
++      GimpCanvasItem *item;
++
++      /*  every region outlined, the hovered / picked ones filled  */
++      item = gimp_canvas_path_new (shell, gimp_path_get_bezier (r), 0, 0,
++                                   picked || hover, GIMP_PATH_STYLE_DEFAULT);
++      gimp_canvas_item_set_highlight (item, picked || hover);
++      gimp_draw_tool_add_item (draw_tool, item);
++      g_object_unref (item);
++    }
++}
++
++static void
++gimp_shape_builder_tool_control (GimpTool       *tool,
++                                 GimpToolAction  action,
++                                 GimpDisplay    *display)
++{
++  if (action == GIMP_TOOL_ACTION_HALT || action == GIMP_TOOL_ACTION_COMMIT)
++    {
++      if (gimp_draw_tool_is_active (GIMP_DRAW_TOOL (tool)))
++        gimp_draw_tool_stop (GIMP_DRAW_TOOL (tool));
++
++      shape_builder_clear ((GimpShapeBuilderTool *) tool);
++    }
++
++  GIMP_TOOL_CLASS (gimp_shape_builder_tool_parent_class)->control (tool, action, display);
++}
++
++static void
++gimp_shape_builder_tool_finalize (GObject *object)
++{
++  GimpShapeBuilderTool *sb = (GimpShapeBuilderTool *) object;
++
++  shape_builder_clear (sb);
++  g_ptr_array_unref (sb->regions);
++  g_array_unref (sb->picked);
++
++  G_OBJECT_CLASS (gimp_shape_builder_tool_parent_class)->finalize (object);
++}
++
++static void
++gimp_shape_builder_tool_class_init (GimpShapeBuilderToolClass *klass)
++{
++  GObjectClass      *object_class    = G_OBJECT_CLASS (klass);
++  GimpToolClass     *tool_class      = GIMP_TOOL_CLASS (klass);
++  GimpDrawToolClass *draw_tool_class = GIMP_DRAW_TOOL_CLASS (klass);
++
++  object_class->finalize     = gimp_shape_builder_tool_finalize;
++
++  tool_class->control        = gimp_shape_builder_tool_control;
++  tool_class->oper_update    = gimp_shape_builder_tool_oper_update;
++  tool_class->button_press   = gimp_shape_builder_tool_button_press;
++  tool_class->motion         = gimp_shape_builder_tool_motion;
++  tool_class->button_release = gimp_shape_builder_tool_button_release;
++
++  draw_tool_class->draw      = gimp_shape_builder_tool_draw;
++}
++
++static void
++gimp_shape_builder_tool_init (GimpShapeBuilderTool *sb)
++{
++  GimpTool *tool = GIMP_TOOL (sb);
++
++  sb->regions = g_ptr_array_new_with_free_func (g_object_unref);
++  sb->picked  = g_array_new (FALSE, FALSE, sizeof (gint));
++  sb->hover   = -1;
++
++  gimp_tool_control_set_motion_mode (tool->control, GIMP_MOTION_MODE_EXACT);
++  gimp_tool_control_set_tool_cursor (tool->control, GIMP_TOOL_CURSOR_PATHS);
++  gimp_tool_control_set_cursor      (tool->control, GIMP_CURSOR_MOUSE);
++}
++
++
++/* ─── Direct Selection (A) ─────────────────────────────────────────── */
++
++typedef GimpPathTool      GimpDirectSelectTool;
++typedef GimpPathToolClass GimpDirectSelectToolClass;
++
++G_DEFINE_TYPE (GimpDirectSelectTool, gimp_direct_select_tool, GIMP_TYPE_PATH_TOOL)
++
++void
++gimp_direct_select_tool_register (GimpToolRegisterCallback  callback,
++                                  gpointer                  data)
++{
++  (* callback) (GIMP_TYPE_DIRECT_SELECT_TOOL,
++                GIMP_TYPE_PATH_OPTIONS,
++                gimp_path_options_gui,
++                GIMP_PAINT_OPTIONS_CONTEXT_MASK |
++                GIMP_CONTEXT_PROP_MASK_PATTERN  |
++                GIMP_CONTEXT_PROP_MASK_GRADIENT,
++                "gimp-direct-select-tool",
++                _("Sélection directe"),
++                _("Sélection directe : modifier les nœuds d'une forme ou d'un chemin "
++                  "(glisser dans le vide : sélection au cadre)"),
++                N_("Sélection _directe"), "A",
++                NULL, GIMP_HELP_TOOL_PATH,
++                "chopgimp-tool-direct-select",
++                data);
++}
++
++static void
++gimp_direct_select_tool_class_init (GimpDirectSelectToolClass *klass)
++{
++}
++
++static void
++gimp_direct_select_tool_init (GimpDirectSelectTool *tool)
++{
++  /*  read by gimp_path_tool_start()  */
++  g_object_set_data (G_OBJECT (tool), "chopgimp-direct-select", GINT_TO_POINTER (TRUE));
++}
+diff --git a/app/tools/chopgimp-shapebuildertool.h b/app/tools/chopgimp-shapebuildertool.h
+new file mode 100644
+index 0000000..9143046
+--- /dev/null
++++ b/app/tools/chopgimp-shapebuildertool.h
+@@ -0,0 +1,23 @@
++/* GIMP - The GNU Image Manipulation Program
++ * chopgimp-shapebuildertool.h — ChopGimp: Shape Builder and Direct Selection
++ *
++ * This program is free software: you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation; either version 3 of the License, or
++ * (at your option) any later version.
++ */
++
++#pragma once
++
++#include "gimpdrawtool.h"
++
++#define GIMP_TYPE_SHAPE_BUILDER_TOOL  (gimp_shape_builder_tool_get_type ())
++#define GIMP_TYPE_DIRECT_SELECT_TOOL  (gimp_direct_select_tool_get_type ())
++
++GType   gimp_shape_builder_tool_get_type   (void) G_GNUC_CONST;
++GType   gimp_direct_select_tool_get_type   (void) G_GNUC_CONST;
++
++void    gimp_shape_builder_tool_register   (GimpToolRegisterCallback  callback,
++                                            gpointer                  data);
++void    gimp_direct_select_tool_register   (GimpToolRegisterCallback  callback,
++                                            gpointer                  data);
+diff --git a/app/tools/gimp-tools.c b/app/tools/gimp-tools.c
+index 127705a..1cf564e 100644
+--- a/app/tools/gimp-tools.c
++++ b/app/tools/gimp-tools.c
+@@ -73,6 +73,7 @@
+ #include "chopgimp-viewtools.h"
+ #include "chopgimp-shapetool.h"
+ #include "chopgimp-spothealtool.h"
++#include "chopgimp-shapebuildertool.h"
+ #include "gimpmeasuretool.h"
+ #include "gimpmovetool.h"
+ #include "gimpmybrushtool.h"
+@@ -151,6 +152,8 @@ gimp_tools_init (Gimp *gimp)
+     gimp_path_tool_register,
+     gimp_shape_tool_register,         /* ChopGimp (Photoshop U) */
+     gimp_spot_heal_tool_register,     /* ChopGimp (Photoshop J) */
++    gimp_shape_builder_tool_register, /* ChopGimp (Illustrator Maj+M) */
++    gimp_direct_select_tool_register, /* ChopGimp (Photoshop A) */
+ 
+     /*  non-modifying tools  */
+ 
+diff --git a/app/tools/gimppathtool.c b/app/tools/gimppathtool.c
+index 5d831f8..16de945 100644
+--- a/app/tools/gimppathtool.c
++++ b/app/tools/gimppathtool.c
+@@ -461,6 +461,12 @@ gimp_path_tool_start (GimpPathTool *path_tool,
+ 
+   path_tool->widget = widget = gimp_tool_path_new (shell);
+ 
++  /*  ChopGimp: the Direct Selection tool selects nodes in a rectangle  */
++  g_object_set (widget, "direct-select",
++                g_object_get_data (G_OBJECT (path_tool),
++                                   "chopgimp-direct-select") != NULL,
++                NULL);
++
+   gimp_draw_tool_set_widget (GIMP_DRAW_TOOL (tool), widget);
+ 
+   g_object_bind_property (G_OBJECT (options), "path-edit-mode",
+diff --git a/app/tools/meson.build b/app/tools/meson.build
+index 95bbcc7..c31c726 100644
+--- a/app/tools/meson.build
++++ b/app/tools/meson.build
+@@ -82,6 +82,7 @@ libapptools_sources = [
+   'chopgimp-viewtools.c',
+   'chopgimp-shapetool.c',
+   'chopgimp-spothealtool.c',
++  'chopgimp-shapebuildertool.c',
+   'gimpmybrushoptions-gui.c',
+   'gimpmybrushtool.c',
+   'gimpnpointdeformationoptions.c',
+-- 
+2.53.0
+

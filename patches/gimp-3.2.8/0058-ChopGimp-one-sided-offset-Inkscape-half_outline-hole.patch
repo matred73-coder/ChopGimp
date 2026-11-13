@@ -1,0 +1,207 @@
+From 32ab5160e00870448ac481c6839af4339af9c883 Mon Sep 17 00:00:00 2001
+From: ChopGimp <mathieu.redon@proton.me>
+Date: Fri, 13 Nov 2026 09:34:02 +0100
+Subject: [PATCH] ChopGimp: one-sided offset (Inkscape half_outline),
+ hole-aware area, rounded corners on straight segments
+
+---
+ app/path/chopgimp-geom.cc | 128 +++++++++++++++++++++++++++++---------
+ 1 file changed, 97 insertions(+), 31 deletions(-)
+
+diff --git a/app/path/chopgimp-geom.cc b/app/path/chopgimp-geom.cc
+index ca3186c..1f1a2ec 100644
+--- a/app/path/chopgimp-geom.cc
++++ b/app/path/chopgimp-geom.cc
+@@ -323,24 +323,40 @@ from_pv (GimpPath *like, const Geom::PathVector &pv, const gchar *name = NULL)
+ /* ─── measures ─────────────────────────────────────────────────────── */
+ 
+ static double
+-pv_area (const Geom::PathVector &pv)
++path_area (const Geom::Path &p)
+ {
+-  double total = 0.0;
++  Geom::Point c;
++  double      a = 0.0;
++  Geom::Path  closed = p;
+ 
+-  for (const Geom::Path &p : pv)
+-    {
+-      Geom::Point c;
+-      double      a = 0.0;
+-      Geom::Path  closed = p;
++  closed.close (true);
++  Geom::centroid (closed.toPwSb (), c, a);
+ 
+-      closed.close (true);
+-      Geom::centroid (closed.toPwSb (), c, a);
++  return std::fabs (a);
++}
+ 
+-      /*  each region counts, whatever the direction of its outline  */
+-      total += std::fabs (a);
+-    }
++/*  a sub-path inside an odd number of others is a hole  */
++static bool
++is_hole (const Geom::PathVector &pv, size_t i)
++{
++  int depth = 0;
+ 
+-  return total;
++  for (size_t j = 0; j < pv.size (); j++)
++    if (j != i && pv[j].winding (pv[i].initialPoint ()) != 0)
++      depth++;
++
++  return depth % 2 == 1;
++}
++
++static double
++pv_area (const Geom::PathVector &pv)
++{
++  double total = 0.0;
++
++  for (size_t i = 0; i < pv.size (); i++)
++    total += (is_hole (pv, i) ? -1 : 1) * path_area (pv[i]);
++
++  return std::fabs (total);
+ }
+ 
+ /* ─── booleans (Pathfinder) ────────────────────────────────────────── */
+@@ -525,28 +541,46 @@ chopgimp_geom_outline (GimpPath     *path,
+   return from_pv (path, outline_pv (to_pv (path), std::fabs (width), join, cap));
+ }
+ 
+-extern "C" GimpPath *
+-chopgimp_geom_offset (GimpPath     *path,
+-                      gdouble       distance,
+-                      ChopGimpJoin  join)
++static Geom::PathVector
++offset_pv (const Geom::PathVector &pv, double distance, ChopGimpJoin join)
+ {
+   Geom::PathVector shape;
+   Geom::PathVector open;
+   Geom::PathVector result;
+ 
+-  for (const Geom::Path &p : to_pv (path))
++  for (const Geom::Path &p : pv)
+     (p.closed () ? shape : open).push_back (p);
+ 
+   if (std::fabs (distance) < 1e-6)
+-    return from_pv (path, to_pv (path));
++    return pv;
+ 
+-  if (! shape.empty ())
++  /*  each outline moves to its outer or inner side (Inkscape's
++   *  half_outline), a hole the other way round
++   */
++  for (size_t i = 0; i < shape.size (); i++)
+     {
+-      Geom::PathVector ring = outline_pv (shape, 2.0 * std::fabs (distance),
+-                                          join, CHOPGIMP_CAP_BUTT);
++      bool       grow = (distance > 0) != is_hole (shape, i);
++      Geom::Path a, b;
+ 
+-      result = bool_op (shape, ring,
+-                        distance > 0 ? CHOPGIMP_BOOL_UNION : CHOPGIMP_BOOL_DIFFERENCE);
++      try
++        {
++          a = Inkscape::half_outline (shape[i], std::fabs (distance), 4.0, ink_join (join));
++          b = Inkscape::half_outline (shape[i].reversed (), std::fabs (distance), 4.0,
++                                      ink_join (join));
++        }
++      catch (std::exception &e)
++        {
++          g_warning ("ChopGimp offset: %s", e.what ());
++          continue;
++        }
++
++      a.close (true);
++      b.close (true);
++
++      if ((path_area (a) > path_area (b)) == grow)
++        result.push_back (a);
++      else
++        result.push_back (b);
+     }
+ 
+   /*  an open path grows into the band around it  */
+@@ -557,7 +591,15 @@ chopgimp_geom_offset (GimpPath     *path,
+       result = result.empty () ? band : bool_op (result, band, CHOPGIMP_BOOL_UNION);
+     }
+ 
+-  return from_pv (path, result);
++  return result;
++}
++
++extern "C" GimpPath *
++chopgimp_geom_offset (GimpPath     *path,
++                      gdouble       distance,
++                      ChopGimpJoin  join)
++{
++  return from_pv (path, offset_pv (to_pv (path), distance, join));
+ }
+ 
+ /* ─── sampling and fitting ─────────────────────────────────────────── */
+@@ -771,11 +813,33 @@ seg_tangent (const Seg &s, bool at_end)
+   return Geom::are_near (d, Point (0, 0)) ? Point (1, 0) : Geom::unit_vector (d);
+ }
+ 
++static bool
++seg_is_line (const Seg &s)
++{
++  return Geom::are_near (s.p1, s.p0) && Geom::are_near (s.p2, s.p3);
++}
++
+ static std::vector<Seg>
+ round_segs (std::vector<Seg> segs, bool closed, double radius,
+             const std::vector<bool> *selected)
+ {
+-  size_t           n = segs.size ();
++  size_t            n = segs.size ();
++  std::vector<bool> line (n);
++
++  /*  a straight segment gets evenly spaced handles, so its parameter
++   *  follows the length; it becomes a line again at the end
++   */
++  for (size_t k = 0; k < n; k++)
++    {
++      line[k] = seg_is_line (segs[k]);
++
++      if (line[k])
++        {
++          segs[k].p1 = Geom::lerp (1.0 / 3.0, segs[k].p0, segs[k].p3);
++          segs[k].p2 = Geom::lerp (2.0 / 3.0, segs[k].p0, segs[k].p3);
++        }
++    }
++
+   std::vector<Seg> out;
+   std::vector<Seg> work = segs;
+ 
+@@ -833,6 +897,12 @@ round_segs (std::vector<Seg> segs, bool closed, double radius,
+           s = a;
+         }
+ 
++      if (line[k])
++        {
++          s.p1 = s.p0;
++          s.p2 = s.p3;
++        }
++
+       trimmed[k] = s;
+     }
+ 
+@@ -1826,11 +1896,7 @@ apply_effect (GKeyFile *kf, const gchar *g, const Geom::PathVector &in, GimpImag
+     }
+   else if (type == "offset")
+     {
+-      double d = kd (kf, g, "distance", 5);
+-      Geom::PathVector ring = outline_pv (in, 2 * std::fabs (d), CHOPGIMP_JOIN_ROUND,
+-                                          CHOPGIMP_CAP_ROUND);
+-
+-      out = bool_op (in, ring, d > 0 ? CHOPGIMP_BOOL_UNION : CHOPGIMP_BOOL_DIFFERENCE);
++      out = offset_pv (in, kd (kf, g, "distance", 5), CHOPGIMP_JOIN_ROUND);
+     }
+   else if (type == "round")
+     {
+-- 
+2.53.0
+

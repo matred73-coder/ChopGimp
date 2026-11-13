@@ -309,3 +309,19 @@ Options : `-Bundle <gimp-clang64>`, `-OutDir <dossier>`, `-Version <x.y.z>` (par
 - **Corrections propres à Windows :** de façon portable (`#ifdef G_OS_WIN32` ou fichiers propres à
   Windows), sans toucher au comportement Linux et Flatpak.
 - **Identité git du projet :** `ChopGimp <mathieu.redon@proton.me>`.
+
+---
+
+## Depuis la version 3.13 : moteur vectoriel d'Inkscape
+
+Les outils vectoriels (Pathfinder, Bâtisseur de formes, décalages, effets de
+chemin) utilisent **lib2geom 1.4** (la bibliothèque de géométrie d'Inkscape).
+Sous MSYS2 CLANG64, avant l'étape 3 :
+
+```bash
+pacman -S --needed mingw-w64-clang-x86_64-boost mingw-w64-clang-x86_64-gsl \
+                   mingw-w64-clang-x86_64-double-conversion mingw-w64-clang-x86_64-lib2geom
+```
+
+(si le paquet `lib2geom` n'existe pas : `git clone --branch 1.4 https://gitlab.com/inkscape/lib2geom`
+puis `cmake -B build -G Ninja -D2GEOM_BUILD_SHARED=ON -D2GEOM_TESTING=OFF -DCMAKE_INSTALL_PREFIX=/c/gimpshop/_install && ninja -C build install`)

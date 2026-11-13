@@ -25,9 +25,9 @@ TOOLBOX = [
     ("gradient", "bucket-fill"),                              # G
     ("convolve", "smudge"),                                   # Goutte d'eau / Doigt
     ("dodge-burn",),                                          # O
-    ("path",),                                                # P
+    ("path", "direct-select"),                                # P / A
     ("text",),                                                # T
-    ("shape",),                                               # U
+    ("shape", "shape-builder"),                               # U / Maj+Alt+M
     ("unified-transform", "scale", "rotate", "shear", "flip",
      "transform-3d", "handle-transform", "warp", "cage", "offset"),  # Ctrl+T
     ("hand", "rotate-view"),                                  # H / R
@@ -39,7 +39,9 @@ HIDDEN = ["brightness-contrast", "threshold", "levels", "curves", "gegl"]
 ICON = {"dodge-burn": "gimp-tool-dodge", "convolve": "gimp-tool-blur",
         "gegl": "gimp-gegl", "hand": "chopgimp-tool-hand",
         "rotate-view": "chopgimp-tool-rotate-view", "shape": "chopgimp-tool-shape",
-        "spot-heal": "chopgimp-tool-spot-heal"}
+        "spot-heal": "chopgimp-tool-spot-heal",
+        "direct-select": "chopgimp-tool-direct-select",
+        "shape-builder": "chopgimp-tool-shape-builder"}
 
 
 def info(tool, visible=True, indent=""):

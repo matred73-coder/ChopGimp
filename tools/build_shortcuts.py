@@ -57,6 +57,10 @@ PS_MAP = [
     ("Outils", "tools-path",               ["p"],            "Plume"),
     ("Outils", "tools-text",               ["t"],            "Texte"),
     ("Outils", "tools-shape",              ["u"],            "Forme (rectangle, ellipse, polygone, étoile, ligne)"),
+    ("Outils", "tools-shape-builder",      [S + A + "m"],    "Bâtisseur de formes (Illustrator)"),
+    ("Outils", "tools-direct-select",      ["a"],            "Sélection directe (nœuds)"),
+    ("Calque", "chopgimp-pathfinder-union",  [P + A + "u"],  "Pathfinder : réunir"),
+    ("Calque", "chopgimp-pathfinder-minus",  [P + A + "y"],  "Pathfinder : soustraire"),
     ("Outils", "tools-zoom",               ["z"],            "Zoom"),
     ("Outils", "tools-unified-transform",  [P + "t"],        "Transformation manuelle (Ctrl+T)"),
     ("Outils", "tools-scale",              [P + A + "t"],    "Mise à l'échelle"),
@@ -197,13 +201,14 @@ def main():
     if "--v2" in sys.argv:   # GIMP non recompilé : actions ajoutées par les patchs absentes
         PS_MAP = [e for e in PS_MAP if not e[1].startswith(("tools-opacity-ps-", "tools-hand",
                                                              "tools-rotate-view", "tools-shape",
-                                                             "tools-spot-heal", "windows-hide-right-docks"))]
+                                                             "tools-spot-heal", "windows-hide-right-docks",
+                                                             "tools-shape-builder", "tools-direct-select"))]
     defaults = json.load(open(DEFAULTS))
     errors = []
 
     # 1. actions valides
     for _, act, _, _ in PS_MAP:
-        if act not in defaults and not act.startswith(("photogimp-", "chopgimp-", "tools-opacity-ps-", "tools-hand", "tools-rotate-view", "tools-shape", "tools-spot-heal", "windows-hide-right-docks")):
+        if act not in defaults and not act.startswith(("photogimp-", "chopgimp-", "tools-opacity-ps-", "tools-hand", "tools-rotate-view", "tools-shape", "tools-spot-heal", "windows-hide-right-docks", "tools-shape-builder", "tools-direct-select")):
             errors.append("action inconnue de GIMP 3.2.8 : %s" % act)
 
     # 2. aucune touche attribuée deux fois dans PS_MAP

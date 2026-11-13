@@ -1,0 +1,29 @@
+From 0638f584b47bad6fee652065d8f8e526ba14cc28 Mon Sep 17 00:00:00 2001
+From: ChopGimp <mathieu.redon@proton.me>
+Date: Fri, 13 Nov 2026 09:48:25 +0100
+Subject: [PATCH] ChopGimp: Shape Builder works on vector layers (not
+ destructive)
+
+---
+ app/tools/chopgimp-shapebuildertool.c | 5 +++++
+ 1 file changed, 5 insertions(+)
+
+diff --git a/app/tools/chopgimp-shapebuildertool.c b/app/tools/chopgimp-shapebuildertool.c
+index 498fe35..6e510fb 100644
+--- a/app/tools/chopgimp-shapebuildertool.c
++++ b/app/tools/chopgimp-shapebuildertool.c
+@@ -531,6 +531,11 @@ gimp_shape_builder_tool_class_init (GimpShapeBuilderToolClass *klass)
+ 
+   object_class->finalize     = gimp_shape_builder_tool_finalize;
+ 
++  /*  it replaces shapes, it does not paint on the layer: vector layers
++   *  must not be refused (« must be rasterized »)
++   */
++  tool_class->is_destructive = FALSE;
++
+   tool_class->control        = gimp_shape_builder_tool_control;
+   tool_class->oper_update    = gimp_shape_builder_tool_oper_update;
+   tool_class->button_press   = gimp_shape_builder_tool_button_press;
+-- 
+2.53.0
+

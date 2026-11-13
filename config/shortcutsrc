@@ -70,6 +70,18 @@
 (action "tools-text" "t")
 # Forme (rectangle, ellipse, polygone, étoile, ligne)
 (action "tools-shape" "u")
+# Bâtisseur de formes (Illustrator)
+(action "tools-shape-builder" "<Shift><Alt>m")
+# Sélection directe (nœuds)
+(action "tools-direct-select" "a")
+
+# ── Calque ──────────────────────────────────────────────────────
+# Pathfinder : réunir
+(action "chopgimp-pathfinder-union" "<Primary><Alt>u")
+# Pathfinder : soustraire
+(action "chopgimp-pathfinder-minus" "<Primary><Alt>y")
+
+# ── Outils ──────────────────────────────────────────────────────
 # Zoom
 (action "tools-zoom" "z")
 # Transformation manuelle (Ctrl+T)

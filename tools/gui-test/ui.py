@@ -9,6 +9,7 @@
   ui.py move <x> <y>                  déplacer le pointeur
   ui.py key <keysym> [shift]          touche (nom X11 : Tab, Escape…)
   ui.py down | up | rel <dx> <dy>     bouton enfoncé / relâché / déplacement relatif
+  ui.py keydown | keyup <keysym>      touche maintenue (ex. Shift_L, Alt_L) / relâchée
   ui.py sleep <secondes>
   ui.py action <nom>                  action ChopGimp (ex. windows-hide-docks)
   ui.py actions [filtre]              liste des actions exportées
@@ -150,7 +151,8 @@ def main():
     ptr = None
     for c in cmds:
         op, args = c[0], c[1:]
-        if op in ("click", "dclick", "drag", "move", "key", "down", "up", "rel") and ptr is None:
+        if op in ("click", "dclick", "drag", "move", "key", "down", "up", "rel",
+                  "keydown", "keyup") and ptr is None:
             ptr = Pointer()
         if op == "shot":
             shot(args[0])
@@ -160,6 +162,9 @@ def main():
             ptr.dclick(int(args[0]), int(args[1]))
         elif op == "drag":
             ptr.drag(*[int(v) for v in args[:4]])
+        elif op in ("keydown", "keyup"):
+            ptr.s("NotifyKeyboardKeysym",
+                  GLib.Variant("(ub)", (Gdk.keyval_from_name(args[0]), op == "keydown")))
         elif op == "down":
             ptr.button(1, True)
         elif op == "up":

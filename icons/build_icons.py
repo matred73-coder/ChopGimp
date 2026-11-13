@@ -691,6 +691,140 @@ def _dock_show():
     return polyline([(7.5, 3.5), (3, 8), (7.5, 12.5)], 1.7) + polyline([(13, 3.5), (8.5, 8), (13, 12.5)], 1.7)
 
 
+# ─── Outils vectoriels (moteur d'Inkscape) ────────────────────────────
+@icon("chopgimp-tool-direct-select")
+def _direct_select():
+    # Flèche blanche (contour seul) + petit nœud carré
+    arrow = [(3, 1.5), (3, 12.5), (5.8, 9.8), (7.8, 14.3), (9.6, 13.5), (7.6, 9.1), (11.5, 9.1)]
+    return polyline(arrow, 1.1, closed=True) + rect(11.5, 11.5, 3.5, 3.5)
+
+
+@icon("chopgimp-tool-shape-builder")
+def _shape_builder():
+    # Deux cercles qui se chevauchent, la zone commune pleine, et un +
+    s = ring(6, 8, 4.3, 1.1) + ring(10, 8, 4.3, 1.1)
+    s += polygon([(8, 4.6), (9.4, 6), (9.8, 8), (9.4, 10), (8, 11.4), (6.6, 10), (6.2, 8), (6.6, 6)], 0.7)
+    s += line(13.5, 1.2, 13.5, 4.8, 1.1) + line(11.7, 3, 15.3, 3, 1.1)
+    return s
+
+
+def _two_squares(a_op, b_op):
+    return rect(1.5, 1.5, 9, 9, 0.5, a_op) + rect(5.5, 5.5, 9, 9, 0.5, b_op)
+
+
+@icon("chopgimp-pf-union")
+def _pf_union():
+    return polygon([(1.5, 1.5), (10.5, 1.5), (10.5, 5.5), (14.5, 5.5), (14.5, 14.5),
+                    (5.5, 14.5), (5.5, 10.5), (1.5, 10.5)])
+
+
+@icon("chopgimp-pf-minus")
+def _pf_minus():
+    return polygon([(1.5, 1.5), (10.5, 1.5), (10.5, 5.5), (5.5, 5.5), (5.5, 10.5), (1.5, 10.5)]) + \
+        rect_outline(5.5, 5.5, 9, 9, 0.9, 0.5)
+
+
+@icon("chopgimp-pf-intersect")
+def _pf_intersect():
+    return rect_outline(1.5, 1.5, 9, 9, 0.9, 0.5) + rect_outline(5.5, 5.5, 9, 9, 0.9, 0.5) + \
+        rect(5.5, 5.5, 5, 5)
+
+
+@icon("chopgimp-pf-exclude")
+def _pf_exclude():
+    return polygon([(1.5, 1.5), (10.5, 1.5), (10.5, 5.5), (5.5, 5.5), (5.5, 10.5), (1.5, 10.5)]) + \
+        polygon([(10.5, 5.5), (14.5, 5.5), (14.5, 14.5), (5.5, 14.5), (5.5, 10.5), (10.5, 10.5)]) + \
+        rect_outline(5.5, 5.5, 5, 5, 0.9, 0.5)
+
+
+@icon("chopgimp-pf-divide")
+def _pf_divide():
+    s = rect_outline(1.5, 1.5, 9, 9, 1.0) + rect_outline(5.5, 5.5, 9, 9, 1.0)
+    return s + rect(6.4, 6.4, 3.2, 3.2, 0, 0.6)
+
+
+def _node(kind):
+    s = rect(6.3, 6.3, 3.4, 3.4)
+    if kind == "corner":
+        s += polyline([(1.5, 13.5), (8, 8), (14.5, 13.5)], 1.0)
+    else:
+        a, b = (2.0, 8.0), (14.0, 8.0)
+        if kind == "symmetric":
+            a, b = (2.5, 8.0), (13.5, 8.0)
+        if kind == "smooth":
+            a, b = (3.5, 8.0), (14.5, 8.0)
+        s += line(a[0], a[1], b[0], b[1], 0.8, op=0.8) + circle(a[0], a[1], 1.3) + circle(b[0], b[1], 1.3)
+        s += arc(8, 15, 7, 200, 340, 1.0)
+    if kind == "auto":
+        s += polygon([(12.5, 0.8), (13.2, 2.6), (15, 3.3), (13.2, 4), (12.5, 5.8), (11.8, 4), (10, 3.3),
+                      (11.8, 2.6)])
+    return s
+
+
+for _k in ("corner", "smooth", "symmetric", "auto"):
+    ICONS["chopgimp-node-" + _k] = (lambda k: lambda: _node(k))(_k)
+
+
+@icon("chopgimp-node-line")
+def _node_line():
+    return line(2, 13, 14, 3, 1.2) + rect(0.8, 11.8, 2.6, 2.6) + rect(12.6, 1.6, 2.6, 2.6)
+
+
+@icon("chopgimp-node-curve")
+def _node_curve():
+    return arc(8, 14, 9, 210, 330, 1.2) + rect(0.8, 8.6, 2.6, 2.6) + rect(12.6, 8.6, 2.6, 2.6)
+
+
+def _align(vertical, where):
+    s = ""
+    pos = {"start": 2.0, "center": 8.0, "end": 14.0}[where]
+    if vertical:   # ligne verticale, nœuds alignés dessus
+        s += line(pos, 1, pos, 15, 0.9, op=0.7)
+        for y in (3.5, 8, 12.5):
+            s += rect(pos - 1.6, y - 1.6, 3.2, 3.2)
+    else:
+        s += line(1, pos, 15, pos, 0.9, op=0.7)
+        for x in (3.5, 8, 12.5):
+            s += rect(x - 1.6, pos - 1.6, 3.2, 3.2)
+    return s
+
+
+ICONS["chopgimp-node-align-left"] = lambda: _align(True, "start")
+ICONS["chopgimp-node-align-hcenter"] = lambda: _align(True, "center")
+ICONS["chopgimp-node-align-top"] = lambda: _align(False, "start")
+ICONS["chopgimp-node-align-vcenter"] = lambda: _align(False, "center")
+
+
+@icon("chopgimp-node-distribute-h")
+def _node_distribute():
+    s = ""
+    for x in (2.5, 8, 13.5):
+        s += rect(x - 1.6, 6.4, 3.2, 3.2) + line(x, 2, x, 4.6, 0.8, op=0.6) + line(x, 11.4, x, 14, 0.8, op=0.6)
+    return s
+
+
+@icon("chopgimp-node-join")
+def _node_join():
+    return arc(4, 8, 4, 270, 450, 1.1) + arc(12, 8, 4, 90, 270, 1.1) + rect(6.4, 6.4, 3.2, 3.2)
+
+
+@icon("chopgimp-node-break")
+def _node_break():
+    return arc(3, 8, 4, 270, 450, 1.1) + arc(13, 8, 4, 90, 270, 1.1) + \
+        line(8, 2, 8, 14, 1.0, op=0.6) + rect(5.6, 6.6, 2.6, 2.6) + rect(7.8, 6.6, 2.6, 2.6)
+
+
+@icon("chopgimp-node-delete")
+def _node_delete():
+    return arc(8, 14, 9, 210, 330, 1.2) + line(5.5, 2.5, 10.5, 7.5, 1.1) + line(10.5, 2.5, 5.5, 7.5, 1.1)
+
+
+@icon("chopgimp-node-round")
+def _node_round():
+    return polyline([(2, 14), (2, 8)], 1.2) + arc(8, 8, 6, 180, 270, 1.2) + polyline([(8, 2), (14, 2)], 1.2) + \
+        line(2, 2, 6, 6, 0.8, op=0.5)
+
+
 @icon("chopgimp-tool-shape")
 def _shape():
     # Carré + cercle superposés (outil Forme)

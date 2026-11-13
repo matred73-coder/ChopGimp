@@ -1,0 +1,593 @@
+From 8ff92aef312ea71e603481eab4c9e9fbf98908a2 Mon Sep 17 00:00:00 2001
+From: ChopGimp <mathieu.redon@proton.me>
+Date: Fri, 13 Nov 2026 09:56:43 +0100
+Subject: [PATCH] ChopGimp: lib2geom errors never crash (catch-all, retry of
+ booleans on shared edges); Shape Builder style by point test
+
+---
+ app/path/chopgimp-geom.cc             | 387 +++++++++++++++++++-------
+ app/path/chopgimp-geom.h              |   3 +
+ app/tools/chopgimp-shapebuildertool.c |  16 +-
+ 3 files changed, 289 insertions(+), 117 deletions(-)
+
+diff --git a/app/path/chopgimp-geom.cc b/app/path/chopgimp-geom.cc
+index ca4e393..fb1d53d 100644
+--- a/app/path/chopgimp-geom.cc
++++ b/app/path/chopgimp-geom.cc
+@@ -366,8 +366,36 @@ pv_area (const Geom::PathVector &pv)
+ 
+ /* ─── booleans (Pathfinder) ────────────────────────────────────────── */
+ 
++static Geom::PathVector offset_pv (const Geom::PathVector &pv, double distance,
++                                   ChopGimpJoin join);
++
++static Geom::PathVector bool_op_once (const Geom::PathVector &a, const Geom::PathVector &b,
++                                      ChopGimpBoolOp op, bool *failed);
++
++/*  lib2geom fails on shapes sharing edges (two neighbouring regions):
++ *  the operation is tried again with the shapes grown by a hair
++ */
+ static Geom::PathVector
+ bool_op (const Geom::PathVector &a, const Geom::PathVector &b, ChopGimpBoolOp op)
++{
++  bool             failed = false;
++  Geom::PathVector r      = bool_op_once (a, b, op, &failed);
++
++  if (failed)
++    {
++      failed = false;
++      r = bool_op_once (offset_pv (a, 0.02, CHOPGIMP_JOIN_MITER),
++                        offset_pv (b, op == CHOPGIMP_BOOL_DIFFERENCE ? -0.02 : 0.02,
++                                   CHOPGIMP_JOIN_MITER),
++                        op, &failed);
++    }
++
++  return r;
++}
++
++static Geom::PathVector
++bool_op_once (const Geom::PathVector &a, const Geom::PathVector &b, ChopGimpBoolOp op,
++              bool *failed)
+ {
+   if (a.empty ())
+     return (op == CHOPGIMP_BOOL_UNION || op == CHOPGIMP_BOOL_EXCLUSION) ? b
+@@ -387,9 +415,9 @@ bool_op (const Geom::PathVector &a, const Geom::PathVector &b, ChopGimpBoolOp op
+         case CHOPGIMP_BOOL_EXCLUSION:    return pig.getXOR ();
+         }
+     }
+-  catch (std::exception &e)
++  catch (...)
+     {
+-      g_warning ("ChopGimp Pathfinder: %s", e.what ());
++      *failed = true;
+     }
+ 
+   return Geom::PathVector ();
+@@ -407,23 +435,31 @@ chopgimp_geom_boolean (GimpPath       **paths,
+                        gint             n_paths,
+                        ChopGimpBoolOp   op)
+ {
+-  Geom::PathVector result;
++  try
++    {
++    Geom::PathVector result;
+ 
+-  g_return_val_if_fail (n_paths >= 1, NULL);
++    g_return_val_if_fail (n_paths >= 1, NULL);
+ 
+-  result = shape_of (paths[0]);
++    result = shape_of (paths[0]);
+ 
+-  for (gint i = 1; i < n_paths; i++)
+-    {
+-      Geom::PathVector other = shape_of (paths[i]);
++    for (gint i = 1; i < n_paths; i++)
++      {
++        Geom::PathVector other = shape_of (paths[i]);
+ 
+-      if (op == CHOPGIMP_BOOL_DIFFERENCE)
+-        result = bool_op (result, other, CHOPGIMP_BOOL_DIFFERENCE);
+-      else
+-        result = bool_op (result, other, op);
+-    }
++        if (op == CHOPGIMP_BOOL_DIFFERENCE)
++          result = bool_op (result, other, CHOPGIMP_BOOL_DIFFERENCE);
++        else
++          result = bool_op (result, other, op);
++      }
+ 
+-  return from_pv (paths[0], result);
++    return from_pv (paths[0], result);
++    }
++  catch (...)
++    {
++      g_warning ("ChopGimp %s: lib2geom error", G_STRFUNC);
++      return NULL;
++    }
+ }
+ 
+ /*  all the regions of the arrangement of the shapes (Pathfinder
+@@ -466,26 +502,34 @@ chopgimp_geom_divide (GimpPath **paths,
+                       gint       n_paths,
+                       gint      *n_pieces)
+ {
+-  std::vector<Geom::PathVector> shapes;
+-  std::vector<GimpPath *>       out;
+-  GimpPath                    **result;
++  try
++    {
++    std::vector<Geom::PathVector> shapes;
++    std::vector<GimpPath *>       out;
++    GimpPath                    **result;
+ 
+-  for (gint i = 0; i < n_paths; i++)
+-    shapes.push_back (shape_of (paths[i]));
++    for (gint i = 0; i < n_paths; i++)
++      shapes.push_back (shape_of (paths[i]));
+ 
+-  for (const Geom::PathVector &p : divide_pv (shapes))
+-    {
+-      GimpPath *gp = from_pv (paths[0], p);
++    for (const Geom::PathVector &p : divide_pv (shapes))
++      {
++        GimpPath *gp = from_pv (paths[0], p);
+ 
+-      if (gp)
+-        out.push_back (gp);
+-    }
++        if (gp)
++          out.push_back (gp);
++      }
+ 
+-  *n_pieces = out.size ();
+-  result    = g_new0 (GimpPath *, out.size () + 1);
+-  std::copy (out.begin (), out.end (), result);
++    *n_pieces = out.size ();
++    result    = g_new0 (GimpPath *, out.size () + 1);
++    std::copy (out.begin (), out.end (), result);
+ 
+-  return result;
++    return result;
++    }
++  catch (...)
++    {
++      g_warning ("ChopGimp %s: lib2geom error", G_STRFUNC);
++      return NULL;
++    }
+ }
+ 
+ /* ─── offset, outline ──────────────────────────────────────────────── */
+@@ -530,6 +574,11 @@ outline_pv (const Geom::PathVector &pv, double width, ChopGimpJoin join, ChopGim
+           g_warning ("ChopGimp outline: %s", e.what ());
+           continue;
+         }
++      catch (...)
++        {
++          g_warning ("ChopGimp outline: lib2geom error");
++          continue;
++        }
+ 
+       result = result.empty () ? o : bool_op (result, o, CHOPGIMP_BOOL_UNION);
+     }
+@@ -543,7 +592,15 @@ chopgimp_geom_outline (GimpPath     *path,
+                        ChopGimpJoin  join,
+                        ChopGimpCap   cap)
+ {
+-  return from_pv (path, outline_pv (to_pv (path), std::fabs (width), join, cap));
++  try
++    {
++    return from_pv (path, outline_pv (to_pv (path), std::fabs (width), join, cap));
++    }
++  catch (...)
++    {
++      g_warning ("ChopGimp %s: lib2geom error", G_STRFUNC);
++      return NULL;
++    }
+ }
+ 
+ static Geom::PathVector
+@@ -578,6 +635,11 @@ offset_pv (const Geom::PathVector &pv, double distance, ChopGimpJoin join)
+           g_warning ("ChopGimp offset: %s", e.what ());
+           continue;
+         }
++      catch (...)
++        {
++          g_warning ("ChopGimp offset: lib2geom error");
++          continue;
++        }
+ 
+       a.close (true);
+       b.close (true);
+@@ -604,7 +666,15 @@ chopgimp_geom_offset (GimpPath     *path,
+                       gdouble       distance,
+                       ChopGimpJoin  join)
+ {
+-  return from_pv (path, offset_pv (to_pv (path), distance, join));
++  try
++    {
++    return from_pv (path, offset_pv (to_pv (path), distance, join));
++    }
++  catch (...)
++    {
++      g_warning ("ChopGimp %s: lib2geom error", G_STRFUNC);
++      return NULL;
++    }
+ }
+ 
+ /* ─── sampling and fitting ─────────────────────────────────────────── */
+@@ -748,12 +818,20 @@ extern "C" GimpPath *
+ chopgimp_geom_simplify (GimpPath *path,
+                         gdouble   tolerance)
+ {
+-  Geom::PathVector out;
++  try
++    {
++    Geom::PathVector out;
+ 
+-  for (const Geom::Path &p : to_pv (path))
+-    out.push_back (simplify_path (p, std::max (0.1, tolerance)));
++    for (const Geom::Path &p : to_pv (path))
++      out.push_back (simplify_path (p, std::max (0.1, tolerance)));
+ 
+-  return from_pv (path, out);
++    return from_pv (path, out);
++    }
++  catch (...)
++    {
++      g_warning ("ChopGimp %s: lib2geom error", G_STRFUNC);
++      return NULL;
++    }
+ }
+ 
+ /* ─── rounded corners ──────────────────────────────────────────────── */
+@@ -971,29 +1049,53 @@ chopgimp_geom_round_corners (GimpPath *path,
+                              gdouble   radius,
+                              gboolean  selected_only)
+ {
+-  return round_corners (path, radius, selected_only);
++  try
++    {
++    return round_corners (path, radius, selected_only);
++    }
++  catch (...)
++    {
++      g_warning ("ChopGimp %s: lib2geom error", G_STRFUNC);
++      return NULL;
++    }
+ }
+ 
+ extern "C" GimpPath *
+ chopgimp_geom_reverse (GimpPath *path)
+ {
+-  Geom::PathVector pv = to_pv (path);
++  try
++    {
++    Geom::PathVector pv = to_pv (path);
+ 
+-  for (Geom::Path &p : pv)
+-    p = p.reversed ();
++    for (Geom::Path &p : pv)
++      p = p.reversed ();
+ 
+-  return from_pv (path, pv);
++    return from_pv (path, pv);
++    }
++  catch (...)
++    {
++      g_warning ("ChopGimp %s: lib2geom error", G_STRFUNC);
++      return NULL;
++    }
+ }
+ 
+ extern "C" gint
+ chopgimp_geom_count_nodes (GimpPath *path)
+ {
+-  gint n = 0;
++  try
++    {
++    gint n = 0;
+ 
+-  for (const Stroke &st : read_strokes (path))
+-    n += st.nodes.size ();
++    for (const Stroke &st : read_strokes (path))
++      n += st.nodes.size ();
+ 
+-  return n;
++    return n;
++    }
++  catch (...)
++    {
++      g_warning ("ChopGimp %s: lib2geom error", G_STRFUNC);
++      return 0;
++    }
+ }
+ 
+ extern "C" gboolean
+@@ -1001,13 +1103,66 @@ chopgimp_geom_contains (GimpPath *path,
+                         gdouble   x,
+                         gdouble   y)
+ {
+-  return shape_of (path).winding (Point (x, y)) != 0;
++  try
++    {
++    return shape_of (path).winding (Point (x, y)) != 0;
++    }
++  catch (...)
++    {
++      g_warning ("ChopGimp %s: lib2geom error", G_STRFUNC);
++      return FALSE;
++    }
++}
++
++/*  a point inside the shape (not on its outline)  */
++extern "C" gboolean
++chopgimp_geom_interior_point (GimpPath *path,
++                              gdouble  *x,
++                              gdouble  *y)
++{
++  try
++    {
++    Geom::PathVector pv = shape_of (path);
++    Geom::OptRect    bb = pv.boundsFast ();
++
++    if (! bb)
++      return FALSE;
++
++    for (int n = 5; n <= 41; n += 6)
++      for (int i = 1; i < n; i++)
++        for (int j = 1; j < n; j++)
++          {
++            Point p (bb->left () + bb->width () * i / n, bb->top () + bb->height () * j / n);
++
++            if (pv.winding (p) != 0)
++              {
++                *x = p[Geom::X];
++                *y = p[Geom::Y];
++                return TRUE;
++              }
++          }
++
++    return FALSE;
++    }
++  catch (...)
++    {
++      g_warning ("ChopGimp %s: lib2geom error", G_STRFUNC);
++      return FALSE;
++    }
+ }
+ 
+ extern "C" gdouble
+ chopgimp_geom_area (GimpPath *path)
+ {
+-  return pv_area (shape_of (path));
++  try
++    {
++    return pv_area (shape_of (path));
++    }
++  catch (...)
++    {
++      g_warning ("ChopGimp %s: lib2geom error", G_STRFUNC);
++      return 0;
++    }
+ }
+ 
+ /* ─── node editing ─────────────────────────────────────────────────── */
+@@ -1419,43 +1574,51 @@ chopgimp_geom_nodes (GimpPath        *path,
+                      ChopGimpNodesOp  op,
+                      gdouble          value)
+ {
+-  std::vector<Stroke> strokes;
+-  GimpStroke         *s;
+-
+-  if (op == CHOPGIMP_NODES_ROUND)
++  try
+     {
+-      GimpPath *rounded = round_corners (path, value, true);
++    std::vector<Stroke> strokes;
++    GimpStroke         *s;
+ 
+-      if (! rounded)
+-        return FALSE;
++    if (op == CHOPGIMP_NODES_ROUND)
++      {
++        GimpPath *rounded = round_corners (path, value, true);
+ 
+-      gimp_path_freeze (path);
+-      while ((s = gimp_path_stroke_get_next (path, NULL)))
+-        gimp_path_stroke_remove (path, s);
+-      gimp_path_add_strokes (rounded, path);
+-      gimp_path_thaw (path);
+-      g_object_unref (rounded);
++        if (! rounded)
++          return FALSE;
+ 
+-      return TRUE;
+-    }
++        gimp_path_freeze (path);
++        while ((s = gimp_path_stroke_get_next (path, NULL)))
++          gimp_path_stroke_remove (path, s);
++        gimp_path_add_strokes (rounded, path);
++        gimp_path_thaw (path);
++        g_object_unref (rounded);
+ 
+-  strokes = read_strokes (path);
++        return TRUE;
++      }
+ 
+-  if (! nodes_on_strokes (strokes, op, value))
+-    return FALSE;
++    strokes = read_strokes (path);
+ 
+-  gimp_path_freeze (path);
++    if (! nodes_on_strokes (strokes, op, value))
++      return FALSE;
+ 
+-  while ((s = gimp_path_stroke_get_next (path, NULL)))
+-    gimp_path_stroke_remove (path, s);
++    gimp_path_freeze (path);
+ 
+-  for (const Stroke &st : strokes)
+-    if (! st.nodes.empty ())
+-      add_stroke (path, st);
++    while ((s = gimp_path_stroke_get_next (path, NULL)))
++      gimp_path_stroke_remove (path, s);
+ 
+-  gimp_path_thaw (path);
++    for (const Stroke &st : strokes)
++      if (! st.nodes.empty ())
++        add_stroke (path, st);
+ 
+-  return TRUE;
++    gimp_path_thaw (path);
++
++    return TRUE;
++    }
++  catch (...)
++    {
++      g_warning ("ChopGimp %s: lib2geom error", G_STRFUNC);
++      return FALSE;
++    }
+ }
+ 
+ /* ─── live path effects ────────────────────────────────────────────── */
+@@ -1930,47 +2093,59 @@ extern "C" GimpPath *
+ chopgimp_geom_effects (GimpPath    *path,
+                        const gchar *spec)
+ {
+-  GKeyFile        *kf = g_key_file_new ();
+-  gchar          **groups;
+-  Geom::PathVector pv;
+-  GimpImage       *image = gimp_item_get_image (GIMP_ITEM (path));
+-
+-  if (! spec || ! g_key_file_load_from_data (kf, spec, -1, G_KEY_FILE_NONE, NULL))
++  try
+     {
+-      g_key_file_free (kf);
+-      return NULL;
+-    }
++    GKeyFile        *kf = g_key_file_new ();
++    gchar          **groups;
++    Geom::PathVector pv;
++    GimpImage       *image = gimp_item_get_image (GIMP_ITEM (path));
+ 
+-  pv     = to_pv (path);
+-  groups = g_key_file_get_groups (kf, NULL);
++    if (! spec || ! g_key_file_load_from_data (kf, spec, -1, G_KEY_FILE_NONE, NULL))
++      {
++        g_key_file_free (kf);
++        return NULL;
++      }
+ 
+-  /*  the effects apply in the order of their groups ([0], [1]…)  */
+-  std::vector<std::string> order;
++    pv     = to_pv (path);
++    groups = g_key_file_get_groups (kf, NULL);
+ 
+-  for (gchar **g = groups; g && *g; g++)
+-    order.push_back (*g);
++    /*  the effects apply in the order of their groups ([0], [1]…)  */
++    std::vector<std::string> order;
+ 
+-  std::sort (order.begin (), order.end (),
+-             [] (const std::string &a, const std::string &b)
+-             { return atoi (a.c_str ()) < atoi (b.c_str ()); });
++    for (gchar **g = groups; g && *g; g++)
++      order.push_back (*g);
+ 
+-  for (const std::string &g : order)
+-    {
+-      if (kd (kf, g.c_str (), "enabled", 1) < 0.5)
+-        continue;
++    std::sort (order.begin (), order.end (),
++               [] (const std::string &a, const std::string &b)
++               { return atoi (a.c_str ()) < atoi (b.c_str ()); });
+ 
+-      try
+-        {
+-          pv = apply_effect (kf, g.c_str (), pv, image);
+-        }
+-      catch (std::exception &e)
+-        {
+-          g_warning ("ChopGimp path effect %s: %s", g.c_str (), e.what ());
+-        }
+-    }
++    for (const std::string &g : order)
++      {
++        if (kd (kf, g.c_str (), "enabled", 1) < 0.5)
++          continue;
++
++        try
++          {
++            pv = apply_effect (kf, g.c_str (), pv, image);
++          }
++        catch (std::exception &e)
++          {
++            g_warning ("ChopGimp path effect %s: %s", g.c_str (), e.what ());
++          }
++        catch (...)
++          {
++            g_warning ("ChopGimp path effect %s: lib2geom error", g.c_str ());
++          }
++      }
+ 
+-  g_strfreev (groups);
+-  g_key_file_free (kf);
++    g_strfreev (groups);
++    g_key_file_free (kf);
+ 
+-  return from_pv (path, pv);
++    return from_pv (path, pv);
++    }
++  catch (...)
++    {
++      g_warning ("ChopGimp %s: lib2geom error", G_STRFUNC);
++      return NULL;
++    }
+ }
+diff --git a/app/path/chopgimp-geom.h b/app/path/chopgimp-geom.h
+index f43a636..903797d 100644
+--- a/app/path/chopgimp-geom.h
++++ b/app/path/chopgimp-geom.h
+@@ -85,6 +85,9 @@ gint        chopgimp_geom_count_nodes   (GimpPath        *path);
+ gboolean    chopgimp_geom_contains      (GimpPath        *path,
+                                          gdouble          x,
+                                          gdouble          y);
++gboolean    chopgimp_geom_interior_point (GimpPath       *path,
++                                          gdouble        *x,
++                                          gdouble        *y);
+ gdouble     chopgimp_geom_area          (GimpPath        *path);
+ 
+ /*  modifies @path in place (the caller pushes the undo step)  */
+diff --git a/app/tools/chopgimp-shapebuildertool.c b/app/tools/chopgimp-shapebuildertool.c
+index 6e510fb..f7a19ad 100644
+--- a/app/tools/chopgimp-shapebuildertool.c
++++ b/app/tools/chopgimp-shapebuildertool.c
+@@ -226,20 +226,14 @@ static GimpVectorLayer *
+ shape_builder_owner (GimpShapeBuilderTool *sb,
+                      GimpPath             *region)
+ {
+-  gdouble area = MAX (1.0, chopgimp_geom_area (region));
++  gdouble x, y;
+   GList  *iter;
+ 
+-  for (iter = sb->layers; iter; iter = iter->next)
+-    {
+-      GimpPath *both[2] = { region, gimp_vector_layer_get_path (iter->data) };
+-      GimpPath *inter   = chopgimp_geom_boolean (both, 2, CHOPGIMP_BOOL_INTERSECTION);
+-      gboolean  covers  = inter && chopgimp_geom_area (inter) > 0.5 * area;
+-
+-      g_clear_object (&inter);
+-
+-      if (covers)
++  /*  the topmost shape containing a point of the region  */
++  if (chopgimp_geom_interior_point (region, &x, &y))
++    for (iter = sb->layers; iter; iter = iter->next)
++      if (chopgimp_geom_contains (gimp_vector_layer_get_path (iter->data), x, y))
+         return iter->data;
+-    }
+ 
+   return sb->layers->data;
+ }
+-- 
+2.53.0
+

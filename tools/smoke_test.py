@@ -250,6 +250,91 @@ try:
     except Exception as e:
         report(False, "Correcteur localisé sur J", repr(e)[:160])
 
+    # 3f. Outils vectoriels (moteur d'Inkscape, procédures chopgimp-path-*)
+    def vrun(name, **kw):
+        p = pdb.lookup_procedure(name)
+        if p is None:
+            return None
+        c = p.create_config()
+        for k, v in kw.items():
+            if k == "paths":
+                c.set_core_object_array(k, v)
+            else:
+                c.set_property(k, v)
+        return p.run(c)
+
+    def vinfo(path):
+        r = vrun("chopgimp-path-info", path=path)
+        return r.index(1), r.index(2)
+
+    try:
+        import math
+        im = Gimp.Image.new(400, 400, Gimp.ImageBaseType.RGB)
+        a = Gimp.Path.new(im, "a"); im.insert_path(a, None, 0); a.bezier_stroke_new_ellipse(150, 200, 80, 80, 0)
+        b = Gimp.Path.new(im, "b"); im.insert_path(b, None, 0); b.bezier_stroke_new_ellipse(250, 200, 80, 80, 0)
+        sq = Gimp.Path.new(im, "sq"); im.insert_path(sq, None, 0)
+        sq.stroke_new_from_points(Gimp.PathStrokeType.BEZIER,
+                                  [100, 100] * 3 + [200, 100] * 3 + [200, 200] * 3 + [100, 200] * 3, True)
+        A = vinfo(a)[1]
+        areas = {}
+        for op, nm in enumerate(["union", "soustraction", "intersection", "exclusion"]):
+            r = vrun("chopgimp-path-boolean", paths=[a, b], operation=op)
+            p = r.index(1); im.insert_path(p, None, 0)
+            areas[nm] = vinfo(p)[1]
+        inter = areas["intersection"]
+        okk = (abs(areas["union"] - (2 * A - inter)) < 0.01 * A and
+               abs(areas["soustraction"] - (A - inter)) < 0.01 * A and
+               abs(areas["exclusion"] - (2 * A - 2 * inter)) < 0.01 * A and inter > 0)
+        report(okk, "Vectoriel : Pathfinder (aires)", " ".join("%s=%.0f" % kv for kv in areas.items()))
+
+        r = vrun("chopgimp-path-divide", paths=[a, b])
+        report(r.index(1) == 3, "Vectoriel : Diviser", "%d morceaux" % r.index(1))
+
+        res = {}
+        for d in (10, -10):
+            p = vrun("chopgimp-path-offset", path=sq, distance=d, join=0).index(1); im.insert_path(p, None, 0)
+            res[d] = vinfo(p)[1]
+        report(abs(res[10] - 120 * 120) < 150 and abs(res[-10] - 80 * 80) < 0.04 * 6400,
+               "Vectoriel : décaler ±10 px", "aires %.0f / %.0f" % (res[10], res[-10]))
+
+        p = vrun("chopgimp-path-outline", path=sq, width=10, join=0, cap=0).index(1); im.insert_path(p, None, 0)
+        report(abs(vinfo(p)[1] - (110 * 110 - 90 * 90)) < 150, "Vectoriel : vectoriser le contour",
+               "aire %.0f" % vinfo(p)[1])
+
+        p = vrun("chopgimp-path-round-corners", path=sq, radius=20, **{"selected-only": False}).index(1)
+        im.insert_path(p, None, 0)
+        expect = 100 * 100 - (4 - math.pi) * 20 * 20
+        report(abs(vinfo(p)[1] - expect) < 100, "Vectoriel : arrondir les coins", "aire %.0f" % vinfo(p)[1])
+
+        p = vrun("chopgimp-path-simplify", path=a, tolerance=2.0).index(1); im.insert_path(p, None, 0)
+        report(abs(vinfo(p)[1] - A) < 0.02 * A, "Vectoriel : simplifier", "%r" % (vinfo(p),))
+
+        # nœuds : tout sélectionner puis rendre angulaires (lignes droites)
+        n = Gimp.Path.new(im, "n"); im.insert_path(n, None, 0); n.bezier_stroke_new_ellipse(200, 200, 50, 50, 0)
+        vrun("chopgimp-path-nodes", path=n, operation=18, value=0.0)
+        vrun("chopgimp-path-nodes", path=n, operation=0, value=0.0)
+        report(abs(vinfo(n)[1] - 2 * 50 * 50) < 20, "Vectoriel : nœuds angulaires", "aire %.0f" % vinfo(n)[1])
+
+        # effet vivant : le rendu suit le chemin source
+        vl = Gimp.VectorLayer.new(im, sq)
+        im.insert_layer(vl, None, 0)
+        vl.set_enable_fill(True); vl.refresh()
+        w0 = vl.get_width()
+        vl.attach_parasite(Gimp.Parasite.new("chopgimp-lpe", 3, list(b"[0]\ntype=offset\ndistance=20\n")))
+        vl.refresh()
+        w1 = vl.get_width()
+        report(w1 >= w0 + 39, "Vectoriel : effet vivant (décalage)", "largeur %d → %d" % (w0, w1))
+        for spec in ["taper\nwidth=20", "powerstroke\nwidths=0:2,0.5:30,1:2", "zigzag\nsize=8\nridges=20",
+                     "wave\nsize=6", "envelope\ntl-x=30", "bend\nangle=90", "twist", "pucker", "round\nradius=15"]:
+            r = vrun("chopgimp-path-effects", path=sq, spec="[0]\ntype=" + spec + "\n")
+            if r.index(0) != Gimp.PDBStatusType.SUCCESS or not r.index(1):
+                report(False, "Vectoriel : effet " + spec.split("\n")[0])
+                break
+        else:
+            report(True, "Vectoriel : 9 effets de chemin calculés")
+    except Exception as e:
+        report(False, "Vectoriel", repr(e)[:200])
+
     # 4. Réglages d'usine présents (thème, icônes, menus, raccourcis)
     data = Gimp.data_directory()
     sysconf = Gimp.sysconf_directory()

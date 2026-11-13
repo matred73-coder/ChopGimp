@@ -49,7 +49,45 @@ gimp["config-opts"] = [o if not o.startswith("-Dbuild-id=") else "-Dbuild-id=%s.
                        for o in gimp["config-opts"]]
 gimp["post-install"] = [c for c in gimp["post-install"] if "extensions" not in c]
 
+# ── Moteur géométrique d'Inkscape (lib2geom 1.4, celle d'Inkscape 1.4) et
+#    ses dépendances, avant GIMP : outils vectoriels avancés (Pathfinder,
+#    décalages, effets de chemin…). Seules les bibliothèques partagées
+#    restent dans le paquet.
+GEOM_MODULES = [
+    {"name": "boost",
+     "buildsystem": "simple",
+     "sources": [{"type": "archive",
+                  "url": "https://archives.boost.io/release/1.87.0/source/boost_1_87_0.tar.bz2",
+                  "sha256": "af57be25cb4c4f4b413ed692fe378affb4352ea50fbe294a11ef548f4d527d89"}],
+     "build-commands": ["./bootstrap.sh --prefix=${FLATPAK_DEST} --with-libraries=system",
+                        "./b2 -j${FLATPAK_BUILDER_N_JOBS} install variant=release link=shared"],
+     "cleanup": ["*"]},
+    {"name": "gsl",
+     "config-opts": ["--disable-static"],
+     "sources": [{"type": "archive", "url": "https://ftp.gnu.org/gnu/gsl/gsl-2.8.tar.gz",
+                  "sha256": "6a99eeed15632c6354895b1dd542ed5a855c0f15d9ad1326c6fe2b2c9e423190"}],
+     "cleanup": ["/bin", "/include", "/lib/pkgconfig", "/share", "*.la"]},
+    {"name": "double-conversion",
+     "buildsystem": "cmake-ninja",
+     "config-opts": ["-DBUILD_SHARED_LIBS=ON", "-DCMAKE_BUILD_TYPE=Release",
+                     "-DCMAKE_POLICY_VERSION_MINIMUM=3.5", "-DCMAKE_INSTALL_LIBDIR=lib"],
+     "sources": [{"type": "git", "url": "https://github.com/google/double-conversion.git",
+                  "tag": "v3.3.1", "commit": "ae0dbfeb9744efd216c95b30555049d75d47116a"}],
+     "cleanup": ["/include", "/lib/cmake"]},
+    {"name": "lib2geom",
+     "buildsystem": "cmake-ninja",
+     "builddir": True,
+     "config-opts": ["-D2GEOM_BUILD_SHARED=ON", "-D2GEOM_TESTING=OFF",
+                     "-DCMAKE_BUILD_TYPE=Release", "-DCMAKE_POLICY_VERSION_MINIMUM=3.5",
+                     "-DCMAKE_INSTALL_LIBDIR=lib"],
+     "sources": [{"type": "git", "url": "https://gitlab.com/inkscape/lib2geom.git",
+                  "tag": "1.4", "commit": "23316118755def8156c268f767894c145130e07d"}],
+     "cleanup": ["/lib/cmake"]},
+]
+
 if not vanilla:
+    gi = m["modules"].index(gimp)
+    m["modules"][gi:gi] = GEOM_MODULES
     # Correctifs GEGL (plantage multi-thread des tuiles mipmap, cf. patches/gegl-0.4.72)
     gegl = next(x for x in m["modules"] if isinstance(x, dict) and x["name"] == "gegl")
     for p in sorted(glob.glob(os.path.join(ROOT, "patches", "gegl-0.4.72", "*.patch"))):

@@ -1,0 +1,61 @@
+From 4c577c547449f6619172fda71a63060013f7a11d Mon Sep 17 00:00:00 2001
+From: ChopGimp <mathieu.redon@proton.me>
+Date: Fri, 13 Nov 2026 10:03:57 +0100
+Subject: [PATCH] ChopGimp: Shape Builder merges neighbouring regions reliably
+ (grow, union, shrink)
+
+---
+ app/tools/chopgimp-shapebuildertool.c | 31 +++++++++++++++++++++++++--
+ 1 file changed, 29 insertions(+), 2 deletions(-)
+
+diff --git a/app/tools/chopgimp-shapebuildertool.c b/app/tools/chopgimp-shapebuildertool.c
+index f7a19ad..07a2250 100644
+--- a/app/tools/chopgimp-shapebuildertool.c
++++ b/app/tools/chopgimp-shapebuildertool.c
+@@ -309,14 +309,41 @@ shape_builder_apply (GimpShapeBuilderTool *sb,
+       GimpPath **picked = g_new0 (GimpPath *, sb->picked->len);
+       GimpPath  *shape;
+ 
++      /*  neighbouring regions share their edges exactly, which the union
++       *  does not handle: each one is grown by a hair, merged, and the
++       *  result shrunk back
++       */
+       for (guint i = 0; i < sb->picked->len; i++)
+-        picked[i] = g_ptr_array_index (sb->regions, g_array_index (sb->picked, gint, i));
++        {
++          GimpPath *r = g_ptr_array_index (sb->regions,
++                                           g_array_index (sb->picked, gint, i));
++
++          picked[i] = chopgimp_geom_offset (r, 0.05, CHOPGIMP_JOIN_MITER);
++          if (! picked[i])
++            picked[i] = GIMP_PATH (gimp_item_duplicate (GIMP_ITEM (r), GIMP_TYPE_PATH));
++        }
+ 
+       shape = chopgimp_geom_boolean (picked, sb->picked->len, CHOPGIMP_BOOL_UNION);
+ 
++      if (shape)
++        {
++          GimpPath *tight = chopgimp_geom_offset (shape, -0.05, CHOPGIMP_JOIN_MITER);
++
++          if (tight)
++            {
++              g_object_unref (shape);
++              shape = tight;
++            }
++        }
++
++      for (guint i = 0; i < sb->picked->len; i++)
++        g_clear_object (&picked[i]);
++
+       if (shape)
+         merged = shape_builder_new_layer (image, shape,
+-                                          shape_builder_owner (sb, picked[0]),
++                                          shape_builder_owner (sb,
++                                            g_ptr_array_index (sb->regions,
++                                                               g_array_index (sb->picked, gint, 0))),
+                                           context, parent, pos);
+       g_free (picked);
+     }
+-- 
+2.53.0
+

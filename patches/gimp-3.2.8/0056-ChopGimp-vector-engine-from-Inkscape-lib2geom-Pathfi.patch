@@ -1,0 +1,3861 @@
+From 70569f6870af21ee52c8c86735440e101baab8b9 Mon Sep 17 00:00:00 2001
+From: ChopGimp <mathieu.redon@proton.me>
+Date: Fri, 13 Nov 2026 09:06:12 +0100
+Subject: [PATCH] =?UTF-8?q?ChopGimp:=20vector=20engine=20from=20Inkscape?=
+ =?UTF-8?q?=20(lib2geom)=20=E2=80=94=20Pathfinder,=20offset,=20outline,=20?=
+ =?UTF-8?q?simplify,=20rounded=20corners,=20node=20operations,=20live=20pa?=
+ =?UTF-8?q?th=20effects;=20chopgimp-path-*=20PDB=20procedures?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+---
+ app/core/gimp.c                          |    2 +
+ app/meson.build                          |    1 +
+ app/path/chopgimp-geom.cc                | 1895 ++++++++++++++++++++++
+ app/path/chopgimp-geom.h                 |  102 ++
+ app/path/chopgimp-inkscape-pathstroke.cc | 1162 +++++++++++++
+ app/path/chopgimp-inkscape-pathstroke.h  |   42 +
+ app/path/gimpvectorlayer.c               |   70 +-
+ app/path/meson.build                     |    9 +-
+ app/pdb/chopgimp-cmds.c                  |  381 +++++
+ app/pdb/chopgimp-cmds.h                  |    8 +
+ app/pdb/meson.build                      |    1 +
+ 11 files changed, 3667 insertions(+), 6 deletions(-)
+ create mode 100644 app/path/chopgimp-geom.cc
+ create mode 100644 app/path/chopgimp-geom.h
+ create mode 100644 app/path/chopgimp-inkscape-pathstroke.cc
+ create mode 100644 app/path/chopgimp-inkscape-pathstroke.h
+ create mode 100644 app/pdb/chopgimp-cmds.c
+ create mode 100644 app/pdb/chopgimp-cmds.h
+
+diff --git a/app/core/gimp.c b/app/core/gimp.c
+index bba1e86..38da02a 100644
+--- a/app/core/gimp.c
++++ b/app/core/gimp.c
+@@ -37,6 +37,7 @@
+ #include "pdb/gimppdb.h"
+ #include "pdb/gimp-pdb-compat.h"
+ #include "pdb/internal-procs.h"
++#include "pdb/chopgimp-cmds.h"
+ 
+ #include "plug-in/gimppluginmanager.h"
+ #include "plug-in/gimppluginmanager-restore.h"
+@@ -562,6 +563,7 @@ gimp_real_initialize (Gimp               *gimp,
+   /*  register all internal procedures  */
+   status_callback (NULL, _("Internal Procedures"), 0.2);
+   internal_procs_init (gimp->pdb);
++  register_chopgimp_procs (gimp->pdb);   /* ChopGimp: vector tools */
+   gimp_pdb_compat_procs_register (gimp->pdb, gimp->pdb_compat_mode);
+ 
+   gimp_plug_in_manager_initialize (gimp->plug_in_manager, status_callback);
+diff --git a/app/meson.build b/app/meson.build
+index 758ca45..249814e 100644
+--- a/app/meson.build
++++ b/app/meson.build
+@@ -77,6 +77,7 @@ libapp = static_library('app',
+ )
+ 
+ gimpconsole_deps = [
++  dependency('2geom'),
+   cairo,
+   dbghelp,
+   drmingw,
+diff --git a/app/path/chopgimp-geom.cc b/app/path/chopgimp-geom.cc
+new file mode 100644
+index 0000000..83968ca
+--- /dev/null
++++ b/app/path/chopgimp-geom.cc
+@@ -0,0 +1,1895 @@
++/* GIMP - The GNU Image Manipulation Program
++ * Copyright (C) 1995 Spencer Kimball and Peter Mattis
++ *
++ * chopgimp-geom.cc — ChopGimp: advanced vector operations on GimpPath
++ * (Pathfinder, offset, outline, simplify, rounded corners, node editing,
++ * live path effects), computed with lib2geom, the geometry library of
++ * Inkscape, and with Inkscape's outline code (chopgimp-inkscape-pathstroke).
++ *
++ * This program is free software: you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation; either version 3 of the License, or
++ * (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License
++ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
++ */
++
++#include "config.h"
++
++#include <algorithm>
++#include <cmath>
++#include <functional>
++#include <random>
++#include <string>
++#include <vector>
++
++#include <2geom/2geom.h>
++#include <2geom/bezier-curve.h>
++#include <2geom/bezier-utils.h>
++#include <2geom/intersection-graph.h>
++#include <2geom/path.h>
++#include <2geom/pathvector.h>
++#include <2geom/sbasis-geometric.h>
++#include <2geom/sbasis-to-bezier.h>
++
++#include "chopgimp-inkscape-pathstroke.h"
++
++#include <gdk-pixbuf/gdk-pixbuf.h>
++#include <gegl.h>
++
++extern "C"
++{
++
++#include "libgimpbase/gimpbase.h"
++
++#include "path-types.h"
++
++#include "core/gimpimage.h"
++#include "core/gimpitem.h"
++
++#include "gimpanchor.h"
++#include "gimpbezierstroke.h"
++#include "gimppath.h"
++#include "gimpstroke.h"
++
++#include "chopgimp-geom.h"
++
++} /* extern "C" */
++
++
++using Geom::Point;
++
++/* ─── GimpPath ⇄ Geom::PathVector ──────────────────────────────────── */
++
++/*  one cubic segment (a line has its handles on its ends)  */
++struct Seg
++{
++  Point p0, p1, p2, p3;
++};
++
++/*  a node of a GIMP Bézier stroke: in-handle, anchor, out-handle  */
++struct Node
++{
++  Point    in, pt, out;
++  gboolean selected;
++};
++
++struct Stroke
++{
++  std::vector<Node> nodes;
++  bool              closed;
++};
++
++static Point
++to_pt (const GimpAnchor *a)
++{
++  return Point (a->position.x, a->position.y);
++}
++
++static std::vector<Stroke>
++read_strokes (GimpPath *path)
++{
++  std::vector<Stroke> out;
++
++  for (GimpStroke *s = gimp_path_stroke_get_next (path, NULL);
++       s;
++       s = gimp_path_stroke_get_next (path, s))
++    {
++      gboolean  closed = FALSE;
++      GArray   *a;
++      Stroke    st;
++
++      if (! GIMP_IS_BEZIER_STROKE (s))
++        continue;
++
++      a = gimp_stroke_control_points_get (s, &closed);
++
++      for (guint i = 0; i + 2 < a->len; i += 3)
++        {
++          Node n;
++
++          n.in       = to_pt (&g_array_index (a, GimpAnchor, i));
++          n.pt       = to_pt (&g_array_index (a, GimpAnchor, i + 1));
++          n.out      = to_pt (&g_array_index (a, GimpAnchor, i + 2));
++          n.selected = g_array_index (a, GimpAnchor, i + 1).selected;
++          st.nodes.push_back (n);
++        }
++
++      st.closed = closed;
++      g_array_free (a, TRUE);
++
++      if (! st.nodes.empty ())
++        out.push_back (st);
++    }
++
++  return out;
++}
++
++static void
++append_seg (Geom::Path &p, const Point &c1, const Point &c2, const Point &b)
++{
++  if (Geom::are_near (c1, p.finalPoint ()) && Geom::are_near (c2, b))
++    p.appendNew<Geom::LineSegment> (b);
++  else
++    p.appendNew<Geom::CubicBezier> (c1, c2, b);
++}
++
++static Geom::Path
++stroke_to_path (const Stroke &st, bool force_close)
++{
++  const std::vector<Node> &n = st.nodes;
++  Geom::Path               p (n[0].pt);
++
++  for (size_t k = 1; k < n.size (); k++)
++    append_seg (p, n[k - 1].out, n[k].in, n[k].pt);
++
++  if ((st.closed || force_close) && n.size () > 1)
++    {
++      if (! Geom::are_near (n.back ().out, n.back ().pt) ||
++          ! Geom::are_near (n[0].in, n[0].pt))
++        append_seg (p, n.back ().out, n[0].in, n[0].pt);
++
++      p.close (true);
++    }
++
++  return p;
++}
++
++static Geom::PathVector
++to_pv (GimpPath *path, bool force_close = false)
++{
++  Geom::PathVector pv;
++
++  for (const Stroke &st : read_strokes (path))
++    if (st.nodes.size () > 1)
++      pv.push_back (stroke_to_path (st, force_close));
++
++  return pv;
++}
++
++static void
++curve_to_segs (const Geom::Curve &c, std::vector<Seg> &segs)
++{
++  auto b = dynamic_cast<const Geom::BezierCurve *> (&c);
++
++  if (c.isDegenerate ())
++    return;
++
++  if (b && b->order () == 1)
++    {
++      segs.push_back ({ c.initialPoint (), c.initialPoint (),
++                        c.finalPoint (), c.finalPoint () });
++    }
++  else if (b && b->order () == 2)
++    {
++      Point q0 = (*b)[0], q1 = (*b)[1], q2 = (*b)[2];
++
++      segs.push_back ({ q0, q0 + (q1 - q0) * (2.0 / 3.0),
++                        q2 + (q1 - q2) * (2.0 / 3.0), q2 });
++    }
++  else if (b && b->order () == 3)
++    {
++      segs.push_back ({ (*b)[0], (*b)[1], (*b)[2], (*b)[3] });
++    }
++  else
++    {
++      Geom::Path cubic = Geom::cubicbezierpath_from_sbasis (c.toSBasis (), 0.1);
++
++      for (const Geom::Curve &cc : cubic)
++        curve_to_segs (cc, segs);
++    }
++}
++
++static std::vector<Seg>
++path_to_segs (const Geom::Path &p)
++{
++  std::vector<Seg> segs;
++
++  for (size_t i = 0; i < p.size_closed (); i++)
++    curve_to_segs (p[i], segs);
++
++  return segs;
++}
++
++static GimpCoords
++coords (const Point &p)
++{
++  GimpCoords c = GIMP_COORDS_DEFAULT_VALUES;
++
++  c.x = p[Geom::X];
++  c.y = p[Geom::Y];
++
++  return c;
++}
++
++static void
++add_stroke (GimpPath *path, const Stroke &st)
++{
++  std::vector<GimpCoords> c;
++  GimpStroke             *stroke;
++
++  if (st.nodes.size () < 2 && ! (st.nodes.size () == 1 && st.closed))
++    return;
++
++  for (const Node &n : st.nodes)
++    {
++      c.push_back (coords (n.in));
++      c.push_back (coords (n.pt));
++      c.push_back (coords (n.out));
++    }
++
++  stroke = gimp_bezier_stroke_new_from_coords (c.data (), c.size (), st.closed);
++
++  /*  keep the node selection  */
++  {
++    gint i = 0;
++
++    for (GList *l = stroke->anchors->head; l; l = l->next, i++)
++      {
++        GimpAnchor *a = (GimpAnchor *) l->data;
++
++        if (a->type == GIMP_ANCHOR_ANCHOR)
++          a->selected = st.nodes[i / 3].selected;
++      }
++  }
++
++  gimp_path_stroke_add (path, stroke);
++  g_object_unref (stroke);
++}
++
++static Stroke
++segs_to_stroke (const std::vector<Seg> &segs, bool closed)
++{
++  Stroke st;
++  size_t n = segs.size ();
++
++  st.closed = closed;
++
++  for (size_t i = 0; i < n; i++)
++    {
++      Node node;
++
++      node.pt       = segs[i].p0;
++      node.out      = segs[i].p1;
++      node.in       = (i > 0) ? segs[i - 1].p2 : (closed ? segs[n - 1].p2 : segs[i].p0);
++      node.selected = FALSE;
++      st.nodes.push_back (node);
++    }
++
++  if (! closed && n > 0)
++    st.nodes.push_back ({ segs[n - 1].p2, segs[n - 1].p3, segs[n - 1].p3, FALSE });
++
++  return st;
++}
++
++static GimpPath *
++from_pv (GimpPath *like, const Geom::PathVector &pv, const gchar *name = NULL)
++{
++  GimpImage *image = gimp_item_get_image (GIMP_ITEM (like));
++  GimpPath  *path  = gimp_path_new (image,
++                                    name ? name : gimp_object_get_name (like));
++  gboolean   any   = FALSE;
++
++  gimp_path_freeze (path);
++
++  for (const Geom::Path &p : pv)
++    {
++      std::vector<Seg> segs = path_to_segs (p);
++
++      if (segs.empty ())
++        continue;
++
++      add_stroke (path, segs_to_stroke (segs, p.closed ()));
++      any = TRUE;
++    }
++
++  gimp_path_thaw (path);
++
++  if (! any)
++    {
++      g_object_unref (path);
++      return NULL;
++    }
++
++  return path;
++}
++
++/* ─── measures ─────────────────────────────────────────────────────── */
++
++static double
++pv_area (const Geom::PathVector &pv)
++{
++  double total = 0.0;
++
++  for (const Geom::Path &p : pv)
++    {
++      Geom::Point c;
++      double      a = 0.0;
++      Geom::Path  closed = p;
++
++      closed.close (true);
++      Geom::centroid (closed.toPwSb (), c, a);
++      total += a;
++    }
++
++  return std::fabs (total);
++}
++
++/* ─── booleans (Pathfinder) ────────────────────────────────────────── */
++
++static Geom::PathVector
++bool_op (const Geom::PathVector &a, const Geom::PathVector &b, ChopGimpBoolOp op)
++{
++  if (a.empty ())
++    return (op == CHOPGIMP_BOOL_UNION || op == CHOPGIMP_BOOL_EXCLUSION) ? b
++                                                                         : Geom::PathVector ();
++  if (b.empty ())
++    return (op == CHOPGIMP_BOOL_INTERSECTION) ? Geom::PathVector () : a;
++
++  try
++    {
++      Geom::PathIntersectionGraph pig (a, b, 1e-4);
++
++      switch (op)
++        {
++        case CHOPGIMP_BOOL_UNION:        return pig.getUnion ();
++        case CHOPGIMP_BOOL_DIFFERENCE:   return pig.getAminusB ();
++        case CHOPGIMP_BOOL_INTERSECTION: return pig.getIntersection ();
++        case CHOPGIMP_BOOL_EXCLUSION:    return pig.getXOR ();
++        }
++    }
++  catch (std::exception &e)
++    {
++      g_warning ("ChopGimp Pathfinder: %s", e.what ());
++    }
++
++  return Geom::PathVector ();
++}
++
++/*  a shape: every sub-path closed, no empty sub-path  */
++static Geom::PathVector
++shape_of (GimpPath *path)
++{
++  return to_pv (path, true);
++}
++
++extern "C" GimpPath *
++chopgimp_geom_boolean (GimpPath       **paths,
++                       gint             n_paths,
++                       ChopGimpBoolOp   op)
++{
++  Geom::PathVector result;
++
++  g_return_val_if_fail (n_paths >= 1, NULL);
++
++  result = shape_of (paths[0]);
++
++  for (gint i = 1; i < n_paths; i++)
++    {
++      Geom::PathVector other = shape_of (paths[i]);
++
++      if (op == CHOPGIMP_BOOL_DIFFERENCE)
++        result = bool_op (result, other, CHOPGIMP_BOOL_DIFFERENCE);
++      else
++        result = bool_op (result, other, op);
++    }
++
++  return from_pv (paths[0], result);
++}
++
++/*  all the regions of the arrangement of the shapes (Pathfinder
++ *  « Divide », shape builder)
++ */
++static std::vector<Geom::PathVector>
++divide_pv (const std::vector<Geom::PathVector> &shapes)
++{
++  std::vector<Geom::PathVector> pieces;
++
++  for (const Geom::PathVector &s : shapes)
++    {
++      std::vector<Geom::PathVector> next;
++      Geom::PathVector              rest = s;
++
++      for (const Geom::PathVector &p : pieces)
++        {
++          Geom::PathVector in  = bool_op (p, s, CHOPGIMP_BOOL_INTERSECTION);
++          Geom::PathVector out = bool_op (p, s, CHOPGIMP_BOOL_DIFFERENCE);
++
++          if (pv_area (in) > 0.5)
++            next.push_back (in);
++          if (pv_area (out) > 0.5)
++            next.push_back (out);
++
++          rest = bool_op (rest, p, CHOPGIMP_BOOL_DIFFERENCE);
++        }
++
++      if (pv_area (rest) > 0.5)
++        next.push_back (rest);
++
++      pieces = next;
++    }
++
++  return pieces;
++}
++
++extern "C" GimpPath **
++chopgimp_geom_divide (GimpPath **paths,
++                      gint       n_paths,
++                      gint      *n_pieces)
++{
++  std::vector<Geom::PathVector> shapes;
++  std::vector<GimpPath *>       out;
++  GimpPath                    **result;
++
++  for (gint i = 0; i < n_paths; i++)
++    shapes.push_back (shape_of (paths[i]));
++
++  for (const Geom::PathVector &p : divide_pv (shapes))
++    {
++      GimpPath *gp = from_pv (paths[0], p);
++
++      if (gp)
++        out.push_back (gp);
++    }
++
++  *n_pieces = out.size ();
++  result    = g_new0 (GimpPath *, out.size () + 1);
++  std::copy (out.begin (), out.end (), result);
++
++  return result;
++}
++
++/* ─── offset, outline ──────────────────────────────────────────────── */
++
++static Inkscape::LineJoinType
++ink_join (ChopGimpJoin join)
++{
++  switch (join)
++    {
++    case CHOPGIMP_JOIN_ROUND: return Inkscape::JOIN_ROUND;
++    case CHOPGIMP_JOIN_BEVEL: return Inkscape::JOIN_BEVEL;
++    default:                  return Inkscape::JOIN_MITER;
++    }
++}
++
++static Inkscape::LineCapType
++ink_cap (ChopGimpCap cap)
++{
++  switch (cap)
++    {
++    case CHOPGIMP_CAP_ROUND:  return Inkscape::BUTT_ROUND;
++    case CHOPGIMP_CAP_SQUARE: return Inkscape::BUTT_SQUARE;
++    default:                  return Inkscape::BUTT_FLAT;
++    }
++}
++
++static Geom::PathVector
++outline_pv (const Geom::PathVector &pv, double width, ChopGimpJoin join, ChopGimpCap cap)
++{
++  Geom::PathVector result;
++
++  for (const Geom::Path &p : pv)
++    {
++      Geom::PathVector o;
++
++      try
++        {
++          o = Inkscape::outline (p, width, 4.0, ink_join (join), ink_cap (cap));
++        }
++      catch (std::exception &e)
++        {
++          g_warning ("ChopGimp outline: %s", e.what ());
++          continue;
++        }
++
++      result = result.empty () ? o : bool_op (result, o, CHOPGIMP_BOOL_UNION);
++    }
++
++  return result;
++}
++
++extern "C" GimpPath *
++chopgimp_geom_outline (GimpPath     *path,
++                       gdouble       width,
++                       ChopGimpJoin  join,
++                       ChopGimpCap   cap)
++{
++  return from_pv (path, outline_pv (to_pv (path), std::fabs (width), join, cap));
++}
++
++extern "C" GimpPath *
++chopgimp_geom_offset (GimpPath     *path,
++                      gdouble       distance,
++                      ChopGimpJoin  join)
++{
++  Geom::PathVector shape;
++  Geom::PathVector open;
++  Geom::PathVector result;
++
++  for (const Geom::Path &p : to_pv (path))
++    (p.closed () ? shape : open).push_back (p);
++
++  if (std::fabs (distance) < 1e-6)
++    return from_pv (path, to_pv (path));
++
++  if (! shape.empty ())
++    {
++      Geom::PathVector ring = outline_pv (shape, 2.0 * std::fabs (distance),
++                                          join, CHOPGIMP_CAP_BUTT);
++
++      result = bool_op (shape, ring,
++                        distance > 0 ? CHOPGIMP_BOOL_UNION : CHOPGIMP_BOOL_DIFFERENCE);
++    }
++
++  /*  an open path grows into the band around it  */
++  if (! open.empty () && distance > 0)
++    {
++      Geom::PathVector band = outline_pv (open, 2.0 * distance, join, CHOPGIMP_CAP_ROUND);
++
++      result = result.empty () ? band : bool_op (result, band, CHOPGIMP_BOOL_UNION);
++    }
++
++  return from_pv (path, result);
++}
++
++/* ─── sampling and fitting ─────────────────────────────────────────── */
++
++static std::vector<Point>
++sample_path (const Geom::Path &p, double step)
++{
++  std::vector<Point> pts;
++
++  for (size_t i = 0; i < p.size_closed (); i++)
++    {
++      const Geom::Curve &c = p[i];
++      double             len;
++      int                n;
++
++      if (c.isDegenerate ())
++        continue;
++
++      len = c.length (0.1);
++      n   = std::max (1, (int) std::ceil (len / step));
++
++      for (int k = 0; k < n; k++)
++        {
++          Point q = c.pointAt ((double) k / n);
++
++          if (pts.empty () || ! Geom::are_near (q, pts.back (), 1e-6))
++            pts.push_back (q);
++        }
++    }
++
++  if (! p.closed ())
++    pts.push_back (p.finalPoint ());
++
++  return pts;
++}
++
++/*  smooth cubic fit of a polyline (tolerance in px)  */
++static Geom::Path
++fit_points (std::vector<Point> pts, bool closed, double tolerance, bool polyline = false)
++{
++  Geom::Path p;
++
++  if (pts.size () < 2)
++    return p;
++
++  if (closed)
++    pts.push_back (pts[0]);
++
++  p.start (pts[0]);
++
++  if (polyline)
++    {
++      for (size_t i = 1; i < pts.size (); i++)
++        if (! Geom::are_near (pts[i], p.finalPoint (), 1e-6))
++          p.appendNew<Geom::LineSegment> (pts[i]);
++    }
++  else
++    {
++      std::vector<Point> bez (4 * pts.size ());
++      int                n;
++
++      n = Geom::bezier_fit_cubic_r (bez.data (), pts.data (), pts.size (),
++                                    tolerance * tolerance, pts.size ());
++
++      if (n <= 0)
++        return fit_points (pts, false, tolerance, true);
++
++      for (int i = 0; i < n; i++)
++        p.appendNew<Geom::CubicBezier> (bez[4 * i + 1], bez[4 * i + 2], bez[4 * i + 3]);
++    }
++
++  if (closed)
++    p.close (true);
++
++  return p;
++}
++
++/*  corners (tangent break) of a path, as curve indices  */
++static bool
++is_corner (const Geom::Curve &a, const Geom::Curve &b, double degrees = 25.0)
++{
++  Point ta = Geom::unit_vector (a.unitTangentAt (1.0));
++  Point tb = Geom::unit_vector (b.unitTangentAt (0.0));
++
++  return Geom::dot (ta, tb) < std::cos (degrees * M_PI / 180.0);
++}
++
++static Geom::Path
++simplify_path (const Geom::Path &p, double tolerance)
++{
++  std::vector<std::vector<Point>> runs (1);
++  size_t                          n = p.size_closed ();
++  Geom::Path                      out;
++  bool                            first = true;
++
++  /*  split at the corners so they stay sharp  */
++  for (size_t i = 0; i < n; i++)
++    {
++      const Geom::Curve &c = p[i];
++
++      if (c.isDegenerate ())
++        continue;
++
++      Geom::Path single (c.initialPoint ());
++
++      single.append (c.duplicate ());
++
++      for (Point q : sample_path (single, std::max (1.0, tolerance / 2.0)))
++        if (runs.back ().empty () || ! Geom::are_near (q, runs.back ().back (), 1e-6))
++          runs.back ().push_back (q);
++
++      if (i + 1 < n && is_corner (c, p[i + 1]))
++        runs.push_back ({ runs.back ().back () });
++    }
++
++  for (auto &run : runs)
++    {
++      Geom::Path part = fit_points (run, false, tolerance);
++
++      if (part.empty () && part.initialPoint () == part.finalPoint ())
++        continue;
++
++      if (first)
++        {
++          out   = part;
++          first = false;
++        }
++      else
++        {
++          for (const Geom::Curve &c : part)
++            out.append (c.duplicate ());
++        }
++    }
++
++  out.close (p.closed ());
++
++  return out;
++}
++
++extern "C" GimpPath *
++chopgimp_geom_simplify (GimpPath *path,
++                        gdouble   tolerance)
++{
++  Geom::PathVector out;
++
++  for (const Geom::Path &p : to_pv (path))
++    out.push_back (simplify_path (p, std::max (0.1, tolerance)));
++
++  return from_pv (path, out);
++}
++
++/* ─── rounded corners ──────────────────────────────────────────────── */
++
++static Point
++cubic_at (const Seg &s, double t)
++{
++  double u = 1 - t;
++
++  return s.p0 * (u * u * u) + s.p1 * (3 * u * u * t) + s.p2 * (3 * u * t * t) + s.p3 * (t * t * t);
++}
++
++/*  split a cubic at t (de Casteljau)  */
++static void
++cubic_split (const Seg &s, double t, Seg &a, Seg &b)
++{
++  Point p01 = Geom::lerp (t, s.p0, s.p1), p12 = Geom::lerp (t, s.p1, s.p2);
++  Point p23 = Geom::lerp (t, s.p2, s.p3);
++  Point p012 = Geom::lerp (t, p01, p12), p123 = Geom::lerp (t, p12, p23);
++  Point m = Geom::lerp (t, p012, p123);
++
++  a = { s.p0, p01, p012, m };
++  b = { m, p123, p23, s.p3 };
++}
++
++static double
++seg_length (const Seg &s)
++{
++  double len = 0;
++  Point  prev = s.p0;
++
++  for (int i = 1; i <= 16; i++)
++    {
++      Point q = cubic_at (s, i / 16.0);
++
++      len += Geom::distance (prev, q);
++      prev = q;
++    }
++
++  return len;
++}
++
++/*  parameter at distance d from the start (or the end)  */
++static double
++seg_param (const Seg &s, double d, bool from_end)
++{
++  double len = seg_length (s);
++  double t   = (len > 0) ? std::min (1.0, d / len) : 0.0;
++
++  return from_end ? 1.0 - t : t;
++}
++
++static Point
++seg_tangent (const Seg &s, bool at_end)
++{
++  Point d = at_end ? (s.p3 - (Geom::are_near (s.p2, s.p3) ? s.p1 : s.p2))
++                   : ((Geom::are_near (s.p1, s.p0) ? s.p2 : s.p1) - s.p0);
++
++  if (Geom::are_near (d, Point (0, 0)))
++    d = at_end ? s.p3 - s.p0 : s.p3 - s.p0;
++
++  return Geom::are_near (d, Point (0, 0)) ? Point (1, 0) : Geom::unit_vector (d);
++}
++
++static std::vector<Seg>
++round_segs (std::vector<Seg> segs, bool closed, double radius,
++            const std::vector<bool> *selected)
++{
++  size_t           n = segs.size ();
++  std::vector<Seg> out;
++  std::vector<Seg> work = segs;
++
++  if (n < 2 || radius <= 0)
++    return segs;
++
++  /*  corner k sits between segment k-1 and segment k  */
++  std::vector<double> cut (n, 0.0);
++  std::vector<bool>   corner (n, false);
++
++  for (size_t k = 0; k < n; k++)
++    {
++      if (! closed && k == 0)
++        continue;
++
++      const Seg &a = segs[(k + n - 1) % n];
++      const Seg &b = segs[k];
++      Point      ta = seg_tangent (a, true), tb = seg_tangent (b, false);
++      double     phi = std::acos (std::max (-1.0, std::min (1.0, Geom::dot (ta, tb))));
++
++      if (phi < 5 * M_PI / 180 || (selected && ! (*selected)[k]))
++        continue;
++
++      double t = radius * std::tan (phi / 2);
++
++      t = std::min ({ t, 0.5 * seg_length (a), 0.5 * seg_length (b) });
++
++      if (t > 0.1)
++        {
++          corner[k] = true;
++          cut[k]    = t;
++        }
++    }
++
++  /*  trim the segments, then add the fillets  */
++  std::vector<Seg> trimmed (n);
++
++  for (size_t k = 0; k < n; k++)
++    {
++      Seg s = work[k], a, b;
++
++      if (corner[k])
++        {
++          cubic_split (s, seg_param (s, cut[k], false), a, b);
++          s = b;
++        }
++
++      size_t next = (k + 1) % n;
++
++      if ((closed || k + 1 < n) && corner[next])
++        {
++          Seg whole = s;
++
++          cubic_split (whole, seg_param (whole, cut[next], true), a, b);
++          s = a;
++        }
++
++      trimmed[k] = s;
++    }
++
++  for (size_t k = 0; k < n; k++)
++    {
++      if (corner[k] && (closed || k > 0))
++        {
++          const Seg &prev = trimmed[(k + n - 1) % n];
++          const Seg &cur  = trimmed[k];
++          Point      a    = prev.p3, b = cur.p0;
++          Point      ta   = seg_tangent (segs[(k + n - 1) % n], true);
++          Point      tb   = seg_tangent (segs[k], false);
++          double     phi  = std::acos (std::max (-1.0, std::min (1.0, Geom::dot (ta, tb))));
++          double     r    = cut[k] / std::max (1e-6, std::tan (phi / 2));
++          double     h    = (4.0 / 3.0) * std::tan (phi / 4) * r;
++
++          out.push_back ({ a, a + ta * h, b - tb * h, b });
++        }
++
++      out.push_back (trimmed[k]);
++    }
++
++  /*  closed: the first fillet belongs before the first segment  */
++  return out;
++}
++
++static GimpPath *
++round_corners (GimpPath *path, double radius, bool selected_only)
++{
++  GimpImage *image  = gimp_item_get_image (GIMP_ITEM (path));
++  GimpPath  *result = gimp_path_new (image, gimp_object_get_name (path));
++
++  gimp_path_freeze (result);
++
++  for (const Stroke &st : read_strokes (path))
++    {
++      Geom::Path        p    = stroke_to_path (st, false);
++      std::vector<Seg>  segs = path_to_segs (p);
++      std::vector<bool> sel;
++      Stroke            out;
++
++      if (segs.empty ())
++        continue;
++
++      for (size_t k = 0; k < segs.size (); k++)
++        sel.push_back (k < st.nodes.size () && st.nodes[k].selected);
++
++      out = segs_to_stroke (round_segs (segs, st.closed, radius,
++                                        selected_only ? &sel : NULL),
++                            st.closed);
++      add_stroke (result, out);
++    }
++
++  gimp_path_thaw (result);
++
++  return result;
++}
++
++extern "C" GimpPath *
++chopgimp_geom_round_corners (GimpPath *path,
++                             gdouble   radius,
++                             gboolean  selected_only)
++{
++  return round_corners (path, radius, selected_only);
++}
++
++extern "C" GimpPath *
++chopgimp_geom_reverse (GimpPath *path)
++{
++  Geom::PathVector pv = to_pv (path);
++
++  for (Geom::Path &p : pv)
++    p = p.reversed ();
++
++  return from_pv (path, pv);
++}
++
++extern "C" gint
++chopgimp_geom_count_nodes (GimpPath *path)
++{
++  gint n = 0;
++
++  for (const Stroke &st : read_strokes (path))
++    n += st.nodes.size ();
++
++  return n;
++}
++
++extern "C" gdouble
++chopgimp_geom_area (GimpPath *path)
++{
++  return pv_area (shape_of (path));
++}
++
++/* ─── node editing ─────────────────────────────────────────────────── */
++
++static Point
++safe_unit (const Point &v, const Point &fallback)
++{
++  return Geom::are_near (v, Point (0, 0)) ? fallback : Geom::unit_vector (v);
++}
++
++static void
++set_node_type (Stroke &st, size_t i, ChopGimpNodesOp op)
++{
++  std::vector<Node> &n    = st.nodes;
++  size_t             size = n.size ();
++  Node              &node = n[i];
++  bool               has_prev = st.closed || i > 0;
++  bool               has_next = st.closed || i + 1 < size;
++  Point              prev = has_prev ? n[(i + size - 1) % size].pt : node.pt;
++  Point              next = has_next ? n[(i + 1) % size].pt : node.pt;
++  double             l_in  = Geom::distance (node.in,  node.pt);
++  double             l_out = Geom::distance (node.out, node.pt);
++  Point              dir;
++
++  if (op == CHOPGIMP_NODES_CORNER)
++    {
++      node.in = node.out = node.pt;
++      return;
++    }
++
++  dir = safe_unit (next - prev, Point (1, 0));
++
++  if (op == CHOPGIMP_NODES_SMOOTH && l_in + l_out > 0.5)
++    dir = safe_unit (node.out - node.in, dir);
++
++  if (op == CHOPGIMP_NODES_AUTO || l_in < 0.5)
++    l_in = Geom::distance (prev, node.pt) / 3.0;
++  if (op == CHOPGIMP_NODES_AUTO || l_out < 0.5)
++    l_out = Geom::distance (next, node.pt) / 3.0;
++
++  if (op == CHOPGIMP_NODES_SYMMETRIC)
++    l_in = l_out = (l_in + l_out) / 2.0;
++
++  if (has_prev)
++    node.in = node.pt - dir * l_in;
++  if (has_next)
++    node.out = node.pt + dir * l_out;
++}
++
++static void
++move_node (Node &n, const Point &to)
++{
++  Point d = to - n.pt;
++
++  n.pt  += d;
++  n.in  += d;
++  n.out += d;
++}
++
++/*  one cubic fitted to the path between nodes a and b of a stroke  */
++static void
++refit_span (Stroke &st, size_t a, size_t b, Point &out_a, Point &in_b)
++{
++  std::vector<Point> pts;
++  size_t             size = st.nodes.size ();
++
++  for (size_t k = a; k != b; k = (k + 1) % size)
++    {
++      const Node &p = st.nodes[k];
++      const Node &q = st.nodes[(k + 1) % size];
++      Seg         s = { p.pt, p.out, q.in, q.pt };
++
++      for (int j = 0; j < 12; j++)
++        pts.push_back (cubic_at (s, j / 12.0));
++    }
++
++  pts.push_back (st.nodes[b].pt);
++
++  {
++    Point bez[4];
++
++    if (Geom::bezier_fit_cubic (bez, pts.data (), pts.size (), 1e9) > 0)
++      {
++        out_a = bez[1];
++        in_b  = bez[2];
++        return;
++      }
++  }
++
++  out_a = st.nodes[a].pt;
++  in_b  = st.nodes[b].pt;
++}
++
++static bool
++nodes_on_strokes (std::vector<Stroke> &strokes, ChopGimpNodesOp op, double value)
++{
++  std::vector<Node *> sel;
++  bool                changed = false;
++
++  for (Stroke &st : strokes)
++    for (Node &n : st.nodes)
++      if (n.selected)
++        sel.push_back (&n);
++
++  switch (op)
++    {
++    case CHOPGIMP_NODES_SELECT_ALL:
++    case CHOPGIMP_NODES_SELECT_NONE:
++      for (Stroke &st : strokes)
++        for (Node &n : st.nodes)
++          n.selected = (op == CHOPGIMP_NODES_SELECT_ALL);
++      return true;
++
++    case CHOPGIMP_NODES_CORNER:
++    case CHOPGIMP_NODES_SMOOTH:
++    case CHOPGIMP_NODES_SYMMETRIC:
++    case CHOPGIMP_NODES_AUTO:
++      for (Stroke &st : strokes)
++        for (size_t i = 0; i < st.nodes.size (); i++)
++          if (st.nodes[i].selected)
++            {
++              set_node_type (st, i, op);
++              changed = true;
++            }
++      return changed;
++
++    case CHOPGIMP_NODES_TO_LINE:
++    case CHOPGIMP_NODES_TO_CURVE:
++      for (Stroke &st : strokes)
++        {
++          size_t size = st.nodes.size ();
++
++          for (size_t i = 0; i < size; i++)
++            {
++              size_t j = (i + 1) % size;
++
++              if ((! st.closed && i + 1 == size) ||
++                  ! st.nodes[i].selected || ! st.nodes[j].selected)
++                continue;
++
++              Node &a = st.nodes[i], &b = st.nodes[j];
++
++              if (op == CHOPGIMP_NODES_TO_LINE)
++                {
++                  a.out = a.pt;
++                  b.in  = b.pt;
++                }
++              else if (Geom::are_near (a.out, a.pt) && Geom::are_near (b.in, b.pt))
++                {
++                  a.out = a.pt + (b.pt - a.pt) / 3.0;
++                  b.in  = b.pt - (b.pt - a.pt) / 3.0;
++                }
++              changed = true;
++            }
++        }
++      return changed;
++
++    case CHOPGIMP_NODES_ALIGN_LEFT:
++    case CHOPGIMP_NODES_ALIGN_HCENTER:
++    case CHOPGIMP_NODES_ALIGN_RIGHT:
++    case CHOPGIMP_NODES_ALIGN_TOP:
++    case CHOPGIMP_NODES_ALIGN_VCENTER:
++    case CHOPGIMP_NODES_ALIGN_BOTTOM:
++      {
++        bool   horiz = (op <= CHOPGIMP_NODES_ALIGN_RIGHT);
++        int    axis  = horiz ? Geom::X : Geom::Y;
++        double lo = G_MAXDOUBLE, hi = -G_MAXDOUBLE, target;
++
++        if (sel.size () < 2)
++          return false;
++
++        for (Node *n : sel)
++          {
++            lo = std::min (lo, n->pt[axis]);
++            hi = std::max (hi, n->pt[axis]);
++          }
++
++        if (op == CHOPGIMP_NODES_ALIGN_LEFT || op == CHOPGIMP_NODES_ALIGN_TOP)
++          target = lo;
++        else if (op == CHOPGIMP_NODES_ALIGN_RIGHT || op == CHOPGIMP_NODES_ALIGN_BOTTOM)
++          target = hi;
++        else
++          target = (lo + hi) / 2.0;
++
++        for (Node *n : sel)
++          {
++            Point to = n->pt;
++
++            to[axis] = target;
++            move_node (*n, to);
++          }
++        return true;
++      }
++
++    case CHOPGIMP_NODES_DISTRIBUTE_H:
++    case CHOPGIMP_NODES_DISTRIBUTE_V:
++      {
++        int axis = (op == CHOPGIMP_NODES_DISTRIBUTE_H) ? Geom::X : Geom::Y;
++
++        if (sel.size () < 3)
++          return false;
++
++        std::sort (sel.begin (), sel.end (),
++                   [axis] (Node *a, Node *b) { return a->pt[axis] < b->pt[axis]; });
++
++        double lo = sel.front ()->pt[axis], hi = sel.back ()->pt[axis];
++
++        for (size_t i = 1; i + 1 < sel.size (); i++)
++          {
++            Point to = sel[i]->pt;
++
++            to[axis] = lo + (hi - lo) * i / (sel.size () - 1);
++            move_node (*sel[i], to);
++          }
++        return true;
++      }
++
++    case CHOPGIMP_NODES_DELETE_KEEP:
++      for (Stroke &st : strokes)
++        {
++          size_t            size = st.nodes.size ();
++          std::vector<Node> kept;
++          std::vector<size_t> keep_idx;
++
++          for (size_t i = 0; i < size; i++)
++            {
++              bool end = ! st.closed && (i == 0 || i + 1 == size);
++
++              if (! st.nodes[i].selected || end)
++                keep_idx.push_back (i);
++            }
++
++          if (keep_idx.size () == size)
++            continue;
++
++          changed = true;
++
++          if (keep_idx.size () < 2)
++            {
++              st.nodes.clear ();
++              continue;
++            }
++
++          for (size_t j = 0; j < keep_idx.size (); j++)
++            kept.push_back (st.nodes[keep_idx[j]]);
++
++          for (size_t j = 0; j < keep_idx.size (); j++)
++            {
++              bool last = (j + 1 == keep_idx.size ());
++
++              if (last && ! st.closed)
++                break;
++
++              size_t a = keep_idx[j];
++              size_t b = keep_idx[last ? 0 : j + 1];
++
++              /*  only spans where nodes were removed are refitted  */
++              if ((b + size - a) % size > 1 || (last && keep_idx.size () < size &&
++                                                (a + 1) % size != b))
++                {
++                  Point out_a, in_b;
++
++                  refit_span (st, a, b, out_a, in_b);
++                  kept[j].out                    = out_a;
++                  kept[last ? 0 : j + 1].in      = in_b;
++                }
++            }
++
++          for (Node &n : kept)
++            n.selected = FALSE;
++
++          st.nodes = kept;
++        }
++      return changed;
++
++    case CHOPGIMP_NODES_JOIN:
++      {
++        /*  ends selected: the same open stroke closes, two strokes merge  */
++        std::vector<std::pair<size_t, bool>> ends;   /* stroke, at its end  */
++
++        for (size_t s = 0; s < strokes.size (); s++)
++          {
++            Stroke &st = strokes[s];
++
++            if (st.closed || st.nodes.empty ())
++              continue;
++
++            if (st.nodes.front ().selected)
++              ends.push_back ({ s, false });
++            if (st.nodes.size () > 1 && st.nodes.back ().selected)
++              ends.push_back ({ s, true });
++          }
++
++        if (ends.size () != 2)
++          return false;
++
++        if (ends[0].first == ends[1].first)
++          {
++            strokes[ends[0].first].closed = true;
++            return true;
++          }
++
++        Stroke &a = strokes[ends[0].first];
++        Stroke &b = strokes[ends[1].first];
++
++        /*  a must end with its selected node, b start with its one  */
++        auto reverse = [] (Stroke &st)
++          {
++            std::reverse (st.nodes.begin (), st.nodes.end ());
++            for (Node &n : st.nodes)
++              std::swap (n.in, n.out);
++          };
++
++        if (! ends[0].second)
++          reverse (a);
++        if (ends[1].second)
++          reverse (b);
++
++        if (Geom::distance (a.nodes.back ().pt, b.nodes.front ().pt) < 0.5)
++          {
++            a.nodes.back ().out = b.nodes.front ().out;
++            a.nodes.insert (a.nodes.end (), b.nodes.begin () + 1, b.nodes.end ());
++          }
++        else
++          {
++            a.nodes.insert (a.nodes.end (), b.nodes.begin (), b.nodes.end ());
++          }
++
++        b.nodes.clear ();
++        return true;
++      }
++
++    case CHOPGIMP_NODES_BREAK:
++      {
++        std::vector<Stroke> result;
++
++        for (Stroke &st : strokes)
++          {
++            std::vector<Node> nodes = st.nodes;
++            bool              any   = false;
++
++            for (const Node &n : nodes)
++              any = any || n.selected;
++
++            if (! any || nodes.size () < 2)
++              {
++                result.push_back (st);
++                continue;
++              }
++
++            changed = true;
++
++            if (st.closed)
++              {
++                /*  open the path at the first selected node  */
++                size_t first = 0;
++
++                while (! nodes[first].selected)
++                  first++;
++
++                std::rotate (nodes.begin (), nodes.begin () + first, nodes.end ());
++                nodes.push_back (nodes[0]);
++                nodes.front ().in  = nodes.front ().pt;
++                nodes.back ().out  = nodes.back ().pt;
++                nodes.front ().selected = nodes.back ().selected = FALSE;
++              }
++
++            /*  then cut at the other selected nodes  */
++            Stroke part;
++
++            part.closed = false;
++
++            for (size_t i = 0; i < nodes.size (); i++)
++              {
++                Node n = nodes[i];
++
++                part.nodes.push_back (n);
++
++                if (n.selected && i > 0 && i + 1 < nodes.size ())
++                  {
++                    part.nodes.back ().out      = n.pt;
++                    part.nodes.back ().selected = FALSE;
++                    result.push_back (part);
++                    part.nodes.clear ();
++
++                    n.in       = n.pt;
++                    n.selected = FALSE;
++                    part.nodes.push_back (n);
++                  }
++              }
++
++            result.push_back (part);
++          }
++
++        strokes = result;
++        return changed;
++      }
++
++    case CHOPGIMP_NODES_ROUND:
++      /*  done on the whole path, see below  */
++      return false;
++    }
++
++  return false;
++}
++
++extern "C" gboolean
++chopgimp_geom_nodes (GimpPath        *path,
++                     ChopGimpNodesOp  op,
++                     gdouble          value)
++{
++  std::vector<Stroke> strokes;
++  GimpStroke         *s;
++
++  if (op == CHOPGIMP_NODES_ROUND)
++    {
++      GimpPath *rounded = round_corners (path, value, true);
++
++      if (! rounded)
++        return FALSE;
++
++      gimp_path_freeze (path);
++      while ((s = gimp_path_stroke_get_next (path, NULL)))
++        gimp_path_stroke_remove (path, s);
++      gimp_path_add_strokes (rounded, path);
++      gimp_path_thaw (path);
++      g_object_unref (rounded);
++
++      return TRUE;
++    }
++
++  strokes = read_strokes (path);
++
++  if (! nodes_on_strokes (strokes, op, value))
++    return FALSE;
++
++  gimp_path_freeze (path);
++
++  while ((s = gimp_path_stroke_get_next (path, NULL)))
++    gimp_path_stroke_remove (path, s);
++
++  for (const Stroke &st : strokes)
++    if (! st.nodes.empty ())
++      add_stroke (path, st);
++
++  gimp_path_thaw (path);
++
++  return TRUE;
++}
++
++/* ─── live path effects ────────────────────────────────────────────── */
++
++struct Polyline
++{
++  std::vector<Point> pts;
++  bool               closed;
++};
++
++static std::vector<Polyline>
++sample_pv (const Geom::PathVector &pv, double step)
++{
++  std::vector<Polyline> out;
++
++  for (const Geom::Path &p : pv)
++    {
++      Polyline pl = { sample_path (p, step), p.closed () };
++
++      if (pl.pts.size () > 1)
++        out.push_back (pl);
++    }
++
++  return out;
++}
++
++/*  n points evenly spaced along a polyline  */
++static std::vector<Point>
++resample (const std::vector<Point> &pts, bool closed, int n, double *total = NULL)
++{
++  std::vector<Point>  seq = pts;
++  std::vector<double> acc (1, 0.0);
++  std::vector<Point>  out;
++
++  if (closed)
++    seq.push_back (pts[0]);
++
++  for (size_t i = 1; i < seq.size (); i++)
++    acc.push_back (acc.back () + Geom::distance (seq[i - 1], seq[i]));
++
++  if (total)
++    *total = acc.back ();
++
++  if (acc.back () <= 0 || n < 2)
++    return pts;
++
++  double step = acc.back () / (closed ? n : n - 1);
++  size_t j    = 0;
++
++  for (int k = 0; k < n; k++)
++    {
++      double d = k * step;
++
++      while (j + 2 < seq.size () && acc[j + 1] < d)
++        j++;
++
++      double seg = acc[j + 1] - acc[j];
++      double t   = seg > 0 ? (d - acc[j]) / seg : 0;
++
++      out.push_back (Geom::lerp (std::min (1.0, std::max (0.0, t)), seq[j], seq[j + 1]));
++    }
++
++  return out;
++}
++
++static std::vector<Point>
++normals (const std::vector<Point> &pts, bool closed)
++{
++  std::vector<Point> out;
++  size_t             n = pts.size ();
++
++  for (size_t i = 0; i < n; i++)
++    {
++      Point a = closed ? pts[(i + n - 1) % n] : pts[i > 0 ? i - 1 : 0];
++      Point b = closed ? pts[(i + 1) % n] : pts[std::min (i + 1, n - 1)];
++      Point t = safe_unit (b - a, Point (1, 0));
++
++      out.push_back (Point (-t[Geom::Y], t[Geom::X]));
++    }
++
++  return out;
++}
++
++static double
++polyline_length (const std::vector<Point> &pts, bool closed)
++{
++  double total = 0;
++
++  resample (pts, closed, 2, &total);
++
++  return total;
++}
++
++static Geom::Path
++width_shape (const std::vector<Point> &pts, bool closed,
++             std::function<double (double)> width)
++{
++  double             len = polyline_length (pts, closed);
++  int                n   = std::max (24, (int) (len / 3.0));
++  std::vector<Point> rp  = resample (pts, false, n);
++  std::vector<Point> nr  = normals (rp, false);
++  std::vector<Point> left, right;
++
++  for (int i = 0; i < n; i++)
++    {
++      double w = std::max (0.0, width ((double) i / (n - 1))) / 2.0;
++
++      left.push_back (rp[i] + nr[i] * w);
++      right.push_back (rp[i] - nr[i] * w);
++    }
++
++  std::reverse (right.begin (), right.end ());
++  left.insert (left.end (), right.begin (), right.end ());
++
++  return fit_points (left, true, 0.3);
++}
++
++/*  piecewise-linear interpolation of « pos:width » pairs  */
++static std::function<double (double)>
++width_profile (const std::string &spec, double fallback)
++{
++  std::vector<std::pair<double, double>> pts;
++  gchar **pairs = g_strsplit (spec.c_str (), ",", -1);
++
++  for (gchar **p = pairs; p && *p; p++)
++    {
++      gchar **kv = g_strsplit (*p, ":", 2);
++
++      if (kv[0] && kv[1])
++        pts.push_back ({ g_ascii_strtod (kv[0], NULL), g_ascii_strtod (kv[1], NULL) });
++
++      g_strfreev (kv);
++    }
++
++  g_strfreev (pairs);
++
++  std::sort (pts.begin (), pts.end ());
++
++  if (pts.empty ())
++    pts = { { 0.0, fallback }, { 1.0, fallback } };
++
++  return [pts] (double t)
++    {
++      if (t <= pts.front ().first)
++        return pts.front ().second;
++      if (t >= pts.back ().first)
++        return pts.back ().second;
++
++      for (size_t i = 1; i < pts.size (); i++)
++        if (t <= pts[i].first)
++          {
++            double u = (t - pts[i - 1].first) /
++                       std::max (1e-9, pts[i].first - pts[i - 1].first);
++
++            /*  smooth (cosine) between the width points  */
++            u = (1 - std::cos (u * M_PI)) / 2;
++
++            return pts[i - 1].second + u * (pts[i].second - pts[i - 1].second);
++          }
++
++      return pts.back ().second;
++    };
++}
++
++static double
++kd (GKeyFile *kf, const gchar *group, const gchar *key, double fallback)
++{
++  gchar *v = g_key_file_get_value (kf, group, key, NULL);
++  double d = v ? g_ascii_strtod (v, NULL) : fallback;
++
++  g_free (v);
++
++  return d;
++}
++
++static std::string
++ks (GKeyFile *kf, const gchar *group, const gchar *key)
++{
++  gchar       *v = g_key_file_get_value (kf, group, key, NULL);
++  std::string  s = v ? v : "";
++
++  g_free (v);
++
++  return s;
++}
++
++static Geom::Rect
++pv_bounds (const Geom::PathVector &pv)
++{
++  Geom::OptRect r = pv.boundsFast ();
++
++  return r ? *r : Geom::Rect (0, 0, 1, 1);
++}
++
++/*  path of another vector layer, by tattoo (pattern, spine)  */
++static Geom::PathVector
++layer_pv (GimpImage *image, double tattoo)
++{
++  GimpPath *path;
++
++  if (! image || tattoo <= 0)
++    return Geom::PathVector ();
++
++  path = chopgimp_vector_layer_path_by_tattoo (image, (guint) tattoo);
++
++  return path ? to_pv (path) : Geom::PathVector ();
++}
++
++/*  bend @shape along @spine: x of the shape → distance along the spine  */
++static Geom::PathVector
++along_path (const Geom::PathVector &shape, const Geom::PathVector &spine,
++            bool repeat, double spacing)
++{
++  Geom::PathVector out;
++
++  if (shape.empty () || spine.empty ())
++    return shape;
++
++  std::vector<Point> sp   = sample_path (spine[0], 1.0);
++  double             slen = polyline_length (sp, spine[0].closed ());
++  std::vector<Point> rs   = resample (sp, spine[0].closed (),
++                                      std::max (2, (int) slen), NULL);
++  std::vector<Point> nr   = normals (rs, spine[0].closed ());
++  Geom::Rect         bb   = pv_bounds (shape);
++  double             w    = std::max (1.0, bb.width ());
++  int                copies = repeat ? std::max (1, (int) (slen / (w + spacing))) : 1;
++  double             scale  = repeat ? 1.0 : slen / w;
++
++  auto map = [&] (Point p, int copy)
++    {
++      double x = (p[Geom::X] - bb.left ()) * scale + copy * (w + spacing);
++      double y = p[Geom::Y] - bb.midpoint ()[Geom::Y];
++      double f = std::min ((double) rs.size () - 1, std::max (0.0, x / slen * (rs.size () - 1)));
++      size_t i = std::min (rs.size () - 2, (size_t) f);
++      double t = f - i;
++      Point  base = Geom::lerp (t, rs[i], rs[i + 1]);
++      Point  n    = safe_unit (Geom::lerp (t, nr[i], nr[i + 1]), Point (0, 1));
++
++      return base + n * y;
++    };
++
++  for (int c = 0; c < copies; c++)
++    for (const Polyline &pl : sample_pv (shape, 1.5))
++      {
++        std::vector<Point> mapped;
++
++        for (const Point &p : pl.pts)
++          mapped.push_back (map (p, c));
++
++        out.push_back (fit_points (mapped, pl.closed, 0.3));
++      }
++
++  return out;
++}
++
++static Geom::PathVector
++apply_effect (GKeyFile *kf, const gchar *g, const Geom::PathVector &in, GimpImage *image)
++{
++  std::string      type = ks (kf, g, "type");
++  Geom::PathVector out;
++
++  if (type == "zigzag" || type == "wave" || type == "roughen")
++    {
++      double size   = kd (kf, g, "size", 8);
++      double ridges = kd (kf, g, "ridges", 24);
++      double length = kd (kf, g, "wavelength", 60);
++      bool   smooth = kd (kf, g, "smooth", 0) > 0.5 || type != "zigzag";
++      std::mt19937 rnd ((unsigned) kd (kf, g, "seed", 1));
++      std::uniform_real_distribution<double> uni (-1.0, 1.0);
++
++      for (const Polyline &pl : sample_pv (in, 1.0))
++        {
++          double             total = polyline_length (pl.pts, pl.closed);
++          int                n;
++          std::vector<Point> rp, nr, res;
++
++          if (type == "zigzag")
++            n = std::max (4, (int) ridges * 2) + (pl.closed ? 0 : 1);
++          else if (type == "wave")
++            n = std::max (16, (int) (total / std::max (2.0, length / 8.0)));
++          else
++            n = std::max (8, (int) (total / std::max (1.0, 100.0 / kd (kf, g, "detail", 20))));
++
++          rp = resample (pl.pts, pl.closed, n);
++          nr = normals (rp, pl.closed);
++
++          for (size_t i = 0; i < rp.size (); i++)
++            {
++              double d;
++
++              if (type == "zigzag")
++                d = size * ((i % 2) ? 1 : -1);
++              else if (type == "wave")
++                d = size * std::sin (2 * M_PI / std::max (1.0, length) *
++                                     total * i / (pl.closed ? n : n - 1));
++              else
++                d = size * uni (rnd);
++
++              res.push_back (rp[i] + nr[i] * d);
++            }
++
++          out.push_back (fit_points (res, pl.closed, 0.4, ! smooth));
++        }
++    }
++  else if (type == "twist" || type == "pucker")
++    {
++      Point  c   = pv_bounds (in).midpoint ();
++      double amt = kd (kf, g, type == "twist" ? "angle" : "amount", type == "twist" ? 90 : 40);
++      double rmax = 1;
++
++      for (const Polyline &pl : sample_pv (in, 2.0))
++        for (const Point &p : pl.pts)
++          rmax = std::max (rmax, Geom::distance (p, c));
++
++      for (const Polyline &pl : sample_pv (in, 2.0))
++        {
++          std::vector<Point> res;
++          int                n = pl.pts.size ();
++
++          for (int i = 0; i < n; i++)
++            {
++              Point  d = pl.pts[i] - c;
++              double r = Geom::L2 (d);
++
++              if (type == "twist")
++                {
++                  double a = amt * M_PI / 180 * (1 - r / rmax);
++
++                  res.push_back (c + d * Geom::Rotate (a));
++                }
++              else
++                {
++                  /*  pucker (< 0) / bloat (> 0): 0 at the corners of a
++                   *  regular shape, maximal between them
++                   */
++                  double w = std::fabs (std::sin (M_PI * 6 * i / n));
++
++                  res.push_back (c + d * (1 + amt / 100.0 * w));
++                }
++            }
++
++          out.push_back (fit_points (res, pl.closed, 0.4));
++        }
++    }
++  else if (type == "taper" || type == "powerstroke")
++    {
++      double width = kd (kf, g, "width", 12);
++      std::function<double (double)> prof;
++
++      if (type == "taper")
++        {
++          double s = std::max (0.0, kd (kf, g, "start", 0.2));
++          double e = std::max (0.0, kd (kf, g, "end", 0.2));
++
++          prof = [=] (double t)
++            {
++              double f = 1.0;
++
++              if (s > 0 && t < s)
++                f = t / s;
++              if (e > 0 && t > 1 - e)
++                f = std::min (f, (1 - t) / e);
++
++              return width * std::sqrt (std::max (0.0, f));
++            };
++        }
++      else
++        {
++          prof = width_profile (ks (kf, g, "widths"), width);
++        }
++
++      for (const Polyline &pl : sample_pv (in, 1.0))
++        out.push_back (width_shape (pl.pts, pl.closed, prof));
++    }
++  else if (type == "envelope")
++    {
++      Geom::Rect bb = pv_bounds (in);
++      Point      tl = bb.corner (0) + Point (kd (kf, g, "tl-x", 0), kd (kf, g, "tl-y", 0));
++      Point      tr = bb.corner (1) + Point (kd (kf, g, "tr-x", 0), kd (kf, g, "tr-y", 0));
++      Point      br = bb.corner (2) + Point (kd (kf, g, "br-x", 0), kd (kf, g, "br-y", 0));
++      Point      bl = bb.corner (3) + Point (kd (kf, g, "bl-x", 0), kd (kf, g, "bl-y", 0));
++
++      for (const Polyline &pl : sample_pv (in, 1.5))
++        {
++          std::vector<Point> res;
++
++          for (const Point &p : pl.pts)
++            {
++              double u = (p[Geom::X] - bb.left ()) / std::max (1.0, bb.width ());
++              double v = (p[Geom::Y] - bb.top ())  / std::max (1.0, bb.height ());
++
++              res.push_back (Geom::lerp (v, Geom::lerp (u, tl, tr), Geom::lerp (u, bl, br)));
++            }
++
++          out.push_back (fit_points (res, pl.closed, 0.3));
++        }
++    }
++  else if (type == "bend")
++    {
++      /*  the horizontal axis becomes an arc of « angle » degrees  */
++      Geom::Rect bb    = pv_bounds (in);
++      double     angle = kd (kf, g, "angle", 60) * M_PI / 180;
++
++      if (std::fabs (angle) < 1e-3)
++        return in;
++
++      double R  = bb.width () / angle;
++      Point  cc = Point (bb.midpoint ()[Geom::X], bb.midpoint ()[Geom::Y] + R);
++
++      for (const Polyline &pl : sample_pv (in, 1.5))
++        {
++          std::vector<Point> res;
++
++          for (const Point &p : pl.pts)
++            {
++              double a = (p[Geom::X] - bb.midpoint ()[Geom::X]) / R;
++              double r = R - (p[Geom::Y] - bb.midpoint ()[Geom::Y]);
++
++              res.push_back (cc + Point (std::sin (a) * r, -std::cos (a) * r));
++            }
++
++          out.push_back (fit_points (res, pl.closed, 0.3));
++        }
++    }
++  else if (type == "pattern")
++    {
++      Geom::PathVector pattern = layer_pv (image, kd (kf, g, "pattern-tattoo", 0));
++
++      if (pattern.empty ())
++        return in;
++
++      out = along_path (pattern, in, kd (kf, g, "repeat", 1) > 0.5, kd (kf, g, "spacing", 4));
++    }
++  else if (type == "along")
++    {
++      /*  this shape bent along another path (Inkscape « Bend »)  */
++      Geom::PathVector spine = layer_pv (image, kd (kf, g, "spine-tattoo", 0));
++
++      if (spine.empty ())
++        return in;
++
++      out = along_path (in, spine, false, 0);
++    }
++  else if (type == "offset")
++    {
++      double d = kd (kf, g, "distance", 5);
++      Geom::PathVector ring = outline_pv (in, 2 * std::fabs (d), CHOPGIMP_JOIN_ROUND,
++                                          CHOPGIMP_CAP_ROUND);
++
++      out = bool_op (in, ring, d > 0 ? CHOPGIMP_BOOL_UNION : CHOPGIMP_BOOL_DIFFERENCE);
++    }
++  else if (type == "round")
++    {
++      Geom::PathVector res;
++
++      for (const Geom::Path &p : in)
++        {
++          std::vector<Seg> segs = round_segs (path_to_segs (p), p.closed (),
++                                              kd (kf, g, "radius", 10), NULL);
++          Stroke st = segs_to_stroke (segs, p.closed ());
++
++          res.push_back (stroke_to_path (st, false));
++        }
++
++      out = res;
++    }
++  else
++    {
++      return in;
++    }
++
++  return out.empty () ? in : out;
++}
++
++extern "C" GimpPath *
++chopgimp_geom_effects (GimpPath    *path,
++                       const gchar *spec)
++{
++  GKeyFile        *kf = g_key_file_new ();
++  gchar          **groups;
++  Geom::PathVector pv;
++  GimpImage       *image = gimp_item_get_image (GIMP_ITEM (path));
++
++  if (! spec || ! g_key_file_load_from_data (kf, spec, -1, G_KEY_FILE_NONE, NULL))
++    {
++      g_key_file_free (kf);
++      return NULL;
++    }
++
++  pv     = to_pv (path);
++  groups = g_key_file_get_groups (kf, NULL);
++
++  /*  the effects apply in the order of their groups ([0], [1]…)  */
++  std::vector<std::string> order;
++
++  for (gchar **g = groups; g && *g; g++)
++    order.push_back (*g);
++
++  std::sort (order.begin (), order.end (),
++             [] (const std::string &a, const std::string &b)
++             { return atoi (a.c_str ()) < atoi (b.c_str ()); });
++
++  for (const std::string &g : order)
++    {
++      if (kd (kf, g.c_str (), "enabled", 1) < 0.5)
++        continue;
++
++      try
++        {
++          pv = apply_effect (kf, g.c_str (), pv, image);
++        }
++      catch (std::exception &e)
++        {
++          g_warning ("ChopGimp path effect %s: %s", g.c_str (), e.what ());
++        }
++    }
++
++  g_strfreev (groups);
++  g_key_file_free (kf);
++
++  return from_pv (path, pv);
++}
+diff --git a/app/path/chopgimp-geom.h b/app/path/chopgimp-geom.h
+new file mode 100644
+index 0000000..fcfb91c
+--- /dev/null
++++ b/app/path/chopgimp-geom.h
+@@ -0,0 +1,102 @@
++/* GIMP - The GNU Image Manipulation Program
++ * chopgimp-geom.h — ChopGimp: advanced vector operations on GimpPath,
++ * computed with lib2geom, the geometry library of Inkscape.
++ *
++ * This program is free software: you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation; either version 3 of the License, or
++ * (at your option) any later version.
++ */
++
++#pragma once
++
++G_BEGIN_DECLS
++
++typedef enum
++{
++  CHOPGIMP_BOOL_UNION,
++  CHOPGIMP_BOOL_DIFFERENCE,    /* the first path minus all the others  */
++  CHOPGIMP_BOOL_INTERSECTION,
++  CHOPGIMP_BOOL_EXCLUSION
++} ChopGimpBoolOp;
++
++typedef enum
++{
++  CHOPGIMP_JOIN_MITER,
++  CHOPGIMP_JOIN_ROUND,
++  CHOPGIMP_JOIN_BEVEL
++} ChopGimpJoin;
++
++typedef enum
++{
++  CHOPGIMP_CAP_BUTT,
++  CHOPGIMP_CAP_ROUND,
++  CHOPGIMP_CAP_SQUARE
++} ChopGimpCap;
++
++typedef enum
++{
++  CHOPGIMP_NODES_CORNER,       /* handles retracted                      */
++  CHOPGIMP_NODES_SMOOTH,       /* handles aligned, lengths kept          */
++  CHOPGIMP_NODES_SYMMETRIC,    /* handles aligned, same length           */
++  CHOPGIMP_NODES_AUTO,         /* handles from the neighbours            */
++  CHOPGIMP_NODES_TO_LINE,      /* segments between selected nodes → line */
++  CHOPGIMP_NODES_TO_CURVE,     /* line segments → curves                 */
++  CHOPGIMP_NODES_ALIGN_LEFT,
++  CHOPGIMP_NODES_ALIGN_HCENTER,
++  CHOPGIMP_NODES_ALIGN_RIGHT,
++  CHOPGIMP_NODES_ALIGN_TOP,
++  CHOPGIMP_NODES_ALIGN_VCENTER,
++  CHOPGIMP_NODES_ALIGN_BOTTOM,
++  CHOPGIMP_NODES_DISTRIBUTE_H,
++  CHOPGIMP_NODES_DISTRIBUTE_V,
++  CHOPGIMP_NODES_DELETE_KEEP,  /* delete, refit the curve                */
++  CHOPGIMP_NODES_JOIN,         /* join two selected end nodes            */
++  CHOPGIMP_NODES_BREAK,        /* cut the path at the selected nodes     */
++  CHOPGIMP_NODES_ROUND,        /* round the selected corners (value = r) */
++  CHOPGIMP_NODES_SELECT_ALL,
++  CHOPGIMP_NODES_SELECT_NONE
++} ChopGimpNodesOp;
++
++/*  all functions returning a GimpPath return a new, unattached path
++ *  of the image of their input (NULL on failure or empty result)
++ */
++GimpPath  * chopgimp_geom_boolean       (GimpPath       **paths,
++                                         gint             n_paths,
++                                         ChopGimpBoolOp   op);
++GimpPath ** chopgimp_geom_divide        (GimpPath       **paths,
++                                         gint             n_paths,
++                                         gint            *n_pieces);
++GimpPath  * chopgimp_geom_offset        (GimpPath        *path,
++                                         gdouble          distance,
++                                         ChopGimpJoin     join);
++GimpPath  * chopgimp_geom_outline       (GimpPath        *path,
++                                         gdouble          width,
++                                         ChopGimpJoin     join,
++                                         ChopGimpCap      cap);
++GimpPath  * chopgimp_geom_simplify      (GimpPath        *path,
++                                         gdouble          tolerance);
++GimpPath  * chopgimp_geom_round_corners (GimpPath        *path,
++                                         gdouble          radius,
++                                         gboolean         selected_only);
++GimpPath  * chopgimp_geom_reverse       (GimpPath        *path);
++
++gint        chopgimp_geom_count_nodes   (GimpPath        *path);
++gdouble     chopgimp_geom_area          (GimpPath        *path);
++
++/*  modifies @path in place (the caller pushes the undo step)  */
++gboolean    chopgimp_geom_nodes         (GimpPath        *path,
++                                         ChopGimpNodesOp  op,
++                                         gdouble          value);
++
++/*  live path effects: @spec is a GKeyFile text, one group per effect
++ *  ([0], [1]…) with « type » and the effect parameters
++ */
++GimpPath  * chopgimp_geom_effects       (GimpPath        *path,
++                                         const gchar     *spec);
++
++/*  the path of a vector layer found by its tattoo (in gimpvectorlayer.c)  */
++GimpPath  * chopgimp_vector_layer_path_by_tattoo (GimpImage *image,
++                                                  guint      tattoo);
++
++G_END_DECLS
+diff --git a/app/path/chopgimp-inkscape-pathstroke.cc b/app/path/chopgimp-inkscape-pathstroke.cc
+new file mode 100644
+index 0000000..0cad13b
+--- /dev/null
++++ b/app/path/chopgimp-inkscape-pathstroke.cc
+@@ -0,0 +1,1162 @@
++/* ChopGimp: taken from Inkscape 1.4 (src/helper/geom-pathstroke.cpp,
++ * commit e7c3feb), outline / offset part only, unchanged
++ * except for the includes. GPL-2.0-or-later, see the copyright notice below. */
++// SPDX-License-Identifier: GPL-2.0-or-later
++/* Authors:
++ *   Liam P. White
++ *   Tavmjong Bah
++ *   Alexander Brock
++ *
++ * Copyright (C) 2014-2015 Authors
++ *
++ * Released under GNU GPL v2+, read the file 'COPYING' for more information.
++ */
++
++#include <iomanip>
++#include <2geom/path-sink.h>
++#include <2geom/sbasis-to-bezier.h> // cubicbezierpath_from_sbasis
++#include <2geom/path-intersection.h>
++#include <2geom/circle.h>
++
++#include "chopgimp-inkscape-pathstroke.h"
++
++namespace Geom {
++
++static Point intersection_point(Point origin_a, Point vector_a, Point origin_b, Point vector_b)
++{
++    Coord denom = cross(vector_a, vector_b);
++    if (!are_near(denom,0.)) {
++        Coord t = (cross(vector_b, origin_a) + cross(origin_b, vector_b)) / denom;
++        return origin_a + vector_a*t;
++    }
++    return Point(infinity(), infinity());
++}
++
++/**
++* Find circle that touches inside of the curve, with radius matching the curvature, at time value \c t.
++* Because this method internally uses unitTangentAt, t should be smaller than 1.0 (see unitTangentAt).
++*/
++static Circle touching_circle( D2<SBasis> const &curve, double t, double tol=0.01 )
++{
++    D2<SBasis> dM=derivative(curve);
++    if ( are_near(L2sq(dM(t)), tol) ) {
++        dM=derivative(dM);
++    }
++    if ( are_near(L2sq(dM(t)), tol) ) {   // try second time
++        dM=derivative(dM);
++    }
++    Piecewise<D2<SBasis> > unitv = unitVector(dM,tol);
++    Piecewise<SBasis> dMlength = dot(Piecewise<D2<SBasis> >(dM),unitv);
++    Piecewise<SBasis> k = cross(derivative(unitv),unitv);
++    k = divide(k,dMlength,tol,3);
++    double curv = k(t); // note that this value is signed
++
++    Geom::Point normal = unitTangentAt(curve, t).cw();
++    double radius = 1/curv;
++    Geom::Point center = curve(t) + radius*normal;
++    return Geom::Circle(center, fabs(radius));
++}
++
++
++// Area of triangle given three corner points
++static double area( Geom::Point a, Geom::Point b, Geom::Point c ) {
++
++    using Geom::X;
++    using Geom::Y;
++    return( 0.5 * fabs( ( a[X]*(b[Y]-c[Y]) + b[X]*(c[Y]-a[Y]) + c[X]*(a[Y]-b[Y]) ) ) );
++}
++
++// Alternative touching circle routine directly using Beziers. Works only at end points.
++static Circle touching_circle( CubicBezier const &curve, bool start ) {
++
++    double k = 0;
++    Geom::Point p;
++    Geom::Point normal;
++    if ( start ) {
++        double distance = Geom::distance( curve[1], curve[0] );
++        k = 4.0/3.0 * area( curve[0], curve[1], curve[2] ) /
++            (distance * distance * distance);
++        if( Geom::cross(curve[0]-curve[1], curve[1]-curve[2]) < 0 ) {
++            k = -k;
++        }
++        p = curve[0];
++        normal = Geom::Point(curve[1] - curve[0]).cw();
++        normal.normalize();
++        // std::cout << "Start k: " << k << " d: " << distance << " normal: " << normal << std::endl;
++    } else {
++        double distance = Geom::distance( curve[3], curve[2] );
++        k = 4.0/3.0 * area( curve[1], curve[2], curve[3] ) /
++            (distance * distance * distance);
++        if( Geom::cross(curve[1]-curve[2], curve[2]-curve[3]) < 0 ) {
++            k = -k;
++        }
++        p = curve[3];
++        normal = Geom::Point(curve[3] - curve[2]).cw();
++        normal.normalize();
++        // std::cout << "End   k: " << k << " d: " << distance << " normal: " << normal << std::endl;
++    }
++    if( k == 0 ) {
++        return Geom::Circle( Geom::Point(0,std::numeric_limits<float>::infinity()),
++                             std::numeric_limits<float>::infinity());
++    } else {
++        double radius = 1/k;
++        Geom::Point center = p + normal * radius;
++        return Geom::Circle( center, fabs(radius) );
++    }
++}
++}
++
++namespace {
++
++// Internal data structure
++
++struct join_data {
++    join_data(Geom::Path &_res, Geom::Path const&_outgoing, Geom::Point _in_tang, Geom::Point _out_tang, double _miter, double _width)
++        : res(_res), outgoing(_outgoing), in_tang(_in_tang), out_tang(_out_tang), miter(_miter), width(_width) {};
++
++    // contains the current path that is being built on
++    Geom::Path &res;
++
++    // contains the next curve to append
++    Geom::Path const& outgoing;
++
++    // input tangents
++    Geom::Point in_tang;
++    Geom::Point out_tang;
++
++    // line parameters
++    double miter;
++    double width; // half stroke width
++};
++
++// Join functions must append the outgoing path
++
++typedef void join_func(join_data jd);
++
++void bevel_join(join_data jd)
++{
++    jd.res.appendNew<Geom::LineSegment>(jd.outgoing.initialPoint());
++    jd.res.append(jd.outgoing);
++}
++
++void round_join(join_data jd)
++{
++    jd.res.appendNew<Geom::EllipticalArc>(jd.width, jd.width, 0, false, jd.width <= 0, jd.outgoing.initialPoint());
++    jd.res.append(jd.outgoing);
++}
++
++void miter_join_internal(join_data const &jd, bool clip)
++{
++    using namespace Geom;
++
++    Curve const& incoming = jd.res.back();
++    Curve const& outgoing = jd.outgoing.front();
++    Path &res = jd.res;
++    double width = jd.width, miter = jd.miter;
++
++    Point tang1 = jd.in_tang;
++    Point tang2 = jd.out_tang;
++    Point p = intersection_point(incoming.finalPoint(), tang1, outgoing.initialPoint(), tang2);
++
++    bool satisfied = false;
++    bool inc_ls = res.back_open().degreesOfFreedom() <= 4;
++
++    if (p.isFinite()) {
++        // check size of miter
++        Point point_on_path = incoming.finalPoint() + rot90(tang1)*width;
++        // SVG defines miter length as distance between inner intersection and outer intersection,
++        // which is twice the distance from p to point_on_path but width is half stroke width.
++        satisfied = distance(p, point_on_path) <= miter * width; 
++        if (satisfied) {
++            // miter OK, check to see if we can do a relocation
++            if (inc_ls) {
++                res.setFinal(p);
++            } else {
++                res.appendNew<LineSegment>(p);
++            }
++        } else if (clip) {
++            // std::cout << "  Clipping ------------ " << std::endl;
++            // miter needs clipping, find two points
++            Point bisector_versor = Line(point_on_path, p).versor();
++            Point point_limit = point_on_path + miter * width * bisector_versor;
++            // std::cout << "     bisector_versor: " << bisector_versor << std::endl;
++            // std::cout << "     point_limit: " << point_limit << std::endl;
++            Point p1 = intersection_point(incoming.finalPoint(), tang1, point_limit, bisector_versor.cw());
++            Point p2 = intersection_point(outgoing.initialPoint(), tang2, point_limit, bisector_versor.cw());
++            // std::cout << "     p1: " << p1 << std::endl;
++            // std::cout << "     p2: " << p2 << std::endl;
++            if (inc_ls) {
++                res.setFinal(p1);
++            } else {
++                res.appendNew<LineSegment>(p1);
++            }
++            res.appendNew<LineSegment>(p2);
++        }
++    }
++
++    res.appendNew<LineSegment>(outgoing.initialPoint());
++
++    // check if we can do another relocation
++    bool out_ls = outgoing.degreesOfFreedom() <= 4;
++
++    if ((satisfied || clip) && out_ls) {
++        res.setFinal(outgoing.finalPoint());
++    } else {
++        res.append(outgoing);
++    }
++
++    // either way, add the rest of the path
++    res.insert(res.end(), ++jd.outgoing.begin(), jd.outgoing.end());
++}
++
++void miter_join(join_data jd) { miter_join_internal(jd, false); }
++void miter_clip_join(join_data jd) { miter_join_internal(jd, true); }
++
++Geom::Point pick_solution(std::vector<Geom::ShapeIntersection> points, Geom::Point tang2, Geom::Point endPt)
++{
++    assert(points.size() == 2);
++    Geom::Point sol;
++    if ( dot(tang2, points[0].point() - endPt) > 0 ) {
++        // points[0] is bad, choose points[1]
++        sol = points[1];
++    } else if ( dot(tang2, points[1].point() - endPt) > 0 ) { // points[0] could be good, now check points[1]
++        // points[1] is bad, choose points[0]
++        sol = points[0];
++    } else {
++        // both points are good, choose nearest
++        sol = ( distanceSq(endPt, points[0].point()) < distanceSq(endPt, points[1].point()) )
++            ? points[0].point() : points[1].point();
++    }
++    return sol;
++}
++
++// Arcs line join. If two circles don't intersect, expand inner circle.
++Geom::Point expand_circle( Geom::Circle &inner_circle, Geom::Circle const &outer_circle, Geom::Point const &start_pt, Geom::Point const &start_tangent ) {
++    // std::cout << "expand_circle:" << std::endl;
++    // std::cout << "  outer_circle: radius: " << outer_circle.radius() << "  center: " << outer_circle.center() << std::endl;
++    // std::cout << "  start: point: " << start_pt << "  tangent: " << start_tangent << std::endl;
++
++    if( !(outer_circle.contains(start_pt) ) ) {
++        // std::cout << "  WARNING: Outer circle does not contain starting point!" << std::endl;
++        return Geom::Point(0,0);
++    }
++
++    Geom::Line secant1(start_pt, start_pt + start_tangent);
++    std::vector<Geom::ShapeIntersection> chord1_pts = outer_circle.intersect(secant1);
++    // std::cout << "  chord1: " << chord1_pts[0].point() << ", " << chord1_pts[1].point() << std::endl;
++    Geom::LineSegment chord1(chord1_pts[0].point(), chord1_pts[1].point());
++
++    Geom::Line bisector = make_bisector_line( chord1 );
++    std::vector<Geom::ShapeIntersection> chord2_pts = outer_circle.intersect(bisector);
++    // std::cout << "  chord2: " << chord2_pts[0].point() << ", " << chord2_pts[1].point() << std::endl;
++    Geom::LineSegment chord2(chord2_pts[0].point(), chord2_pts[1].point());
++
++    // Find D, point on chord2 and on circle closest to start point
++    Geom::Coord d0 = Geom::distance(chord2_pts[0].point(),start_pt);
++    Geom::Coord d1 = Geom::distance(chord2_pts[1].point(),start_pt);
++    // std::cout << "  d0: " << d0 << " d1: " << d1 << std::endl;
++    Geom::Point d = (d0 < d1) ? chord2_pts[0].point() : chord2_pts[1].point();
++    Geom::Line da(d,start_pt);
++
++    // Chord through start point and point D
++    std::vector<Geom::ShapeIntersection> chord3_pts =  outer_circle.intersect(da);
++    // std::cout << "  chord3: " << chord3_pts[0].point() << ", " << chord3_pts[1].point() << std::endl;
++
++    // Find farthest point on chord3 and on circle (could be more robust)
++    Geom::Coord d2 = Geom::distance(chord3_pts[0].point(),d);
++    Geom::Coord d3 = Geom::distance(chord3_pts[1].point(),d);
++    // std::cout << "  d2: " << d2 << " d3: " << d3 << std::endl;
++
++    // Find point P, the intersection of outer circle and new inner circle
++    Geom::Point p = (d2 > d3) ? chord3_pts[0].point() : chord3_pts[1].point();
++
++    // Find center of new circle: it is at the intersection of the bisector
++    // of the chord defined by the start point and point P and a line through
++    // the start point and parallel to the first bisector.
++    Geom::LineSegment chord4(start_pt,p);
++    Geom::Line bisector2 = make_bisector_line( chord4 );
++    Geom::Line diameter = make_parallel_line( start_pt, bisector );
++    std::vector<Geom::ShapeIntersection> center_new = bisector2.intersect( diameter );
++    // std::cout << "  center_new: " << center_new[0].point() << std::endl;
++    Geom::Coord r_new = Geom::distance( center_new[0].point(), start_pt );
++    // std::cout << "  r_new: " << r_new << std::endl;
++
++    inner_circle.setCenter( center_new[0].point() );
++    inner_circle.setRadius( r_new );
++    return p;
++}
++
++// Arcs line join. If two circles don't intersect, adjust both circles so they just touch.
++// Increase (decrease) the radius of circle 1 and decrease (increase) of circle 2 by the same amount keeping the given points and tangents fixed.
++Geom::Point adjust_circles( Geom::Circle &circle1, Geom::Circle &circle2, Geom::Point const &point1, Geom::Point const &point2, Geom::Point const &tan1, Geom::Point const &tan2 ) {
++
++    Geom::Point n1 = (circle1.center() - point1).normalized(); // Always points towards center
++    Geom::Point n2 = (circle2.center() - point2).normalized();
++    Geom::Point sum_n = n1 + n2;
++
++    double r1 = circle1.radius();
++    double r2 = circle2.radius();
++    double delta_r = r2 - r1;
++    Geom::Point c1 = circle1.center();
++    Geom::Point c2 = circle2.center();
++    Geom::Point delta_c = c2 - c1;
++
++    // std::cout << "adjust_circles:" << std::endl;
++    // std::cout << "    norm: " << n1 << "; " << n2 << std::endl;
++    // std::cout << "    sum_n: " << sum_n << std::endl;
++    // std::cout << "    delta_r: " << delta_r << std::endl;
++    // std::cout << "    delta_c: " << delta_c << std::endl;
++
++    // Quadratic equation
++    double A = 4 - sum_n.length() * sum_n.length();
++    double B = 4.0 * delta_r - 2.0 * Geom::dot( delta_c, sum_n );
++    double C = delta_r * delta_r - delta_c.length() * delta_c.length();
++
++    double s1 = 0;
++    double s2 = 0;
++
++    if( fabs(A) < 0.01 ) {
++        // std::cout << "    A near zero! $$$$$$$$$$$$$$$$$$" << std::endl;
++        if( B != 0 ) {
++            s1 = -C/B;
++            s2 = -s1;
++        }
++    } else {
++        s1 = (-B + sqrt(B*B - 4*A*C))/(2*A);
++        s2 = (-B - sqrt(B*B - 4*A*C))/(2*A);
++    }
++
++    double dr = (fabs(s1)<=fabs(s2)?s1:s2);
++
++    // std::cout << "    A: " << A << std::endl;
++    // std::cout << "    B: " << B << std::endl;
++    // std::cout << "    C: " << C << std::endl;
++    // std::cout << "    s1: " << s1 << " s2: " << s2 << " dr: " << dr << std::endl;
++
++    circle1 = Geom::Circle( c1 - dr*n1, r1-dr );
++    circle2 = Geom::Circle( c2 + dr*n2, r2+dr );
++
++    // std::cout << "    C1: " << circle1 << std::endl;
++    // std::cout << "    C2: " << circle2 << std::endl;
++    // std::cout << "    d': " << Geom::Point( circle1.center() - circle2.center() ).length() << std::endl;
++
++    Geom::Line bisector( circle1.center(), circle2.center() );
++    std::vector<Geom::ShapeIntersection> points = circle1.intersect( bisector );
++    Geom::Point p0 = points[0].point();
++    Geom::Point p1 = points[1].point();
++    // std::cout << "    points: " << p0 << "; " << p1 << std::endl;
++    if( std::abs( Geom::distance( p0, circle2.center() ) - circle2.radius() ) <
++        std::abs( Geom::distance( p1, circle2.center() ) - circle2.radius() ) ) {
++        return p0;
++    } else {
++        return p1;
++    }
++}
++
++void extrapolate_join_internal(join_data const &jd, int alternative)
++{
++    // std::cout << "\nextrapolate_join: entrance: alternative: " << alternative << std::endl;
++    using namespace Geom;
++
++    Geom::Path &res = jd.res;
++    Geom::Curve const& incoming = res.back();
++    Geom::Curve const& outgoing = jd.outgoing.front();
++    Geom::Point startPt = incoming.finalPoint();
++    Geom::Point endPt = outgoing.initialPoint();
++    Geom::Point tang1 = jd.in_tang;
++    Geom::Point tang2 = jd.out_tang;
++    // width is half stroke-width
++    double width = jd.width, miter = jd.miter;
++
++    // std::cout << "  startPt: " << startPt << "  endPt: " << endPt << std::endl;
++    // std::cout << "  tang1: " << tang1 << "  tang2: " << tang2 <<  std::endl;
++    // std::cout << "    dot product: " << Geom::dot( tang1, tang2 ) <<  std::endl;
++    // std::cout << "  width: " << width << std::endl;
++
++    // CIRCLE CALCULATION TESTING
++    Geom::Circle circle1 = touching_circle(Geom::reverse(incoming.toSBasis()), 0.);
++    Geom::Circle circle2 = touching_circle(outgoing.toSBasis(), 0);
++    // std::cout << "  circle1: " << circle1 << std::endl;
++    // std::cout << "  circle2: " << circle2 << std::endl;
++    if( Geom::CubicBezier const * in_bezier = dynamic_cast<Geom::CubicBezier const*>(&incoming) ) {
++        Geom::Circle circle_test1 = touching_circle(*in_bezier, false);
++        if( !Geom::are_near( circle1, circle_test1, 0.01 ) ) {
++            // std::cout << "  Circle 1 error!!!!!!!!!!!!!!!!!" << std::endl;
++            // std::cout << "           " << circle_test1 << std::endl;
++        }
++    }
++    if( Geom::CubicBezier const * out_bezier = dynamic_cast<Geom::CubicBezier const*>(&outgoing) ) {
++        Geom::Circle circle_test2 = touching_circle(*out_bezier, true);
++        if( !Geom::are_near( circle2, circle_test2, 0.01 ) ) {
++            // std::cout << "  Circle 2 error!!!!!!!!!!!!!!!!!" << std::endl;
++            // std::cout << "           " << circle_test2 << std::endl;
++        }
++    }
++    // END TESTING
++
++    Geom::Point center1 = circle1.center();
++    double side1 = tang1[Geom::X]*(startPt[Geom::Y]-center1[Geom::Y]) - tang1[Geom::Y]*(startPt[Geom::X]-center1[Geom::X]);
++    // std::cout << "  side1: " << side1 << std::endl;
++
++    bool inc_ls = !circle1.center().isFinite();
++    bool out_ls = !circle2.center().isFinite();
++
++    std::vector<Geom::ShapeIntersection> points;
++
++    Geom::EllipticalArc *arc1 = nullptr;
++    Geom::EllipticalArc *arc2 = nullptr;
++    Geom::LineSegment *seg1 = nullptr;
++    Geom::LineSegment *seg2 = nullptr;
++    Geom::Point sol;
++    Geom::Point p1;
++    Geom::Point p2;
++
++    if (!inc_ls && !out_ls) {
++        // std::cout << " two circles" << std::endl;
++
++        // See if tangent is backwards (radius < width/2 and circle is inside stroke).
++        Geom::Point node_on_path = startPt + Geom::rot90(tang1)*width;
++        // std::cout << "  node_on_path: " << node_on_path << "  -------------- " << std::endl;
++        bool b1 = false;
++        bool b2 = false;
++        if (circle1.radius() < width &&  distance( circle1.center(), node_on_path ) < width) {
++            b1 = true;
++        }
++        if (circle2.radius() < width &&  distance( circle2.center(), node_on_path ) < width) {
++            b2 = true;
++        }
++        // std::cout << "  b1: " << (b1?"true":"false")
++        //           << "  b2: " << (b2?"true":"false") << std::endl;
++
++        // Two circles
++        points = circle1.intersect(circle2);
++
++        if (points.size() != 2) {
++            // std::cout << "   Circles do not intersect, do backup" << std::endl;
++            switch (alternative) {
++                case 1:
++                {
++                    // Fallback to round if one path has radius smaller than half line width.
++                    if(b1 || b2) {
++                        // std::cout << "At one least path has radius smaller than half line width." << std::endl;
++                        return( round_join(jd) );
++                    }
++
++                    Point p;
++                    if( circle2.contains( startPt ) && !circle1.contains( endPt ) ) {
++                        // std::cout << "Expand circle1" << std::endl;
++                        p = expand_circle( circle1, circle2, startPt, tang1 );
++                        points.emplace_back( 0, 0, p );
++                        points.emplace_back( 0, 0, p );
++                    } else if( circle1.contains( endPt ) && !circle2.contains( startPt ) ) {
++                        // std::cout << "Expand circle2" << std::endl;
++                        p = expand_circle( circle2, circle1, endPt, tang2 );
++                        points.emplace_back( 0, 0, p );
++                        points.emplace_back( 0, 0, p );
++                    } else {
++                        // std::cout << "Either both points inside or both outside" << std::endl;
++                        return( miter_clip_join(jd) );
++                    }
++                    break;
++                    
++                }
++                case 2:
++                {
++                    // Fallback to round if one path has radius smaller than half line width.
++                    if(b1 || b2) {
++                        // std::cout << "At one least path has radius smaller than half line width." << std::endl;
++                        return( round_join(jd) );
++                    }
++
++                    if( ( circle2.contains( startPt ) && !circle1.contains( endPt ) ) ||
++                        ( circle1.contains( endPt ) && !circle2.contains( startPt ) ) ) {
++                        
++                        Geom::Point apex = adjust_circles( circle1, circle2, startPt, endPt, tang1, tang2 );
++                        points.emplace_back( 0, 0, apex );
++                        points.emplace_back( 0, 0, apex );
++                    } else {
++                        // std::cout << "Either both points inside or both outside" << std::endl;
++                        return( miter_clip_join(jd) );
++                    }
++                        
++                    break;
++                }
++                case 3:
++                    if( side1 > 0 ) {
++                        Geom::Line secant(startPt, startPt + tang1);
++                        points = circle2.intersect(secant);
++                        circle1.setRadius(std::numeric_limits<float>::infinity());
++                        circle1.setCenter(Geom::Point(0,std::numeric_limits<float>::infinity()));
++                    } else {
++                        Geom::Line secant(endPt, endPt + tang2);
++                        points = circle1.intersect(secant);
++                        circle2.setRadius(std::numeric_limits<float>::infinity());
++                        circle2.setCenter(Geom::Point(0,std::numeric_limits<float>::infinity()));
++                    }
++                    break;
++
++
++                case 0:
++                default:
++                    // Do nothing
++                    break;
++            }
++        }
++
++        if (points.size() == 2) {
++            sol = pick_solution(points, tang2, endPt);
++            if( circle1.radius() != std::numeric_limits<float>::infinity() ) {
++                arc1 = circle1.arc(startPt, 0.5*(startPt+sol), sol);
++            } else {
++                seg1 = new Geom::LineSegment(startPt, sol);
++            }
++            if( circle2.radius() != std::numeric_limits<float>::infinity() ) {
++                arc2 = circle2.arc(sol, 0.5*(sol+endPt), endPt);
++            } else {
++                seg2 = new Geom::LineSegment(sol, endPt);
++            }
++        }
++    } else if (inc_ls && !out_ls) {
++        // Line and circle
++        // std::cout << " line circle" << std::endl;
++        points = circle2.intersect(Line(incoming.initialPoint(), incoming.finalPoint()));
++        if (points.size() == 2) {
++            sol = pick_solution(points, tang2, endPt);
++            arc2 = circle2.arc(sol, 0.5*(sol+endPt), endPt);
++        }
++    } else if (!inc_ls && out_ls) {
++        // Circle and line
++        // std::cout << " circle line" << std::endl;
++        points = circle1.intersect(Line(outgoing.initialPoint(), outgoing.finalPoint()));
++        if (points.size() == 2) {
++            sol = pick_solution(points, tang2, endPt);
++            arc1 = circle1.arc(startPt, 0.5*(sol+startPt), sol);
++        }
++    }
++    if (points.size() != 2) {
++        // std::cout << " no solutions" << std::endl;
++        // no solutions available, fall back to miter
++        return miter_join(jd);
++    }
++
++    // We have a solution, thus sol is defined.
++    p1 = sol;
++    
++    // See if we need to clip. Miter length is measured along a circular arc that is tangent to the
++    // bisector of the incoming and out going angles and passes through the end point (sol) of the
++    // line join.
++
++    // Center of circle is intersection of a line orthogonal to bisector and a line bisecting
++    // a chord connecting the path end point (point_on_path) and the join end point (sol).
++    Geom::Point point_on_path = startPt + Geom::rot90(tang1)*width;
++    Geom::Line bisector = make_angle_bisector_line(startPt, point_on_path, endPt);
++    Geom::Line ortho = make_orthogonal_line(point_on_path, bisector); 
++
++    Geom::LineSegment chord(point_on_path, sol);
++    Geom::Line bisector_chord =  make_bisector_line(chord);
++
++    Geom::Line limit_line;
++    double miter_limit = width * miter;
++    bool clipped = false;
++
++    if (are_parallel(bisector_chord, ortho)) {
++        // No intersection (can happen if curvatures are equal but opposite)
++        if (Geom::distance(point_on_path, sol) > miter_limit) {
++            clipped = true;
++            Geom::Point temp = bisector.versor();
++            Geom::Point limit_point = point_on_path + miter_limit * temp; 
++            limit_line = make_parallel_line( limit_point, ortho );
++        }
++    } else {
++        Geom::Point center =
++            Geom::intersection_point( bisector_chord.pointAt(0), bisector_chord.versor(),
++                                      ortho.pointAt(0),          ortho.versor() );
++        Geom::Coord radius = distance(center, point_on_path);
++        Geom::Circle circle_center(center, radius);
++
++        double limit_angle = miter_limit / radius;
++
++        Geom::Ray start_ray(center, point_on_path);
++        Geom::Ray end_ray(center, sol);
++        Geom::Line limit_line(center, 0); // Angle set below
++
++        if (Geom::cross(start_ray.versor(), end_ray.versor()) < 0) {
++            limit_line.setAngle(start_ray.angle() - limit_angle);
++        } else {
++            limit_line.setAngle(start_ray.angle() + limit_angle);
++        }
++
++        Geom::EllipticalArc *arc_center = circle_center.arc(point_on_path, 0.5*(point_on_path + sol), sol);
++        if (arc_center && arc_center->sweepAngle() > limit_angle) {
++            // We need to clip
++            clipped = true;
++
++            if (!inc_ls) {
++                // Incoming circular
++                points = circle1.intersect(limit_line);
++                if (points.size() == 2) {
++                    p1 = pick_solution(points, tang2, endPt);
++                    delete arc1;
++                    arc1 = circle1.arc(startPt, 0.5*(p1+startPt), p1);
++                }
++            } else {
++                p1 = Geom::intersection_point(startPt, tang1, limit_line.pointAt(0), limit_line.versor());
++            }
++
++            if (!out_ls) {
++                // Outgoing circular
++                points = circle2.intersect(limit_line);
++                if (points.size() == 2) {
++                    p2 = pick_solution(points, tang1, endPt);
++                    delete arc2;
++                    arc2 = circle2.arc(p2, 0.5*(p2+endPt), endPt);
++                }
++            } else {
++                p2 = Geom::intersection_point(endPt, tang2, limit_line.pointAt(0), limit_line.versor());
++            }
++        }
++    }    
++
++    // Add initial
++    if (arc1) {
++        res.append(*arc1);
++    } else if (seg1 ) {
++        res.append(*seg1);
++    } else {
++        // Straight line segment: move last point
++        res.setFinal(p1);
++    }
++
++    if (clipped) {
++        res.appendNew<Geom::LineSegment>(p2);
++    }
++
++    // Add outgoing
++    if (arc2) {
++        res.append(*arc2);
++        res.append(outgoing);
++    } else if (seg2 ) {
++        res.append(*seg2);
++        res.append(outgoing);
++    } else {
++        // Straight line segment:
++        res.appendNew<Geom::LineSegment>(outgoing.finalPoint());
++    }
++
++    // add the rest of the path
++    res.insert(res.end(), ++jd.outgoing.begin(), jd.outgoing.end());
++
++    delete arc1;
++    delete arc2;
++    delete seg1;
++    delete seg2;
++}
++
++void extrapolate_join(     join_data jd) { extrapolate_join_internal(jd, 0); }
++void extrapolate_join_alt1(join_data jd) { extrapolate_join_internal(jd, 1); }
++void extrapolate_join_alt2(join_data jd) { extrapolate_join_internal(jd, 2); }
++void extrapolate_join_alt3(join_data jd) { extrapolate_join_internal(jd, 3); }
++
++
++void tangents(Geom::Point tang[2], Geom::Curve const& incoming, Geom::Curve const& outgoing)
++{
++    Geom::Point tang1 = Geom::unitTangentAt(reverse(incoming.toSBasis()), 0.);
++    Geom::Point tang2 = outgoing.unitTangentAt(0.);
++    tang[0] = tang1, tang[1] = tang2;
++}
++
++// Offsetting a line segment is mathematically stable and quick to do
++Geom::LineSegment offset_line(Geom::LineSegment const& l, double width)
++{
++    Geom::Point tang1 = Geom::rot90(l.unitTangentAt(0));
++    Geom::Point tang2 = Geom::rot90(unitTangentAt(reverse(l.toSBasis()), 0.));
++
++    Geom::Point start = l.initialPoint() + tang1 * width;
++    Geom::Point end = l.finalPoint() - tang2 * width;
++    
++    return Geom::LineSegment(start, end);
++}
++
++void get_cubic_data(Geom::CubicBezier const& bez, double time, double& len, double& rad)
++{
++    // get derivatives
++    std::vector<Geom::Point> derivs = bez.pointAndDerivatives(time, 3);
++
++    Geom::Point der1 = derivs[1]; // first deriv (tangent vector)
++    Geom::Point der2 = derivs[2]; // second deriv (tangent's tangent)
++    double l = Geom::L2(der1); // length
++
++    len = rad = 0;
++
++    // TODO: we might want to consider using Geom::touching_circle to determine the
++    // curvature radius here. Less code duplication, but slower
++
++    if (Geom::are_near(l, 0, 1e-4)) {
++        l = Geom::L2(der2) / 2;
++        Geom::Point der3 = derivs.at(3); // try second time
++        if (Geom::are_near(l, 0, 1e-4)) {
++            l = Geom::L2(der3);
++            if (Geom::are_near(l, 0)) {
++                return; // this isn't a segment...
++            }
++        rad = 1e8;
++        } else {
++            rad = -l * (Geom::dot(der2, der2) / Geom::cross(der2, der3));
++        }
++    } else {
++        rad = -l * (Geom::dot(der1, der1) / Geom::cross(der1, der2));
++    }
++    len = l;
++}
++
++double _offset_cubic_stable_sub(
++        Geom::CubicBezier const& bez,
++        Geom::CubicBezier& c,
++        const Geom::Point& start_normal,
++        const Geom::Point& end_normal,
++        const Geom::Point& start_new,
++        const Geom::Point& end_new,
++        const double start_rad,
++        const double end_rad,
++        const double start_len,
++        const double end_len,
++        const double width,
++        const double width_correction) {
++    using Geom::X;
++    using Geom::Y;
++
++    double start_off = 1, end_off = 1;
++    // correction of the lengths of the tangent to the offset
++    // start_off / end_off can also be negative. This is intended and
++    // is the case when *_radius is negative and its absolute value smaller then width.
++    if (!Geom::are_near(start_rad, 0)) {
++        start_off += width / start_rad;
++    }
++    if (!Geom::are_near(end_rad, 0)) {
++        end_off += width / end_rad;
++    }
++
++    // the correction factor should not change the sign of the factors
++    // as it is only a scaling heuristic to make the approximation better.
++    const auto correction_factor = 1 + width_correction / width;
++    if (correction_factor > 0) {
++        start_off *= correction_factor;
++        end_off *= correction_factor;
++    }
++
++    start_off *= start_len;
++    end_off *= end_len;
++
++    Geom::Point mid1_new = start_normal.ccw()*start_off;
++    mid1_new = Geom::Point(start_new[X] + mid1_new[X]/3., start_new[Y] + mid1_new[Y]/3.);
++    Geom::Point mid2_new = end_normal.ccw()*end_off;
++    mid2_new = Geom::Point(end_new[X] - mid2_new[X]/3., end_new[Y] - mid2_new[Y]/3.);
++
++    // create the estimate curve
++    c = Geom::CubicBezier(start_new, mid1_new, mid2_new, end_new);
++
++    // check the tolerance for our estimate to be a parallel curve
++    // both directions have to be checked, as we are computing a hausdorff distance with offset
++    double worst_residual = 0;
++    const auto min_offset_difference = [width, &worst_residual](Geom::CubicBezier const &bez1,
++                                                                Geom::CubicBezier const &bez2, const double time) {
++        const Geom::Point requested_point = bez1.pointAt(time);
++        const Geom::Point closest_point = bez2.pointAt(bez2.nearestTime(requested_point));
++        const double current_residual = (requested_point - closest_point).length() - std::abs(width);
++        if (std::abs(current_residual) > std::abs(worst_residual)) {
++            worst_residual = current_residual;
++        }
++    };
++    for (size_t ii = 3; ii <= 7; ii += 2) {
++        const double t = static_cast<double>(ii) / 10;
++
++        min_offset_difference(bez, c, t);
++        min_offset_difference(c, bez, t);
++    }
++    return worst_residual;
++}
++
++void offset_cubic(Geom::Path& p, Geom::CubicBezier const& bez, double width, double tol, size_t levels)
++{
++    using Geom::X;
++    using Geom::Y;
++
++    const Geom::Point start_pos = bez.initialPoint();
++    const Geom::Point end_pos = bez.finalPoint();
++
++    const Geom::Point start_normal = Geom::rot90(bez.unitTangentAt(0));
++    const Geom::Point end_normal = -Geom::rot90(Geom::unitTangentAt(Geom::reverse(bez.toSBasis()), 0.));
++
++    // offset the start and end control points out by the width
++    const Geom::Point start_new = start_pos + start_normal*width;
++    const Geom::Point end_new = end_pos + end_normal*width;
++
++    // --------
++    double start_rad, end_rad;
++    double start_len, end_len; // tangent lengths
++    get_cubic_data(bez, 0, start_len, start_rad);
++    get_cubic_data(bez, 1, end_len, end_rad);
++
++
++    Geom::CubicBezier c;
++
++    double best_width_correction = 0;
++    double best_residual = _offset_cubic_stable_sub(
++                bez, c,
++                start_normal, end_normal,
++                start_new, end_new,
++                start_rad, end_rad,
++                start_len, end_len,
++                width, best_width_correction);
++    double stepsize = std::abs(width)/2;
++    bool seen_success = false;
++    double stepsize_threshold = 0;
++    // std::cout << "Residual from " << best_residual << " ";
++    size_t ii = 0;
++    for (; ii < 100 && stepsize > stepsize_threshold; ++ii) {
++        bool success = false;
++        const double width_correction = best_width_correction - (best_residual > 0 ? 1 : -1) * stepsize;
++        Geom::CubicBezier current_curve;
++        const double residual = _offset_cubic_stable_sub(
++                    bez, current_curve,
++                    start_normal, end_normal,
++                    start_new, end_new,
++                    start_rad, end_rad,
++                    start_len, end_len,
++                    width, width_correction);
++        if (std::abs(residual) < std::abs(best_residual)) {
++            best_residual = residual;
++            best_width_correction = width_correction;
++            c = current_curve;
++            success = true;
++            if (std::abs(best_residual) < tol/4) {
++                break;
++            }
++        }
++
++        if (success) {
++            if (!seen_success) {
++                seen_success = true;
++                //std::cout << "Stepsize factor: " << std::abs(width) / stepsize << std::endl;
++                stepsize_threshold = stepsize / 1000;
++            }
++        }
++        else {
++            stepsize /= 2;
++        }
++        if (std::abs(best_width_correction) >= std::abs(width)/2) {
++            //break; // Seems to prevent some numerical instabilities, not clear if useful
++        }
++    }
++
++    // reached maximum recursive depth
++    // don't bother with any more correction
++    if (levels == 0) {
++        try {
++            p.append(c);
++        }
++        catch (...) {
++            if ((p.finalPoint() - c.initialPoint()).length() < 1e-6) {
++                c.setInitial(p.finalPoint());
++            }
++            else {
++                auto line = Geom::LineSegment(p.finalPoint(), c.initialPoint());
++                p.append(line);
++            }
++            p.append(c);
++        }
++
++        return;
++    }
++
++    // We find the point on (bez) for which the distance between
++    // (c) and (bez) differs the most from the desired distance (width).
++    // both directions have to be checked, as we are computing a hausdorff distance with offset
++    double worst_err = std::abs(best_residual);
++    double worst_time = .5;
++    const auto min_offset_difference = [width, &worst_err, &worst_time](Geom::CubicBezier const &bez1,
++                                                                        Geom::CubicBezier const &bez2,
++                                                                        const double time) {
++        const Geom::Point requested_point = bez1.pointAt(time);
++        const Geom::Point closest_point = bez2.pointAt(bez2.nearestTime(requested_point));
++        const double current_residual = std::abs((requested_point - closest_point).length() - std::abs(width));
++        if (current_residual > worst_err) {
++            worst_err = current_residual;
++            worst_time = time;
++        }
++    };
++    for (size_t ii = 1; ii <= 9; ++ii) {
++        const double t = static_cast<double>(ii) / 10;
++
++        min_offset_difference(bez, c, t);
++        min_offset_difference(c, bez, t);
++    }
++
++    if (worst_err < tol) {
++        if (Geom::are_near(start_new, p.finalPoint())) {
++            p.setFinal(start_new); // if it isn't near, we throw
++        }
++
++        // we're good, curve is accurate enough
++        p.append(c);
++        return;
++    } else {
++        // split the curve in two
++        std::pair<Geom::CubicBezier, Geom::CubicBezier> s = bez.subdivide(worst_time);
++        offset_cubic(p, s.first, width, tol, levels - 1);
++        offset_cubic(p, s.second, width, tol, levels - 1);
++    }
++}
++
++void offset_quadratic(Geom::Path& p, Geom::QuadraticBezier const& bez, double width, double tol, size_t levels)
++{
++    // cheat
++    // it's faster
++    // seriously
++    std::vector<Geom::Point> points = bez.controlPoints();
++    Geom::Point b1 = points[0] + (2./3) * (points[1] - points[0]);
++    Geom::Point b2 = b1 + (1./3) * (points[2] - points[0]);
++    Geom::CubicBezier cub = Geom::CubicBezier(points[0], b1, b2, points[2]);
++    offset_cubic(p, cub, width, tol, levels);
++}
++
++void offset_curve(Geom::Path& res, Geom::Curve const* current, double width, double tolerance)
++{
++    size_t levels = 8;
++
++    if (current->isDegenerate()) return; // don't do anything
++
++    // TODO: we can handle SVGEllipticalArc here as well, do that!
++
++    if (Geom::BezierCurve const *b = dynamic_cast<Geom::BezierCurve const*>(current)) {
++        size_t order = b->order();
++        switch (order) {
++            case 1:
++                res.append(offset_line(static_cast<Geom::LineSegment const&>(*current), width));
++                break;
++            case 2: {
++                Geom::QuadraticBezier const& q = static_cast<Geom::QuadraticBezier const&>(*current);
++                offset_quadratic(res, q, width, tolerance, levels);
++                break;
++            }
++            case 3: {
++                Geom::CubicBezier const& cb = static_cast<Geom::CubicBezier const&>(*current);
++                offset_cubic(res, cb, width, tolerance, levels);
++                break;
++            }
++            default: {
++                Geom::Path sbasis_path = Geom::cubicbezierpath_from_sbasis(current->toSBasis(), tolerance);
++                for (const auto & i : sbasis_path)
++                    offset_curve(res, &i, width, tolerance);
++                break;
++            }
++        }
++    } else {
++        Geom::Path sbasis_path = Geom::cubicbezierpath_from_sbasis(current->toSBasis(), 0.1);
++        for (const auto & i : sbasis_path)
++            offset_curve(res, &i, width, tolerance);
++    }
++}
++
++typedef void cap_func(Geom::PathBuilder& res, Geom::Path const& with_dir, Geom::Path const& against_dir, double width);
++
++void flat_cap(Geom::PathBuilder& res, Geom::Path const&, Geom::Path const& against_dir, double)
++{
++    res.lineTo(against_dir.initialPoint());
++}
++
++void round_cap(Geom::PathBuilder& res, Geom::Path const&, Geom::Path const& against_dir, double width)
++{
++    res.arcTo(width / 2., width / 2., 0., true, false, against_dir.initialPoint());
++}
++
++void square_cap(Geom::PathBuilder& res, Geom::Path const& with_dir, Geom::Path const& against_dir, double width)
++{
++    width /= 2.;
++    Geom::Point normal_1 = -Geom::unitTangentAt(Geom::reverse(with_dir.back().toSBasis()), 0.);
++    Geom::Point normal_2 = -against_dir[0].unitTangentAt(0.);
++    res.lineTo(with_dir.finalPoint() + normal_1*width);
++    res.lineTo(against_dir.initialPoint() + normal_2*width);
++    res.lineTo(against_dir.initialPoint());
++}
++
++void peak_cap(Geom::PathBuilder& res, Geom::Path const& with_dir, Geom::Path const& against_dir, double width)
++{
++    width /= 2.;
++    Geom::Point normal_1 = -Geom::unitTangentAt(Geom::reverse(with_dir.back().toSBasis()), 0.);
++    Geom::Point normal_2 = -against_dir[0].unitTangentAt(0.);
++    Geom::Point midpoint = ((with_dir.finalPoint() + normal_1*width) + (against_dir.initialPoint() + normal_2*width)) * 0.5;
++    res.lineTo(midpoint);
++    res.lineTo(against_dir.initialPoint());
++}
++
++} // namespace
++
++namespace Inkscape {
++
++Geom::PathVector outline(
++        Geom::Path const& input,
++        double width,
++        double miter,
++        LineJoinType join,
++        LineCapType butt,
++        double tolerance)
++{
++    if (input.size() == 0) return Geom::PathVector(); // nope, don't even try
++
++    Geom::PathBuilder res;
++    Geom::Path with_dir = half_outline(input, width/2., miter, join, tolerance);
++    Geom::Path against_dir = half_outline(input.reversed(), width/2., miter, join, tolerance);
++    res.moveTo(with_dir[0].initialPoint());
++    res.append(with_dir);
++
++    cap_func *cf;
++    switch (butt) {
++        case BUTT_ROUND:
++            cf = &round_cap;
++            break;
++        case BUTT_SQUARE:
++            cf = &square_cap;
++            break;
++        case BUTT_PEAK:
++            cf = &peak_cap;
++            break;
++        default:
++            cf = &flat_cap;
++    }
++
++    // glue caps
++    if (!input.closed()) {
++        cf(res, with_dir, against_dir, width);
++    } else {
++        res.closePath();
++        res.moveTo(against_dir.initialPoint());
++    }
++
++    res.append(against_dir);
++
++    if (!input.closed()) {
++        cf(res, against_dir, with_dir, width);
++    }
++
++    res.closePath();
++    res.flush();
++    return res.peek();
++}
++
++Geom::Path half_outline(
++        Geom::Path const& input,
++        double width,
++        double miter,
++        LineJoinType join,
++        double tolerance)
++{
++    if (tolerance <= 0) {
++        if (std::abs(width) > 0) {
++            tolerance = std::abs(width) / 100;
++        }
++        else {
++            tolerance = 1e-4;
++        }
++    }
++    Geom::Path res;
++    if (input.size() == 0) return res;
++
++    Geom::Point tang1 = input[0].unitTangentAt(0);
++    Geom::Point start = input.initialPoint() + tang1 * width;
++    Geom::Path temp;
++    Geom::Point tang[2];
++
++    res.setStitching(true);
++    temp.setStitching(true);
++
++    res.start(start);
++
++    // Do two curves at a time for efficiency, since the join function needs to know the outgoing curve as well
++    const Geom::Curve &closingline = input.back_closed();
++    const size_t k = (are_near(closingline.initialPoint(), closingline.finalPoint()) && input.closed() )
++            ?input.size_open():input.size_default();
++    
++    for (size_t u = 0; u < k; u += 2) {
++        temp.clear();
++
++        offset_curve(temp, &input[u], width, tolerance);
++
++        // on the first run through, there isn't a join
++        if (u == 0) {
++            res.append(temp);
++        } else {
++            tangents(tang, input[u-1], input[u]);
++            outline_join(res, temp, tang[0], tang[1], width, miter, join);
++        }
++
++        // odd number of paths
++        if (u < k - 1) {
++            temp.clear();
++            offset_curve(temp, &input[u+1], width, tolerance);
++            tangents(tang, input[u], input[u+1]);
++            outline_join(res, temp, tang[0], tang[1], width, miter, join);
++        }
++    }
++    if (input.closed()) {
++        Geom::Curve const &c1 = res.back();
++        Geom::Curve const &c2 = res.front();
++        temp.clear();
++        temp.append(c1);
++        Geom::Path temp2;
++        temp2.append(c2);
++        tangents(tang, input.back(), input.front());
++        outline_join(temp, temp2, tang[0], tang[1], width, miter, join);
++        res.erase(res.begin());
++        res.erase_last();
++        res.append(temp);
++        res.close();
++    }
++    return res;
++}
++
++void outline_join(Geom::Path &res, Geom::Path const& temp, Geom::Point in_tang, Geom::Point out_tang, double width, double miter, Inkscape::LineJoinType join)
++{
++    if (res.size() == 0 || temp.size() == 0)
++        return;
++    Geom::Curve const& outgoing = temp.front();
++    if (Geom::are_near(res.finalPoint(), outgoing.initialPoint(), 0.01)) {
++        // if the points are /that/ close, just ignore this one
++        res.setFinal(temp.initialPoint());
++        res.append(temp);
++        return;
++    }
++
++    join_data jd(res, temp, in_tang, out_tang, miter, width);
++    if (!(Geom::cross(in_tang, out_tang) > 0)) {
++        join = Inkscape::JOIN_BEVEL;
++    }
++    join_func *jf;
++    switch (join) {
++        case Inkscape::JOIN_BEVEL:
++            jf = &bevel_join;
++            break;
++        case Inkscape::JOIN_ROUND:
++            jf = &round_join;
++            break;
++        case Inkscape::JOIN_EXTRAPOLATE:
++            jf = &extrapolate_join;
++            break;
++        case Inkscape::JOIN_EXTRAPOLATE1:
++            jf = &extrapolate_join_alt1;
++            break;
++        case Inkscape::JOIN_EXTRAPOLATE2:
++            jf = &extrapolate_join_alt2;
++            break;
++        case Inkscape::JOIN_EXTRAPOLATE3:
++            jf = &extrapolate_join_alt3;
++            break;
++        case Inkscape::JOIN_MITER_CLIP:
++            jf = &miter_clip_join;
++            break;
++        default:
++            jf = &miter_join;
++    }
++    jf(jd);
++}
++} // namespace Inkscape
+diff --git a/app/path/chopgimp-inkscape-pathstroke.h b/app/path/chopgimp-inkscape-pathstroke.h
+new file mode 100644
+index 0000000..2ac6b28
+--- /dev/null
++++ b/app/path/chopgimp-inkscape-pathstroke.h
+@@ -0,0 +1,42 @@
++// SPDX-License-Identifier: GPL-2.0-or-later
++/* ChopGimp: declarations taken from Inkscape 1.4 src/helper/geom-pathstroke.h
++ * (Authors: Liam P. White, Tavmjong Bah, Alexander Brock), only what the
++ * outline / offset code needs.
++ */
++#pragma once
++
++#include <vector>
++#include <2geom/path.h>
++#include <2geom/pathvector.h>
++
++namespace Inkscape {
++
++enum LineJoinType {
++    JOIN_BEVEL,
++    JOIN_ROUND,
++    JOIN_MITER,
++    JOIN_MITER_CLIP,
++    JOIN_EXTRAPOLATE,
++    JOIN_EXTRAPOLATE1,
++    JOIN_EXTRAPOLATE2,
++    JOIN_EXTRAPOLATE3,
++};
++
++enum LineCapType {
++    BUTT_FLAT,
++    BUTT_ROUND,
++    BUTT_SQUARE,
++    BUTT_PEAK,
++};
++
++Geom::PathVector outline (Geom::Path const &input, double width, double miter,
++                          LineJoinType join = JOIN_BEVEL, LineCapType cap = BUTT_FLAT,
++                          double tolerance = -1);
++
++Geom::Path half_outline (Geom::Path const &input, double width, double miter,
++                         LineJoinType join = JOIN_BEVEL, double tolerance = -1);
++
++void outline_join (Geom::Path &res, Geom::Path const &outgoing, Geom::Point in_tang,
++                   Geom::Point out_tang, double width, double miter, LineJoinType join);
++
++} // namespace Inkscape
+diff --git a/app/path/gimpvectorlayer.c b/app/path/gimpvectorlayer.c
+index c9ad78e..1e6f2e4 100644
+--- a/app/path/gimpvectorlayer.c
++++ b/app/path/gimpvectorlayer.c
+@@ -45,6 +45,7 @@
+ #include "core/gimprasterizable.h"
+ 
+ #include "gimpvectorlayer.h"
++#include "chopgimp-geom.h"
+ #include "gimpvectorlayeroptions.h"
+ #include "gimppath.h"
+ 
+@@ -141,7 +142,9 @@ static void       gimp_vector_layer_transform       (GimpItem               *ite
+                                                      gboolean                push_undo);
+ 
+ static gboolean   gimp_vector_layer_render          (GimpVectorLayer        *layer);
+-static void       gimp_vector_layer_render_path     (GimpVectorLayer        *layer);
++static void       gimp_vector_layer_render_path     (GimpVectorLayer        *layer,
++                                                     GimpPath               *effective);
++static GimpPath * chopgimp_vector_layer_effective_path (GimpVectorLayer     *layer);
+ static void       gimp_vector_layer_changed_options (GimpVectorLayer        *layer);
+ 
+ static void       gimp_vector_layer_removed         (GimpItem               *item);
+@@ -828,6 +831,7 @@ gimp_vector_layer_render (GimpVectorLayer *layer)
+   gint          width    = gimp_image_get_width (image);
+   gint          height   = gimp_image_get_height (image);
+   gdouble       stroke   = 0;
++  GimpPath     *effective;
+ 
+   g_return_val_if_fail (gimp_item_is_attached (GIMP_ITEM (drawable)), FALSE);
+ 
+@@ -836,9 +840,12 @@ gimp_vector_layer_render (GimpVectorLayer *layer)
+   if (layer->options->enable_stroke)
+     stroke = gimp_stroke_options_get_width (layer->options->stroke_options);
+ 
++  effective = chopgimp_vector_layer_effective_path (layer);
++
+   /* Resize layer according to path size */
+   gimp_item_get_offset (GIMP_ITEM (layer), &layer_x, &layer_y);
+-  gimp_item_bounds (GIMP_ITEM (layer->options->path), &x, &y, &width, &height);
++  gimp_item_bounds (GIMP_ITEM (effective ? effective : layer->options->path),
++                    &x, &y, &width, &height);
+ 
+   buffer = gegl_buffer_new (GEGL_RECTANGLE (0, 0,
+                                             (gint) ceil (width + stroke),
+@@ -855,15 +862,62 @@ gimp_vector_layer_render (GimpVectorLayer *layer)
+                       GIMP_FILL_TRANSPARENT);
+ 
+   /* render path to the layer */
+-  gimp_vector_layer_render_path (layer);
++  gimp_vector_layer_render_path (layer, effective);
++
++  g_clear_object (&effective);
+ 
+   g_object_thaw_notify (G_OBJECT (drawable));
+ 
+   return TRUE;
+ }
+ 
++/*  ChopGimp: live path effects. When the layer carries the parasite
++ *  « chopgimp-lpe » (a key file: one group per effect), it is drawn from
++ *  the path transformed by the effects; its own path stays editable, and
++ *  the result follows every change of it, like Inkscape's path effects.
++ */
++GimpPath *
++chopgimp_vector_layer_path_by_tattoo (GimpImage *image,
++                                      guint      tattoo)
++{
++  GimpLayer *layer = gimp_image_get_layer_by_tattoo (image, tattoo);
++
++  if (GIMP_IS_VECTOR_LAYER (layer))
++    return gimp_vector_layer_get_path (GIMP_VECTOR_LAYER (layer));
++
++  return NULL;
++}
++
++static GimpPath *
++chopgimp_vector_layer_effective_path (GimpVectorLayer *layer)
++{
++  const GimpParasite *parasite;
++  gchar              *spec;
++  guint32             size = 0;
++  const gchar        *data;
++  GimpPath           *path;
++
++  if (! layer->options || ! layer->options->path)
++    return NULL;
++
++  parasite = gimp_item_parasite_find (GIMP_ITEM (layer), "chopgimp-lpe");
++  if (! parasite)
++    return NULL;
++
++  data = gimp_parasite_get_data (parasite, &size);
++  if (! data || size == 0)
++    return NULL;
++
++  spec = g_strndup (data, size);
++  path = chopgimp_geom_effects (layer->options->path, spec);
++  g_free (spec);
++
++  return path;
++}
++
+ static void
+-gimp_vector_layer_render_path (GimpVectorLayer *layer)
++gimp_vector_layer_render_path (GimpVectorLayer *layer,
++                               GimpPath        *effective)
+ {
+   GimpImage              *image     = gimp_item_get_image (GIMP_ITEM (layer));
+   GimpVectorLayerOptions *options   = layer->options;
+@@ -875,6 +929,9 @@ gimp_vector_layer_render_path (GimpVectorLayer *layer)
+   if (options)
+     path = options->path;
+ 
++  if (effective)
++    path = effective;
++
+   /* Don't mask these fill/stroke operations  */
+   gimp_selection_suspend (GIMP_SELECTION (selection));
+ 
+@@ -906,7 +963,10 @@ gimp_vector_layer_render_path (GimpVectorLayer *layer)
+ 
+   drawables = g_list_prepend (NULL, GIMP_DRAWABLE (layer));
+   /* stroke the path object onto the layer */
+-  if (options->enable_stroke && gimp_item_is_attached (GIMP_ITEM (path)))
++  if (options->enable_stroke && effective)
++    gimp_drawable_stroke_path (GIMP_DRAWABLE (layer), options->stroke_options,
++                               effective, FALSE, NULL);
++  else if (options->enable_stroke && gimp_item_is_attached (GIMP_ITEM (path)))
+     gimp_item_stroke (GIMP_ITEM (path), drawables,
+                       gimp_get_user_context (image->gimp),
+                       options->stroke_options,
+diff --git a/app/path/meson.build b/app/path/meson.build
+index 00a75e1..f9e59b5 100644
+--- a/app/path/meson.build
++++ b/app/path/meson.build
+@@ -1,4 +1,9 @@
++# ChopGimp: Inkscape's geometry library (vector tools)
++lib2geom = dependency('2geom')
++
+ libapppath_sources = [
++  'chopgimp-geom.cc',
++  'chopgimp-inkscape-pathstroke.cc',
+   'gimpanchor.c',
+   'gimpbezierstroke.c',
+   'gimppath.c',
+@@ -21,7 +26,9 @@ libapppath = static_library('apppath',
+   libapppath_sources,
+   include_directories: [ rootInclude, rootAppInclude, ],
+   c_args: '-DG_LOG_DOMAIN="Gimp-Path"',
++  cpp_args: '-DG_LOG_DOMAIN="Gimp-Path"',
++  override_options: [ 'cpp_std=c++17' ],
+   dependencies: [
+-    cairo, gegl, gdk_pixbuf, gexiv2
++    cairo, gegl, gdk_pixbuf, gexiv2, lib2geom,
+   ],
+ )
+diff --git a/app/pdb/chopgimp-cmds.c b/app/pdb/chopgimp-cmds.c
+new file mode 100644
+index 0000000..fbd2431
+--- /dev/null
++++ b/app/pdb/chopgimp-cmds.c
+@@ -0,0 +1,381 @@
++/* GIMP - The GNU Image Manipulation Program
++ * Copyright (C) 1995 Spencer Kimball and Peter Mattis
++ *
++ * chopgimp-cmds.c — ChopGimp: PDB procedures of the advanced vector tools
++ * (app/path/chopgimp-geom.cc). Written by hand, not by pdbgen.
++ *
++ * This program is free software: you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation; either version 3 of the License, or
++ * (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License
++ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
++ */
++
++#include "config.h"
++
++#include <gegl.h>
++
++#include <gdk-pixbuf/gdk-pixbuf.h>
++
++#include "libgimpbase/gimpbase.h"
++
++#include "pdb-types.h"
++
++#include "core/gimpimage.h"
++#include "core/gimpimage-undo-push.h"
++#include "core/gimpparamspecs.h"
++
++#include "path/gimppath.h"
++#include "path/chopgimp-geom.h"
++
++#include "gimppdb.h"
++#include "gimpprocedure.h"
++#include "chopgimp-cmds.h"
++
++#include "gimp-intl.h"
++
++
++#define ARG_OBJECT(n) g_value_get_object (gimp_value_array_index (args, (n)))
++#define ARG_INT(n)    g_value_get_int (gimp_value_array_index (args, (n)))
++#define ARG_DOUBLE(n) g_value_get_double (gimp_value_array_index (args, (n)))
++#define ARG_BOOL(n)   g_value_get_boolean (gimp_value_array_index (args, (n)))
++
++static GimpValueArray *
++chopgimp_return_path (GimpProcedure *procedure,
++                      GimpPath      *path,
++                      GError       **error)
++{
++  GimpValueArray *return_vals;
++
++  return_vals = gimp_procedure_get_return_values (procedure, path != NULL,
++                                                  error ? *error : NULL);
++  if (path)
++    /*  same ownership as the generated procedures (gimp-path-copy…)  */
++    g_value_set_object (gimp_value_array_index (return_vals, 1), path);
++
++  return return_vals;
++}
++
++static GimpValueArray *
++boolean_invoker (GimpProcedure         *procedure,
++                 Gimp                  *gimp,
++                 GimpContext           *context,
++                 GimpProgress          *progress,
++                 const GimpValueArray  *args,
++                 GError               **error)
++{
++  GimpPath **paths = g_value_get_boxed (gimp_value_array_index (args, 0));
++  gint       n     = gimp_core_object_array_get_length ((GObject **) paths);
++
++  if (n < 1)
++    return chopgimp_return_path (procedure, NULL, error);
++
++  return chopgimp_return_path (procedure,
++                               chopgimp_geom_boolean (paths, n, ARG_INT (1)),
++                               error);
++}
++
++static GimpValueArray *
++divide_invoker (GimpProcedure         *procedure,
++                Gimp                  *gimp,
++                GimpContext           *context,
++                GimpProgress          *progress,
++                const GimpValueArray  *args,
++                GError               **error)
++{
++  GimpPath      **paths = g_value_get_boxed (gimp_value_array_index (args, 0));
++  gint            n     = gimp_core_object_array_get_length ((GObject **) paths);
++  GimpPath      **pieces;
++  gint            n_pieces = 0;
++  GimpValueArray *return_vals;
++
++  if (n < 1)
++    return gimp_procedure_get_return_values (procedure, FALSE, NULL);
++
++  pieces = chopgimp_geom_divide (paths, n, &n_pieces);
++
++  return_vals = gimp_procedure_get_return_values (procedure, TRUE, NULL);
++  g_value_set_boxed (gimp_value_array_index (return_vals, 1), pieces);
++
++  /*  the array is copied, its paths are kept (inserted by the caller)  */
++  g_free (pieces);
++
++  return return_vals;
++}
++
++static GimpValueArray *
++offset_invoker (GimpProcedure         *procedure,
++                Gimp                  *gimp,
++                GimpContext           *context,
++                GimpProgress          *progress,
++                const GimpValueArray  *args,
++                GError               **error)
++{
++  return chopgimp_return_path (procedure,
++                               chopgimp_geom_offset (ARG_OBJECT (0), ARG_DOUBLE (1),
++                                                     ARG_INT (2)),
++                               error);
++}
++
++static GimpValueArray *
++outline_invoker (GimpProcedure         *procedure,
++                 Gimp                  *gimp,
++                 GimpContext           *context,
++                 GimpProgress          *progress,
++                 const GimpValueArray  *args,
++                 GError               **error)
++{
++  return chopgimp_return_path (procedure,
++                               chopgimp_geom_outline (ARG_OBJECT (0), ARG_DOUBLE (1),
++                                                      ARG_INT (2), ARG_INT (3)),
++                               error);
++}
++
++static GimpValueArray *
++simplify_invoker (GimpProcedure         *procedure,
++                  Gimp                  *gimp,
++                  GimpContext           *context,
++                  GimpProgress          *progress,
++                  const GimpValueArray  *args,
++                  GError               **error)
++{
++  return chopgimp_return_path (procedure,
++                               chopgimp_geom_simplify (ARG_OBJECT (0), ARG_DOUBLE (1)),
++                               error);
++}
++
++static GimpValueArray *
++round_invoker (GimpProcedure         *procedure,
++               Gimp                  *gimp,
++               GimpContext           *context,
++               GimpProgress          *progress,
++               const GimpValueArray  *args,
++               GError               **error)
++{
++  return chopgimp_return_path (procedure,
++                               chopgimp_geom_round_corners (ARG_OBJECT (0),
++                                                            ARG_DOUBLE (1),
++                                                            ARG_BOOL (2)),
++                               error);
++}
++
++static GimpValueArray *
++reverse_invoker (GimpProcedure         *procedure,
++                 Gimp                  *gimp,
++                 GimpContext           *context,
++                 GimpProgress          *progress,
++                 const GimpValueArray  *args,
++                 GError               **error)
++{
++  return chopgimp_return_path (procedure,
++                               chopgimp_geom_reverse (ARG_OBJECT (0)),
++                               error);
++}
++
++static GimpValueArray *
++effects_invoker (GimpProcedure         *procedure,
++                 Gimp                  *gimp,
++                 GimpContext           *context,
++                 GimpProgress          *progress,
++                 const GimpValueArray  *args,
++                 GError               **error)
++{
++  return chopgimp_return_path (procedure,
++                               chopgimp_geom_effects (ARG_OBJECT (0),
++                                                      g_value_get_string (gimp_value_array_index (args, 1))),
++                               error);
++}
++
++static GimpValueArray *
++info_invoker (GimpProcedure         *procedure,
++              Gimp                  *gimp,
++              GimpContext           *context,
++              GimpProgress          *progress,
++              const GimpValueArray  *args,
++              GError               **error)
++{
++  GimpPath       *path = ARG_OBJECT (0);
++  GimpValueArray *return_vals;
++
++  return_vals = gimp_procedure_get_return_values (procedure, TRUE, NULL);
++  g_value_set_int    (gimp_value_array_index (return_vals, 1),
++                      chopgimp_geom_count_nodes (path));
++  g_value_set_double (gimp_value_array_index (return_vals, 2),
++                      chopgimp_geom_area (path));
++
++  return return_vals;
++}
++
++static GimpValueArray *
++nodes_invoker (GimpProcedure         *procedure,
++               Gimp                  *gimp,
++               GimpContext           *context,
++               GimpProgress          *progress,
++               const GimpValueArray  *args,
++               GError               **error)
++{
++  GimpPath       *path  = ARG_OBJECT (0);
++  gint            op    = ARG_INT (1);
++  gdouble         value = ARG_DOUBLE (2);
++  GimpImage      *image = gimp_item_get_image (GIMP_ITEM (path));
++  gboolean        changed;
++  GimpValueArray *return_vals;
++
++  if (gimp_item_is_attached (GIMP_ITEM (path)) &&
++      op != CHOPGIMP_NODES_SELECT_ALL && op != CHOPGIMP_NODES_SELECT_NONE)
++    gimp_image_undo_push_path_mod (image, _("Modifier les nœuds"), path);
++
++  changed = chopgimp_geom_nodes (path, op, value);
++
++  return_vals = gimp_procedure_get_return_values (procedure, TRUE, NULL);
++  g_value_set_boolean (gimp_value_array_index (return_vals, 1), changed);
++
++  return return_vals;
++}
++
++
++static GimpProcedure *
++chopgimp_procedure (GimpPDB          *pdb,
++                    GimpMarshalFunc   invoker,
++                    const gchar      *name,
++                    const gchar      *help)
++{
++  GimpProcedure *procedure = gimp_procedure_new (invoker, FALSE);
++
++  gimp_object_set_static_name (GIMP_OBJECT (procedure), name);
++  gimp_procedure_set_static_help (procedure, help, help, NULL);
++  gimp_procedure_set_static_attribution (procedure,
++                                         "ChopGimp (lib2geom / Inkscape)",
++                                         "ChopGimp", "2026");
++  return procedure;
++}
++
++static GParamSpec *
++path_arg (const gchar *name)
++{
++  return gimp_param_spec_path (name, name, "A path", FALSE, GIMP_PARAM_READWRITE);
++}
++
++static GParamSpec *
++paths_arg (const gchar *name)
++{
++  return gimp_param_spec_core_object_array (name, name, "Paths", GIMP_TYPE_PATH,
++                                            GIMP_PARAM_READWRITE);
++}
++
++static GParamSpec *
++int_arg (const gchar *name, gint min, gint max, gint def)
++{
++  return g_param_spec_int (name, name, name, min, max, def, GIMP_PARAM_READWRITE);
++}
++
++static GParamSpec *
++double_arg (const gchar *name, gdouble min, gdouble max, gdouble def)
++{
++  return g_param_spec_double (name, name, name, min, max, def, GIMP_PARAM_READWRITE);
++}
++
++void
++register_chopgimp_procs (GimpPDB *pdb)
++{
++  GimpProcedure *p;
++
++  p = chopgimp_procedure (pdb, boolean_invoker, "chopgimp-path-boolean",
++                          "Pathfinder: union (0), first minus the others (1), "
++                          "intersection (2), exclusion (3) of paths. Returns a new path "
++                          "to insert in the image.");
++  gimp_procedure_add_argument (p, paths_arg ("paths"));
++  gimp_procedure_add_argument (p, int_arg ("operation", 0, 3, 0));
++  gimp_procedure_add_return_value (p, path_arg ("path"));
++  gimp_pdb_register_procedure (pdb, p);
++  g_object_unref (p);
++
++  p = chopgimp_procedure (pdb, divide_invoker, "chopgimp-path-divide",
++                          "Pathfinder « Divide »: every region of the arrangement of the paths.");
++  gimp_procedure_add_argument (p, paths_arg ("paths"));
++  gimp_procedure_add_return_value (p, paths_arg ("pieces"));
++  gimp_pdb_register_procedure (pdb, p);
++  g_object_unref (p);
++
++  p = chopgimp_procedure (pdb, offset_invoker, "chopgimp-path-offset",
++                          "Grow (> 0) or shrink (< 0) a shape; join: miter (0), round (1), bevel (2).");
++  gimp_procedure_add_argument (p, path_arg ("path"));
++  gimp_procedure_add_argument (p, double_arg ("distance", -10000, 10000, 5));
++  gimp_procedure_add_argument (p, int_arg ("join", 0, 2, 1));
++  gimp_procedure_add_return_value (p, path_arg ("result"));
++  gimp_pdb_register_procedure (pdb, p);
++  g_object_unref (p);
++
++  p = chopgimp_procedure (pdb, outline_invoker, "chopgimp-path-outline",
++                          "Stroke to path: the outline of the stroke as a filled shape; "
++                          "cap: butt (0), round (1), square (2).");
++  gimp_procedure_add_argument (p, path_arg ("path"));
++  gimp_procedure_add_argument (p, double_arg ("width", 0, 10000, 4));
++  gimp_procedure_add_argument (p, int_arg ("join", 0, 2, 0));
++  gimp_procedure_add_argument (p, int_arg ("cap", 0, 2, 0));
++  gimp_procedure_add_return_value (p, path_arg ("result"));
++  gimp_pdb_register_procedure (pdb, p);
++  g_object_unref (p);
++
++  p = chopgimp_procedure (pdb, simplify_invoker, "chopgimp-path-simplify",
++                          "Fewer nodes, the shape kept within the tolerance (px).");
++  gimp_procedure_add_argument (p, path_arg ("path"));
++  gimp_procedure_add_argument (p, double_arg ("tolerance", 0.1, 1000, 2));
++  gimp_procedure_add_return_value (p, path_arg ("result"));
++  gimp_pdb_register_procedure (pdb, p);
++  g_object_unref (p);
++
++  p = chopgimp_procedure (pdb, round_invoker, "chopgimp-path-round-corners",
++                          "Round the corners (all, or only the selected nodes).");
++  gimp_procedure_add_argument (p, path_arg ("path"));
++  gimp_procedure_add_argument (p, double_arg ("radius", 0, 10000, 10));
++  gimp_procedure_add_argument (p, g_param_spec_boolean ("selected-only", "selected-only",
++                                                        "Only the selected nodes",
++                                                        FALSE, GIMP_PARAM_READWRITE));
++  gimp_procedure_add_return_value (p, path_arg ("result"));
++  gimp_pdb_register_procedure (pdb, p);
++  g_object_unref (p);
++
++  p = chopgimp_procedure (pdb, reverse_invoker, "chopgimp-path-reverse",
++                          "Reverse the direction of every sub-path.");
++  gimp_procedure_add_argument (p, path_arg ("path"));
++  gimp_procedure_add_return_value (p, path_arg ("result"));
++  gimp_pdb_register_procedure (pdb, p);
++  g_object_unref (p);
++
++  p = chopgimp_procedure (pdb, effects_invoker, "chopgimp-path-effects",
++                          "Apply a stack of path effects (key file text) and return the result.");
++  gimp_procedure_add_argument (p, path_arg ("path"));
++  gimp_procedure_add_argument (p, gimp_param_spec_string ("spec", "spec", "Effects",
++                                                          FALSE, FALSE, FALSE, NULL,
++                                                          GIMP_PARAM_READWRITE));
++  gimp_procedure_add_return_value (p, path_arg ("result"));
++  gimp_pdb_register_procedure (pdb, p);
++  g_object_unref (p);
++
++  p = chopgimp_procedure (pdb, info_invoker, "chopgimp-path-info",
++                          "Number of nodes and filled area of a path.");
++  gimp_procedure_add_argument (p, path_arg ("path"));
++  gimp_procedure_add_return_value (p, int_arg ("n-nodes", 0, G_MAXINT, 0));
++  gimp_procedure_add_return_value (p, double_arg ("area", 0, G_MAXDOUBLE, 0));
++  gimp_pdb_register_procedure (pdb, p);
++  g_object_unref (p);
++
++  p = chopgimp_procedure (pdb, nodes_invoker, "chopgimp-path-nodes",
++                          "Operation on the selected nodes of a path (undoable): "
++                          "see ChopGimpNodesOp in app/path/chopgimp-geom.h.");
++  gimp_procedure_add_argument (p, path_arg ("path"));
++  gimp_procedure_add_argument (p, int_arg ("operation", 0, CHOPGIMP_NODES_SELECT_NONE, 0));
++  gimp_procedure_add_argument (p, double_arg ("value", -10000, 10000, 0));
++  gimp_procedure_add_return_value (p, g_param_spec_boolean ("changed", "changed", "changed",
++                                                            FALSE, GIMP_PARAM_READWRITE));
++  gimp_pdb_register_procedure (pdb, p);
++  g_object_unref (p);
++}
+diff --git a/app/pdb/chopgimp-cmds.h b/app/pdb/chopgimp-cmds.h
+new file mode 100644
+index 0000000..75e28ba
+--- /dev/null
++++ b/app/pdb/chopgimp-cmds.h
+@@ -0,0 +1,8 @@
++/* GIMP - The GNU Image Manipulation Program
++ * chopgimp-cmds.h — ChopGimp: PDB procedures of the vector tools
++ * (registered from app/core/gimp.c: internal-procs.c is generated).
++ */
++
++#pragma once
++
++void   register_chopgimp_procs (GimpPDB *pdb);
+diff --git a/app/pdb/meson.build b/app/pdb/meson.build
+index 2bb52b9..96c08dc 100644
+--- a/app/pdb/meson.build
++++ b/app/pdb/meson.build
+@@ -56,6 +56,7 @@ libappinternalprocs_sources = [
+   'palette-select-cmds.c',
+   'palettes-cmds.c',
+   'path-cmds.c',
++  'chopgimp-cmds.c',
+   'pattern-cmds.c',
+   'pattern-select-cmds.c',
+   'patterns-cmds.c',
+-- 
+2.53.0
+

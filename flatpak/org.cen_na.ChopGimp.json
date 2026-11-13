@@ -787,6 +787,89 @@
             ]
         },
         {
+            "name": "boost",
+            "buildsystem": "simple",
+            "sources": [
+                {
+                    "type": "archive",
+                    "url": "https://archives.boost.io/release/1.87.0/source/boost_1_87_0.tar.bz2",
+                    "sha256": "af57be25cb4c4f4b413ed692fe378affb4352ea50fbe294a11ef548f4d527d89"
+                }
+            ],
+            "build-commands": [
+                "./bootstrap.sh --prefix=${FLATPAK_DEST} --with-libraries=system",
+                "./b2 -j${FLATPAK_BUILDER_N_JOBS} install variant=release link=shared"
+            ],
+            "cleanup": [
+                "*"
+            ]
+        },
+        {
+            "name": "gsl",
+            "config-opts": [
+                "--disable-static"
+            ],
+            "sources": [
+                {
+                    "type": "archive",
+                    "url": "https://ftp.gnu.org/gnu/gsl/gsl-2.8.tar.gz",
+                    "sha256": "6a99eeed15632c6354895b1dd542ed5a855c0f15d9ad1326c6fe2b2c9e423190"
+                }
+            ],
+            "cleanup": [
+                "/bin",
+                "/include",
+                "/lib/pkgconfig",
+                "/share",
+                "*.la"
+            ]
+        },
+        {
+            "name": "double-conversion",
+            "buildsystem": "cmake-ninja",
+            "config-opts": [
+                "-DBUILD_SHARED_LIBS=ON",
+                "-DCMAKE_BUILD_TYPE=Release",
+                "-DCMAKE_POLICY_VERSION_MINIMUM=3.5",
+                "-DCMAKE_INSTALL_LIBDIR=lib"
+            ],
+            "sources": [
+                {
+                    "type": "git",
+                    "url": "https://github.com/google/double-conversion.git",
+                    "tag": "v3.3.1",
+                    "commit": "ae0dbfeb9744efd216c95b30555049d75d47116a"
+                }
+            ],
+            "cleanup": [
+                "/include",
+                "/lib/cmake"
+            ]
+        },
+        {
+            "name": "lib2geom",
+            "buildsystem": "cmake-ninja",
+            "builddir": true,
+            "config-opts": [
+                "-D2GEOM_BUILD_SHARED=ON",
+                "-D2GEOM_TESTING=OFF",
+                "-DCMAKE_BUILD_TYPE=Release",
+                "-DCMAKE_POLICY_VERSION_MINIMUM=3.5",
+                "-DCMAKE_INSTALL_LIBDIR=lib"
+            ],
+            "sources": [
+                {
+                    "type": "git",
+                    "url": "https://gitlab.com/inkscape/lib2geom.git",
+                    "tag": "1.4",
+                    "commit": "23316118755def8156c268f767894c145130e07d"
+                }
+            ],
+            "cleanup": [
+                "/lib/cmake"
+            ]
+        },
+        {
             "name": "gimp",
             "sources": [
                 {
@@ -873,7 +956,14 @@
                         "../patches/gimp-3.2.8/0052-ChopGimp-Tab-Shift-Tab-hide-the-panels-wherever-the-.patch",
                         "../patches/gimp-3.2.8/0053-ChopGimp-flexible-panel-groups-a-separator-pushes-al.patch",
                         "../patches/gimp-3.2.8/0054-ChopGimp-panels-may-be-smaller-than-their-content-cu.patch",
-                        "../patches/gimp-3.2.8/0055-ChopGimp-panel-groups-keep-the-size-set-by-a-drag-no.patch"
+                        "../patches/gimp-3.2.8/0055-ChopGimp-panel-groups-keep-the-size-set-by-a-drag-no.patch",
+                        "../patches/gimp-3.2.8/0056-ChopGimp-vector-engine-from-Inkscape-lib2geom-Pathfi.patch",
+                        "../patches/gimp-3.2.8/0057-ChopGimp-Shape-Builder-and-Direct-Selection-A-tools-.patch",
+                        "../patches/gimp-3.2.8/0058-ChopGimp-one-sided-offset-Inkscape-half_outline-hole.patch",
+                        "../patches/gimp-3.2.8/0059-ChopGimp-holes-detected-from-the-middle-of-a-segment.patch",
+                        "../patches/gimp-3.2.8/0060-ChopGimp-Shape-Builder-works-on-vector-layers-not-de.patch",
+                        "../patches/gimp-3.2.8/0061-ChopGimp-lib2geom-errors-never-crash-catch-all-retry.patch",
+                        "../patches/gimp-3.2.8/0062-ChopGimp-Shape-Builder-merges-neighbouring-regions-r.patch"
                     ]
                 }
             ],

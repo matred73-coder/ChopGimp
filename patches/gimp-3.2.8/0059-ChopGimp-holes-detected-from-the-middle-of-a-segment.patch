@@ -1,0 +1,34 @@
+From 498d699a87f04b378b18d8bb51761c1a834b5da2 Mon Sep 17 00:00:00 2001
+From: ChopGimp <mathieu.redon@proton.me>
+Date: Fri, 13 Nov 2026 09:39:27 +0100
+Subject: [PATCH] ChopGimp: holes detected from the middle of a segment
+
+---
+ app/path/chopgimp-geom.cc | 9 +++++++--
+ 1 file changed, 7 insertions(+), 2 deletions(-)
+
+diff --git a/app/path/chopgimp-geom.cc b/app/path/chopgimp-geom.cc
+index 1f1a2ec..ca4e393 100644
+--- a/app/path/chopgimp-geom.cc
++++ b/app/path/chopgimp-geom.cc
+@@ -339,10 +339,15 @@ path_area (const Geom::Path &p)
+ static bool
+ is_hole (const Geom::PathVector &pv, size_t i)
+ {
+-  int depth = 0;
++  int   depth = 0;
++
++  /*  the middle of the first segment: not a corner that the sub-path
++   *  could share with another one
++   */
++  Point probe = pv[i].empty () ? pv[i].initialPoint () : pv[i][0].pointAt (0.5);
+ 
+   for (size_t j = 0; j < pv.size (); j++)
+-    if (j != i && pv[j].winding (pv[i].initialPoint ()) != 0)
++    if (j != i && pv[j].winding (probe) != 0)
+       depth++;
+ 
+   return depth % 2 == 1;
+-- 
+2.53.0
+
