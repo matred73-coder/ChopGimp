@@ -161,6 +161,32 @@ calque_head = ["      <section>"] + style_submenu(8) + [
     "      </section>"]
 calque = get["_Layer"][:2] + calque_head + get["_Layer"][2:]
 
+# Affichage > Apparence (ChopGimp) : variantes, accent, densité, police, taille
+def radio_sub(label, prefix, keys):
+    return ["      <submenu>",
+            '        <attribute name="label" translatable="no">%s</attribute>' % label,
+            "        <section>"] + \
+           ['          <item><attribute name="action">app.windows-%s-%s</attribute></item>' % (prefix, k)
+            for k in keys] + \
+           ["        </section>", "      </submenu>"]
+
+
+apparence = ["    <submenu>",
+             '      <attribute name="label" translatable="no">_Apparence</attribute>',
+             "      <section>"] + \
+    ['        <item><attribute name="action">app.windows-appearance-%s</attribute></item>' % k
+     for k in ["sombre", "gris", "gris-clair", "clair", "contraste", "affinity", "krita"]] + \
+    ["      </section>", "      <section>"] + \
+    ["  " + l for l in radio_sub("_Couleur d'accent", "accent",
+                                 ["variante", "bleu", "cyan", "violet", "vert", "orange",
+                                  "rouge", "rose", "jaune"])] + \
+    ["  " + l for l in radio_sub("_Densité", "density", ["compact", "normal", "comfortable"])] + \
+    ["  " + l for l in radio_sub("_Police de l'interface", "ui-font", ["inter", "source", "system"])] + \
+    ["  " + l for l in radio_sub("_Taille de l'interface", "ui-size", ["90", "100", "115", "130"])] + \
+    ["      </section>", "    </submenu>"]
+affichage = insert_before_close(get["_View"], ["      <section>"] + ["  " + l for l in apparence] +
+                                ["      </section>"])
+
 order = [
     get["_File"],
     get["_Edit"],
@@ -170,7 +196,7 @@ order = [
     texte,
     get["_Select"],
     get["Filte_rs"],
-    get["_View"],
+    affichage,
     fenetre,
     get["_Help"],
 ]

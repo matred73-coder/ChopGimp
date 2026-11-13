@@ -1,0 +1,41 @@
+/* ═══════════════════════════════════════════════════════════════
+ * ChopGimp — palette « Clair » (schéma light)
+ * Fichier GÉNÉRÉ par tools/build_themes.py : ne pas modifier à la main.
+ * ═══════════════════════════════════════════════════════════════ */
+
+@define-color ps-accent                      #1473E6;
+@define-color ps-accent-hover                #2680EB;
+@define-color ps-accent-pressed              #0D66D0;
+@define-color ps-canvas                      #D4D4D4;
+@define-color ps-field                       #FFFFFF;
+@define-color ps-chrome                      #E8E8E8;
+@define-color ps-list                        #FAFAFA;
+@define-color ps-button-border               #C2C2C2;
+@define-color ps-white                       #FFFFFF;
+@define-color fg-color                       #1E1E1E;
+@define-color bg-color                       #F0F0F0;
+@define-color border-color                   #D0D0D0;
+@define-color dimmed-fg-color                #5A5A5A;
+@define-color disabled-fg-color              #9A9A9A;
+@define-color disabled-button-color          #D0D0D0;
+@define-color hover-color                    #E1E1E1;
+@define-color widget-bg-color                #FFFFFF;
+@define-color selected-color                 #DADADA;
+@define-color extreme-bg-color               #FAFAFA;
+@define-color extreme-selected-color         #DADADA;
+@define-color strong-border-color            #DCDCDC;
+@define-color stronger-border-color          #C2C2C2;
+@define-color edge-border-color              #D0D0D0;
+@define-color scrollbar-slider-color         #A8A8A8;
+@define-color scrollbar-trough-color         transparent;
+@define-color ruler-color                    rgba(0,0,0,0.08);
+@define-color ps-danger                      #C9252D;
+@define-color ps-danger-fg                   #B0141B;
+@define-color ps-progress                    #C8C8C8;
+@define-color ps-knob                        #FFFFFF;
+@define-color ps-check-border                #8A8A8A;
+@define-color scrollbar-slider-hover-color   #8C8C8C;
+@define-color scrollbar-slider-active-color  #6E6E6E;
+@define-color ps-tooltip-bg                  #323232;
+@define-color ps-tooltip-fg                  #FFFFFF;
+@define-color ps-strong-fg                   #000000;

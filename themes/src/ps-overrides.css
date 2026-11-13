@@ -1,0 +1,807 @@
+/* ═══════════════════════════════════════════════════════════════
+ * ChopGimp — surcouche « Photoshop 2024-2026 »
+ * Chargé APRÈS common.css / common-dark.css : à spécificité égale,
+ * ces règles l'emportent.
+ * ═══════════════════════════════════════════════════════════════ */
+
+/* ── Typographie & densité ─────────────────────────────────────
+ * Photoshop : texte petit (≈ 11-12 px), interface compacte.
+ * (La taille globale peut être ajustée dans Préférences > Interface.) */
+* {
+  /*  la police et sa taille viennent de gtk-font-name (réglées par
+   *  app/gui/themes.c, menu Affichage > Apparence) ; 1rem = cette taille,
+   *  si bien que l'échelle des Préférences s'applique partout  */
+  font-size: 1rem;
+  outline-color: alpha(@ps-accent, 0.6);
+  outline-width: 1px;
+  outline-offset: -1px;
+}
+
+*:selected,
+*:selected:focus {
+  background-color: @selected-color;
+}
+
+/* ── Fond général / zone sans image ────────────────────────────── */
+GimpDisplayShell,
+#gimp-canvas {
+  background-color: @ps-canvas;
+}
+
+/* Fenêtre principale vide (avant ouverture d'image) */
+GimpImageWindow > box,
+GimpImageWindow notebook > stack {
+  background-color: @ps-canvas;
+}
+
+/* ── Barre de menus (bandeau supérieur plus sombre) ────────────── */
+#image-menubar,
+menubar {
+  background-color: @ps-chrome;
+  box-shadow: 0 -1px @edge-border-color inset;
+  padding: 0 2px;
+}
+
+menubar > menuitem {
+  min-height: 14px;
+  padding: 3px 9px;
+  color: @fg-color;
+}
+
+menubar > menuitem:hover {
+  background: @hover-color;
+  box-shadow: none;
+  border-radius: 3px;
+}
+
+/* Menus déroulants : fond panneau, survol bleu accent (style Photoshop) */
+menu,
+.menu,
+.context-menu {
+  background-color: @bg-color;
+  border: 1px solid @edge-border-color;
+  padding: 4px 0;
+}
+
+menu menuitem,
+menu menuitem:hover {
+  min-height: 18px;
+  padding: 2px 22px 2px 12px;
+  color: @fg-color;
+  background-color: transparent;
+}
+
+menu menuitem:hover,
+menuitem *:hover {
+  background-color: @ps-accent;
+  color: @ps-white;
+}
+
+menu menuitem:hover label,
+menu menuitem:hover accelerator,
+menu menuitem:hover arrow {
+  color: @ps-white;
+  background-color: transparent;
+}
+
+menu menuitem:disabled label {
+  color: @disabled-fg-color;
+}
+
+menu menuitem accelerator {
+  color: @dimmed-fg-color;
+}
+
+menu separator {
+  background-color: @stronger-border-color;
+  min-height: 1px;
+  margin: 4px 0;
+}
+
+menuitem check,
+menuitem radio {
+  border-color: @dimmed-fg-color;
+  background-color: transparent;
+}
+
+menuitem check:checked,
+menuitem radio:checked {
+  background-color: @ps-accent;
+  border-color: @ps-accent;
+  color: @ps-white;
+}
+
+/* ── Panneaux (docks) ──────────────────────────────────────────── */
+GimpDock,
+GimpDockbook,
+GimpDockable {
+  background-color: @bg-color;
+}
+
+/* Séparateurs entre panneaux.
+ * Ceux des docks (classe « wide ») font 6 px : c'est toute la zone que la
+ * souris peut saisir pour redimensionner. Ils s'éclairent au survol.
+ * Les autres restent une ligne fine, avec une zone de saisie invisible. */
+paned > separator {
+  background-image: none;
+  background-color: @edge-border-color;
+  min-width: 1px;
+  min-height: 1px;
+}
+
+paned.horizontal > separator:not(.wide) {
+  margin: 0 -4px;
+  padding: 0 4px;
+  background-clip: content-box;
+}
+
+paned.vertical > separator:not(.wide) {
+  margin: -4px 0;
+  padding: 4px 0;
+  background-clip: content-box;
+}
+
+paned > separator.wide {
+  min-width: 6px;
+  min-height: 6px;
+  margin: 0;
+  padding: 0;
+  background-color: @ps-chrome;
+  border: 1px solid @edge-border-color;
+}
+
+paned > separator.wide:hover {
+  background-color: @ps-accent;
+  border-color: @ps-accent;
+}
+
+/* Boutons de groupe (réduire, menu, fermer) au bout de la barre d'onglets */
+#chopgimp-dockbook-buttons button {
+  min-width: 20px;
+  min-height: 20px;
+  padding: 0;
+  margin: 0 1px;
+}
+
+/* Bande au bord droit de la fenêtre : masque / affiche les panneaux */
+#chopgimp-dock-strip {
+  min-width: 12px;
+  padding: 0;
+  margin: 0;
+  border: none;
+  border-left: 1px solid @edge-border-color;
+  border-radius: 0;
+  background-image: none;
+  background-color: @ps-chrome;
+  box-shadow: none;
+}
+
+#chopgimp-dock-strip:hover {
+  background-color: @hover-color;
+}
+
+/* ── Onglets des panneaux ──────────────────────────────────────
+ * Photoshop : barre d'onglets plus sombre, onglet actif = couleur du
+ * panneau + texte blanc gras, onglets inactifs gris, pas de cadre. */
+notebook header {
+  background-color: @ps-chrome;
+  border-bottom: 1px solid @edge-border-color;
+  box-shadow: none;
+  padding: 0;
+}
+
+notebook header tabs tab {
+  background-color: transparent;
+  border: none;
+  border-right: 1px solid @edge-border-color;
+  box-shadow: none;
+  margin: 0;
+  min-width: 24px;
+  min-height: 22px;
+  padding: 2px 10px;
+  border-radius: 0;
+}
+
+notebook header tabs tab label {
+  color: @dimmed-fg-color;
+  font-weight: normal;
+}
+
+notebook header tabs tab image {
+  color: @dimmed-fg-color;
+}
+
+notebook header tabs tab:hover {
+  background-color: alpha(@hover-color, 0.6);
+}
+
+notebook header tabs tab:checked {
+  background-color: @bg-color;
+  box-shadow: none;
+}
+
+notebook header tabs tab:checked label {
+  color: @ps-strong-fg;
+  font-weight: bold;
+}
+
+notebook header tabs tab:checked image {
+  color: @ps-strong-fg;
+}
+
+notebook header button {
+  background: transparent;
+  border: none;
+  min-height: 18px;
+  min-width: 18px;
+  padding: 1px;
+}
+
+notebook header button:hover {
+  background-color: @hover-color;
+  border-radius: 3px;
+}
+
+notebook stack {
+  background-color: @bg-color;
+}
+
+/* Onglets de documents (mode fenêtre unique) : style Photoshop
+ * — barre sombre, onglet actif plus clair. */
+GimpImageWindow notebook > header {
+  background-color: @ps-chrome;
+}
+
+GimpImageWindow notebook > header tabs tab {
+  min-height: 24px;
+  padding: 2px 8px;
+}
+
+GimpImageWindow notebook > header tabs tab:checked {
+  background-color: @hover-color;
+}
+
+/* ── Boîte à outils ────────────────────────────────────────────
+ * Boutons carrés compacts, coins arrondis, outil actif sur fond gris
+ * clair (comme Photoshop 2024), sans bordure. */
+GimpToolPalette,
+GimpToolbox {
+  background-color: @bg-color;
+}
+
+toolbutton button,
+toolbutton button.flat {
+  background-color: transparent;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  padding: 4px;
+  margin: 1px;
+  box-shadow: none;
+}
+
+toolbutton button.flat:hover {
+  background-color: @hover-color;
+  border-color: transparent;
+}
+
+toolbutton button.flat:checked,
+toolbutton button.flat:checked:hover {
+  background-color: @selected-color;
+  border-color: transparent;
+}
+
+toolbutton button.flat:checked image {
+  color: @ps-strong-fg;
+}
+
+toolbutton button.flat:checked:active:hover {
+  background-color: @ps-button-border;
+}
+
+/* Masquer le logo Wilber en tête de boîte à outils (voir aussi gimprc) */
+GimpToolbox > box > frame:first-child {
+  min-height: 0;
+}
+
+/* ── Boutons ───────────────────────────────────────────────────
+ * Photoshop / Spectrum : boutons contour arrondis, bouton principal
+ * plein bleu. */
+button {
+  background-color: transparent;
+  background-image: none;
+  border-radius: 4px;
+  box-shadow: none;
+  min-height: 18px;
+  padding: 2px 8px;
+}
+
+button:not(.flat) {
+  border: 1px solid @ps-button-border;
+}
+
+button:hover {
+  background-color: @hover-color;
+}
+
+button:active,
+button:checked {
+  background-color: @selected-color;
+  border-color: @ps-button-border;
+}
+
+button.flat {
+  border-color: transparent;
+}
+
+button.image-button {
+  padding: 2px;
+  min-width: 18px;
+}
+
+/* Boutons des barres de dialogues (OK / Annuler) : forme pilule */
+.dialog-action-box button,
+.dialog-action-area button,
+dialog buttonbox button {
+  border-radius: 14px;
+  padding: 3px 16px;
+  min-height: 20px;
+}
+
+button.suggested-action,
+button.default,
+.dialog-action-box button.default {
+  background-color: @ps-accent;
+  border: 1px solid @ps-accent;
+  color: @ps-white;
+}
+
+button.suggested-action label,
+button.default label {
+  color: @ps-white;
+  font-weight: bold;
+}
+
+button.suggested-action:hover,
+button.default:hover {
+  background-color: @ps-accent-hover;
+  border-color: @ps-accent-hover;
+}
+
+button.suggested-action:active,
+button.default:active {
+  background-color: @ps-accent-pressed;
+}
+
+button.destructive-action {
+  border: 1px solid @ps-danger;
+  color: @ps-danger-fg;
+}
+
+/* Petits boutons en pied de panneau (nouveau calque, supprimer…) */
+GimpDockable button,
+GimpEditor button,
+button.titlebutton {
+  border-color: transparent;
+  background-color: transparent;
+  padding: 2px;
+  min-height: 18px;
+  min-width: 18px;
+}
+
+GimpDockable button:hover,
+GimpEditor button:hover {
+  background-color: @hover-color;
+}
+
+/* ── Champs de saisie ──────────────────────────────────────────── */
+entry,
+spinbutton,
+spinbutton entry {
+  background-color: @ps-field;
+  border: 1px solid @edge-border-color;
+  border-radius: 3px;
+  min-height: 18px;
+  padding: 1px 5px;
+  box-shadow: none;
+}
+
+entry:focus,
+entry:focus-within,
+spinbutton:focus,
+spinbutton:focus-within {
+  border-color: @ps-accent;
+  box-shadow: 0 0 0 1px @ps-accent inset;
+}
+
+entry selection,
+.view selection {
+  background-color: @ps-accent;
+  color: @ps-white;
+}
+
+spinbutton {
+  padding: 0;
+}
+
+spinbutton entry {
+  border: none;
+  border-radius: 3px 0 0 3px;
+  box-shadow: none;
+}
+
+spinbutton button.up,
+spinbutton button.down {
+  background-color: transparent;
+  border: none;
+  border-left: 1px solid @edge-border-color;
+  border-radius: 0;
+  min-width: 14px;
+  padding: 0 2px;
+}
+
+spinbutton button:hover {
+  background-color: @hover-color;
+}
+
+/* Listes déroulantes */
+combobox button,
+combobox box.linked button {
+  background-color: @ps-field;
+  border: 1px solid @edge-border-color;
+  border-radius: 3px;
+  min-height: 18px;
+  padding: 1px 6px;
+}
+
+combobox button:hover {
+  background-color: @hover-color;
+}
+
+/* ── Curseurs GimpSpinScale (opacité, taille…) ─────────────────
+ * Barre fine, remplissage gris clair, chiffres alignés à droite. */
+GimpSpinScale {
+  border-radius: 3px;
+  box-shadow: none;
+}
+
+GimpSpinScale entry {
+  background-color: @ps-field;
+  border: 1px solid @edge-border-color;
+  border-right-width: 0;
+  border-radius: 3px 0 0 3px;
+  min-height: 20px;
+}
+
+GimpSpinScale entry progress {
+  background-color: @ps-progress;
+  border-radius: 2px 0 0 2px;
+}
+
+GimpSpinScale:focus-within entry progress {
+  background-color: alpha(@ps-accent, 0.55);
+}
+
+GimpSpinScale button {
+  background-color: @ps-field;
+  border: 1px solid @edge-border-color;
+  border-radius: 0;
+  box-shadow: none;
+  min-width: 14px;
+  padding: 0 1px;
+}
+
+GimpSpinScale button:nth-child(odd) {
+  border-left-width: 0;
+  border-radius: 0 3px 3px 0;
+}
+
+/* Curseurs GtkScale */
+scale trough {
+  background-color: @ps-button-border;
+  min-height: 2px;
+  min-width: 2px;
+  border-radius: 1px;
+}
+
+scale highlight {
+  background-color: @ps-accent;
+  border-radius: 1px;
+}
+
+scale slider {
+  background-color: @ps-knob;
+  border: 1px solid @edge-border-color;
+  border-radius: 100%;
+  min-height: 12px;
+  min-width: 12px;
+  margin: -6px;
+}
+
+/* ── Cases à cocher / boutons radio : accent bleu ──────────────── */
+check,
+radio {
+  background-color: @ps-field;
+  border: 1px solid @ps-check-border;
+  min-width: 13px;
+  min-height: 13px;
+}
+
+check {
+  border-radius: 2px;
+}
+
+check:checked,
+radio:checked {
+  background-color: @ps-accent;
+  border-color: @ps-accent;
+  color: @ps-white;
+}
+
+checkbutton:hover,
+checkbutton.text-button:hover,
+checkbutton:hover label,
+radiobutton:hover,
+checkbutton label:hover {
+  background-color: transparent;
+}
+
+checkbutton:checked label,
+radiobutton:checked label {
+  font-weight: normal;
+}
+
+/* Interrupteurs */
+switch {
+  background-color: @ps-button-border;
+  border: none;
+  border-radius: 10px;
+  min-height: 16px;
+}
+
+switch:checked {
+  background-color: @ps-accent;
+}
+
+switch slider {
+  background-color: @ps-white;
+  border: none;
+  border-radius: 100%;
+  min-width: 14px;
+  min-height: 14px;
+  margin: 1px;
+}
+
+/* ── Listes : calques, couches, chemins, historique ────────────── */
+.view,
+treeview.view {
+  background-color: @ps-list;
+}
+
+.view row,
+treeview.view row {
+  min-height: 26px;
+}
+
+.view:selected,
+.view row:selected,
+treeview.view:selected {
+  background-color: @selected-color;
+  color: @ps-strong-fg;
+}
+
+.view row:hover {
+  background-color: alpha(@hover-color, 0.5);
+}
+
+.view header button {
+  background-color: @ps-chrome;
+  border: none;
+  border-right: 1px solid @edge-border-color;
+  border-bottom: 1px solid @edge-border-color;
+  border-radius: 0;
+  color: @dimmed-fg-color;
+  padding: 2px 6px;
+}
+
+GimpView {
+  background-color: @ps-list;
+}
+
+list,
+list row {
+  background-color: @ps-list;
+}
+
+list row:selected {
+  background-color: @selected-color;
+}
+
+list row:hover {
+  background-color: alpha(@hover-color, 0.5);
+}
+
+/* ── Barres de défilement fines (comme Photoshop) ──────────────── */
+scrollbar {
+  background-color: transparent;
+  border: none;
+}
+
+scrollbar trough {
+  background: transparent;
+}
+
+scrollbar slider {
+  background-color: @scrollbar-slider-color;
+  border: 3px solid transparent;
+  background-clip: padding-box;
+  border-radius: 8px;
+  min-width: 6px;
+  min-height: 6px;
+  margin: 0;
+}
+
+scrollbar slider:hover {
+  background-color: @scrollbar-slider-hover-color;
+}
+
+scrollbar slider:active {
+  background-color: @scrollbar-slider-active-color;
+}
+
+scrollbar button {
+  min-width: 0;
+  min-height: 0;
+  padding: 0;
+  border: none;
+  background: none;
+}
+
+/* ── Règles ────────────────────────────────────────────────────── */
+GimpRuler {
+  background-color: @ps-chrome;
+  color: @dimmed-fg-color;
+  font-size: 0.79rem;
+}
+
+/* ── Barre d'état ──────────────────────────────────────────────── */
+statusbar,
+GimpStatusbar {
+  background-color: @ps-chrome;
+  border-top: 1px solid @edge-border-color;
+  color: @dimmed-fg-color;
+  padding: 0 4px;
+  min-height: 20px;
+}
+
+statusbar label,
+GimpStatusbar label {
+  color: @dimmed-fg-color;
+}
+
+statusbar progressbar progress {
+  background-color: @ps-accent;
+}
+
+progressbar trough progress {
+  background-color: @ps-accent;
+}
+
+/* ── Info-bulles ───────────────────────────────────────────────── */
+tooltip,
+tooltip.background {
+  background-color: @ps-tooltip-bg;
+  border: 1px solid @edge-border-color;
+  border-radius: 4px;
+  color: @ps-tooltip-fg;
+  padding: 4px 8px;
+}
+
+tooltip box,
+tooltip label {
+  background-color: transparent;
+  color: @ps-tooltip-fg;
+}
+
+/* ── Cadres / titres de groupes dans les options d'outils ──────── */
+frame > border,
+frame border {
+  border: none;
+}
+
+frame > label,
+GimpFrame > label {
+  color: @dimmed-fg-color;
+  font-weight: bold;
+}
+
+/* ── Dialogues & popovers ──────────────────────────────────────── */
+dialog,
+.dialog-vbox,
+.background {
+  background-color: @bg-color;
+}
+
+popover,
+popover.background {
+  background-color: @bg-color;
+  border: 1px solid @edge-border-color;
+  border-radius: 4px;
+}
+
+popover button {
+  border-radius: 3px;
+}
+
+/* Barre de titre GTK (dialogues côté client) */
+headerbar {
+  background-color: @ps-chrome;
+  border-bottom: 1px solid @edge-border-color;
+  box-shadow: none;
+  min-height: 30px;
+}
+
+/* ── Sélecteurs de couleur ─────────────────────────────────────── */
+GimpColorNotebook notebook.frame,
+GimpColorNotebook .frame {
+  border: none;
+  background-color: @bg-color;
+}
+
+GimpFgBgEditor {
+  background-color: transparent;
+}
+
+/* ── Barre d'options horizontale (PhotoGIMP Pro v3, GIMP recompilé) ── */
+#photogimp-options-bar {
+  background-color: @bg-color;
+  border-bottom: 1px solid @edge-border-color;
+  min-height: 30px;
+  padding: 1px 8px;
+}
+
+#photogimp-options-bar label {
+  color: @fg-color;
+}
+
+#photogimp-options-bar .dim-label {
+  color: @dimmed-fg-color;
+}
+
+#photogimp-options-bar .photogimp-tool-name {
+  font-weight: bold;
+  margin-right: 4px;
+}
+
+#photogimp-options-bar separator {
+  background-color: @stronger-border-color;
+  min-width: 1px;
+  margin: 4px 2px;
+}
+
+#photogimp-options-bar GimpSpinScale entry {
+  min-height: 20px;
+}
+
+#photogimp-options-bar button {
+  min-height: 20px;
+  padding: 1px 6px;
+}
+
+/* Panneau déroulant des couleurs (fond / contour / texte) */
+button.chopgimp-swatch {
+  padding: 1px;
+  margin: 0;
+  min-width: 0;
+  min-height: 0;
+  border: 1px solid transparent;
+  border-radius: 2px;
+}
+
+button.chopgimp-swatch:hover {
+  border-color: @ps-strong-fg;
+}
+
+#photogimp-options-bar menubutton button,
+#photogimp-options-bar button.popup {
+  padding: 1px 4px;
+}

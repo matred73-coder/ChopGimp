@@ -1,0 +1,7 @@
+sombre	dark	Sombre (Photoshop)
+gris	gray	Gris moyen
+gris-clair	light	Gris clair
+clair	light	Clair
+contraste	dark	Contraste élevé
+affinity	dark	Anthracite (Affinity)
+krita	dark	Gris bleuté (Krita)

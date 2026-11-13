@@ -462,7 +462,11 @@ try:
     # 4. Réglages d'usine présents (thème, icônes, menus, raccourcis)
     data = Gimp.data_directory()
     sysconf = Gimp.sysconf_directory()
-    for label, path in [("Thème PS-Dark", os.path.join(data, "themes", "PS-Dark", "gimp-dark.css")),
+    for label, path in [("Thème ChopGimp (sombre)", os.path.join(data, "themes", "ChopGimp", "gimp-dark.css")),
+                        ("Thème ChopGimp (clair)", os.path.join(data, "themes", "ChopGimp", "gimp-light.css")),
+                        ("Thème : palette Krita", os.path.join(data, "themes", "ChopGimp", "palette-krita.css")),
+                        ("Ancien nom PS-Dark", os.path.join(data, "themes", "PS-Dark", "gimp-dark.css")),
+                        ("Police Inter", "/app/share/fonts/chopgimp/Inter-Regular.ttf"),
                         ("Icônes PS-Line", os.path.join(data, "icons", "PS-Line", "index.theme")),
                         ("Menus Photoshop", os.path.join(data, "menus", "layers-menu.ui")),
                         ("Raccourcis d'usine", os.path.join(sysconf, "shortcutsrc")),

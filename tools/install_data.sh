@@ -24,9 +24,13 @@ python3 "$SRC/tools/build_shortcuts.py"
 python3 "$SRC/tools/build_documents.py"
 python3 "$SRC/icons/build_icons.py"
 
-# 2. Thème PS-Dark
-rm -rf "$DATA/themes/PS-Dark"
-cp -r "$SRC/themes/PS-Dark" "$DATA/themes/"
+# 2. Thème ChopGimp (7 variantes de couleurs, tools/build_themes.py) et
+#    l'ancien nom PS-Dark qui y renvoie ; polices de l'interface (OFL)
+python3 "$SRC/tools/build_themes.py"
+rm -rf "$DATA/themes/PS-Dark" "$DATA/themes/ChopGimp"
+cp -r "$SRC/themes/ChopGimp" "$SRC/themes/PS-Dark" "$DATA/themes/"
+mkdir -p "$DEST/share/fonts/chopgimp"
+cp "$SRC/data/fonts/"*.ttf "$SRC/data/fonts/"LICENSE-*.txt "$DEST/share/fonts/chopgimp/"
 
 # 3. Icônes PS-Line = Default de GIMP + surcouche originale
 rm -rf "$DATA/icons/PS-Line"

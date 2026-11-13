@@ -1,2 +1,5 @@
-/* PS-Dark n'existe qu en sombre : toutes les variantes chargent la palette sombre. */
-@import url("gimp-dark.css");
+/* ═══════════════════════════════════════════════════════════════
+ * ChopGimp — ancien nom « PS-Dark », renvoie vers ChopGimp
+ * Fichier GÉNÉRÉ par tools/build_themes.py : ne pas modifier à la main.
+ * ═══════════════════════════════════════════════════════════════ */
+@import url("../ChopGimp/gimp-light.css");

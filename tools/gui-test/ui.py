@@ -126,8 +126,10 @@ def app_owner():
 APP = (app_owner() if "action" in " ".join(sys.argv) else "", "/org/cen_na/ChopGimp", "org.gtk.Actions")
 
 
-def action(name):
-    call(APP[0], APP[1], APP[2], "Activate", GLib.Variant("(sava{sv})", (name, [], {})))
+def action(name, value=None):
+    """Active une action ; value : paramètre entier (actions radio)."""
+    params = [GLib.Variant("i", int(value))] if value is not None else []
+    call(APP[0], APP[1], APP[2], "Activate", GLib.Variant("(sava{sv})", (name, params, {})))
     print("action", name)
 
 
@@ -178,7 +180,7 @@ def main():
         elif op == "key":
             ptr.key(args[0], len(args) > 1)
         elif op == "action":
-            action(args[0])
+            action(args[0], args[1] if len(args) > 1 else None)
         elif op == "actions":
             actions(args[0] if args else "")
         elif op == "sleep":

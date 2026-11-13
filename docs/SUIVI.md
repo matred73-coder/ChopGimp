@@ -5,7 +5,7 @@ Plan complet : lots 0 à 6, idées en plus, calendrier de 17 étapes (voir l'his
 | Étape | Version | Contenu | État |
 |---|---|---|---|
 | 1 | 3.16.2 | Fin de la revue de code | ✅ livrée |
-| 2 | 3.17.0 | Apparence I (variantes, rem, accent, densité, polices, menu) | à faire |
+| 2 | 3.17.0 | Apparence I (variantes, rem, accent, densité, polices, menu) | ✅ livrée |
 | 3 | 3.17.1 | Apparence II (préférences, espaces de travail, barre d'outils, écran d'accueil) | à faire |
 | 4 | 3.18.0 | Refonte de l'outil Texte | à faire |
 | 5 | 3.19.0 | PSD I | à faire |
@@ -39,3 +39,20 @@ Plan complet : lots 0 à 6, idées en plus, calendrier de 17 étapes (voir l'his
 - **Banc de test graphique** : la vue d'ensemble GNOME est fermée par D-Bus (commande `nooverview`), et `CHOPGIMP_GUITEST_FLATPAK_ARGS` permet de passer des variables à l'application.
 
 **Bugs connus restants** : Ctrl+poignée dérive légèrement sur un texte transformé (sera revu avec la refonte du Texte, étape 4).
+
+## 3.17.0 — Apparence I
+
+- **Thème « ChopGimp »**, généré par `tools/build_themes.py` à partir de `themes/src/` :
+  - 7 variantes de couleurs : Sombre (Photoshop), Gris moyen, Gris clair, Clair, Contraste élevé, Anthracite (Affinity), Gris bleuté (Krita) ;
+  - plus aucune couleur codée en dur dans la surcouche, vérification automatique (`--check`) ;
+  - l'ancien nom « PS-Dark » renvoie vers ChopGimp.
+- **Tailles en rem** : la taille de police des Préférences et la « Taille de l'interface » s'appliquent partout.
+- **Menu Affichage > Apparence**, appliqué à chaud :
+  - variante ;
+  - couleur d'accent (8 couleurs ou celle de la variante) ;
+  - densité (compacte, normale, aérée) ;
+  - police (Inter, Source Sans 3, système) ;
+  - taille de l'interface (90 / 100 / 115 / 130 %).
+- **Polices Inter et Source Sans 3 fournies** (OFL) ; sous Windows, enregistrées au démarrage (`AddFontResourceEx`) pour que l'interface ne retombe plus sur une police de secours.
+- **La zone autour de l'image suit le thème** (fond clair dans les variantes claires).
+- Réglages enregistrés dans `chopgimprc [appearance]`.

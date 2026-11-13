@@ -1,5 +1,5 @@
 # ── PhotoGIMP Pro : réglages d'usine façon Photoshop ──────────────────
-(theme "PS-Dark")
+(theme "ChopGimp")
 (theme-color-scheme dark)
 (icon-theme "PS-Line")
 (prefer-symbolic-icons yes)
@@ -26,7 +26,7 @@
     (snap-to-canvas yes)
     (snap-to-bbox yes)
     (snap-to-equidistance yes)
-    (padding-mode custom)
+    (padding-mode default)
     (padding-color (color-rgb 0.118 0.118 0.118))
     (padding-in-show-all no))
 (default-fullscreen-view
@@ -45,7 +45,7 @@
     (snap-to-canvas yes)
     (snap-to-bbox yes)
     (snap-to-equidistance yes)
-    (padding-mode custom)
+    (padding-mode default)
     (padding-color (color-rgb 0.118 0.118 0.118))
     (padding-in-show-all no))
 (default-image

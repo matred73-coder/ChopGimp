@@ -1,0 +1,706 @@
+From 62a1ec8aaaea868d621ec117a5051d57c765668a Mon Sep 17 00:00:00 2001
+From: ChopGimp <mathieu.redon@proton.me>
+Date: Fri, 13 Nov 2026 19:24:11 +0100
+Subject: [PATCH] ChopGimp: appearance (variants palettes, accent, density, UI
+ font, size; Windows font registration)
+
+---
+ app/actions/windows-actions.c  | 173 +++++++++++++++++++++++++++++++++
+ app/actions/windows-commands.c | 148 ++++++++++++++++++++++++++++
+ app/actions/windows-commands.h |  15 +++
+ app/gui/gui.c                  |  41 ++++++++
+ app/gui/themes.c               | 139 ++++++++++++++++++++++++++
+ app/widgets/chopgimp-rc.c      |  26 +++++
+ app/widgets/chopgimp-rc.h      |   6 ++
+ 7 files changed, 548 insertions(+)
+
+diff --git a/app/actions/windows-actions.c b/app/actions/windows-actions.c
+index 866740d..0b1cc54 100644
+--- a/app/actions/windows-actions.c
++++ b/app/actions/windows-actions.c
+@@ -187,6 +187,131 @@ static const GimpRadioActionEntry windows_tabs_position_actions[] =
+     GIMP_POSITION_RIGHT, GIMP_HELP_WINDOWS_TABS_POSITION },
+ };
+ 
++/*  ChopGimp: Affichage > Apparence  */
++static const GimpRadioActionEntry windows_appearance_actions[] =
++{
++  { "windows-appearance-sombre", NULL,
++    NC_("windows-action", "_Sombre (Photoshop)"), NULL, { NULL },
++    NC_("windows-action", "Variante de couleurs de l'interface"),
++    0, NULL },
++  { "windows-appearance-gris", NULL,
++    NC_("windows-action", "_Gris moyen"), NULL, { NULL },
++    NC_("windows-action", "Variante de couleurs de l'interface"),
++    1, NULL },
++  { "windows-appearance-gris-clair", NULL,
++    NC_("windows-action", "Gris c_lair"), NULL, { NULL },
++    NC_("windows-action", "Variante de couleurs de l'interface"),
++    2, NULL },
++  { "windows-appearance-clair", NULL,
++    NC_("windows-action", "_Clair"), NULL, { NULL },
++    NC_("windows-action", "Variante de couleurs de l'interface"),
++    3, NULL },
++  { "windows-appearance-contraste", NULL,
++    NC_("windows-action", "Contraste _élevé"), NULL, { NULL },
++    NC_("windows-action", "Variante de couleurs de l'interface"),
++    4, NULL },
++  { "windows-appearance-affinity", NULL,
++    NC_("windows-action", "_Anthracite (Affinity)"), NULL, { NULL },
++    NC_("windows-action", "Variante de couleurs de l'interface"),
++    5, NULL },
++  { "windows-appearance-krita", NULL,
++    NC_("windows-action", "Gris _bleuté (Krita)"), NULL, { NULL },
++    NC_("windows-action", "Variante de couleurs de l'interface"),
++    6, NULL },
++};
++
++static const GimpRadioActionEntry windows_accent_actions[] =
++{
++  { "windows-accent-variante", NULL,
++    NC_("windows-action", "Couleur de la _variante"), NULL, { NULL },
++    NC_("windows-action", "Couleur d'accent de l'interface"),
++    0, NULL },
++  { "windows-accent-bleu", NULL,
++    NC_("windows-action", "_Bleu"), NULL, { NULL },
++    NC_("windows-action", "Couleur d'accent de l'interface"),
++    1, NULL },
++  { "windows-accent-cyan", NULL,
++    NC_("windows-action", "C_yan"), NULL, { NULL },
++    NC_("windows-action", "Couleur d'accent de l'interface"),
++    2, NULL },
++  { "windows-accent-violet", NULL,
++    NC_("windows-action", "_Violet"), NULL, { NULL },
++    NC_("windows-action", "Couleur d'accent de l'interface"),
++    3, NULL },
++  { "windows-accent-vert", NULL,
++    NC_("windows-action", "V_ert"), NULL, { NULL },
++    NC_("windows-action", "Couleur d'accent de l'interface"),
++    4, NULL },
++  { "windows-accent-orange", NULL,
++    NC_("windows-action", "_Orange"), NULL, { NULL },
++    NC_("windows-action", "Couleur d'accent de l'interface"),
++    5, NULL },
++  { "windows-accent-rouge", NULL,
++    NC_("windows-action", "_Rouge"), NULL, { NULL },
++    NC_("windows-action", "Couleur d'accent de l'interface"),
++    6, NULL },
++  { "windows-accent-rose", NULL,
++    NC_("windows-action", "Ro_se"), NULL, { NULL },
++    NC_("windows-action", "Couleur d'accent de l'interface"),
++    7, NULL },
++  { "windows-accent-jaune", NULL,
++    NC_("windows-action", "_Jaune"), NULL, { NULL },
++    NC_("windows-action", "Couleur d'accent de l'interface"),
++    8, NULL },
++};
++
++static const GimpRadioActionEntry windows_density_actions[] =
++{
++  { "windows-density-compact", NULL,
++    NC_("windows-action", "_Compacte"), NULL, { NULL },
++    NC_("windows-action", "Espacement des boutons, champs et menus"),
++    0, NULL },
++  { "windows-density-normal", NULL,
++    NC_("windows-action", "_Normale"), NULL, { NULL },
++    NC_("windows-action", "Espacement des boutons, champs et menus"),
++    1, NULL },
++  { "windows-density-comfortable", NULL,
++    NC_("windows-action", "_Aérée"), NULL, { NULL },
++    NC_("windows-action", "Espacement des boutons, champs et menus"),
++    2, NULL },
++};
++
++static const GimpRadioActionEntry windows_ui_font_actions[] =
++{
++  { "windows-ui-font-inter", NULL,
++    NC_("windows-action", "_Inter"), NULL, { NULL },
++    NC_("windows-action", "Police de l'interface"),
++    0, NULL },
++  { "windows-ui-font-source", NULL,
++    NC_("windows-action", "_Source Sans 3"), NULL, { NULL },
++    NC_("windows-action", "Police de l'interface"),
++    1, NULL },
++  { "windows-ui-font-system", NULL,
++    NC_("windows-action", "Police du _système"), NULL, { NULL },
++    NC_("windows-action", "Police de l'interface"),
++    2, NULL },
++};
++
++static const GimpRadioActionEntry windows_ui_size_actions[] =
++{
++  { "windows-ui-size-90", NULL,
++    NC_("windows-action", "_90 %"), NULL, { NULL },
++    NC_("windows-action", "Taille de l'interface (texte et icônes)"),
++    0, NULL },
++  { "windows-ui-size-100", NULL,
++    NC_("windows-action", "_100 %"), NULL, { NULL },
++    NC_("windows-action", "Taille de l'interface (texte et icônes)"),
++    1, NULL },
++  { "windows-ui-size-115", NULL,
++    NC_("windows-action", "11_5 %"), NULL, { NULL },
++    NC_("windows-action", "Taille de l'interface (texte et icônes)"),
++    2, NULL },
++  { "windows-ui-size-130", NULL,
++    NC_("windows-action", "1_30 %"), NULL, { NULL },
++    NC_("windows-action", "Taille de l'interface (texte et icônes)"),
++    3, NULL },
++};
++
+ void
+ windows_actions_setup (GimpActionGroup *group)
+ {
+@@ -196,6 +321,27 @@ windows_actions_setup (GimpActionGroup *group)
+                                  windows_actions,
+                                  G_N_ELEMENTS (windows_actions));
+ 
++  gimp_action_group_add_radio_actions (group, "windows-action",
++                                       windows_appearance_actions,
++                                       G_N_ELEMENTS (windows_appearance_actions),
++                                       NULL, 0, windows_appearance_cmd_callback);
++  gimp_action_group_add_radio_actions (group, "windows-action",
++                                       windows_accent_actions,
++                                       G_N_ELEMENTS (windows_accent_actions),
++                                       NULL, 0, windows_accent_cmd_callback);
++  gimp_action_group_add_radio_actions (group, "windows-action",
++                                       windows_density_actions,
++                                       G_N_ELEMENTS (windows_density_actions),
++                                       NULL, 1, windows_density_cmd_callback);
++  gimp_action_group_add_radio_actions (group, "windows-action",
++                                       windows_ui_font_actions,
++                                       G_N_ELEMENTS (windows_ui_font_actions),
++                                       NULL, 0, windows_ui_font_cmd_callback);
++  gimp_action_group_add_radio_actions (group, "windows-action",
++                                       windows_ui_size_actions,
++                                       G_N_ELEMENTS (windows_ui_size_actions),
++                                       NULL, 1, windows_ui_size_cmd_callback);
++
+   gimp_action_group_add_toggle_actions (group, "windows-action",
+                                         windows_toggle_actions,
+                                         G_N_ELEMENTS (windows_toggle_actions));
+@@ -306,6 +452,33 @@ windows_actions_update (GimpActionGroup *group,
+   gimp_action_group_set_action_sensitive (group, "windows-show-tabs", config->single_window_mode,
+                                           _("Single-window mode disabled"));
+ 
++  /*  ChopGimp: the appearance radio items follow chopgimprc  */
++  {
++    static const struct { const gchar *key, *prefix; } radios[] =
++    {
++      { "variant",     "windows-appearance" },
++      { "accent-name", "windows-accent"     },
++      { "density",     "windows-density"    },
++      { "font",        "windows-ui-font"    },
++      { "size",        "windows-ui-size"    },
++    };
++
++    for (guint r = 0; r < G_N_ELEMENTS (radios); r++)
++      {
++        /*  only a stored choice: the defaults are the initial radio values,
++         *  and setting a radio item runs its callback
++         */
++        gchar *value = chopgimp_rc_get_string ("appearance", radios[r].key, NULL);
++        gchar *name  = value ? g_strdup_printf ("%s-%s", radios[r].prefix, value) : NULL;
++
++        if (name && gimp_action_group_get_action (group, name))
++          gimp_action_group_set_action_active (group, name, TRUE);
++
++        g_free (name);
++        g_free (value);
++      }
++  }
++
+ #undef SET_ACTIVE
+ }
+ 
+diff --git a/app/actions/windows-commands.c b/app/actions/windows-commands.c
+index a7b11a4..37dab8b 100644
+--- a/app/actions/windows-commands.c
++++ b/app/actions/windows-commands.c
+@@ -27,6 +27,7 @@
+ #include "actions-types.h"
+ 
+ #include "config/gimpdisplayconfig.h"
++#include "config/config-enums.h"
+ #include "config/gimpguiconfig.h"
+ 
+ #include "core/gimp.h"
+@@ -289,3 +290,150 @@ windows_open_recent_cmd_callback (GimpAction *action,
+ 
+   g_object_unref (info);
+ }
++
++
++/*  ChopGimp: Affichage > Apparence — the settings are kept in chopgimprc
++ *  [appearance] and applied by app/gui/themes.c (re-read on « theme »)
++ */
++static void
++chopgimp_appearance_changed (Gimp *gimp)
++{
++  g_object_notify (G_OBJECT (gimp->config), "theme");
++}
++
++static gboolean
++chopgimp_appearance_store (const gchar *key,
++                           const gchar *value)
++{
++  gchar   *old     = chopgimp_rc_get_string ("appearance", key, NULL);
++  gboolean changed = g_strcmp0 (old, value) != 0;
++
++  if (changed)
++    chopgimp_rc_set_string ("appearance", key, value);
++
++  g_free (old);
++
++  return changed;
++}
++
++void
++windows_appearance_cmd_callback (GimpAction *action,
++                                 GVariant   *value,
++                                 gpointer    data)
++{
++  static const struct { const gchar *name; GimpThemeScheme scheme; } variants[] =
++  {
++    { "sombre",     GIMP_THEME_DARK  },
++    { "gris",       GIMP_THEME_GRAY  },
++    { "gris-clair", GIMP_THEME_LIGHT },
++    { "clair",      GIMP_THEME_LIGHT },
++    { "contraste",  GIMP_THEME_DARK  },
++    { "affinity",   GIMP_THEME_DARK  },
++    { "krita",      GIMP_THEME_DARK  },
++  };
++  Gimp *gimp;
++  gint  v;
++  return_if_no_gimp (gimp, data);
++
++  v = CLAMP (g_variant_get_int32 (value), 0, (gint) G_N_ELEMENTS (variants) - 1);
++
++  /*  (the menu also sets the radio item when it updates: no change)  */
++  if (! chopgimp_appearance_store ("variant", variants[v].name))
++    return;
++
++  /*  the scheme (light / gray / dark) gives the base styles, the variant
++   *  its palette; setting them notifies « theme » (re-applied)
++   */
++  g_object_set (gimp->config,
++                "theme",              "ChopGimp",
++                "theme-color-scheme", variants[v].scheme,
++                NULL);
++  chopgimp_appearance_changed (gimp);
++}
++
++void
++windows_accent_cmd_callback (GimpAction *action,
++                             GVariant   *value,
++                             gpointer    data)
++{
++  static const struct { const gchar *name; const gchar *color; } accents[] =
++  {
++    { "variante", ""        },
++    { "bleu",     "#378EF0" },
++    { "cyan",     "#00B4E6" },
++    { "violet",   "#8A63D2" },
++    { "vert",     "#2DA44E" },
++    { "orange",   "#F28C28" },
++    { "rouge",    "#E34850" },
++    { "rose",     "#E0529C" },
++    { "jaune",    "#E0B000" },
++  };
++  Gimp *gimp;
++  gint  a;
++  return_if_no_gimp (gimp, data);
++
++  a = CLAMP (g_variant_get_int32 (value), 0, (gint) G_N_ELEMENTS (accents) - 1);
++
++  if (chopgimp_appearance_store ("accent-name", accents[a].name))
++    {
++      chopgimp_rc_set_string ("appearance", "accent", accents[a].color);
++      chopgimp_appearance_changed (gimp);
++    }
++}
++
++void
++windows_density_cmd_callback (GimpAction *action,
++                              GVariant   *value,
++                              gpointer    data)
++{
++  static const gchar *names[] = { "compact", "normal", "comfortable" };
++  Gimp *gimp;
++  return_if_no_gimp (gimp, data);
++
++  if (chopgimp_appearance_store ("density",
++                                 names[CLAMP (g_variant_get_int32 (value), 0, 2)]))
++    chopgimp_appearance_changed (gimp);
++}
++
++void
++windows_ui_font_cmd_callback (GimpAction *action,
++                              GVariant   *value,
++                              gpointer    data)
++{
++  static const gchar *names[] = { "inter", "source", "system" };
++  Gimp *gimp;
++  return_if_no_gimp (gimp, data);
++
++  if (chopgimp_appearance_store ("font",
++                                 names[CLAMP (g_variant_get_int32 (value), 0, 2)]))
++    chopgimp_appearance_changed (gimp);
++}
++
++void
++windows_ui_size_cmd_callback (GimpAction *action,
++                              GVariant   *value,
++                              gpointer    data)
++{
++  static const struct { const gchar *name; gdouble font; gboolean override; GimpIconSize icons; } sizes[] =
++  {
++    { "90",  0.90, TRUE,  GIMP_ICON_SIZE_SMALL  },
++    { "100", 1.00, FALSE, GIMP_ICON_SIZE_SMALL  },
++    { "115", 1.15, TRUE,  GIMP_ICON_SIZE_MEDIUM },
++    { "130", 1.30, TRUE,  GIMP_ICON_SIZE_LARGE  },
++  };
++  Gimp *gimp;
++  gint  s;
++  return_if_no_gimp (gimp, data);
++
++  s = CLAMP (g_variant_get_int32 (value), 0, (gint) G_N_ELEMENTS (sizes) - 1);
++
++  if (! chopgimp_appearance_store ("size", sizes[s].name))
++    return;
++
++  /*  the Preferences' own settings: they re-apply the theme  */
++  g_object_set (gimp->config,
++                "font-relative-size",       sizes[s].font,
++                "override-theme-icon-size", sizes[s].override,
++                "custom-icon-size",         sizes[s].icons,
++                NULL);
++}
+diff --git a/app/actions/windows-commands.h b/app/actions/windows-commands.h
+index 28fffb8..8228582 100644
+--- a/app/actions/windows-commands.h
++++ b/app/actions/windows-commands.h
+@@ -18,6 +18,21 @@
+ #pragma once
+ 
+ 
++void  windows_appearance_cmd_callback    (GimpAction *action,
++                                         GVariant   *value,
++                                         gpointer    data);
++void  windows_accent_cmd_callback        (GimpAction *action,
++                                         GVariant   *value,
++                                         gpointer    data);
++void  windows_density_cmd_callback       (GimpAction *action,
++                                         GVariant   *value,
++                                         gpointer    data);
++void  windows_ui_font_cmd_callback       (GimpAction *action,
++                                         GVariant   *value,
++                                         gpointer    data);
++void  windows_ui_size_cmd_callback       (GimpAction *action,
++                                         GVariant   *value,
++                                         gpointer    data);
+ void  windows_hide_right_docks_cmd_callback        (GimpAction *action,
+                                                     GVariant   *value,
+                                                     gpointer    data);
+diff --git a/app/gui/gui.c b/app/gui/gui.c
+index 74a7ced..9afbc5c 100644
+--- a/app/gui/gui.c
++++ b/app/gui/gui.c
+@@ -26,6 +26,10 @@
+ #include "libgimpwidgets/gimpwidgets.h"
+ #include "libgimpwidgets/gimpwidgets-private.h"
+ 
++#ifdef G_OS_WIN32
++#include <windows.h>
++#endif
++
+ #include "gui-types.h"
+ #include "gimpapp.h"
+ 
+@@ -173,6 +177,42 @@ static GimpUIConfigurer *ui_configurer    = NULL;
+ static GdkMonitor       *initial_monitor  = NULL;
+ 
+ 
++/*  ChopGimp: the interface fonts (Inter, Source Sans 3) shipped in
++ *  share/fonts/chopgimp.  On Linux (Flatpak) fontconfig finds them by
++ *  itself; on Windows the GTK interface draws with DirectWrite, which only
++ *  sees the fonts installed in the system or registered by the process.
++ */
++static void
++chopgimp_register_ui_fonts (void)
++{
++#ifdef G_OS_WIN32
++  gchar       *dir = g_build_filename (gimp_installation_directory (),
++                                       "share", "fonts", "chopgimp", NULL);
++  GDir        *gdir = g_dir_open (dir, 0, NULL);
++  const gchar *name;
++
++  if (gdir)
++    {
++      while ((name = g_dir_read_name (gdir)))
++        if (g_str_has_suffix (name, ".ttf"))
++          {
++            gchar    *path  = g_build_filename (dir, name, NULL);
++            gunichar2 *wpath = g_utf8_to_utf16 (path, -1, NULL, NULL, NULL);
++
++            if (wpath)
++              AddFontResourceExW ((LPCWSTR) wpath, FR_PRIVATE, 0);
++
++            g_free (wpath);
++            g_free (path);
++          }
++
++      g_dir_close (gdir);
++    }
++
++  g_free (dir);
++#endif
++}
++
+ /*  public functions  */
+ 
+ void
+@@ -298,6 +338,7 @@ gui_init (Gimp         *gimp,
+ 
+   gimp_dnd_init (gimp);
+ 
++  chopgimp_register_ui_fonts ();
+   themes_init (gimp);
+   gimp_canvas_styles_init ();
+ 
+diff --git a/app/gui/themes.c b/app/gui/themes.c
+index a6bc4fd..2b4e535 100644
+--- a/app/gui/themes.c
++++ b/app/gui/themes.c
+@@ -17,7 +17,9 @@
+ 
+ #include "config.h"
+ 
++#include <stdio.h>
+ #include <stdlib.h>
++#include <string.h>
+ 
+ #include <gegl.h>
+ #include <gtk/gtk.h>
+@@ -43,6 +45,7 @@
+ #include "display/gimpimagewindow.h"
+ 
+ #include "widgets/gimpwidgets-utils.h"
++#include "widgets/chopgimp-rc.h"
+ 
+ #include "icon-themes.h"
+ #include "themes.h"
+@@ -277,6 +280,108 @@ themes_get_theme_file (Gimp        *gimp,
+   return file;
+ }
+ 
++/*  ChopGimp: appearance settings (chopgimprc [appearance]):
++ *    variant  palette (themes/ChopGimp/palette-<variant>.css)
++ *    accent   #RRGGBB, empty: the palette's own
++ *    density  compact | normal | comfortable
++ *    font     inter | source | system
++ */
++static void
++chopgimp_shade (const gchar *hex,
++                gdouble      factor,
++                gchar       *out)
++{
++  guint r = 0x37, g = 0x8E, b = 0xF0;
++
++  if (hex && strlen (hex) == 7)
++    sscanf (hex + 1, "%02x%02x%02x", &r, &g, &b);
++
++  if (factor > 1.0)   /* towards white */
++    {
++      r = r + (255 - r) * (factor - 1.0);
++      g = g + (255 - g) * (factor - 1.0);
++      b = b + (255 - b) * (factor - 1.0);
++    }
++  else
++    {
++      r *= factor;
++      g *= factor;
++      b *= factor;
++    }
++
++  g_snprintf (out, 8, "#%02X%02X%02X", MIN (r, 255), MIN (g, 255), MIN (b, 255));
++}
++
++static gchar *
++chopgimp_themes_appearance_css (void)
++{
++  GString *css     = g_string_new ("\n/* ChopGimp: apparence */\n");
++  gchar   *accent  = chopgimp_rc_get_string ("appearance", "accent", "");
++  gchar   *density = chopgimp_rc_get_string ("appearance", "density", "normal");
++
++  if (accent && strlen (accent) == 7 && accent[0] == '#')
++    {
++      gchar hover[8], pressed[8];
++
++      chopgimp_shade (accent, 1.15, hover);
++      chopgimp_shade (accent, 0.85, pressed);
++
++      g_string_append_printf (css,
++                              "@define-color ps-accent %s;\n"
++                              "@define-color ps-accent-hover %s;\n"
++                              "@define-color ps-accent-pressed %s;\n",
++                              accent, hover, pressed);
++    }
++
++  if (! g_strcmp0 (density, "compact"))
++    g_string_append (css,
++                     "button, entry, spinbutton, combobox button, notebook > header > tabs > tab "
++                     "{ min-height: 16px; padding-top: 0; padding-bottom: 0; }\n"
++                     "treeview.view { padding-top: 0; padding-bottom: 0; }\n"
++                     "menuitem { min-height: 18px; padding-top: 1px; padding-bottom: 1px; }\n");
++  else if (! g_strcmp0 (density, "comfortable"))
++    g_string_append (css,
++                     "button, entry, spinbutton, combobox button "
++                     "{ min-height: 28px; padding-top: 3px; padding-bottom: 3px; }\n"
++                     "notebook > header > tabs > tab { min-height: 26px; }\n"
++                     "treeview.view { padding-top: 3px; padding-bottom: 3px; }\n"
++                     "menuitem { min-height: 26px; padding-top: 4px; padding-bottom: 4px; }\n");
++
++  g_free (accent);
++  g_free (density);
++
++  return g_string_free (css, FALSE);
++}
++
++static void
++chopgimp_themes_set_font (void)
++{
++  static gchar *system_font = NULL;
++  GtkSettings  *settings    = gtk_settings_get_for_screen (gdk_screen_get_default ());
++  gchar        *font        = chopgimp_rc_get_string ("appearance", "font", "inter");
++  const gchar  *name;
++
++  /*  remember the desktop's font, for « Système »  */
++  if (! system_font)
++    g_object_get (settings, "gtk-font-name", &system_font, NULL);
++
++  if (! g_strcmp0 (font, "source"))
++    name = "Source Sans 3 10";
++  else if (! g_strcmp0 (font, "system"))
++    name = system_font;
++  else
++#ifdef G_OS_WIN32
++    name = "Inter, Segoe UI 9";
++#else
++    name = "Inter 9";
++#endif
++
++  if (name)
++    g_object_set (settings, "gtk-font-name", name, NULL);
++
++  g_free (font);
++}
++
+ void
+ themes_theme_change_notify (GimpGuiConfig *config,
+                             GParamSpec    *pspec,
+@@ -292,6 +397,9 @@ themes_theme_change_notify (GimpGuiConfig *config,
+ 
+   themes_apply_theme (gimp, config);
+ 
++  /*  ChopGimp: the interface font and its size (1rem everywhere)  */
++  chopgimp_themes_set_font ();
++
+   theme_css = gimp_directory_file ("theme.css", NULL);
+ 
+   if (gimp->be_verbose)
+@@ -568,6 +676,29 @@ themes_apply_theme (Gimp          *gimp,
+ 
+       css_files = g_slist_reverse (css_files);
+ 
++      /*  ChopGimp: the palette of the chosen variant comes right after the
++       *  theme (its colours replace those of the scheme)
++       */
++      {
++        gchar *variant = chopgimp_rc_get_string ("appearance", "variant", NULL);
++        GFile *dir     = themes_get_theme_dir (gimp, config->theme);
++
++        if (variant && *variant && dir && css_files)
++          {
++            gchar *name    = g_strdup_printf ("palette-%s.css", variant);
++            GFile *palette = g_file_get_child (dir, name);
++
++            if (g_file_query_exists (palette, NULL))
++              css_files = g_slist_insert (css_files, palette, 1);
++            else
++              g_object_unref (palette);
++
++            g_free (name);
++          }
++
++        g_free (variant);
++      }
++
+       g_output_stream_printf (
+         output, NULL, NULL, &error,
+         "/* GIMP theme.css\n"
+@@ -609,6 +740,14 @@ themes_apply_theme (Gimp          *gimp,
+             icon_themes_current_prefer_symbolic (gimp) ? "symbolic" : "regular",
+             prefer_dark_theme ? "/* prefer-dark-theme */\n" : "");
+ 
++          /*  ChopGimp: accent colour and density (menu Affichage > Apparence)  */
++          if (! error)
++            {
++              gchar *css = chopgimp_themes_appearance_css ();
++
++              g_output_stream_printf (output, NULL, NULL, &error, "%s", css);
++              g_free (css);
++            }
+         }
+ 
+ #if defined(PLATFORM_OSX) && MAC_OS_X_VERSION_MIN_REQUIRED >= 101000
+diff --git a/app/widgets/chopgimp-rc.c b/app/widgets/chopgimp-rc.c
+index e9dd240..1259063 100644
+--- a/app/widgets/chopgimp-rc.c
++++ b/app/widgets/chopgimp-rc.c
+@@ -115,3 +115,29 @@ chopgimp_rc_set_strings (const gchar         *group,
+ 
+   g_free (path);
+ }
++
++gchar *
++chopgimp_rc_get_string (const gchar *group,
++                        const gchar *key,
++                        const gchar *default_value)
++{
++  gchar *value = g_key_file_get_string (chopgimp_rc_get (), group, key, NULL);
++
++  return value ? value : g_strdup (default_value);
++}
++
++void
++chopgimp_rc_set_string (const gchar *group,
++                        const gchar *key,
++                        const gchar *value)
++{
++  gchar *path = chopgimp_rc_path ();
++
++  if (value)
++    g_key_file_set_string (chopgimp_rc_get (), group, key, value);
++  else
++    g_key_file_remove_key (chopgimp_rc_get (), group, key, NULL);
++
++  g_key_file_save_to_file (chopgimp_rc, path, NULL);
++  g_free (path);
++}
+diff --git a/app/widgets/chopgimp-rc.h b/app/widgets/chopgimp-rc.h
+index c6b4035..799373a 100644
+--- a/app/widgets/chopgimp-rc.h
++++ b/app/widgets/chopgimp-rc.h
+@@ -20,3 +20,9 @@ gchar   ** chopgimp_rc_get_strings (const gchar         *group,
+ void       chopgimp_rc_set_strings (const gchar         *group,
+                                     const gchar         *key,
+                                     const gchar * const *list);
++gchar    * chopgimp_rc_get_string  (const gchar         *group,
++                                    const gchar         *key,
++                                    const gchar         *default_value);
++void       chopgimp_rc_set_string  (const gchar         *group,
++                                    const gchar         *key,
++                                    const gchar         *value);
+-- 
+2.53.0
+

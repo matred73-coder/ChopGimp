@@ -216,6 +216,14 @@ sh tools/install_data.sh /c/gimpshop/_install
 > ⚠️ `install_data.sh` ajoute ses réglages à la fin de `gimprc` : ne le lance qu'**une fois** après
 > chaque `ninja install`.
 
+> **Depuis la 3.17.0**, `install_data.sh` installe aussi :
+> - le thème **ChopGimp**, en 7 variantes de couleurs (menu **Affichage > Apparence**) ;
+> - les polices d'interface **Inter** et **Source Sans 3** (licence OFL) dans `share/fonts/chopgimp`.
+>
+> Sous Windows, ChopGimp enregistre ces polices au démarrage (`AddFontResourceEx`), car l'interface GTK passe par DirectWrite, qui ne voit que les polices installées ou enregistrées par le programme. Vérifie que `share\fonts\chopgimp\*.ttf` est bien copié par l'installateur.
+>
+> Si le rendu reste laid, essaie **Affichage > Apparence > Police de l'interface > Police du système** (Segoe UI) et **Taille de l'interface** (115 % ou 130 % sur les écrans à 125–150 %).
+
 ---
 
 ## 9. Fabriquer `chopgimp-3.11.1-setup.exe`
