@@ -45,8 +45,10 @@ def fail(procedure, msg):
 
 
 def gegl_color(r, g, b, a=1.0):
+    """Couleur sRGB (0..1, comme Gdk.RGBA) → Gegl.Color ; set_rgba() seul
+    attendrait du RGB linéaire et éclaircirait la couleur."""
     c = Gegl.Color.new("black")
-    c.set_rgba(r, g, b, a)
+    c.set_rgba_with_space(r, g, b, a, None)
     return c
 
 
@@ -74,8 +76,8 @@ def parasite_set(item, name, data):
 
 
 def rgba(c):
-    r = c.get_rgba()
-    return [r.red, r.green, r.blue, r.alpha]
+    r, g, b, a = c.get_rgba_with_space(None)
+    return [r, g, b, a]
 
 
 def from_rgba(v):
@@ -1163,4 +1165,5 @@ class ChopGimpFx(Gimp.PlugIn):
         return ok(procedure)
 
 
-Gimp.main(ChopGimpFx.__gtype__, sys.argv)
+if __name__ == "__main__":
+    Gimp.main(ChopGimpFx.__gtype__, sys.argv)

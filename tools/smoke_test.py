@@ -459,6 +459,43 @@ try:
     except Exception as e:
         report(False, "Texte (effets)", repr(e)[:200])
 
+    # 3 bis. Import PSD avancé (plug-in chopgimp_psd) sur le PSD de test
+    try:
+        import runpy
+        repo = os.environ.get("SMOKE_REPO", os.path.expanduser("~/DOCKER/photogimp-pro"))
+        psd_path = os.path.join(TMP, "test.psd")
+        runpy.run_path(os.path.join(repo, "tools", "fixtures", "make_psd.py"))["write"](psd_path)
+        im = Gimp.file_load(Gimp.RunMode.NONINTERACTIVE, Gio.File.new_for_path(psd_path))
+        top = {l.get_name(): l for l in im.get_layers()}
+        texts = [l for l in top.values() if isinstance(l, Gimp.TextLayer)]
+        report(len(texts) == 3, "PSD : 3 textes modifiables", ", ".join(sorted(l.get_name() for l in texts)))
+        titre = top.get("Titre")
+        report(isinstance(titre, Gimp.TextLayer) and "Bonjour" in (titre.get_markup() or "") and
+               "DejaVu Sans Bold" in titre.get_font().get_name() and abs(titre.get_font_size()[0] - 48) < 0.5,
+               "PSD : texte à 2 styles (police, taille, balises)",
+               titre.get_font().get_name() if titre else "absent")
+        para = top.get("Paragraphe")
+        spec = run("chopgimp-text-fx-get", layer=para).index(1) if isinstance(para, Gimp.TextLayer) else ""
+        report((spec or "").startswith("warp=arc"), "PSD : déformation Arc reprise", spec or "")
+        rect = top.get("Rectangle")
+        report(isinstance(rect, Gimp.VectorLayer) and rect.get_enable_stroke() and
+               abs(rect.get_stroke_width() - 4) < 0.1, "PSD : forme → calque vectoriel avec contour",
+               type(rect).__name__)
+        photo = top.get("Photo masquée")
+        report(photo is not None and photo.get_mask() is not None and
+               any(p.get_name().startswith("Masque vectoriel") for p in im.get_paths()),
+               "PSD : masque vectoriel → masque + chemin")
+        fx = [f.get_name() for f in (top["Effets"].get_filters() or [])] if "Effets" in top else []
+        report(len(fx) == 3, "PSD : effets lfx2 → styles ChopGimp", ", ".join(fx))
+        orig = [l for l in im.get_layers() if l.get_name().startswith("⟲")]
+        report(len(orig) == 1 and not orig[0].get_visible() and len(orig[0].get_children()) == 4,
+               "PSD : originaux gardés dans un groupe masqué")
+        par = im.get_parasite("chopgimp-psd-report")
+        txt = bytes(b & 255 for b in par.get_data()).decode() if par else ""
+        report("FooBarSans-Regular" in txt, "PSD : police absente signalée dans le rapport")
+    except Exception as e:
+        report(False, "Import PSD", repr(e)[:200])
+
     # 4. Réglages d'usine présents (thème, icônes, menus, raccourcis)
     data = Gimp.data_directory()
     sysconf = Gimp.sysconf_directory()

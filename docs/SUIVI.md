@@ -8,7 +8,7 @@ Plan complet : lots 0 à 6, idées en plus, calendrier de 17 étapes (voir l'his
 | 2 | 3.17.0 | Apparence I (variantes, rem, accent, densité, polices, menu) | ✅ livrée |
 | 3 | 3.17.1 | Apparence II (préférences, espaces de travail, barre d'outils, écran d'accueil) | ✅ livrée |
 | 4 | 3.18.0 | Refonte de l'outil Texte | ✅ livrée |
-| 5 | 3.19.0 | PSD I | à faire |
+| 5 | 3.19.0 | PSD I | ✅ livrée |
 | 6 | 3.19.1 | PSD II | à faire |
 | 7 | 3.20.0 | Vectoriel I (PDF/AI) | à faire |
 | 8 | 3.20.1 | Vectoriel II (EPS, SVG, aperçus, Placer) | à faire |
@@ -92,3 +92,29 @@ Plan complet : lots 0 à 6, idées en plus, calendrier de 17 étapes (voir l'his
 **Reporté** :
 - curseurs des axes des polices variables. Les instances nommées sont déjà listées. Reporté à l'étape 17 ;
 - dérive de Ctrl+poignée sur un texte avec effets.
+
+## 3.19.0 — Import PSD I
+
+- **Nouveau plug-in `chopgimp_psd`**, prioritaire pour les .psd et .psb :
+  - l'import de GIMP charge d'abord les pixels, les groupes, les masques et les modes ;
+  - `psdparse.py`, en Python pur, relit ensuite la section des calques (370 Mo lus en 0,2 s, sans toucher aux pixels) ;
+  - chaque calque est retrouvé par son identifiant Photoshop.
+- **Textes → calques de texte modifiables** :
+  - police (nom PostScript retrouvé via fontconfig), taille, couleur, approche, interlignage, alignement ;
+  - plusieurs styles dans un calque, en balises ;
+  - texte de point ou cadre de paragraphe ;
+  - rotation, inclinaison et étirement en transformation modifiable ;
+  - déformation de Photoshop vers les 15 styles ChopGimp.
+- **Formes → calques vectoriels** (fond uni, contour avec épaisseur, extrémités, angles et tirets).
+- **Masques vectoriels** → masque de calque, plus un chemin du même nom.
+- **Effets (lfx2) → styles ChopGimp** : ombre portée, ombre interne, lueurs, biseau, incrustation couleur, contour, incrustation de dégradé. Les anciens effets posés par l'import de GIMP sont retirés pour éviter le doublon.
+- **Originaux** : les calques pixellisés remplacés sont gardés dans le groupe masqué « ⟲ Originaux ».
+- **Polices absentes** : fenêtre de remplacement ; la correspondance est mémorisée dans `chopgimp-psd.json`.
+- **Rapport** de ce qui est repris, approximé ou ignoré. Il est aussi enregistré dans le parasite d'image `chopgimp-psd-report`.
+- **Couleurs des styles de calque** : elles étaient traitées en RVB linéaire, donc rendues trop claires. Elles sont maintenant en sRGB (`chopgimp_fx`).
+- **PSD de test** généré par `tools/fixtures/make_psd.py` ; 8 tests ajoutés.
+
+**Limites**, traitées en 3.19.1 :
+- calques de réglage et de remplissage ;
+- objets dynamiques ;
+- contour intérieur ou extérieur d'une forme, rendu centré.

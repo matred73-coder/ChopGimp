@@ -99,6 +99,11 @@ cp "$SRC/presets/palettes/"*.gpl "$DATA/palettes/"
 install_plugin() {   # $1 = nom, $2 = fichier source
     mkdir -p "$PLUG/$1"
     install -m 755 "$2" "$PLUG/$1/$1.py"
+    # modules annexes (ex. psdparse.py), seulement pour un plug-in qui a son dossier
+    [ "$(basename "$(dirname "$2")")" = "$1" ] || return 0
+    for m in "$(dirname "$2")"/*.py; do
+        [ "$m" = "$2" ] || install -m 644 "$m" "$PLUG/$1/"
+    done
 }
 for d in "$SRC/plug-ins/"*/; do          # plug-ins ChopGimp (photogimp_ps, chopgimp_fx…)
     n="$(basename "$d")"
