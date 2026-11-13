@@ -1,0 +1,80 @@
+From 4ae127e7a0a4307da0dcc600c9562898d544abe2 Mon Sep 17 00:00:00 2001
+From: ChopGimp <mathieu.redon@proton.me>
+Date: Fri, 13 Nov 2026 23:44:33 +0100
+Subject: [PATCH] ChopGimp: plug-in dialogs stay above the image window;
+ readable rectangle select labels
+
+---
+ app/display/gimpoptionsbar.c |  3 +++
+ libgimp/gimpui.c             | 34 ++++++++++++++++++++++++++++++++++
+ 2 files changed, 37 insertions(+)
+
+diff --git a/app/display/gimpoptionsbar.c b/app/display/gimpoptionsbar.c
+index 4964af6..b04fb8e 100644
+--- a/app/display/gimpoptionsbar.c
++++ b/app/display/gimpoptionsbar.c
+@@ -388,6 +388,9 @@ gimp_options_bar_label (const gchar *prop)
+   if (! strcmp (prop, "line-spacing"))   return _("Interlignage");
+   if (! strcmp (prop, "font-size"))      return _("Taille");
+   if (! strcmp (prop, "box-mode"))       return _("Cadre");
++  if (! strcmp (prop, "fixed-rule-active")) return _("Fixe");
++  if (! strcmp (prop, "fixed-rule"))        return " ";
++  if (! strcmp (prop, "round-corners"))     return _("Coins arrondis");
+   if (! strcmp (prop, "constrain-scale"))  return _("Conserver les proportions");
+   if (! strcmp (prop, "constrain-rotate")) return _("Rotation par 15°");
+   if (! strcmp (prop, "constrain-shear"))  return _("Inclinaison contrainte");
+diff --git a/libgimp/gimpui.c b/libgimp/gimpui.c
+index 58062b7..dbbd6cc 100644
+--- a/libgimp/gimpui.c
++++ b/libgimp/gimpui.c
+@@ -276,6 +276,32 @@ static gboolean gimp_ui_initialized = FALSE;
+  * It can safely be called more than once. Calls after the first return
+  * quickly with no effect.
+  **/
++static gboolean
++chopgimp_dialog_realize_hook (GSignalInvocationHint *ihint,
++                              guint                  n_values,
++                              const GValue          *values,
++                              gpointer               data)
++{
++  GObject *object = g_value_get_object (&values[0]);
++
++  if (GTK_IS_DIALOG (object)                                &&
++      ! gtk_window_get_transient_for (GTK_WINDOW (object))  &&
++      ! g_object_get_data (object, "chopgimp-transient"))
++    {
++      GBytes *handle = gimp_progress_get_window_handle ();
++
++      g_object_set_data (object, "chopgimp-transient", GINT_TO_POINTER (1));
++      if (handle)
++        gimp_window_set_transient (GTK_WINDOW (object));
++      else
++        /*  no window to attach to (e.g. a file opened at start-up)  */
++        gtk_window_set_keep_above (GTK_WINDOW (object), TRUE);
++      g_clear_pointer (&handle, g_bytes_unref);
++    }
++
++  return TRUE;   /*  stay connected  */
++}
++
+ void
+ gimp_ui_init (const gchar *prog_name)
+ {
+@@ -367,6 +393,14 @@ gimp_ui_init (const gchar *prog_name)
+   gegl_init (NULL, NULL);
+ 
+   gimp_ui_initialized = TRUE;
++
++  /*  ChopGimp: every dialog of a plug-in stays above the image window.
++   *  Python plug-ins rarely call gimp_window_set_transient(): their
++   *  dialogs (missing fonts, layer style…) could open behind ChopGimp,
++   *  which then looked frozen.
++   */
++  g_signal_add_emission_hook (g_signal_lookup ("realize", GTK_TYPE_WIDGET), 0,
++                              chopgimp_dialog_realize_hook, NULL, NULL);
+ }
+ 
+ #ifdef GDK_WINDOWING_QUARTZ
+-- 
+2.53.0
+

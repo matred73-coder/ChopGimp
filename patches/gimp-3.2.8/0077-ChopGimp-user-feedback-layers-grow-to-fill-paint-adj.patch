@@ -1,0 +1,511 @@
+From 3cf709822ee69801a06f684427712a514db23254 Mon Sep 17 00:00:00 2001
+From: ChopGimp <mathieu.redon@proton.me>
+Date: Fri, 13 Nov 2026 23:33:41 +0100
+Subject: [PATCH] =?UTF-8?q?ChopGimp:=20user=20feedback=20=E2=80=94=20layer?=
+ =?UTF-8?q?s=20grow=20to=20fill/paint,=20adjustments=20merged=20by=20defau?=
+ =?UTF-8?q?lt,=20paint=20warnings,=20modifier=20assertion,=20auto-select?=
+ =?UTF-8?q?=20changes=20active=20layer,=20warp=20double=20free,=20plug-in?=
+ =?UTF-8?q?=20end=20in=20crash=20context?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+---
+ app/actions/edit-commands.c          |  17 ++++
+ app/chopgimp-crash.c                 |  15 ++-
+ app/config/gimpguiconfig.c           |   2 +-
+ app/core/chopgimp-layer-grow.c       | 140 +++++++++++++++++++++++++++
+ app/core/chopgimp-layer-grow.h       |  28 ++++++
+ app/core/meson.build                 |   1 +
+ app/dialogs/chopgimp-textpanels.c    |   2 +-
+ app/paint/gimppaintoptions.c         |   2 +-
+ app/plug-in/gimpplugin.c             |   7 ++
+ app/plug-in/gimppluginmanager-call.c |   1 -
+ app/text/chopgimp-textfx.c           |   9 +-
+ app/tools/gimpbucketfilltool.c       |  19 ++++
+ app/tools/gimpfilteroptions.c        |  14 ++-
+ app/tools/gimppainttool.c            |  12 +++
+ app/tools/tool_manager.c             |   7 +-
+ 15 files changed, 263 insertions(+), 13 deletions(-)
+ create mode 100644 app/core/chopgimp-layer-grow.c
+ create mode 100644 app/core/chopgimp-layer-grow.h
+
+diff --git a/app/actions/edit-commands.c b/app/actions/edit-commands.c
+index 78a5b9c..4641ba7 100644
+--- a/app/actions/edit-commands.c
++++ b/app/actions/edit-commands.c
+@@ -42,6 +42,7 @@
+ #include "core/gimpimage.h"
+ #include "core/gimpimage-undo.h"
+ #include "core/gimprasterizable.h"
++#include "core/chopgimp-layer-grow.h"
+ 
+ #include "path/gimppath-import.h"
+ #include "path/gimpvectorlayer.h"
+@@ -648,7 +649,23 @@ edit_fill_cmd_callback (GimpAction *action,
+             }
+           else
+             {
++              GimpDisplay *display = action_data_get_display (data);
++              gchar       *warning;
++
++              /*  ChopGimp: layers have no edges (Photoshop), and say
++               *  when the result will not show as expected
++               */
++              chopgimp_layer_grow_for_fill (iter->data,
++                                            action_data_get_context (data));
+               gimp_drawable_edit_fill (iter->data, options, NULL);
++
++              if (display &&
++                  (warning = chopgimp_layer_paint_warning (iter->data)))
++                {
++                  gimp_message_literal (image->gimp, G_OBJECT (display),
++                                        GIMP_MESSAGE_WARNING, warning);
++                  g_free (warning);
++                }
+             }
+         }
+ 
+diff --git a/app/chopgimp-crash.c b/app/chopgimp-crash.c
+index 2ece4f0..cc30824 100644
+--- a/app/chopgimp-crash.c
++++ b/app/chopgimp-crash.c
+@@ -559,8 +559,21 @@ chopgimp_crash_note_plugin (const gchar *procedure,
+       g_free (ts);
+       g_date_time_unref (now);
+     }
+-  else if (depth > 0)
++  else
+     {
++      /*  remove the most recent run of this procedure (runs may end in
++       *  any order: plug-ins launched from menus run asynchronously)
++       */
++      gint n = MIN (depth, (gint) G_N_ELEMENTS (stack));
++      gsize len = strlen (procedure);
++
++      for (i = n - 1; i >= 0; i--)
++        if (! strncmp (stack[i], procedure, len) && stack[i][len] == ' ')
++          break;
++      if (i < 0)
++        return;
++      for (; i < n - 1; i++)
++        memcpy (stack[i], stack[i + 1], sizeof (stack[0]));
+       depth--;
+       g_strlcpy (last, procedure, sizeof (last));
+     }
+diff --git a/app/config/gimpguiconfig.c b/app/config/gimpguiconfig.c
+index 5a118f2..2057731 100644
+--- a/app/config/gimpguiconfig.c
++++ b/app/config/gimpguiconfig.c
+@@ -149,7 +149,7 @@ gimp_gui_config_class_init (GimpGuiConfigClass *klass)
+                             "move-tool-changes-active",
+                             "Move tool changes active layer",
+                             MOVE_TOOL_CHANGES_ACTIVE_BLURB,
+-                            FALSE,
++                            TRUE,   /* ChopGimp: like Photoshop's auto-select */
+                             GIMP_PARAM_STATIC_STRINGS);
+ 
+   GIMP_CONFIG_PROP_INT (object_class, PROP_FILTER_TOOL_MAX_RECENT,
+diff --git a/app/core/chopgimp-layer-grow.c b/app/core/chopgimp-layer-grow.c
+new file mode 100644
+index 0000000..24edbb6
+--- /dev/null
++++ b/app/core/chopgimp-layer-grow.c
+@@ -0,0 +1,140 @@
++/* GIMP - The GNU Image Manipulation Program
++ * chopgimp-layer-grow.c — ChopGimp: layers without edges for filling
++ *
++ * This program is free software: you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation; either version 3 of the License, or
++ * (at your option) any later version.
++ */
++
++#include "config.h"
++
++#include <gdk-pixbuf/gdk-pixbuf.h>
++#include <gegl.h>
++
++#include "libgimpbase/gimpbase.h"
++#include "libgimpmath/gimpmath.h"
++
++#include "core-types.h"
++
++#include "gimpchannel.h"
++#include "gimpcontainer.h"
++#include "gimpdrawable.h"
++#include "gimpdrawable-filters.h"
++#include "gimpimage.h"
++#include "gimpitem.h"
++#include "gimplayer.h"
++#include "gimplayer-floating-selection.h"
++#include "gimplinklayer.h"
++
++#include "path/gimpvectorlayer.h"
++#include "text/gimptextlayer.h"
++
++#include "chopgimp-layer-grow.h"
++
++
++gboolean
++chopgimp_layer_grow_for_fill (GimpDrawable *drawable,
++                              GimpContext  *context)
++{
++  GimpItem  *item;
++  GimpImage *image;
++  gint       x, y, w, h;          /*  area to fill, image coordinates  */
++  gint       lx, ly, lw, lh;      /*  layer  */
++  gint       nx1, ny1, nx2, ny2;  /*  new layer  */
++
++  if (! GIMP_IS_LAYER (drawable)                         ||
++      gimp_viewable_get_children (GIMP_VIEWABLE (drawable)) ||
++      gimp_layer_is_floating_sel (GIMP_LAYER (drawable)) ||
++      gimp_item_is_text_layer (GIMP_ITEM (drawable))     ||
++      gimp_item_is_vector_layer (GIMP_ITEM (drawable))   ||
++      gimp_item_is_link_layer (GIMP_ITEM (drawable))     ||
++      gimp_item_is_content_locked (GIMP_ITEM (drawable), NULL))
++    return FALSE;
++
++  item  = GIMP_ITEM (drawable);
++  image = gimp_item_get_image (item);
++
++  if (! gimp_item_bounds (GIMP_ITEM (gimp_image_get_mask (image)), &x, &y, &w, &h) ||
++      gimp_channel_is_empty (gimp_image_get_mask (image)))
++    {
++      x = 0;
++      y = 0;
++      w = gimp_image_get_width (image);
++      h = gimp_image_get_height (image);
++    }
++
++  /*  only what can be seen: clip to the image  */
++  if (! gimp_rectangle_intersect (x, y, w, h,
++                                  0, 0,
++                                  gimp_image_get_width (image),
++                                  gimp_image_get_height (image),
++                                  &x, &y, &w, &h))
++    return FALSE;
++
++  gimp_item_get_offset (item, &lx, &ly);
++  lw = gimp_item_get_width  (item);
++  lh = gimp_item_get_height (item);
++
++  nx1 = MIN (lx, x);
++  ny1 = MIN (ly, y);
++  nx2 = MAX (lx + lw, x + w);
++  ny2 = MAX (ly + lh, y + h);
++
++  if (nx1 == lx && ny1 == ly && nx2 == lx + lw && ny2 == ly + lh)
++    return FALSE;
++
++  gimp_item_resize (item, context, GIMP_FILL_TRANSPARENT,
++                    nx2 - nx1, ny2 - ny1, lx - nx1, ly - ny1);
++
++  return TRUE;
++}
++
++#define WARN_HIDDEN  (1 << 0)
++#define WARN_OPACITY (1 << 1)
++#define WARN_FILTERS (1 << 2)
++
++gchar *
++chopgimp_layer_paint_warning (GimpDrawable *drawable)
++{
++  guint   warned;
++  guint   reason = 0;
++  gchar  *msg    = NULL;
++
++  if (! GIMP_IS_LAYER (drawable))
++    return NULL;
++
++  warned = GPOINTER_TO_UINT (g_object_get_data (G_OBJECT (drawable),
++                                                "chopgimp-paint-warned"));
++
++  if (! gimp_item_is_visible (GIMP_ITEM (drawable)))
++    {
++      reason = WARN_HIDDEN;
++      msg = g_strdup_printf ("Le calque « %s » est masqué : ce que vous peignez ne se voit pas.",
++                             gimp_object_get_name (drawable));
++    }
++  else if (gimp_layer_get_opacity (GIMP_LAYER (drawable)) < 0.5)
++    {
++      reason = WARN_OPACITY;
++      msg = g_strdup_printf ("Le calque « %s » est à %d %% d'opacité : les couleurs paraissent pâles.",
++                             gimp_object_get_name (drawable),
++                             (gint) (gimp_layer_get_opacity (GIMP_LAYER (drawable)) * 100.0 + 0.5));
++    }
++  else if (gimp_drawable_has_visible_filters (drawable))
++    {
++      reason = WARN_FILTERS;
++      msg = g_strdup_printf ("Le calque « %s » a des filtres actifs (icône fx) : la couleur "
++                             "affichée est filtrée. Fusionnez-les pour peindre en vraies couleurs.",
++                             gimp_object_get_name (drawable));
++    }
++
++  if (! reason || (warned & reason))
++    {
++      g_free (msg);
++      return NULL;
++    }
++
++  g_object_set_data (G_OBJECT (drawable), "chopgimp-paint-warned",
++                     GUINT_TO_POINTER (warned | reason));
++  return msg;
++}
+diff --git a/app/core/chopgimp-layer-grow.h b/app/core/chopgimp-layer-grow.h
+new file mode 100644
+index 0000000..5ee0e7c
+--- /dev/null
++++ b/app/core/chopgimp-layer-grow.h
+@@ -0,0 +1,28 @@
++/* GIMP - The GNU Image Manipulation Program
++ * chopgimp-layer-grow.h — ChopGimp: layers without edges for filling
++ *
++ * This program is free software: you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation; either version 3 of the License, or
++ * (at your option) any later version.
++ */
++
++#pragma once
++
++/*  Grow (never shrink) a pixel layer so that it covers the area about to
++ *  be filled: the selection's bounds, or the whole image without a
++ *  selection, clipped to the image. Photoshop layers have no edges; in
++ *  GIMP a selection outside the layer would silently not be filled.
++ *  Does nothing for groups, text, vector, link and floating layers, and
++ *  for channels and masks. Pushes its own undo step (call it inside the
++ *  fill's undo group). Returns TRUE if the layer was resized.
++ */
++gboolean   chopgimp_layer_grow_for_fill   (GimpDrawable *drawable,
++                                           GimpContext  *context);
++
++/*  Status-bar hint when painting or filling would not show as expected:
++ *  hidden layer, low opacity, or live filters on the layer. Returns a
++ *  newly allocated message, or NULL; each reason is reported once per
++ *  layer and session.
++ */
++gchar    * chopgimp_layer_paint_warning   (GimpDrawable *drawable);
+diff --git a/app/core/meson.build b/app/core/meson.build
+index 82012d3..0be2375 100644
+--- a/app/core/meson.build
++++ b/app/core/meson.build
+@@ -220,6 +220,7 @@ libappcore_sources = [
+   'gimppdbprogress.c',
+   'gimppickable-auto-shrink.c',
+   'chopgimp-alpha-bounds.c',
++  'chopgimp-layer-grow.c',
+   'gimppickable-contiguous-region.cc',
+   'gimppickable.c',
+   'gimpprogress.c',
+diff --git a/app/dialogs/chopgimp-textpanels.c b/app/dialogs/chopgimp-textpanels.c
+index a3a38c8..328b4ff 100644
+--- a/app/dialogs/chopgimp-textpanels.c
++++ b/app/dialogs/chopgimp-textpanels.c
+@@ -1362,7 +1362,7 @@ panel_new (Gimp *gimp, gboolean paragraph)
+         static const gchar *const effects[] =
+         {
+           "chopgimp-layer-style",         N_("Ombre…"),
+-          "photogimp-style-stroke",       N_("Contour"),
++          "photogimp-style-stroke",       N_("Contour…"),
+           "chopgimp-fx-gradient-overlay", N_("Dégradé…"),
+           NULL
+         };
+diff --git a/app/paint/gimppaintoptions.c b/app/paint/gimppaintoptions.c
+index e1737aa..b9bbbd5 100644
+--- a/app/paint/gimppaintoptions.c
++++ b/app/paint/gimppaintoptions.c
+@@ -79,7 +79,7 @@
+ #define DEFAULT_SMOOTHING_QUALITY       20
+ #define DEFAULT_SMOOTHING_FACTOR        50
+ 
+-#define DEFAULT_EXPAND_USE              FALSE
++#define DEFAULT_EXPAND_USE              TRUE   /* ChopGimp: layers grow as you paint (Photoshop) */
+ #define DEFAULT_EXPAND_AMOUNT           100.0
+ #define DEFAULT_EXPAND_FILL_TYPE        GIMP_FILL_TRANSPARENT
+ #define DEFAULT_EXPAND_MASK_FILL_TYPE   GIMP_ADD_MASK_WHITE
+diff --git a/app/plug-in/gimpplugin.c b/app/plug-in/gimpplugin.c
+index 771d739..fb30182 100644
+--- a/app/plug-in/gimpplugin.c
++++ b/app/plug-in/gimpplugin.c
+@@ -98,6 +98,8 @@
+ 
+ #include "gimp-intl.h"
+ 
++#include "chopgimp-crash.h"
++
+ 
+ static void       gimp_plug_in_finalize               (GObject      *object);
+ 
+@@ -645,6 +647,11 @@ gimp_plug_in_close (GimpPlugIn *plug_in,
+ 
+   plug_in->open = FALSE;
+ 
++  /*  ChopGimp: the plug-in is over (crash report context)  */
++  if (plug_in->main_proc_frame.procedure)
++    chopgimp_crash_note_plugin (gimp_object_get_name (plug_in->main_proc_frame.procedure),
++                                FALSE);
++
+   if (plug_in->pid)
+     {
+ #ifndef G_OS_WIN32
+diff --git a/app/plug-in/gimppluginmanager-call.c b/app/plug-in/gimppluginmanager-call.c
+index 1237231..5227db7 100644
+--- a/app/plug-in/gimppluginmanager-call.c
++++ b/app/plug-in/gimppluginmanager-call.c
+@@ -331,7 +331,6 @@ gimp_plug_in_manager_call_run (GimpPlugInManager   *manager,
+ 
+           return_vals = gimp_plug_in_proc_frame_get_return_values (proc_frame);
+ 
+-          chopgimp_crash_note_plugin (gimp_object_get_name (procedure), FALSE);
+         }
+ 
+       g_object_unref (plug_in);
+diff --git a/app/text/chopgimp-textfx.c b/app/text/chopgimp-textfx.c
+index a24a2b7..bcc7086 100644
+--- a/app/text/chopgimp-textfx.c
++++ b/app/text/chopgimp-textfx.c
+@@ -1512,17 +1512,20 @@ chopgimp_text_fx_moves_glyphs (const gchar *spec)
+   gchar   *v;
+   gboolean moves = FALSE;
+ 
++  /*  (each value is cleared after use: a skipped lookup must not free
++   *  the previous one a second time)
++   */
+   if ((v = chopgimp_text_fx_get_value (spec, "warp")))
+     moves = strcmp (v, "none") != 0;
+-  g_free (v);
++  g_clear_pointer (&v, g_free);
+ 
+   if (! moves && (v = chopgimp_text_fx_get_value (spec, "path")))
+     moves = TRUE;
+-  g_free (v);
++  g_clear_pointer (&v, g_free);
+ 
+   if (! moves && (v = chopgimp_text_fx_get_value (spec, "shape")))
+     moves = TRUE;
+-  g_free (v);
++  g_clear_pointer (&v, g_free);
+ 
+   return moves;
+ }
+diff --git a/app/tools/gimpbucketfilltool.c b/app/tools/gimpbucketfilltool.c
+index 4fcdb68..ac302a3 100644
+--- a/app/tools/gimpbucketfilltool.c
++++ b/app/tools/gimpbucketfilltool.c
+@@ -46,6 +46,8 @@
+ #include "core/gimpprojection.h"
+ #include "core/gimptoolinfo.h"
+ #include "core/gimpwaitable.h"
++#include "core/chopgimp-layer-grow.h"
++#include "core/gimpimage-undo.h"
+ 
+ #include "gegl/gimp-gegl-nodes.h"
+ 
+@@ -654,13 +656,30 @@ gimp_bucket_fill_tool_button_press (GimpTool            *tool,
+           gimp_context_set_paint_mode (GIMP_CONTEXT (fill_options),
+                                        gimp_context_get_paint_mode (context));
+ 
++          gchar *warning = chopgimp_layer_paint_warning (drawable);
++
++          if (warning)
++            {
++              gimp_tool_message_literal (tool, display, warning);
++              g_free (warning);
++            }
++
+           if (options->fill_area == GIMP_BUCKET_FILL_SELECTION)
+             {
++              /*  ChopGimp: the layer grows to the selection (no edges)  */
++              gimp_image_undo_group_start (image, GIMP_UNDO_GROUP_PAINT,
++                                           gimp_fill_options_get_undo_desc (fill_options));
++              chopgimp_layer_grow_for_fill (drawable, context);
+               gimp_drawable_edit_fill (drawable, fill_options, NULL);
++              gimp_image_undo_group_end (image);
+               gimp_image_flush (image);
+             }
+           else /* GIMP_BUCKET_FILL_SIMILAR_COLORS || GIMP_BUCKET_FILL_LINE_ART */
+             {
++              /*  ChopGimp: a click outside the layer fills there too  */
++              if (chopgimp_layer_grow_for_fill (drawable, context))
++                gimp_image_flush (image);
++
+               gimp_bucket_fill_tool_start (bucket_tool, coords, display);
+               gimp_bucket_fill_tool_preview (bucket_tool, coords, display,
+                                              fill_options);
+diff --git a/app/tools/gimpfilteroptions.c b/app/tools/gimpfilteroptions.c
+index acf37e9..b3ae3f7 100644
+--- a/app/tools/gimpfilteroptions.c
++++ b/app/tools/gimpfilteroptions.c
+@@ -112,10 +112,16 @@ gimp_filter_options_class_init (GimpFilterOptionsClass *klass)
+ 
+   GIMP_CONFIG_PROP_BOOLEAN (object_class, PROP_MERGE_FILTER,
+                             "merge-filter",
+-                            _("_Merge filter"),
+-                            _("If enabled, the filter is immediately merged.\n"
+-                              "Otherwise, it becomes an editable non-destructive filter."),
+-                            FALSE,
++                            /*  ChopGimp: applied to the pixels by default, like
++                             *  Photoshop's Image > Adjustments; a filter left on
++                             *  the layer re-renders on every stroke and shows
++                             *  painted colors filtered.
++                             */
++                            "Appliquer _directement au calque",
++                            "Coché : le réglage modifie les pixels du calque (comme Photoshop).\n"
++                            "Décoché : il reste un filtre modifiable (icône fx du calque), "
++                            "recalculé à chaque modification.",
++                            TRUE,
+                             GIMP_PARAM_STATIC_STRINGS);
+ }
+ 
+diff --git a/app/tools/gimppainttool.c b/app/tools/gimppainttool.c
+index 85dd56f..73252cb 100644
+--- a/app/tools/gimppainttool.c
++++ b/app/tools/gimppainttool.c
+@@ -38,6 +38,7 @@
+ #include "core/gimppaintinfo.h"
+ #include "core/gimpprojection.h"
+ #include "core/gimptoolinfo.h"
++#include "core/chopgimp-layer-grow.h"
+ 
+ #include "paint/gimppaintcore.h"
+ #include "paint/gimppaintoptions.h"
+@@ -357,6 +358,17 @@ gimp_paint_tool_button_press (GimpTool            *tool,
+ 
+           return;
+         }
++
++      /*  ChopGimp: say once why a stroke may not show as expected  */
++      {
++        gchar *warning = chopgimp_layer_paint_warning (drawable);
++
++        if (warning)
++          {
++            gimp_tool_message_literal (tool, display, warning);
++            g_free (warning);
++          }
++      }
+     }
+ 
+   if (gimp_draw_tool_is_active (draw_tool))
+diff --git a/app/tools/tool_manager.c b/app/tools/tool_manager.c
+index 1628e72..9157fa5 100644
+--- a/app/tools/tool_manager.c
++++ b/app/tools/tool_manager.c
+@@ -513,7 +513,12 @@ tool_manager_active_modifier_state_active (Gimp            *gimp,
+ 
+   tool_manager = tool_manager_get (gimp);
+ 
+-  if (tool_manager->active_tool)
++  /*  ChopGimp: a modifier key pressed while the active tool works on
++   *  another display (e.g. during a paste or a fill that moved the focus)
++   *  is not for this tool: ignore it instead of failing an assertion.
++   */
++  if (tool_manager->active_tool &&
++      tool_manager->active_tool->focus_display == display)
+     {
+       gimp_tool_set_active_modifier_state (tool_manager->active_tool,
+                                            state,
+-- 
+2.53.0
+

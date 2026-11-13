@@ -35,6 +35,11 @@ STYLES = {
                                      (0.0, 0.0, 0.0)),
 }
 
+# effet correspondant dans la fenêtre Style de calque (plug-in chopgimp_fx)
+STYLE_KEYS = {"photogimp-style-stroke": "stroke",
+              "photogimp-style-outer-glow": "outer-glow",
+              "photogimp-style-inner-shadow": "inner-shadow"}
+
 # ── Calques de réglage : (libellé, opération GEGL) ──
 ADJUST = {
     "photogimp-adj-brightness-contrast": ("Luminosité/Contraste…", "gimp:brightness-contrast"),
@@ -148,6 +153,18 @@ class PhotoGimpPS(Gimp.PlugIn):
     def run(self, procedure, run_mode, image, drawables, config, data):
         name = procedure.get_name()
         layers = [d for d in drawables if isinstance(d, Gimp.Layer)]
+        # depuis un menu : la fenêtre Style de calque, l'effet déjà coché
+        # (Contour…, Lueur externe…, Ombre interne… ont des réglages)
+        if name in STYLES and run_mode == Gimp.RunMode.INTERACTIVE and layers:
+            proc = Gimp.get_pdb().lookup_procedure("chopgimp-layer-style")
+            if proc is not None:
+                cfg = proc.create_config()
+                cfg.set_property("run-mode", Gimp.RunMode.INTERACTIVE)
+                cfg.set_property("image", image)
+                cfg.set_core_object_array("drawables", layers[:1])
+                cfg.set_property("effect", STYLE_KEYS[name])
+                res = proc.run(cfg)
+                return procedure.new_return_values(res.index(0), GLib.Error())
         image.undo_group_start()
         try:
             if name in STYLES:

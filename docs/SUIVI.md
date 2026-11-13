@@ -10,7 +10,8 @@ Plan complet : lots 0 à 6, idées en plus, calendrier de 17 étapes (voir l'his
 | 4 | 3.18.0 | Refonte de l'outil Texte | ✅ livrée |
 | 5 | 3.19.0 | PSD I | ✅ livrée |
 | 5 bis | 3.19.1 | Traceur de plantage + correctif (hors plan) | ✅ livrée |
-| 6 | 3.19.2 | PSD II | à faire |
+| 5 ter | 3.19.2 | Retours d'utilisation (remplissage, filtres, styles, sélection auto) | ✅ livrée |
+| 6 | 3.19.3 | PSD II | à faire |
 | 7 | 3.20.0 | Vectoriel I (PDF/AI) | à faire |
 | 8 | 3.20.1 | Vectoriel II (EPS, SVG, aperçus, Placer) | à faire |
 | 9 | 3.20.2 | Vectoriel III (SVG natif, export SVG) | à faire |
@@ -136,3 +137,40 @@ Plan complet : lots 0 à 6, idées en plus, calendrier de 17 étapes (voir l'his
   - procédure de vignette propre au plug-in (l'erreur au démarrage disparaît) ;
   - une police de remplacement mémorisée qui est un alias (Sans-serif) est reconnue.
 - **Barre d'options de la transformation** : libellés lisibles pour les contraintes.
+
+## 3.19.2 — Retours d'utilisation (livrée)
+
+Signalés le 2026-11-13 en utilisant ChopGimp sur une affiche (scan 2480×3510) :
+
+1. **Calques sans bords pour le remplissage et la peinture** : Édition > Remplir, le pot de peinture et les pinceaux agrandissent automatiquement le calque pour couvrir la sélection ou le trait. Aujourd'hui, une sélection hors des limites du calque ne se remplit pas : c'est le cas dans afficheDANY.xcf, où des calques sont décalés de (-1046, -1301).
+2. **Réglages du menu Couleurs fusionnés par défaut** (Désaturer, Luminosité-Contraste, Teinte-Saturation, Niveaux, Courbes…), comme dans Photoshop, avec une case « Garder modifiable ». Aujourd'hui, ils restent en filtres actifs, et peindre ou remplir s'affiche alors filtré et rame.
+3. **Avertissement dans la barre d'état** quand on peint ou remplit un calque très transparent (opacité < 50 %), masqué, ou qui porte des filtres actifs.
+4. **Erreurs internes du journal** : `gimp_tool_set_active_modifier_state: assertion 'display == tool->focus_display'` (touche modificatrice pendant un collage ou un remplissage).
+5. **Styles et contours avec fenêtre de réglage** :
+   - Style de calque > Contour, Lueur externe et Ombre interne ouvrent la fenêtre « Style de calque… » avec l'effet coché ;
+   - Tracé > Contour à l'intérieur / à l'extérieur ouvrent une petite fenêtre (épaisseur, couleur, aperçu) ;
+   - le bouton Contour du panneau Caractère ouvre la même fenêtre ;
+   - les libellés prennent des points de suspension « … ».
+6. **Sélection automatique du calque (outil Déplacement)** :
+   - le calque cliqué devient le calque actif et est mis en surbrillance dans le panneau Calques, comme dans Photoshop ;
+   - un clic dans le vide garde le calque actuel ;
+   - Maj+clic ajoute le calque à la sélection.
+
+**Fait en 3.19.2** :
+1. **Remplissage et peinture** :
+   - Édition > Remplir et le pot de peinture agrandissent le calque jusqu'à la sélection, ou jusqu'à l'image entière (`core/chopgimp-layer-grow.c`) ;
+   - les pinceaux ont « Agrandir les calques » activé par défaut.
+2. **Réglages Couleurs et Filtres** : « Appliquer directement au calque » est coché par défaut ; décoché, le réglage reste un filtre modifiable.
+3. **Avertissements dans la barre d'état**, une fois par calque : calque masqué, opacité < 50 %, filtres actifs.
+4. **Assertion `focus_display`** : une touche modificatrice destinée à une autre image est ignorée.
+5. **Fenêtres de réglage** :
+   - Contour…, Lueur externe… et Ombre interne… ouvrent Style de calque avec l'effet coché, en gras et en aperçu ; le contour et l'incrustation couleur sont à 100 % par défaut ;
+   - Contour à l'intérieur… / à l'extérieur… demandent l'épaisseur et la couleur ;
+   - le bouton Contour… du panneau Caractère passe aussi par Style de calque.
+6. **Sélection automatique** : le calque cliqué devient le calque actif (`move-tool-changes-active` activé par défaut). Maj+clic n'est pas modifié : il sert déjà à basculer le mode de l'outil.
+
+**Également corrigé** :
+- **Plantage pendant « Déformer le texte »** : double libération dans `chopgimp_text_fx_moves_glyphs`, à chaque redessin d'un texte déformé en cours d'édition.
+- **Fenêtres de plug-ins passant derrière ChopGimp** (par exemple « Polices absentes » à l'ouverture d'un PSD), qui donnaient l'impression d'un logiciel figé. Toutes sont maintenant rattachées à la fenêtre de l'image (`libgimp/gimpui.c`).
+- **Rapport de plantage** : les plug-ins terminés ne restent plus « en cours ».
+- **Barre d'options de la sélection rectangulaire** : libellés lisibles.

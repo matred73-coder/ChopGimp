@@ -656,10 +656,11 @@ def style_from_json(data):
     return {k: (v, from_rgba(c), o) for k, (v, c, o) in (data or {}).items()}
 
 
-def layer_style_dialog(image, layer):
+def layer_style_dialog(image, layer, focus=None):
     """Fenêtre Style de calque avec aperçu en direct (comme Photoshop) :
     chaque réglage est appliqué immédiatement au calque ; Annuler rétablit
-    le style d'origine."""
+    le style d'origine. focus : clé d'un effet (« stroke »…) à cocher et
+    mettre en avant (commandes Contour…, Lueur externe…, etc.)."""
     GimpUi.init("chopgimp_fx")
     dialog = GimpUi.Dialog(title="Style de calque — " + layer.get_name(), role="chopgimp-layer-style",
                            modal=True)
@@ -683,7 +684,8 @@ def layer_style_dialog(image, layer):
         col = mem[1][:3] if mem else DEFAULT_COLORS[key]
         cbtn = Gtk.ColorButton.new_with_rgba(Gdk_rgba(col))
         grid.attach(cbtn, 1, row, 1, 1)
-        op_adj = Gtk.Adjustment(value=round(mem[2] * 100) if mem else 75, lower=0, upper=100,
+        op_adj = Gtk.Adjustment(value=round(mem[2] * 100) if mem else
+                                (100 if key in ("stroke", "overlay") else 75), lower=0, upper=100,
                                 step_increment=1)
         op_spin = Gtk.SpinButton(adjustment=op_adj, digits=0)
         op_spin.set_tooltip_text("Opacité (%)")
@@ -701,6 +703,9 @@ def layer_style_dialog(image, layer):
             pw[pkey] = sp
             c += 2
         widgets[key] = (check, cbtn, op_spin, pw)
+        if key == focus:
+            check.set_active(True)
+            check.get_child().set_markup("<b>%s</b>" % GLib.markup_escape_text(label))
         row += 1
 
     preview = Gtk.CheckButton(label="Aperçu")
@@ -765,6 +770,9 @@ def layer_style_dialog(image, layer):
     preview.connect("toggled", changed)
 
     dialog.show_all()
+    if focus in widgets:
+        widgets[focus][0].grab_focus()
+        changed()                      # aperçu immédiat de l'effet coché
     try:
         while True:
             resp = dialog.run()
@@ -827,8 +835,8 @@ PROCS = {
                            [("boolean", "at-end", "Flèche à la fin", None, None, True),
                             ("boolean", "at-start", "Flèche au début", None, None, False),
                             ("double", "size", "Taille (× épaisseur)", 1, 20, 4)]),
-    "chopgimp-fx-stroke-inside": ("Contour à l'intérieur", [TRACE, TRACE_L], []),
-    "chopgimp-fx-stroke-outside": ("Contour à l'extérieur", [TRACE, TRACE_L], []),
+    "chopgimp-fx-stroke-inside": ("Contour à l'intérieur…", [TRACE, TRACE_L], []),
+    "chopgimp-fx-stroke-outside": ("Contour à l'extérieur…", [TRACE, TRACE_L], []),
     "chopgimp-fx-brush-stroke": ("Contour au pinceau (brosse active)…", [TRACE, TRACE_L],
                                  [("boolean", "simulate", "Simuler la pression (trait effilé)",
                                    None, None, True)]),
@@ -847,6 +855,7 @@ VECTOR_FX = {"chopgimp-fx-zigzag", "chopgimp-fx-roughen", "chopgimp-fx-wave", "c
              "chopgimp-fx-stroke-inside", "chopgimp-fx-stroke-outside"}
 STROKE_SIDES = [("chopgimp-fx-stroke-inside", "Contour à l'intérieur"),
                 ("chopgimp-fx-stroke-outside", "Contour à l'extérieur")]
+STROKE_DIALOG = {}      # calque → (épaisseur, couleur) choisis dans la fenêtre
 
 
 def store_args(name, A):
@@ -882,15 +891,47 @@ def apply_vector_fx(image, layer, name, A):
         res = variable_width(image, layer, A("width"), int(A("profile")))
     elif name == "chopgimp-fx-arrows":
         res = add_arrows(image, layer, A("at-start"), A("at-end"), A("size"))
-    elif name == "chopgimp-fx-stroke-inside":
-        res = stroke_position(image, layer, outside=False)
-    elif name == "chopgimp-fx-stroke-outside":
-        res = stroke_position(image, layer, outside=True)
+    elif name in ("chopgimp-fx-stroke-inside", "chopgimp-fx-stroke-outside"):
+        chosen = STROKE_DIALOG.get(layer.get_id())
+        if chosen:
+            layer.set_enable_stroke(True)
+            layer.set_stroke_width(chosen[0])
+            layer.set_stroke_color(chosen[1])
+        res = stroke_position(image, layer, outside=name == "chopgimp-fx-stroke-outside")
     if res is None:
         return "L'effet n'a rien produit (forme vide ?)."
     if isinstance(res, str):
         return res
     parasite_set(res, FX_PARASITE, {"proc": name, "args": store_args(name, A), "src": src})
+    return res
+
+
+def stroke_width_dialog(layer, outside):
+    """Épaisseur et couleur du contour avant de le placer à l'intérieur ou
+    à l'extérieur (préremplies avec le contour du calque)."""
+    GimpUi.init("chopgimp_fx")
+    title = "Contour à l'extérieur" if outside else "Contour à l'intérieur"
+    dialog = GimpUi.Dialog(title=title, role="chopgimp-stroke-width", modal=True)
+    dialog.add_button("_Annuler", Gtk.ResponseType.CANCEL)
+    dialog.add_button("_OK", Gtk.ResponseType.OK)
+    grid = Gtk.Grid(column_spacing=10, row_spacing=6, margin=12)
+    dialog.get_content_area().pack_start(grid, True, True, 0)
+    grid.attach(Gtk.Label(label="Épaisseur (px)", xalign=0), 0, 0, 1, 1)
+    width = Gtk.SpinButton(adjustment=Gtk.Adjustment(value=max(1.0, layer.get_stroke_width()),
+                                                     lower=0.5, upper=500, step_increment=1),
+                           digits=1)
+    grid.attach(width, 1, 0, 1, 1)
+    grid.attach(Gtk.Label(label="Couleur", xalign=0), 0, 1, 1, 1)
+    cur = rgba(layer.get_stroke_color())
+    cbtn = Gtk.ColorButton.new_with_rgba(Gdk_rgba(cur[:3]))
+    grid.attach(cbtn, 1, 1, 1, 1)
+    dialog.show_all()
+    resp = dialog.run()
+    res = None
+    if resp == Gtk.ResponseType.OK:
+        c = cbtn.get_rgba()
+        res = (width.get_value(), gegl_color(c.red, c.green, c.blue))
+    dialog.destroy()
     return res
 
 
@@ -958,6 +999,10 @@ class ChopGimpFx(Gimp.PlugIn):
                 for i, label_ in enumerate(PROFILES):
                     ch.add(str(i), i, label_, "")
                 p.add_choice_argument(key, nick, nick, ch, "0", GObject.ParamFlags.READWRITE)
+        if name == "chopgimp-layer-style":
+            # hors de la liste des réglages : pas de fenêtre générique
+            p.add_string_argument("effect", "Effet", "Effet à cocher et mettre en avant (stroke, "
+                                  "outer-glow, inner-shadow…)", "", GObject.ParamFlags.READWRITE)
         return p
 
     def run(self, procedure, run_mode, image, drawables, config, data):
@@ -1000,8 +1045,17 @@ class ChopGimpFx(Gimp.PlugIn):
         def A(k):
             return config.get_property(k)
 
+        # Contour à l'intérieur / à l'extérieur : épaisseur et couleur d'abord
+        if name in ("chopgimp-fx-stroke-inside", "chopgimp-fx-stroke-outside") and \
+                run_mode == Gimp.RunMode.INTERACTIVE:
+            for vl in selected_vector_layers(layers):
+                chosen = stroke_width_dialog(vl, name == "chopgimp-fx-stroke-outside")
+                if chosen is None:
+                    return cancel
+                STROKE_DIALOG[vl.get_id()] = chosen
+
         if name == "chopgimp-layer-style" and run_mode == Gimp.RunMode.INTERACTIVE:
-            layer_style_dialog(image, layers[0])      # gère son historique
+            layer_style_dialog(image, layers[0], config.get_property("effect") or None)  # gère son historique
             return ok(procedure)
 
         image.undo_group_start()
