@@ -1,0 +1,648 @@
+From 36102cc890a0e75a667ed7a71f96642014004b2a Mon Sep 17 00:00:00 2001
+From: ChopGimp <mathieu.redon@proton.me>
+Date: Fri, 13 Nov 2026 19:40:26 +0100
+Subject: [PATCH] ChopGimp: workspaces, edit toolbar, Apparence preferences
+ page, welcome presets
+
+---
+ app/actions/windows-actions.c    |  48 ++++++++++-
+ app/actions/windows-commands.c   | 136 +++++++++++++++++++++++++++++++
+ app/actions/windows-commands.h   |   9 ++
+ app/dialogs/preferences-dialog.c | 109 +++++++++++++++++++++++++
+ app/dialogs/welcome-dialog.c     |  92 ++++++++++++++++++++-
+ app/display/gimpimagewindow.c    |  18 +++-
+ app/display/gimpimagewindow.h    |   2 +
+ app/widgets/gimpprefsbox.c       |  40 +++++++++
+ app/widgets/gimpprefsbox.h       |   2 +
+ 9 files changed, 450 insertions(+), 6 deletions(-)
+
+diff --git a/app/actions/windows-actions.c b/app/actions/windows-actions.c
+index 0b1cc54..5a75c5a 100644
+--- a/app/actions/windows-actions.c
++++ b/app/actions/windows-actions.c
+@@ -129,7 +129,19 @@ static const GimpActionEntry windows_actions[] =
+     NC_("windows-action", "_Réinitialiser les panneaux"), NULL, { NULL },
+     NC_("windows-action", "Referme tous les panneaux et rétablit leur disposition d'origine"),
+     windows_reset_panels_cmd_callback,
+-    GIMP_HELP_WINDOWS_HIDE_DOCKS }
++    GIMP_HELP_WINDOWS_HIDE_DOCKS },
++
++  { "windows-workspace-save", GIMP_ICON_DOCUMENT_SAVE,
++    NC_("windows-action", "En_registrer l'espace de travail"), NULL, { NULL },
++    NC_("windows-action", "Garde la disposition actuelle des panneaux comme « Mon espace de travail »"),
++    windows_workspace_save_cmd_callback,
++    GIMP_HELP_WINDOWS_HIDE_DOCKS },
++
++  { "windows-edit-toolbar", GIMP_ICON_PREFERENCES_SYSTEM,
++    NC_("windows-action", "_Modifier la barre d'outils…"), NULL, { NULL },
++    NC_("windows-action", "Choisir les outils visibles et leurs groupes (Préférences > Boîte à outils)"),
++    windows_edit_toolbar_cmd_callback,
++    GIMP_HELP_PREFS_TOOLBOX }
+ };
+ 
+ static const GimpToggleActionEntry windows_toggle_actions[] =
+@@ -312,6 +324,35 @@ static const GimpRadioActionEntry windows_ui_size_actions[] =
+     3, NULL },
+ };
+ 
++/*  ChopGimp: Fenêtres > Espace de travail (Photoshop)  */
++static const GimpEnumActionEntry windows_workspace_actions[] =
++{
++  { "windows-workspace-essentiel", NULL,
++    NC_("windows-action", "_Essentiel"), NULL, { NULL },
++    NC_("windows-action", "Panneaux de l'espace de travail Essentiel"),
++    0, FALSE, NULL },
++  { "windows-workspace-photographie", NULL,
++    NC_("windows-action", "_Photographie"), NULL, { NULL },
++    NC_("windows-action", "Histogramme, navigation, historique, calques"),
++    1, FALSE, NULL },
++  { "windows-workspace-peinture", NULL,
++    NC_("windows-action", "P_einture"), NULL, { NULL },
++    NC_("windows-action", "Couleurs, pinceaux, préréglages, dynamiques, symétrie"),
++    2, FALSE, NULL },
++  { "windows-workspace-typographie", NULL,
++    NC_("windows-action", "_Typographie"), NULL, { NULL },
++    NC_("windows-action", "Caractère, paragraphe, glyphes, styles de texte, polices"),
++    3, FALSE, NULL },
++  { "windows-workspace-illustration", NULL,
++    NC_("windows-action", "_Illustration"), NULL, { NULL },
++    NC_("windows-action", "Couleurs, dégradés, chemins, symétrie, calques"),
++    4, FALSE, NULL },
++  { "windows-workspace-personnel", NULL,
++    NC_("windows-action", "Mon espace de tra_vail"), NULL, { NULL },
++    NC_("windows-action", "La disposition enregistrée avec « Enregistrer l'espace de travail »"),
++    5, FALSE, NULL },
++};
++
+ void
+ windows_actions_setup (GimpActionGroup *group)
+ {
+@@ -321,6 +362,11 @@ windows_actions_setup (GimpActionGroup *group)
+                                  windows_actions,
+                                  G_N_ELEMENTS (windows_actions));
+ 
++  gimp_action_group_add_enum_actions (group, "windows-action",
++                                      windows_workspace_actions,
++                                      G_N_ELEMENTS (windows_workspace_actions),
++                                      windows_workspace_cmd_callback);
++
+   gimp_action_group_add_radio_actions (group, "windows-action",
+                                        windows_appearance_actions,
+                                        G_N_ELEMENTS (windows_appearance_actions),
+diff --git a/app/actions/windows-commands.c b/app/actions/windows-commands.c
+index 37dab8b..8c0f65b 100644
+--- a/app/actions/windows-commands.c
++++ b/app/actions/windows-commands.c
+@@ -22,6 +22,8 @@
+ #include <gegl.h>
+ #include <gtk/gtk.h>
+ 
++#include "libgimpbase/gimpbase.h"
++#include "libgimpconfig/gimpconfig.h"
+ #include "libgimpwidgets/gimpwidgets.h"
+ 
+ #include "actions-types.h"
+@@ -35,6 +37,8 @@
+ 
+ #include "widgets/gimpactiongroup.h"
+ #include "widgets/gimpdialogfactory.h"
++#include "widgets/gimphelp-ids.h"
++#include "widgets/gimpprefsbox.h"
+ #include "widgets/gimpsessioninfo.h"
+ #include "widgets/gimptoggleaction.h"
+ #include "widgets/gimpuimanager.h"
+@@ -98,6 +102,138 @@ windows_hide_right_docks_cmd_callback (GimpAction *action,
+   g_list_free (windows);
+ }
+ 
++/*  ChopGimp: the column of panels shown again before a new arrangement  */
++static void
++chopgimp_show_all_panels (Gimp *gimp)
++{
++  GimpAction *hide;
++
++  hide = gimp_ui_manager_find_action (menus_get_image_manager_singleton (gimp),
++                                      "windows", "windows-hide-right-docks");
++  if (hide)
++    gimp_toggle_action_set_active (GIMP_TOGGLE_ACTION (hide), FALSE);
++
++  if (GIMP_GUI_CONFIG (gimp->config)->hide_docks)
++    g_object_set (gimp->config, "hide-docks", FALSE, NULL);
++}
++
++static GFile *
++chopgimp_personal_workspace_file (void)
++{
++  return gimp_directory_file ("chopgimp-workspace.sessionrc", NULL);
++}
++
++/*  ChopGimp: Fenêtres > Espace de travail  */
++void
++windows_workspace_cmd_callback (GimpAction *action,
++                                GVariant   *value,
++                                gpointer    data)
++{
++  static const gchar *names[] = { "essentiel", "photographie", "peinture",
++                                  "typographie", "illustration" };
++  Gimp  *gimp;
++  GList *windows;
++  GFile *file;
++  gint   w;
++  return_if_no_gimp (gimp, data);
++
++  w = g_variant_get_int32 (value);
++
++  if (w >= 0 && w < (gint) G_N_ELEMENTS (names))
++    {
++      gchar *name = g_strdup_printf ("%s.sessionrc", names[w]);
++
++      file = gimp_sysconf_directory_file ("workspaces", name, NULL);
++      g_free (name);
++    }
++  else
++    {
++      file = chopgimp_personal_workspace_file ();
++    }
++
++  if (! g_file_query_exists (file, NULL))
++    {
++      gimp_message_literal (gimp, NULL, GIMP_MESSAGE_WARNING,
++                            w < (gint) G_N_ELEMENTS (names) ?
++                            _("Espace de travail introuvable.") :
++                            _("Aucun espace de travail enregistré : utilisez d'abord "
++                              "« Enregistrer l'espace de travail »."));
++      g_object_unref (file);
++      return;
++    }
++
++  chopgimp_show_all_panels (gimp);
++
++  windows = gimp_get_image_windows (gimp);
++  if (windows)
++    gimp_image_window_restore_panels (windows->data, file);
++  g_list_free (windows);
++
++  g_object_unref (file);
++}
++
++void
++windows_workspace_save_cmd_callback (GimpAction *action,
++                                     GVariant   *value,
++                                     gpointer    data)
++{
++  Gimp             *gimp;
++  GFile            *file;
++  GimpConfigWriter *writer;
++  GError           *error = NULL;
++  return_if_no_gimp (gimp, data);
++
++  file   = chopgimp_personal_workspace_file ();
++  writer = gimp_config_writer_new_from_file (file, TRUE,
++                                             "ChopGimp — mon espace de travail",
++                                             &error);
++  if (writer)
++    {
++      gimp_dialog_factory_save (gimp_dialog_factory_get_singleton (), writer);
++      gimp_config_writer_finish (writer, "end of workspace", &error);
++    }
++
++  if (error)
++    {
++      gimp_message_literal (gimp, NULL, GIMP_MESSAGE_ERROR, error->message);
++      g_clear_error (&error);
++    }
++  else
++    {
++      gimp_message_literal (gimp, NULL, GIMP_MESSAGE_INFO,
++                            _("Espace de travail enregistré : Fenêtres > Espace de travail > "
++                              "Mon espace de travail."));
++    }
++
++  g_object_unref (file);
++}
++
++/*  ChopGimp: Photoshop « Edit Toolbar » = the Toolbox page of the
++ *  preferences (visible tools and their groups)
++ */
++void
++windows_edit_toolbar_cmd_callback (GimpAction *action,
++                                   GVariant   *value,
++                                   gpointer    data)
++{
++  Gimp      *gimp;
++  GtkWidget *dialog;
++  GtkWidget *prefs_box;
++  return_if_no_gimp (gimp, data);
++
++  dialog = gimp_dialog_factory_dialog_raise (gimp_dialog_factory_get_singleton (),
++                                             gdk_display_get_monitor (gdk_display_get_default (), 0),
++                                             NULL,
++                                             "gimp-preferences-dialog", -1);
++  if (! dialog)
++    return;
++
++  prefs_box = g_object_get_data (G_OBJECT (dialog), "prefs-box");
++  if (GIMP_IS_PREFS_BOX (prefs_box))
++    gimp_prefs_box_set_current_help_id (GIMP_PREFS_BOX (prefs_box),
++                                        GIMP_HELP_PREFS_TOOLBOX);
++}
++
+ /*  ChopGimp: back to the factory arrangement of the panels  */
+ void
+ windows_reset_panels_cmd_callback (GimpAction *action,
+diff --git a/app/actions/windows-commands.h b/app/actions/windows-commands.h
+index 8228582..dcfbc96 100644
+--- a/app/actions/windows-commands.h
++++ b/app/actions/windows-commands.h
+@@ -18,6 +18,15 @@
+ #pragma once
+ 
+ 
++void  windows_workspace_cmd_callback      (GimpAction *action,
++                                         GVariant   *value,
++                                         gpointer    data);
++void  windows_workspace_save_cmd_callback (GimpAction *action,
++                                         GVariant   *value,
++                                         gpointer    data);
++void  windows_edit_toolbar_cmd_callback  (GimpAction *action,
++                                         GVariant   *value,
++                                         gpointer    data);
+ void  windows_appearance_cmd_callback    (GimpAction *action,
+                                          GVariant   *value,
+                                          gpointer    data);
+diff --git a/app/dialogs/preferences-dialog.c b/app/dialogs/preferences-dialog.c
+index 78ea5e9..fb2b5f8 100644
+--- a/app/dialogs/preferences-dialog.c
++++ b/app/dialogs/preferences-dialog.c
+@@ -54,6 +54,7 @@
+ #include "widgets/gimpgrideditor.h"
+ #include "widgets/gimphelp.h"
+ #include "widgets/gimphelp-ids.h"
++#include "widgets/chopgimp-rc.h"
+ #include "widgets/gimplanguagecombobox.h"
+ #include "widgets/gimpmessagebox.h"
+ #include "widgets/gimpmessagedialog.h"
+@@ -1131,6 +1132,86 @@ prefs_help_func (const gchar *help_id,
+   gimp_standard_help_func (help_id, NULL);
+ }
+ 
++/*  ChopGimp: the « Apparence » page drives the same actions as the menu
++ *  Affichage > Apparence (settings in chopgimprc [appearance])
++ */
++typedef struct
++{
++  const gchar *label;
++  const gchar *rc_key;
++  const gchar *action_prefix;
++  const gchar *keys[10];
++  const gchar *names[10];
++} ChopGimpAppearanceRow;
++
++static const ChopGimpAppearanceRow chopgimp_appearance_rows[] =
++{
++  { N_("Variante :"), "variant", "windows-appearance",
++    { "sombre", "gris", "gris-clair", "clair", "contraste", "affinity", "krita", NULL },
++    { N_("Sombre (Photoshop)"), N_("Gris moyen"), N_("Gris clair"), N_("Clair"),
++      N_("Contraste élevé"), N_("Anthracite (Affinity)"), N_("Gris bleuté (Krita)"), NULL } },
++  { N_("Couleur d'accent :"), "accent-name", "windows-accent",
++    { "variante", "bleu", "cyan", "violet", "vert", "orange", "rouge", "rose", "jaune", NULL },
++    { N_("Celle de la variante"), N_("Bleu"), N_("Cyan"), N_("Violet"), N_("Vert"),
++      N_("Orange"), N_("Rouge"), N_("Rose"), N_("Jaune"), NULL } },
++  { N_("Densité :"), "density", "windows-density",
++    { "compact", "normal", "comfortable", NULL },
++    { N_("Compacte"), N_("Normale"), N_("Aérée"), NULL } },
++  { N_("Police de l'interface :"), "font", "windows-ui-font",
++    { "inter", "source", "system", NULL },
++    { N_("Inter"), N_("Source Sans 3"), N_("Police du système"), NULL } },
++  { N_("Taille de l'interface :"), "size", "windows-ui-size",
++    { "90", "100", "115", "130", NULL },
++    { N_("90 %"), N_("100 %"), N_("115 %"), N_("130 %"), NULL } },
++};
++
++static void
++chopgimp_prefs_appearance_changed (GtkComboBox *combo,
++                                   Gimp        *gimp)
++{
++  const ChopGimpAppearanceRow *row = g_object_get_data (G_OBJECT (combo), "chopgimp-row");
++  gint                          i   = gtk_combo_box_get_active (combo);
++  gchar                        *name;
++
++  if (i < 0)
++    return;
++
++  name = g_strdup_printf ("%s-%s", row->action_prefix, row->keys[i]);
++  g_action_group_activate_action (G_ACTION_GROUP (gimp->app), name,
++                                  g_variant_new_int32 (i));
++  g_free (name);
++}
++
++static void
++chopgimp_prefs_appearance (Gimp    *gimp,
++                           GtkGrid *grid)
++{
++  guint r;
++
++  for (r = 0; r < G_N_ELEMENTS (chopgimp_appearance_rows); r++)
++    {
++      const ChopGimpAppearanceRow *row   = &chopgimp_appearance_rows[r];
++      GtkWidget                   *combo = gtk_combo_box_text_new ();
++      gchar                       *value = chopgimp_rc_get_string ("appearance", row->rc_key, NULL);
++      gint                         i, active = (r == 2 || r == 4) ? 1 : 0;
++
++      for (i = 0; row->keys[i]; i++)
++        {
++          gtk_combo_box_text_append_text (GTK_COMBO_BOX_TEXT (combo), _(row->names[i]));
++          if (value && ! strcmp (value, row->keys[i]))
++            active = i;
++        }
++
++      gtk_combo_box_set_active (GTK_COMBO_BOX (combo), active);
++      g_object_set_data (G_OBJECT (combo), "chopgimp-row", (gpointer) row);
++      g_signal_connect (combo, "changed",
++                        G_CALLBACK (chopgimp_prefs_appearance_changed), gimp);
++
++      prefs_widget_add_aligned (combo, _(row->label), grid, r, FALSE, NULL);
++      g_free (value);
++    }
++}
++
+ static GtkWidget *
+ prefs_dialog_new (Gimp       *gimp,
+                   GimpConfig *config)
+@@ -2017,6 +2098,34 @@ prefs_dialog_new (Gimp       *gimp,
+                     gimp);
+ 
+ 
++  /*****************************************/
++  /*  ChopGimp: Interface / Apparence      */
++  /*****************************************/
++  vbox = gimp_prefs_box_add_page (GIMP_PREFS_BOX (prefs_box),
++                                  "gimp-prefs-theme",
++                                  _("Apparence ChopGimp"),
++                                  _("Apparence"),
++                                  GIMP_HELP_PREFS_THEME,
++                                  &top_iter,
++                                  &child_iter);
++
++  vbox2 = prefs_frame_new (_("Apparence de l'interface"), GTK_CONTAINER (vbox), FALSE);
++  grid  = prefs_grid_new (GTK_CONTAINER (vbox2));
++  chopgimp_prefs_appearance (gimp, GTK_GRID (grid));
++
++  vbox2 = prefs_frame_new (_("Espaces de travail"), GTK_CONTAINER (vbox), FALSE);
++  {
++    GtkWidget *label = gtk_label_new (_("Fenêtres > Espace de travail : Essentiel, Photographie, "
++                                        "Peinture, Typographie, Illustration, ou le vôtre "
++                                        "(« Enregistrer l'espace de travail »)."));
++
++    gtk_label_set_line_wrap (GTK_LABEL (label), TRUE);
++    gtk_label_set_xalign (GTK_LABEL (label), 0.0);
++    gtk_box_pack_start (GTK_BOX (vbox2), label, FALSE, FALSE, 0);
++    gtk_widget_set_visible (label, TRUE);
++  }
++
++
+   /***********************/
+   /*  Interface / Theme  */
+   /***********************/
+diff --git a/app/dialogs/welcome-dialog.c b/app/dialogs/welcome-dialog.c
+index 98ad1ef..848eed3 100644
+--- a/app/dialogs/welcome-dialog.c
++++ b/app/dialogs/welcome-dialog.c
+@@ -41,6 +41,11 @@
+ #include "core/gimp-utils.h"
+ #include "core/gimpcontainer.h"
+ #include "core/gimpimagefile.h"
++#include "core/gimp-gui.h"
++#include "core/gimpimage.h"
++#include "core/gimpimage-new.h"
++#include "core/gimptemplate.h"
++#include "core/gimpcontext.h"
+ 
+ #include "file/file-open.h"
+ 
+@@ -761,6 +766,87 @@ welcome_dialog_create_personalize_page (Gimp       *gimp,
+   g_clear_object (&size_group);
+ }
+ 
++/*  ChopGimp: tiles creating a document from a template in one click  */
++static const struct { const gchar *template; const gchar *label; const gchar *size; } chopgimp_presets[] =
++{
++  { "Défaut — Document par défaut 1920×1080",              N_("Par défaut"),  "1920 × 1080" },
++  { "Impression — A4 portrait",                              N_("A4"),          "300 ppp" },
++  { "Réseaux sociaux — Instagram publication 1080×1080",     N_("Instagram"),   "1080 × 1080" },
++  { "Réseaux sociaux — Instagram / TikTok story 1080×1920",  N_("Story"),       "1080 × 1920" },
++  { "Web — Bannière 1200×628",                               N_("Bannière"),    "1200 × 628" },
++  { "Vidéo — UHD 4K 3840×2160",                              N_("4K"),          "3840 × 2160" },
++  { "Illustration — Toile 4000×4000",                        N_("Toile"),       "4000 × 4000" },
++};
++
++static void
++chopgimp_welcome_preset_clicked (GtkButton *button,
++                                 GtkWidget *welcome_dialog)
++{
++  Gimp         *gimp     = g_object_get_data (G_OBJECT (button), "gimp");
++  GimpTemplate *template = g_object_get_data (G_OBJECT (button), "template");
++  GimpContext  *context  = gimp_get_user_context (gimp);
++  GimpImage    *image;
++
++  image = gimp_image_new_from_template (gimp, template, context);
++  gimp_create_display (gimp, image, gimp_template_get_unit (template), 1.0,
++                       G_OBJECT (gimp_widget_get_monitor (GTK_WIDGET (button))));
++  g_object_unref (image);
++
++  gtk_widget_destroy (welcome_dialog);
++}
++
++static void
++chopgimp_welcome_presets (Gimp      *gimp,
++                          GtkWidget *welcome_dialog,
++                          GtkWidget *main_vbox)
++{
++  GtkWidget *vbox = prefs_frame_new (_("Nouveau document"), GTK_CONTAINER (main_vbox), FALSE);
++  GtkWidget *flow = gtk_flow_box_new ();
++  guint      i;
++
++  gtk_flow_box_set_selection_mode (GTK_FLOW_BOX (flow), GTK_SELECTION_NONE);
++  gtk_flow_box_set_max_children_per_line (GTK_FLOW_BOX (flow), 7);
++  gtk_flow_box_set_homogeneous (GTK_FLOW_BOX (flow), TRUE);
++  gtk_box_pack_start (GTK_BOX (vbox), flow, FALSE, FALSE, 0);
++
++  for (i = 0; i < G_N_ELEMENTS (chopgimp_presets); i++)
++    {
++      GimpTemplate *template;
++      GtkWidget    *button, *box, *label;
++      gchar        *markup;
++
++      template = (GimpTemplate *)
++        gimp_container_get_child_by_name (gimp->templates, chopgimp_presets[i].template);
++      if (! template)
++        continue;
++
++      button = gtk_button_new ();
++      box    = gtk_box_new (GTK_ORIENTATION_VERTICAL, 2);
++      gtk_box_pack_start (GTK_BOX (box),
++                          gtk_image_new_from_icon_name ("document-new", GTK_ICON_SIZE_DND),
++                          FALSE, FALSE, 0);
++      label  = gtk_label_new (NULL);
++      markup = g_markup_printf_escaped ("<b>%s</b>\n<small>%s</small>",
++                                        _(chopgimp_presets[i].label),
++                                        chopgimp_presets[i].size);
++      gtk_label_set_markup (GTK_LABEL (label), markup);
++      gtk_label_set_justify (GTK_LABEL (label), GTK_JUSTIFY_CENTER);
++      g_free (markup);
++      gtk_box_pack_start (GTK_BOX (box), label, FALSE, FALSE, 0);
++      gtk_container_add (GTK_CONTAINER (button), box);
++      gtk_widget_set_tooltip_text (button, chopgimp_presets[i].template);
++
++      g_object_set_data (G_OBJECT (button), "gimp", gimp);
++      g_object_set_data (G_OBJECT (button), "template", template);
++      g_signal_connect (button, "clicked",
++                        G_CALLBACK (chopgimp_welcome_preset_clicked), welcome_dialog);
++
++      gtk_container_add (GTK_CONTAINER (flow), button);
++    }
++
++  gtk_widget_show_all (flow);
++}
++
+ static void
+ welcome_dialog_create_creation_page (Gimp       *gimp,
+                                      GimpConfig *config,
+@@ -803,6 +889,9 @@ welcome_dialog_create_creation_page (Gimp       *gimp,
+                     G_CALLBACK (welcome_dialog_open_image_dialog),
+                     welcome_dialog);
+ 
++  /*  ChopGimp: one-click documents (Photoshop's home screen)  */
++  chopgimp_welcome_presets (gimp, welcome_dialog, main_vbox);
++
+   /* Recent Files */
+   vbox = prefs_frame_new (_("Recent Images"), GTK_CONTAINER (main_vbox),
+                           FALSE);
+@@ -848,9 +937,10 @@ welcome_dialog_create_creation_page (Gimp       *gimp,
+           continue;
+         }
+ 
++      /*  ChopGimp: larger thumbnails  */
+       row = gimp_row_new (gimp_get_user_context (gimp),
+                           GIMP_VIEWABLE (imagefile),
+-                          32, 0);
++                          56, 0);
+ 
+       label = gimp_row_get_label (GIMP_ROW (row));
+       if (label)
+diff --git a/app/display/gimpimagewindow.c b/app/display/gimpimagewindow.c
+index ad07227af..cafe845 100644
+--- a/app/display/gimpimagewindow.c
++++ b/app/display/gimpimagewindow.c
+@@ -2278,10 +2278,22 @@ gimp_image_window_close_books (GimpDockColumns *columns)
+  **/
+ void
+ gimp_image_window_reset_panels (GimpImageWindow *window)
++{
++  GFile *file = gimp_sysconf_directory_file ("sessionrc", NULL);
++
++  gimp_image_window_restore_panels (window, file);
++  g_object_unref (file);
++}
++
++/*  ChopGimp: the panels as arranged in @file (a sessionrc: the factory
++ *  one, a workspace — Fenêtres > Espace de travail — or the user's own)
++ */
++void
++gimp_image_window_restore_panels (GimpImageWindow *window,
++                                  GFile           *file)
+ {
+   GimpImageWindowPrivate *private;
+   GimpSessionInfo        *info    = NULL;
+-  GFile                  *file;
+   GimpScanner            *scanner;
+   GList                  *dialogs;
+   GList                  *iter;
+@@ -2292,10 +2304,8 @@ gimp_image_window_reset_panels (GimpImageWindow *window)
+ 
+   private = GIMP_IMAGE_WINDOW_GET_PRIVATE (window);
+ 
+-  /*  the factory arrangement of the single-window mode  */
+-  file    = gimp_sysconf_directory_file ("sessionrc", NULL);
++  /*  the arrangement of the single-window mode  */
+   scanner = gimp_scanner_new_file (file, NULL);
+-  g_object_unref (file);
+ 
+   if (scanner)
+     {
+diff --git a/app/display/gimpimagewindow.h b/app/display/gimpimagewindow.h
+index 9349e50..577b889 100644
+--- a/app/display/gimpimagewindow.h
++++ b/app/display/gimpimagewindow.h
+@@ -94,6 +94,8 @@ void               gimp_image_window_keep_canvas_pos      (GimpImageWindow  *win
+ /*  ChopGimp  */
+ void               gimp_image_window_right_docks_changed  (GimpImageWindow  *window);
+ void               gimp_image_window_reset_panels         (GimpImageWindow  *window);
++void               gimp_image_window_restore_panels       (GimpImageWindow  *window,
++                                                           GFile            *file);
+ void               gimp_image_window_suspend_keep_pos     (GimpImageWindow  *window);
+ void               gimp_image_window_resume_keep_pos      (GimpImageWindow  *window);
+ 
+diff --git a/app/widgets/gimpprefsbox.c b/app/widgets/gimpprefsbox.c
+index 883f8f5..9c49404 100644
+--- a/app/widgets/gimpprefsbox.c
++++ b/app/widgets/gimpprefsbox.c
+@@ -516,3 +516,43 @@ gimp_prefs_box_get_stack (GimpPrefsBox *box)
+ 
+   return GET_PRIVATE (box)->stack;
+ }
++
++/*  ChopGimp: open the preferences on a given page  */
++static gboolean
++prefs_box_select_help_id (GtkTreeModel *model,
++                          GtkTreePath  *path,
++                          GtkTreeIter  *iter,
++                          gpointer      data)
++{
++  GimpPrefsBox *box     = data;
++  gchar        *help_id = NULL;
++  gboolean      found;
++
++  gtk_tree_model_get (model, iter, COLUMN_PAGE_HELP_ID, &help_id, -1);
++
++  found = ! g_strcmp0 (help_id, g_object_get_data (G_OBJECT (box), "chopgimp-wanted"));
++
++  if (found)
++    {
++      GtkTreeView *view = GTK_TREE_VIEW (GET_PRIVATE (box)->tree_view);
++
++      gtk_tree_view_expand_to_path (view, path);
++      gtk_tree_selection_select_iter (gtk_tree_view_get_selection (view), iter);
++    }
++
++  g_free (help_id);
++
++  return found;
++}
++
++void
++gimp_prefs_box_set_current_help_id (GimpPrefsBox *box,
++                                    const gchar  *help_id)
++{
++  g_return_if_fail (GIMP_IS_PREFS_BOX (box));
++
++  g_object_set_data (G_OBJECT (box), "chopgimp-wanted", (gpointer) help_id);
++  gtk_tree_model_foreach (GTK_TREE_MODEL (GET_PRIVATE (box)->store),
++                          prefs_box_select_help_id, box);
++  g_object_set_data (G_OBJECT (box), "chopgimp-wanted", NULL);
++}
+diff --git a/app/widgets/gimpprefsbox.h b/app/widgets/gimpprefsbox.h
+index 7a0dfbd..4d1cd74 100644
+--- a/app/widgets/gimpprefsbox.h
++++ b/app/widgets/gimpprefsbox.h
+@@ -69,5 +69,7 @@ GtkWidget   * gimp_prefs_box_set_page_resettable   (GimpPrefsBox *box,
+                                                     GtkWidget    *page,
+                                                     const gchar  *label);
+ 
++void          gimp_prefs_box_set_current_help_id (GimpPrefsBox *box,
++                                                  const gchar  *help_id);
+ GtkWidget   * gimp_prefs_box_get_tree_view         (GimpPrefsBox *box);
+ GtkWidget   * gimp_prefs_box_get_stack             (GimpPrefsBox *box);
+-- 
+2.53.0
+

@@ -67,6 +67,11 @@ cp "$TMP/menus/"*.ui "$DATA/menus/"
 mkdir -p "$ETC/tool-options"
 cat "$SRC/config/gimprc-photogimp" >> "$ETC/gimprc"
 sed 's/@GEOMETRY@/(position 0 0)\n    (size 1600 900)/' "$SRC/config/sessionrc" > "$ETC/sessionrc"
+# espaces de travail d'usine (Fenêtres > Espace de travail)
+mkdir -p "$ETC/workspaces"
+for w in "$SRC/config/workspaces/"*.sessionrc; do
+    sed 's/@GEOMETRY@/(position 0 0)\n    (size 1600 900)/' "$w" > "$ETC/workspaces/$(basename "$w")"
+done
 cp "$SRC/config/toolrc" "$ETC/toolrc"
 cp "$SRC/config/templaterc" "$ETC/templaterc"
 cp "$SRC/config/shortcutsrc" "$ETC/shortcutsrc"          # lu grâce au patch 0001

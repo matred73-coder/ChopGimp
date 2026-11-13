@@ -6,7 +6,7 @@ Plan complet : lots 0 à 6, idées en plus, calendrier de 17 étapes (voir l'his
 |---|---|---|---|
 | 1 | 3.16.2 | Fin de la revue de code | ✅ livrée |
 | 2 | 3.17.0 | Apparence I (variantes, rem, accent, densité, polices, menu) | ✅ livrée |
-| 3 | 3.17.1 | Apparence II (préférences, espaces de travail, barre d'outils, écran d'accueil) | à faire |
+| 3 | 3.17.1 | Apparence II (préférences, espaces de travail, barre d'outils, écran d'accueil) | ✅ livrée |
 | 4 | 3.18.0 | Refonte de l'outil Texte | à faire |
 | 5 | 3.19.0 | PSD I | à faire |
 | 6 | 3.19.1 | PSD II | à faire |
@@ -56,3 +56,12 @@ Plan complet : lots 0 à 6, idées en plus, calendrier de 17 étapes (voir l'his
 - **Polices Inter et Source Sans 3 fournies** (OFL) ; sous Windows, enregistrées au démarrage (`AddFontResourceEx`) pour que l'interface ne retombe plus sur une police de secours.
 - **La zone autour de l'image suit le thème** (fond clair dans les variantes claires).
 - Réglages enregistrés dans `chopgimprc [appearance]`.
+
+## 3.17.1 — Apparence II
+
+- **Préférences > Interface > Apparence** : variante, accent, densité, police, taille de l'interface (mêmes réglages que le menu).
+- **Fenêtres > Espace de travail** : Essentiel, Photographie, Peinture, Typographie, Illustration, et « Mon espace de travail » (Enregistrer l'espace de travail). Les dispositions sont générées par `tools/build_layout.py` (`config/workspaces/`) et appliquées à chaud.
+- **Fenêtres > Modifier la barre d'outils…** : ouvre directement Préférences > Boîte à outils (outils visibles, groupes).
+- **Écran d'accueil** :
+  - affiché au démarrage ;
+  - onglet Créer : 7 documents en un clic (Par défaut, A4, Instagram, Story, Bannière, 4K, Toile), vignettes plus grandes pour les images récentes.

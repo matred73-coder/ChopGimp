@@ -1,0 +1,62 @@
+# GIMP sessionrc — ChopGimp (espace de travail « Typographie »)
+# Généré par tools/build_layout.py. L'installeur conserve la position/taille
+# de votre fenêtre principale ; GIMP réécrit ce fichier à chaque fermeture.
+
+(session-info "toplevel"
+    (factory-entry "gimp-single-image-window")
+    @GEOMETRY@
+    (open-on-exit)
+    (aux-info
+        (left-docks-width "46")
+        (right-docks-width "330")
+        (maximized "yes"))
+    (gimp-toolbox
+        (side left))
+    (gimp-dock
+        (side right)
+        (book
+            (current-page 0)
+            (dockable "chopgimp-character"
+                (tab-style automatic)
+                (aux-info
+                    (show-button-bar "true")))
+            (dockable "chopgimp-paragraph"
+                (tab-style automatic)
+                (aux-info
+                    (show-button-bar "true"))))
+        (book
+            (position 250)
+            (current-page 0)
+            (dockable "chopgimp-glyphs"
+                (tab-style automatic)
+                (aux-info
+                    (show-button-bar "true")))
+            (dockable "chopgimp-text-styles"
+                (tab-style automatic)
+                (aux-info
+                    (show-button-bar "true")))
+            (dockable "gimp-font-list"
+                (tab-style automatic)
+                (aux-info
+                    (show-button-bar "true"))))
+        (book
+            (position 330)
+            (current-page 0)
+            (dockable "gimp-layer-list"
+                (tab-style name)
+                (preview-size 64)
+                (aux-info
+                    (show-button-bar "true")))
+            (dockable "gimp-path-list"
+                (tab-style name)
+                (preview-size 32)
+                (aux-info
+                    (show-button-bar "true"))))))
+
+(hide-docks no)
+(single-window-mode yes)
+(show-tabs yes)
+(tabs-position 0)
+(last-tip-shown 0)
+
+# end of sessionrc

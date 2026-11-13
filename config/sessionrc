@@ -1,4 +1,4 @@
-# GIMP sessionrc — PhotoGIMP Pro v2 (espace de travail « Essentiel »)
+# GIMP sessionrc — ChopGimp (espace de travail « Essentiel »)
 # Généré par tools/build_layout.py. L'installeur conserve la position/taille
 # de votre fenêtre principale ; GIMP réécrit ce fichier à chaque fermeture.
 
@@ -44,6 +44,14 @@
                 (aux-info
                     (show-button-bar "true")))
             (dockable "chopgimp-paragraph"
+                (tab-style automatic)
+                (aux-info
+                    (show-button-bar "true")))
+            (dockable "chopgimp-glyphs"
+                (tab-style automatic)
+                (aux-info
+                    (show-button-bar "true")))
+            (dockable "chopgimp-text-styles"
                 (tab-style automatic)
                 (aux-info
                     (show-button-bar "true")))

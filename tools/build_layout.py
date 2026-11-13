@@ -86,7 +86,45 @@ def book(pos, dockables):
     return s
 
 
-def sessionrc():
+def workspace_books(name):
+    """Les trois groupes de panneaux de droite d'un espace de travail
+    (comme les espaces de travail de Photoshop)."""
+    info = dockable("gimp-cursor-view", extra=['(frame-1-mode "pixel")', '(frame-2-mode "rgb-percent")'])
+    layers3 = [dockable("gimp-layer-list", tab="name", preview=64),
+               dockable("gimp-channel-list", tab="name", preview=32),
+               dockable("gimp-path-list", tab="name", preview=32)]
+    if name == "photographie":
+        return (book(None, [dockable("gimp-histogram-editor"), dockable("gimp-color-editor"), info]),
+                book(250, [dockable("gimp-navigation-view"), dockable("gimp-undo-history"),
+                           dockable("gimp-sample-point-editor")]),
+                book(330, layers3))
+    if name == "peinture":
+        return (book(None, [dockable("gimp-color-editor"), dockable("gimp-palette-editor"),
+                            dockable("gimp-pattern-grid")]),
+                book(250, [dockable("gimp-brush-grid"), dockable("gimp-mypaint-brush-grid"),
+                           dockable("gimp-tool-preset-list"), dockable("gimp-dynamics-list")]),
+                book(330, [dockable("gimp-layer-list", tab="name", preview=64),
+                           dockable("gimp-navigation-view"), dockable("gimp-symmetry-editor")]))
+    if name == "typographie":
+        return (book(None, [dockable("chopgimp-character"), dockable("chopgimp-paragraph")]),
+                book(250, [dockable("chopgimp-glyphs"), dockable("chopgimp-text-styles"),
+                           dockable("gimp-font-list")]),
+                book(330, [dockable("gimp-layer-list", tab="name", preview=64),
+                           dockable("gimp-path-list", tab="name", preview=32)]))
+    if name == "illustration":
+        return (book(None, [dockable("gimp-color-editor"), dockable("gimp-palette-editor"),
+                            dockable("gimp-gradient-list")]),
+                book(250, [dockable("gimp-path-list", tab="name", preview=32),
+                           dockable("gimp-undo-history"), dockable("gimp-symmetry-editor")]),
+                book(330, [dockable("gimp-layer-list", tab="name", preview=64),
+                           dockable("gimp-channel-list", tab="name", preview=32)]))
+    return None
+
+
+WORKSPACES = ["essentiel", "photographie", "peinture", "typographie", "illustration"]
+
+
+def sessionrc(workspace="essentiel"):
     color = book(None, [dockable("gimp-color-editor"), dockable("gimp-palette-editor"),
                         dockable("gimp-gradient-list"), dockable("gimp-pattern-grid")])
     # v3 : les options d'outil sont dans la barre d'options horizontale ;
@@ -101,7 +139,9 @@ def sessionrc():
     layers = book(330, [dockable("gimp-layer-list", tab="name", preview=64),
                         dockable("gimp-channel-list", tab="name", preview=32),
                         dockable("gimp-path-list", tab="name", preview=32)])
-    return """# GIMP sessionrc — PhotoGIMP Pro v2 (espace de travail « Essentiel »)
+    if workspace != "essentiel":
+        color, props, layers = workspace_books(workspace)
+    return """# GIMP sessionrc — ChopGimp (espace de travail « %s »)
 # Généré par tools/build_layout.py. L'installeur conserve la position/taille
 # de votre fenêtre principale ; GIMP réécrit ce fichier à chaque fermeture.
 
@@ -128,7 +168,7 @@ def sessionrc():
 (last-tip-shown 0)
 
 # end of sessionrc
-""" % (color, props, layers)
+""" % (workspace.capitalize(), color, props, layers)
 
 
 if __name__ == "__main__":
@@ -142,4 +182,8 @@ if __name__ == "__main__":
                             '                    (show-button-bar "true")))\n'
                             '            (dockable "gimp-undo-history"', 1)
     open(os.path.join(ROOT, "config", "sessionrc"), "w").write(sess)
-    print("config/toolrc et config/sessionrc générés")
+    # espaces de travail d'usine (Fenêtres > Espace de travail)
+    os.makedirs(os.path.join(ROOT, "config", "workspaces"), exist_ok=True)
+    for w in WORKSPACES:
+        open(os.path.join(ROOT, "config", "workspaces", w + ".sessionrc"), "w").write(sessionrc(w))
+    print("config/toolrc, config/sessionrc et %d espaces de travail générés" % len(WORKSPACES))

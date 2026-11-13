@@ -64,3 +64,5 @@
 (cursor-mode tool-icon)
 (show-paint-tool-cursor no)
 (show-brush-outline yes)
+# Écran d'accueil (documents récents, nouveaux documents en un clic)
+(show-welcome-dialog yes)

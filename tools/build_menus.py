@@ -100,7 +100,21 @@ for sec in PANNEAUX:
     panneaux.append("      <section>")
     panneaux += ['        <item><attribute name="action">app.%s</attribute></item>' % a for a in sec]
     panneaux.append("      </section>")
-fenetre = get["_Windows"][:2] + panneaux + get["_Windows"][2:]
+# Fenêtres > Espace de travail (Photoshop), Modifier la barre d'outils
+espace = ["      <section>",
+          "      <submenu>",
+          '        <attribute name="label" translatable="no">_Espace de travail</attribute>',
+          "        <section>"] + \
+    ['          <item><attribute name="action">app.windows-workspace-%s</attribute></item>' % w
+     for w in ["essentiel", "photographie", "peinture", "typographie", "illustration"]] + \
+    ["        </section>", "        <section>",
+     '          <item><attribute name="action">app.windows-workspace-personnel</attribute></item>',
+     '          <item><attribute name="action">app.windows-workspace-save</attribute></item>',
+     "        </section>",
+     "      </submenu>",
+     '      <item><attribute name="action">app.windows-edit-toolbar</attribute></item>',
+     "      </section>"]
+fenetre = get["_Windows"][:2] + espace + panneaux + get["_Windows"][2:]
 fenetre = insert_before_close(fenetre, outils)
 
 texte = """    <submenu>
