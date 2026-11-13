@@ -335,6 +335,50 @@ try:
     except Exception as e:
         report(False, "Vectoriel", repr(e)[:200])
 
+    # 3g. Texte : balises ChopGimp (Pango) et vectorisation
+    try:
+        im = Gimp.Image.new(800, 300, Gimp.ImageBaseType.RGB)
+        bg = Gimp.Layer.new(im, "Fond", 800, 300, Gimp.ImageType.RGB_IMAGE, 100, Gimp.LayerMode.NORMAL)
+        im.insert_layer(bg, None, 0)
+        font = Gimp.Font.get_by_name("Sans-serif") or Gimp.context_get_font()
+
+        def width_of(markup):
+            t = Gimp.TextLayer.new(im, "x", font, 40.0, Gimp.Unit.pixel())
+            im.insert_layer(t, None, 0)
+            t.set_markup(markup)
+            w = t.get_width()
+            im.remove_layer(t)
+            return w
+
+        plain = width_of("<markup>Bonjour Monde</markup>")
+        caps = width_of('<markup><span text_transform="uppercase">Bonjour Monde</span></markup>')
+        sup = width_of('<markup>Bonjour <span baseline_shift="superscript">'
+                       '<span font_scale="superscript">Monde</span></span></markup>')
+        report(caps > plain and sup < plain, "Texte : capitales et exposant (balises Pango)",
+               "largeurs %d / %d / %d" % (plain, caps, sup))
+
+        t = Gimp.TextLayer.new(im, "Abc", font, 80.0, Gimp.Unit.pixel())
+        im.insert_layer(t, None, 0)
+        t.set_color(color(0.8, 0.1, 0.1))
+        r = run("chopgimp-text-outline", **{"run-mode": Gimp.RunMode.NONINTERACTIVE, "image": im,
+                                            "drawables": [t]})
+        sel = im.get_selected_layers()
+        vl = sel[0] if sel else None
+        okk = (r.index(0) == Gimp.PDBStatusType.SUCCESS and isinstance(vl, Gimp.VectorLayer) and
+               vl.get_fill_color().get_rgba()[0] > 0.7 and len(vl.get_path().get_strokes()) >= 4)
+        report(okk, "Texte : vectoriser (Ctrl+Maj+O)",
+               "%d contours" % (len(vl.get_path().get_strokes()) if vl else 0))
+
+        t = Gimp.TextLayer.new(im, "Abc", font, 80.0, Gimp.Unit.pixel())
+        im.insert_layer(t, None, 0)
+        r = run("chopgimp-text-outline-letters", **{"run-mode": Gimp.RunMode.NONINTERACTIVE, "image": im,
+                                                    "drawables": [t]})
+        grp = im.get_selected_layers()[0]
+        n = len(grp.get_children()) if isinstance(grp, Gimp.GroupLayer) else 0
+        report(n == 3, "Texte : vectoriser lettre par lettre", "%d lettres" % n)
+    except Exception as e:
+        report(False, "Texte", repr(e)[:200])
+
     # 4. Réglages d'usine présents (thème, icônes, menus, raccourcis)
     data = Gimp.data_directory()
     sysconf = Gimp.sysconf_directory()

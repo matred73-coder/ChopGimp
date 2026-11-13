@@ -92,6 +92,8 @@ def sessionrc():
     # v3 : les options d'outil sont dans la barre d'options horizontale ;
     # le panneau complet reste accessible (bouton à droite de la barre).
     props = book(250, [dockable("gimp-undo-history"),
+                       dockable("chopgimp-character"),
+                       dockable("chopgimp-paragraph"),
                        dockable("gimp-brush-grid"),
                        dockable("gimp-cursor-view", extra=['(frame-1-mode "pixel")', '(frame-2-mode "rgb-percent")'])])
     layers = book(330, [dockable("gimp-layer-list", tab="name", preview=64),

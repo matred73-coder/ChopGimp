@@ -1,0 +1,1127 @@
+From af88543c08f8ba7ed12be4db425f2373bab93608 Mon Sep 17 00:00:00 2001
+From: ChopGimp <mathieu.redon@proton.me>
+Date: Fri, 13 Nov 2026 11:42:51 +0100
+Subject: [PATCH] ChopGimp: Character and Paragraph panels (selection or whole
+ layer: font, size, leading, tracking, kerning, scales, baseline, color, faux
+ bold/italic, caps, small caps, super/subscript, OpenType, alignment, indent,
+ hyphenation); any Pango attribute in text markup; double-click on a text with
+ the Move tool edits it
+
+---
+ app/actions/dialogs-actions.c     |  16 +
+ app/dialogs/chopgimp-textpanels.c | 775 ++++++++++++++++++++++++++++++
+ app/dialogs/chopgimp-textpanels.h |  14 +
+ app/dialogs/dialogs.c             |  10 +
+ app/dialogs/meson.build           |   1 +
+ app/tools/gimpmovetool.c          |  26 +
+ app/widgets/gimptextbuffer.c      | 107 +++++
+ app/widgets/gimptextbuffer.h      |  19 +
+ menus/dialogs-menuitems.ui.in     |   2 +
+ 9 files changed, 970 insertions(+)
+ create mode 100644 app/dialogs/chopgimp-textpanels.c
+ create mode 100644 app/dialogs/chopgimp-textpanels.h
+
+diff --git a/app/actions/dialogs-actions.c b/app/actions/dialogs-actions.c
+index 2959dd4..71b493f 100644
+--- a/app/actions/dialogs-actions.c
++++ b/app/actions/dialogs-actions.c
+@@ -140,6 +140,22 @@ const GimpStringActionEntry dialogs_dockable_actions[] =
+     "gimp-undo-history",
+     GIMP_HELP_UNDO_DIALOG },
+ 
++  { "dialogs-character", "gimp-tool-text",
++    NC_("dialogs-action", "_Caractère"),
++    NC_("dialogs-action", "_Caractère"),
++    { NULL },
++    NC_("dialogs-action", "Ouvrir le panneau Caractère (police, taille, approche, OpenType…)"),
++    "chopgimp-character",
++    GIMP_HELP_TOOL_TEXT },
++
++  { "dialogs-paragraph", "format-justify-left",
++    NC_("dialogs-action", "_Paragraphe"),
++    NC_("dialogs-action", "_Paragraphe"),
++    { NULL },
++    NC_("dialogs-action", "Ouvrir le panneau Paragraphe (alignement, retrait, césure)"),
++    "chopgimp-paragraph",
++    GIMP_HELP_TOOL_TEXT },
++
+   { "dialogs-cursor", GIMP_ICON_CURSOR,
+     NC_("dialogs-action", "_Pointer Dialog"),
+     NC_("dialogs-action", "_Pointer"),
+diff --git a/app/dialogs/chopgimp-textpanels.c b/app/dialogs/chopgimp-textpanels.c
+new file mode 100644
+index 0000000..6284c8f
+--- /dev/null
++++ b/app/dialogs/chopgimp-textpanels.c
+@@ -0,0 +1,775 @@
++/* GIMP - The GNU Image Manipulation Program
++ * Copyright (C) 1995 Spencer Kimball and Peter Mattis
++ *
++ * chopgimp-textpanels.c — ChopGimp: Photoshop « Character » and
++ * « Paragraph » panels.
++ *
++ * While a text is being edited, the character settings apply to the
++ * selected characters (tags of the GimpTextBuffer, written as Pango
++ * markup); otherwise to the whole selected text layer.
++ *
++ * This program is free software: you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation; either version 3 of the License, or
++ * (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License
++ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
++ */
++
++#include "config.h"
++
++#include <string.h>
++
++#include <gegl.h>
++#include <gtk/gtk.h>
++
++#include "libgimpbase/gimpbase.h"
++#include "libgimpcolor/gimpcolor.h"
++#include "libgimpmath/gimpmath.h"
++#include "libgimpwidgets/gimpwidgets.h"
++
++#include "dialogs-types.h"
++
++#include "core/gimp.h"
++#include "core/gimpcontainer.h"
++#include "core/gimpcontext.h"
++#include "core/gimpdatafactory.h"
++#include "core/gimpimage.h"
++
++#include "text/gimpfont.h"
++#include "text/gimptext.h"
++#include "text/gimptextlayer.h"
++
++#include "widgets/gimpeditor.h"
++#include "widgets/gimptextbuffer.h"
++
++#include "tools/tools-types.h"
++#include "tools/gimptexttool.h"
++#include "tools/tool_manager.h"
++
++#include "chopgimp-textpanels.h"
++
++#include "gimp-intl.h"
++
++
++typedef struct
++{
++  Gimp          *gimp;
++  gboolean       paragraph;
++  gboolean       updating;
++  guint          refresh_id;
++  GimpTextLayer *shown_layer;
++
++  /*  Character  */
++  GtkWidget     *font;
++  GtkWidget     *size;
++  GtkWidget     *leading;
++  GtkWidget     *tracking;
++  GtkWidget     *kerning;
++  GtkWidget     *vscale;
++  GtkWidget     *hscale;
++  GtkWidget     *baseline;
++  GtkWidget     *color;
++
++  /*  Paragraph  */
++  GtkWidget     *indent;
++  GtkWidget     *box_mode;
++  GtkWidget     *hyphens;
++} Panel;
++
++
++/* ─── the target: text being edited, or the selected text layer ──── */
++
++typedef struct
++{
++  GimpTextLayer  *layer;
++  GimpTextBuffer *buffer;     /* the text tool's, or a temporary one */
++  gboolean        temporary;
++  GtkTextIter     start;
++  GtkTextIter     end;
++} Target;
++
++static GimpTextLayer *
++panel_text_layer (Gimp *gimp)
++{
++  GimpContext *context = gimp_get_user_context (gimp);
++  GimpImage   *image   = gimp_context_get_image (context);
++  GList       *iter;
++
++  if (! image)
++    return NULL;
++
++  for (iter = gimp_image_get_selected_layers (image); iter; iter = iter->next)
++    if (GIMP_IS_TEXT_LAYER (iter->data))
++      return iter->data;
++
++  return NULL;
++}
++
++static GimpTextTool *
++panel_text_tool (Gimp *gimp)
++{
++  GimpTool *tool = tool_manager_get_active (gimp);
++
++  if (GIMP_IS_TEXT_TOOL (tool) && GIMP_TEXT_TOOL (tool)->layer)
++    return GIMP_TEXT_TOOL (tool);
++
++  return NULL;
++}
++
++static gboolean
++target_begin (Panel *panel, Target *t)
++{
++  GimpTextTool *tool = panel_text_tool (panel->gimp);
++  GtkTextBuffer *buffer;
++
++  memset (t, 0, sizeof (Target));
++
++  if (tool)
++    {
++      t->layer  = tool->layer;
++      t->buffer = tool->buffer;
++    }
++  else
++    {
++      GimpText *text;
++
++      t->layer = panel_text_layer (panel->gimp);
++      if (! t->layer || ! (text = gimp_text_layer_get_text (t->layer)))
++        return FALSE;
++
++      t->buffer    = gimp_text_buffer_new ();
++      t->temporary = TRUE;
++
++      if (text->markup)
++        gimp_text_buffer_set_markup (t->buffer, text->markup);
++      else
++        gimp_text_buffer_set_text (t->buffer, text->text);
++    }
++
++  buffer = GTK_TEXT_BUFFER (t->buffer);
++
++  if (! gtk_text_buffer_get_selection_bounds (buffer, &t->start, &t->end))
++    gtk_text_buffer_get_bounds (buffer, &t->start, &t->end);
++
++  return TRUE;
++}
++
++/*  a temporary buffer is written back into the layer  */
++static void
++target_end (Target *t, const gchar *undo_desc)
++{
++  if (t->temporary)
++    {
++      gchar *markup = gimp_text_buffer_get_markup (t->buffer);
++
++      gimp_text_layer_set (t->layer, undo_desc, "markup", markup, NULL);
++      g_free (markup);
++      g_object_unref (t->buffer);
++
++      gimp_image_flush (gimp_item_get_image (GIMP_ITEM (t->layer)));
++    }
++}
++
++static GimpTextLayer *
++panel_layer (Panel *panel)
++{
++  GimpTextTool *tool = panel_text_tool (panel->gimp);
++
++  return tool ? tool->layer : panel_text_layer (panel->gimp);
++}
++
++static void
++layer_flush (GimpTextLayer *layer)
++{
++  gimp_image_flush (gimp_item_get_image (GIMP_ITEM (layer)));
++}
++
++static void
++layer_set_double (Panel *panel, const gchar *undo_desc, const gchar *prop, gdouble value)
++{
++  GimpTextLayer *layer = panel_layer (panel);
++
++  if (layer)
++    {
++      gimp_text_layer_set (layer, undo_desc, prop, value, NULL);
++      layer_flush (layer);
++    }
++}
++
++static void
++layer_set_int (Panel *panel, const gchar *undo_desc, const gchar *prop, gint value)
++{
++  GimpTextLayer *layer = panel_layer (panel);
++
++  if (layer)
++    {
++      gimp_text_layer_set (layer, undo_desc, prop, value, NULL);
++      layer_flush (layer);
++    }
++}
++
++/* ─── character operations ─────────────────────────────────────────── */
++
++static void
++font_activate (GtkEntry *entry, Panel *panel)
++{
++  Target t;
++
++  if (panel->updating || ! target_begin (panel, &t))
++    return;
++
++  gimp_text_buffer_set_font (t.buffer, &t.start, &t.end, gtk_entry_get_text (entry));
++  target_end (&t, _("Police"));
++}
++
++static void
++size_changed (GtkSpinButton *spin, Panel *panel)
++{
++  Target t;
++
++  if (panel->updating || ! target_begin (panel, &t))
++    return;
++
++  gimp_text_buffer_set_size (t.buffer, &t.start, &t.end,
++                             PANGO_SCALE * gtk_spin_button_get_value (spin));
++  target_end (&t, _("Taille du texte"));
++}
++
++static void
++kerning_changed (GtkSpinButton *spin, Panel *panel)
++{
++  Target t;
++
++  if (panel->updating || ! target_begin (panel, &t))
++    return;
++
++  gimp_text_buffer_set_kerning (t.buffer, &t.start, &t.end,
++                                PANGO_SCALE * gtk_spin_button_get_value (spin));
++  target_end (&t, _("Crénage"));
++}
++
++static void
++baseline_changed (GtkSpinButton *spin, Panel *panel)
++{
++  Target t;
++
++  if (panel->updating || ! target_begin (panel, &t))
++    return;
++
++  gimp_text_buffer_set_baseline (t.buffer, &t.start, &t.end,
++                                 PANGO_SCALE * gtk_spin_button_get_value (spin));
++  target_end (&t, _("Décalage de la ligne de base"));
++}
++
++static void
++color_changed (GimpColorButton *button, Panel *panel)
++{
++  Target     t;
++  GeglColor *color;
++
++  if (panel->updating || ! target_begin (panel, &t))
++    return;
++
++  color = gimp_color_button_get_color (button);
++  gimp_text_buffer_set_color (t.buffer, &t.start, &t.end, color);
++  g_object_unref (color);
++  target_end (&t, _("Couleur du texte"));
++}
++
++static void
++leading_changed (GtkSpinButton *spin, Panel *panel)
++{
++  if (! panel->updating)
++    layer_set_double (panel, _("Interlignage"), "line-spacing", gtk_spin_button_get_value (spin));
++}
++
++static void
++tracking_changed (GtkSpinButton *spin, Panel *panel)
++{
++  if (! panel->updating)
++    layer_set_double (panel, _("Approche"), "letter-spacing", gtk_spin_button_get_value (spin));
++}
++
++/*  horizontal / vertical scale and faux italic: the text matrix  */
++static void
++matrix_update (Panel *panel, gint which, gdouble value)
++{
++  GimpTextLayer *layer = panel_text_tool (panel->gimp) ?
++                         panel_text_tool (panel->gimp)->layer :
++                         panel_text_layer (panel->gimp);
++  GimpText      *text;
++  GimpMatrix2    m;
++
++  if (panel->updating || ! layer)
++    return;
++
++  text = gimp_text_layer_get_text (layer);
++  m    = text->transformation;
++
++  if (which == 0)          /* horizontal scale, % */
++    m.coeff[0][0] = value / 100.0;
++  else if (which == 1)     /* vertical scale, % */
++    m.coeff[1][1] = value / 100.0;
++  else                     /* faux italic: shear */
++    m.coeff[0][1] = (ABS (m.coeff[0][1]) > 0.01) ? 0.0 : -0.21;
++
++  gimp_text_layer_set (layer, _("Transformation du texte"), "transformation", &m, NULL);
++  layer_flush (layer);
++}
++
++static void
++hscale_changed (GtkSpinButton *spin, Panel *panel)
++{
++  matrix_update (panel, 0, gtk_spin_button_get_value (spin));
++}
++
++static void
++vscale_changed (GtkSpinButton *spin, Panel *panel)
++{
++  matrix_update (panel, 1, gtk_spin_button_get_value (spin));
++}
++
++/*  a toggle: a Pango attribute on the characters  */
++typedef struct
++{
++  const gchar *attr;
++  const gchar *value;      /* value when on (NULL: bold / italic … tags) */
++  const gchar *tag;        /* GimpTextBuffer tag: "b", "i", "u", "s"     */
++  const gchar *label;
++  const gchar *tooltip;
++} Toggle;
++
++static const Toggle char_toggles[] =
++{
++  { NULL, NULL, "fauxbold", "<b>T</b>",  N_("Faux gras") },
++  { NULL, NULL, "fauxital", "<i>T</i>",  N_("Faux italique") },
++  { "text_transform", "uppercase", NULL, "TT", N_("Tout en capitales") },
++  { "variant", "smallcaps", NULL, "T<small>T</small>", N_("Petites capitales") },
++  { "baseline_shift", "superscript", NULL, "T¹", N_("Exposant") },
++  { "baseline_shift", "subscript", NULL, "T₁", N_("Indice") },
++  { NULL, NULL, "u", "<u>T</u>", N_("Souligné") },
++  { NULL, NULL, "s", "<s>T</s>", N_("Barré") },
++};
++
++static const Toggle opentype_toggles[] =
++{
++  { "font_features", "liga=1, clig=1", NULL, "fi", N_("Ligatures standard") },
++  { "font_features", "dlig=1", NULL, "st", N_("Ligatures conditionnelles") },
++  { "font_features", "onum=1", NULL, "1⁹", N_("Chiffres elzéviriens") },
++  { "font_features", "frac=1", NULL, "½", N_("Fractions") },
++  { "font_features", "ordn=1", NULL, "1ᵉʳ", N_("Ordinaux") },
++  { "font_features", "salt=1", NULL, "a", N_("Variantes stylistiques") },
++  { "font_features", "tnum=1", NULL, "0|0", N_("Chiffres tabulaires") },
++};
++
++static void
++toggle_clicked (GtkButton *button, Panel *panel)
++{
++  const Toggle *tg = g_object_get_data (G_OBJECT (button), "chopgimp-toggle");
++  Target        t;
++
++  if (panel->updating)
++    return;
++
++  /*  faux bold: an outline of the text color around the glyphs  */
++  if (tg->tag && ! strcmp (tg->tag, "fauxbold"))
++    {
++      GimpTextLayer *layer = panel_text_tool (panel->gimp) ?
++                             panel_text_tool (panel->gimp)->layer :
++                             panel_text_layer (panel->gimp);
++      GimpText      *text;
++
++      if (! layer)
++        return;
++
++      text = gimp_text_layer_get_text (layer);
++
++      if (text->outline == GIMP_TEXT_OUTLINE_STROKE_FILL)
++        {
++          layer_set_int (panel, _("Faux gras"), "outline", GIMP_TEXT_OUTLINE_NONE);
++        }
++      else
++        {
++          gimp_text_layer_set (layer, _("Faux gras"),
++                               "outline",            GIMP_TEXT_OUTLINE_STROKE_FILL,
++                               "outline-direction",  GIMP_TEXT_OUTLINE_DIRECTION_CENTERED,
++                               "outline-width",      MAX (0.5, text->font_size * 0.035),
++                               "outline-foreground", text->color,
++                               NULL);
++          layer_flush (layer);
++        }
++      return;
++    }
++
++  if (tg->tag && ! strcmp (tg->tag, "fauxital"))
++    {
++      matrix_update (panel, 2, 0);
++      return;
++    }
++
++  if (! target_begin (panel, &t))
++    return;
++
++  if (tg->tag)
++    {
++      GtkTextTag *tag = gimp_text_buffer_name_to_tag (t.buffer, tg->tag, NULL, NULL);
++
++      if (gtk_text_iter_has_tag (&t.start, tag))
++        gtk_text_buffer_remove_tag (GTK_TEXT_BUFFER (t.buffer), tag, &t.start, &t.end);
++      else
++        gtk_text_buffer_apply_tag (GTK_TEXT_BUFFER (t.buffer), tag, &t.start, &t.end);
++    }
++  else
++    {
++      const gchar *current = gimp_text_buffer_get_iter_attr (t.buffer, &t.start, tg->attr);
++
++      if (! strcmp (tg->attr, "font_features"))
++        {
++          /*  OpenType features add up  */
++          gchar *features;
++
++          if (current && strstr (current, tg->value))
++            {
++              gchar **parts = g_strsplit (current, ", ", -1);
++              GString *str  = g_string_new (NULL);
++
++              for (gint i = 0; parts[i]; i++)
++                if (! strstr (tg->value, parts[i]))
++                  g_string_append_printf (str, "%s%s", str->len ? ", " : "", parts[i]);
++
++              features = g_string_free (str, FALSE);
++              g_strfreev (parts);
++            }
++          else
++            {
++              features = current ? g_strconcat (current, ", ", tg->value, NULL)
++                                 : g_strdup (tg->value);
++            }
++
++          gimp_text_buffer_set_attr (t.buffer, &t.start, &t.end, tg->attr,
++                                     *features ? features : NULL);
++          g_free (features);
++        }
++      else
++        {
++          gboolean on = current && ! strcmp (current, tg->value);
++
++          gimp_text_buffer_set_attr (t.buffer, &t.start, &t.end, tg->attr,
++                                     on ? NULL : tg->value);
++
++          /*  superscript / subscript: smaller characters too  */
++          if (! strcmp (tg->attr, "baseline_shift"))
++            gimp_text_buffer_set_attr (t.buffer, &t.start, &t.end, "font_scale",
++                                       on ? NULL : tg->value);
++        }
++    }
++
++  target_end (&t, _(tg->tooltip));
++}
++
++
++/* ─── paragraph operations ─────────────────────────────────────────── */
++
++static void
++justify_clicked (GtkButton *button, Panel *panel)
++{
++  layer_set_int (panel, _("Alignement"), "justify",
++                 GPOINTER_TO_INT (g_object_get_data (G_OBJECT (button), "justify")));
++}
++
++static void
++indent_changed (GtkSpinButton *spin, Panel *panel)
++{
++  if (! panel->updating)
++    layer_set_double (panel, _("Retrait de première ligne"), "indent",
++                      gtk_spin_button_get_value (spin));
++}
++
++static void
++box_mode_toggled (GtkToggleButton *toggle, Panel *panel)
++{
++  if (! panel->updating)
++    layer_set_int (panel, _("Texte de paragraphe"), "box-mode",
++                   gtk_toggle_button_get_active (toggle) ?
++                   GIMP_TEXT_BOX_FIXED : GIMP_TEXT_BOX_DYNAMIC);
++}
++
++static void
++hyphens_toggled (GtkToggleButton *toggle, Panel *panel)
++{
++  Target t;
++
++  if (panel->updating || ! target_begin (panel, &t))
++    return;
++
++  gtk_text_buffer_get_bounds (GTK_TEXT_BUFFER (t.buffer), &t.start, &t.end);
++  gimp_text_buffer_set_attr (t.buffer, &t.start, &t.end, "insert_hyphens",
++                             gtk_toggle_button_get_active (toggle) ? NULL : "false");
++  target_end (&t, _("Césure"));
++}
++
++
++/* ─── showing the current values ───────────────────────────────────── */
++
++static void
++spin_set (GtkWidget *spin, gdouble value)
++{
++  if (spin)
++    gtk_spin_button_set_value (GTK_SPIN_BUTTON (spin), value);
++}
++
++static gboolean
++panel_refresh (Panel *panel)
++{
++  GimpTextLayer *layer = panel_text_tool (panel->gimp) ?
++                         panel_text_tool (panel->gimp)->layer :
++                         panel_text_layer (panel->gimp);
++  GimpText      *text;
++
++  if (layer == panel->shown_layer)
++    return G_SOURCE_CONTINUE;
++
++  panel->shown_layer = layer;
++
++  if (! layer || ! (text = gimp_text_layer_get_text (layer)))
++    return G_SOURCE_CONTINUE;
++
++  panel->updating = TRUE;
++
++  if (panel->font && text->font)
++    gtk_entry_set_text (GTK_ENTRY (panel->font), gimp_object_get_name (text->font));
++
++  spin_set (panel->size,     text->font_size);
++  spin_set (panel->leading,  text->line_spacing);
++  spin_set (panel->tracking, text->letter_spacing);
++  spin_set (panel->hscale,   text->transformation.coeff[0][0] * 100.0);
++  spin_set (panel->vscale,   text->transformation.coeff[1][1] * 100.0);
++  spin_set (panel->indent,   text->indent);
++
++  if (panel->color && text->color)
++    gimp_color_button_set_color (GIMP_COLOR_BUTTON (panel->color), text->color);
++
++  if (panel->box_mode)
++    gtk_toggle_button_set_active (GTK_TOGGLE_BUTTON (panel->box_mode),
++                                  text->box_mode == GIMP_TEXT_BOX_FIXED);
++
++  panel->updating = FALSE;
++
++  return G_SOURCE_CONTINUE;
++}
++
++
++/* ─── building the panels ──────────────────────────────────────────── */
++
++static GtkWidget *
++spin_new (Panel       *panel,
++          gdouble      lo,
++          gdouble      hi,
++          gdouble      step,
++          gint         digits,
++          GCallback    callback)
++{
++  GtkWidget *spin = gtk_spin_button_new_with_range (lo, hi, step);
++
++  gtk_spin_button_set_digits (GTK_SPIN_BUTTON (spin), digits);
++  gtk_widget_set_hexpand (spin, TRUE);
++  g_signal_connect (spin, "value-changed", callback, panel);
++
++  return spin;
++}
++
++static void
++grid_row (GtkWidget   *grid,
++          gint         row,
++          gint         col,
++          const gchar *icon_text,
++          const gchar *tooltip,
++          GtkWidget   *widget)
++{
++  GtkWidget *label = gtk_label_new (NULL);
++
++  gtk_label_set_markup (GTK_LABEL (label), icon_text);
++  gtk_widget_set_tooltip_text (label, tooltip);
++  gtk_widget_set_tooltip_text (widget, tooltip);
++  gtk_grid_attach (GTK_GRID (grid), label,  col,     row, 1, 1);
++  gtk_grid_attach (GTK_GRID (grid), widget, col + 1, row, 1, 1);
++}
++
++static GtkWidget *
++toggle_row (Panel *panel, const Toggle *toggles, gint n)
++{
++  GtkWidget *row = gtk_box_new (GTK_ORIENTATION_HORIZONTAL, 2);
++
++  for (gint i = 0; i < n; i++)
++    {
++      GtkWidget *button = gtk_button_new ();
++      GtkWidget *label  = gtk_label_new (NULL);
++
++      gtk_label_set_markup (GTK_LABEL (label), toggles[i].label);
++      gtk_container_add (GTK_CONTAINER (button), label);
++      gtk_widget_set_tooltip_text (button, _(toggles[i].tooltip));
++      gtk_widget_set_hexpand (button, TRUE);
++      g_object_set_data (G_OBJECT (button), "chopgimp-toggle", (gpointer) &toggles[i]);
++      g_signal_connect (button, "clicked", G_CALLBACK (toggle_clicked), panel);
++      gtk_box_pack_start (GTK_BOX (row), button, TRUE, TRUE, 0);
++    }
++
++  return row;
++}
++
++static void
++font_completion_add (GimpObject *font, GtkListStore *store)
++{
++  GtkTreeIter iter;
++
++  gtk_list_store_append (store, &iter);
++  gtk_list_store_set (store, &iter, 0, gimp_object_get_name (font), -1);
++}
++
++static void
++panel_free (Panel *panel)
++{
++  if (panel->refresh_id)
++    g_source_remove (panel->refresh_id);
++  g_free (panel);
++}
++
++static GtkWidget *
++panel_new (Gimp *gimp, gboolean paragraph)
++{
++  Panel     *panel  = g_new0 (Panel, 1);
++  GtkWidget *editor = g_object_new (GIMP_TYPE_EDITOR, NULL);
++  GtkWidget *box    = gtk_box_new (GTK_ORIENTATION_VERTICAL, 6);
++  GtkWidget *grid   = gtk_grid_new ();
++
++  panel->gimp      = gimp;
++  panel->paragraph = paragraph;
++
++  gtk_container_set_border_width (GTK_CONTAINER (box), 6);
++  gtk_grid_set_row_spacing (GTK_GRID (grid), 4);
++  gtk_grid_set_column_spacing (GTK_GRID (grid), 6);
++  gtk_box_pack_start (GTK_BOX (box), grid, FALSE, FALSE, 0);
++
++  if (! paragraph)
++    {
++      GtkListStore       *store = gtk_list_store_new (1, G_TYPE_STRING);
++      GtkEntryCompletion *completion = gtk_entry_completion_new ();
++
++      gimp_container_foreach (gimp_data_factory_get_container (gimp->font_factory),
++                              (GFunc) font_completion_add, store);
++      gtk_entry_completion_set_model (completion, GTK_TREE_MODEL (store));
++      gtk_entry_completion_set_text_column (completion, 0);
++      gtk_entry_completion_set_minimum_key_length (completion, 1);
++      g_object_set (completion, "inline-completion", FALSE, NULL);
++      g_object_unref (store);
++
++      panel->font = gtk_entry_new ();
++      gtk_entry_set_completion (GTK_ENTRY (panel->font), completion);
++      gtk_entry_set_placeholder_text (GTK_ENTRY (panel->font), _("Police (tapez pour chercher)"));
++      gtk_entry_set_icon_from_icon_name (GTK_ENTRY (panel->font), GTK_ENTRY_ICON_PRIMARY,
++                                         "gimp-font");
++      g_object_unref (completion);
++      g_signal_connect (panel->font, "activate", G_CALLBACK (font_activate), panel);
++      gtk_grid_attach (GTK_GRID (grid), panel->font, 0, 0, 4, 1);
++
++      panel->size     = spin_new (panel, 1, 1000, 1, 1, G_CALLBACK (size_changed));
++      panel->leading  = spin_new (panel, -500, 500, 1, 1, G_CALLBACK (leading_changed));
++      panel->tracking = spin_new (panel, -100, 500, 0.5, 1, G_CALLBACK (tracking_changed));
++      panel->kerning  = spin_new (panel, -100, 100, 0.5, 1, G_CALLBACK (kerning_changed));
++      panel->vscale   = spin_new (panel, 1, 1000, 1, 0, G_CALLBACK (vscale_changed));
++      panel->hscale   = spin_new (panel, 1, 1000, 1, 0, G_CALLBACK (hscale_changed));
++      panel->baseline = spin_new (panel, -500, 500, 1, 1, G_CALLBACK (baseline_changed));
++
++      panel->color = gimp_color_button_new (_("Couleur du texte"), 40, 20,
++                                            gegl_color_new ("black"),
++                                            GIMP_COLOR_AREA_FLAT);
++      g_signal_connect (panel->color, "color-changed", G_CALLBACK (color_changed), panel);
++
++      grid_row (grid, 1, 0, "<b>T</b><small>T</small>", _("Taille (points)"), panel->size);
++      grid_row (grid, 1, 2, "<small>A</small><b>A</b>", _("Interlignage (px en plus)"), panel->leading);
++      grid_row (grid, 2, 0, "VA", _("Crénage de la sélection"), panel->kerning);
++      grid_row (grid, 2, 2, "<u>VA</u>", _("Approche (espacement des lettres)"), panel->tracking);
++      grid_row (grid, 3, 0, "↕T", _("Échelle verticale (%)"), panel->vscale);
++      grid_row (grid, 3, 2, "↔T", _("Échelle horizontale (%)"), panel->hscale);
++      grid_row (grid, 4, 0, "A<sup>a</sup>", _("Décalage de la ligne de base"), panel->baseline);
++      grid_row (grid, 4, 2, _("Couleur"), _("Couleur du texte"), panel->color);
++
++      gtk_box_pack_start (GTK_BOX (box),
++                          toggle_row (panel, char_toggles, G_N_ELEMENTS (char_toggles)),
++                          FALSE, FALSE, 0);
++      gtk_box_pack_start (GTK_BOX (box), gtk_label_new (_("OpenType")), FALSE, FALSE, 0);
++      gtk_box_pack_start (GTK_BOX (box),
++                          toggle_row (panel, opentype_toggles, G_N_ELEMENTS (opentype_toggles)),
++                          FALSE, FALSE, 0);
++    }
++  else
++    {
++      static const struct { gint justify; const gchar *icon; const gchar *tip; } aligns[] =
++      {
++        { GIMP_TEXT_JUSTIFY_LEFT,   "format-justify-left",   N_("Aligner à gauche") },
++        { GIMP_TEXT_JUSTIFY_CENTER, "format-justify-center", N_("Centrer") },
++        { GIMP_TEXT_JUSTIFY_RIGHT,  "format-justify-right",  N_("Aligner à droite") },
++        { GIMP_TEXT_JUSTIFY_FILL,   "format-justify-fill",   N_("Justifier (dernière ligne à gauche)") },
++      };
++      GtkWidget *row = gtk_box_new (GTK_ORIENTATION_HORIZONTAL, 2);
++
++      for (guint i = 0; i < G_N_ELEMENTS (aligns); i++)
++        {
++          GtkWidget *b = gtk_button_new_from_icon_name (aligns[i].icon, GTK_ICON_SIZE_BUTTON);
++
++          gtk_widget_set_tooltip_text (b, _(aligns[i].tip));
++          gtk_widget_set_hexpand (b, TRUE);
++          g_object_set_data (G_OBJECT (b), "justify", GINT_TO_POINTER (aligns[i].justify));
++          g_signal_connect (b, "clicked", G_CALLBACK (justify_clicked), panel);
++          gtk_box_pack_start (GTK_BOX (row), b, TRUE, TRUE, 0);
++        }
++      gtk_grid_attach (GTK_GRID (grid), row, 0, 0, 2, 1);
++
++      panel->indent = spin_new (panel, -1000, 1000, 1, 1, G_CALLBACK (indent_changed));
++      grid_row (grid, 1, 0, "→≡", _("Retrait de première ligne (px)"), panel->indent);
++
++      panel->box_mode = gtk_check_button_new_with_label (_("Texte de paragraphe (cadre fixe)"));
++      g_signal_connect (panel->box_mode, "toggled", G_CALLBACK (box_mode_toggled), panel);
++      gtk_grid_attach (GTK_GRID (grid), panel->box_mode, 0, 2, 2, 1);
++
++      panel->hyphens = gtk_check_button_new_with_label (_("Césure"));
++      gtk_toggle_button_set_active (GTK_TOGGLE_BUTTON (panel->hyphens), TRUE);
++      g_signal_connect (panel->hyphens, "toggled", G_CALLBACK (hyphens_toggled), panel);
++      gtk_grid_attach (GTK_GRID (grid), panel->hyphens, 0, 3, 2, 1);
++    }
++
++  gtk_box_pack_start (GTK_BOX (editor), box, TRUE, TRUE, 0);
++  gtk_widget_show_all (box);
++
++  /*  follow the layer being edited / selected  */
++  panel->refresh_id = g_timeout_add (400, (GSourceFunc) panel_refresh, panel);
++  g_object_set_data_full (G_OBJECT (editor), "chopgimp-panel", panel,
++                          (GDestroyNotify) panel_free);
++
++  return editor;
++}
++
++GtkWidget *
++chopgimp_character_panel_new (GimpDialogFactory *factory,
++                              GimpContext       *context,
++                              GimpUIManager     *ui_manager,
++                              gint               view_size)
++{
++  return panel_new (context->gimp, FALSE);
++}
++
++GtkWidget *
++chopgimp_paragraph_panel_new (GimpDialogFactory *factory,
++                              GimpContext       *context,
++                              GimpUIManager     *ui_manager,
++                              gint               view_size)
++{
++  return panel_new (context->gimp, TRUE);
++}
+diff --git a/app/dialogs/chopgimp-textpanels.h b/app/dialogs/chopgimp-textpanels.h
+new file mode 100644
+index 0000000..00c17bb
+--- /dev/null
++++ b/app/dialogs/chopgimp-textpanels.h
+@@ -0,0 +1,14 @@
++/* GIMP - The GNU Image Manipulation Program
++ * chopgimp-textpanels.h — ChopGimp: Character and Paragraph panels
++ */
++
++#pragma once
++
++GtkWidget * chopgimp_character_panel_new (GimpDialogFactory *factory,
++                                          GimpContext       *context,
++                                          GimpUIManager     *ui_manager,
++                                          gint               view_size);
++GtkWidget * chopgimp_paragraph_panel_new (GimpDialogFactory *factory,
++                                          GimpContext       *context,
++                                          GimpUIManager     *ui_manager,
++                                          gint               view_size);
+diff --git a/app/dialogs/dialogs.c b/app/dialogs/dialogs.c
+index 7c15ce4..2ab7fb4 100644
+--- a/app/dialogs/dialogs.c
++++ b/app/dialogs/dialogs.c
+@@ -49,6 +49,7 @@
+ 
+ #include "dialogs.h"
+ #include "dialogs-constructors.h"
++#include "chopgimp-textpanels.h"
+ 
+ #include "gimp-log.h"
+ 
+@@ -324,6 +325,15 @@ static const GimpDialogFactoryEntry entries[] =
+             N_("Errors"), N_("Error Console"), GIMP_ICON_DIALOG_WARNING,
+             GIMP_HELP_ERRORS_DIALOG,
+             dialogs_error_console_new, 0, TRUE),
++  /*  ChopGimp (Photoshop)  */
++  DOCKABLE ("chopgimp-character",
++            N_("Caractère"), N_("Caractère (texte)"), "gimp-tool-text",
++            GIMP_HELP_TOOL_TEXT,
++            chopgimp_character_panel_new, 0, TRUE),
++  DOCKABLE ("chopgimp-paragraph",
++            N_("Paragraphe"), N_("Paragraphe (texte)"), "format-justify-left",
++            GIMP_HELP_TOOL_TEXT,
++            chopgimp_paragraph_panel_new, 0, TRUE),
+   DOCKABLE ("gimp-cursor-view",
+             N_("Pointer"), N_("Pointer Information"), GIMP_ICON_CURSOR,
+             GIMP_HELP_POINTER_INFO_DIALOG,
+diff --git a/app/dialogs/meson.build b/app/dialogs/meson.build
+index 518efbb..67c850e 100644
+--- a/app/dialogs/meson.build
++++ b/app/dialogs/meson.build
+@@ -22,6 +22,7 @@ libappdialogs_sources = [
+   'data-delete-dialog.c',
+   'dialogs-constructors.c',
+   'dialogs.c',
++  'chopgimp-textpanels.c',
+   'extensions-dialog.c',
+   'file-open-dialog.c',
+   'file-open-location-dialog.c',
+diff --git a/app/tools/gimpmovetool.c b/app/tools/gimpmovetool.c
+index f2e4b02..a590f7a 100644
+--- a/app/tools/gimpmovetool.c
++++ b/app/tools/gimpmovetool.c
+@@ -36,6 +36,8 @@
+ #include "core/gimpguide.h"
+ #include "core/gimpimage.h"
+ #include "core/gimpimage-pick-item.h"
++
++#include "text/gimptextlayer.h"
+ #include "core/gimplayer.h"
+ #include "core/gimpimage-undo.h"
+ #include "core/gimplayermask.h"
+@@ -207,6 +209,30 @@ gimp_move_tool_button_press (GimpTool            *tool,
+   const gchar       *locked_message = NULL;
+   GimpItem          *locked_item    = NULL;
+ 
++  /*  ChopGimp (Photoshop): double-click on a text edits it, the cursor
++   *  where the click was
++   */
++  if (press_type == GIMP_BUTTON_PRESS_DOUBLE &&
++      options->move_type == GIMP_TRANSFORM_TYPE_LAYER)
++    {
++      GimpLayer *picked = gimp_image_pick_layer (image,
++                                                 coords->x, coords->y,
++                                                 NULL);
++
++      if (picked && gimp_item_is_text_layer (GIMP_ITEM (picked)))
++        {
++          GList *sel = g_list_prepend (NULL, picked);
++
++          gimp_image_set_selected_layers (image, sel);
++          g_list_free (sel);
++          gimp_image_flush (image);
++
++          chopgimp_switch_tool_later (display->gimp, display, "gimp-text-tool",
++                                      coords, time, 0);
++          return;
++        }
++    }
++
+   /*  ChopGimp: dragging a handle of the transform controls resizes the
+    *  object directly (Photoshop): fit the layer to its content, then hand
+    *  the press over to the unified transform tool.
+diff --git a/app/widgets/gimptextbuffer.c b/app/widgets/gimptextbuffer.c
+index ddd4a8f..6455fd8 100644
+--- a/app/widgets/gimptextbuffer.c
++++ b/app/widgets/gimptextbuffer.c
+@@ -177,6 +177,8 @@ gimp_text_buffer_finalize (GObject *object)
+       buffer->color_tags = NULL;
+     }
+ 
++  g_clear_pointer (&buffer->chopgimp_attr_tags, g_list_free);
++
+   if (buffer->preedit_color_tags)
+     {
+       g_list_free (buffer->preedit_color_tags);
+@@ -1312,6 +1314,16 @@ gimp_text_buffer_tag_to_name (GimpTextBuffer  *buffer,
+           g_object_unref (color);
+         }
+ 
++      return "span";
++    }
++  else if (g_list_find (buffer->chopgimp_attr_tags, tag))
++    {
++      if (attribute)
++        *attribute = g_object_get_data (G_OBJECT (tag), "chopgimp-attr");
++
++      if (value)
++        *value = g_strdup (g_object_get_data (G_OBJECT (tag), "chopgimp-value"));
++
+       return "span";
+     }
+   else if (tag == buffer->preedit_underline_tag)
+@@ -1328,6 +1340,97 @@ gimp_text_buffer_tag_to_name (GimpTextBuffer  *buffer,
+   return NULL;
+ }
+ 
++/*  ChopGimp: generic attribute tags  */
++
++static const gchar *const chopgimp_attrs[] =
++{
++  "font_features", "text_transform", "baseline_shift", "font_scale",
++  "allow_breaks", "insert_hyphens", "variant", "weight", "stretch",
++  NULL
++};
++
++gboolean
++gimp_text_buffer_is_chopgimp_attr (const gchar *attribute)
++{
++  for (gint i = 0; attribute && chopgimp_attrs[i]; i++)
++    if (! strcmp (attribute, chopgimp_attrs[i]))
++      return TRUE;
++
++  return FALSE;
++}
++
++GtkTextTag *
++gimp_text_buffer_get_attr_tag (GimpTextBuffer *buffer,
++                               const gchar    *attribute,
++                               const gchar    *value)
++{
++  GList      *list;
++  GtkTextTag *tag;
++
++  g_return_val_if_fail (GIMP_IS_TEXT_BUFFER (buffer), NULL);
++
++  for (list = buffer->chopgimp_attr_tags; list; list = list->next)
++    {
++      tag = list->data;
++
++      if (! g_strcmp0 (g_object_get_data (G_OBJECT (tag), "chopgimp-attr"), attribute) &&
++          ! g_strcmp0 (g_object_get_data (G_OBJECT (tag), "chopgimp-value"), value))
++        return tag;
++    }
++
++  tag = gtk_text_buffer_create_tag (GTK_TEXT_BUFFER (buffer), NULL, NULL);
++  g_object_set_data_full (G_OBJECT (tag), "chopgimp-attr",  g_strdup (attribute), g_free);
++  g_object_set_data_full (G_OBJECT (tag), "chopgimp-value", g_strdup (value),     g_free);
++  buffer->chopgimp_attr_tags = g_list_prepend (buffer->chopgimp_attr_tags, tag);
++
++  return tag;
++}
++
++void
++gimp_text_buffer_set_attr (GimpTextBuffer    *buffer,
++                           const GtkTextIter *start,
++                           const GtkTextIter *end,
++                           const gchar       *attribute,
++                           const gchar       *value)
++{
++  GList *list;
++
++  g_return_if_fail (GIMP_IS_TEXT_BUFFER (buffer));
++
++  if (gtk_text_iter_equal (start, end))
++    return;
++
++  gtk_text_buffer_begin_user_action (GTK_TEXT_BUFFER (buffer));
++
++  for (list = buffer->chopgimp_attr_tags; list; list = list->next)
++    if (! g_strcmp0 (g_object_get_data (list->data, "chopgimp-attr"), attribute))
++      gtk_text_buffer_remove_tag (GTK_TEXT_BUFFER (buffer), list->data, start, end);
++
++  if (value && *value)
++    gtk_text_buffer_apply_tag (GTK_TEXT_BUFFER (buffer),
++                               gimp_text_buffer_get_attr_tag (buffer, attribute, value),
++                               start, end);
++
++  gtk_text_buffer_end_user_action (GTK_TEXT_BUFFER (buffer));
++}
++
++const gchar *
++gimp_text_buffer_get_iter_attr (GimpTextBuffer    *buffer,
++                                const GtkTextIter *iter,
++                                const gchar       *attribute)
++{
++  GList *list;
++
++  g_return_val_if_fail (GIMP_IS_TEXT_BUFFER (buffer), NULL);
++
++  for (list = buffer->chopgimp_attr_tags; list; list = list->next)
++    if (! g_strcmp0 (g_object_get_data (list->data, "chopgimp-attr"), attribute) &&
++        gtk_text_iter_has_tag (iter, list->data))
++      return g_object_get_data (list->data, "chopgimp-value");
++
++  return NULL;
++}
++
+ GtkTextTag *
+ gimp_text_buffer_name_to_tag (GimpTextBuffer *buffer,
+                               const gchar    *name,
+@@ -1373,6 +1476,10 @@ gimp_text_buffer_name_to_tag (GimpTextBuffer *buffer,
+         {
+           return gimp_text_buffer_get_font_tag (buffer, value);
+         }
++      else if (gimp_text_buffer_is_chopgimp_attr (attribute))
++        {
++          return gimp_text_buffer_get_attr_tag (buffer, attribute, value);
++        }
+       else if (! strcmp (attribute, GIMP_TEXT_ATTR_NAME_COLOR))
+         {
+           GtkTextTag *tag;
+diff --git a/app/widgets/gimptextbuffer.h b/app/widgets/gimptextbuffer.h
+index d491c40..c6c8433 100644
+--- a/app/widgets/gimptextbuffer.h
++++ b/app/widgets/gimptextbuffer.h
+@@ -45,6 +45,11 @@ struct _GimpTextBuffer
+   GList         *font_tags;
+   GList         *color_tags;
+ 
++  /*  ChopGimp: any other Pango span attribute (font_features,
++   *  text_transform, baseline_shift, font_scale…), one tag per value
++   */
++  GList         *chopgimp_attr_tags;
++
+   GtkTextTag    *preedit_underline_tag;
+   GList         *preedit_color_tags;
+   GList         *preedit_bg_color_tags;
+@@ -155,6 +160,20 @@ const gchar    * gimp_text_buffer_tag_to_name          (GimpTextBuffer     *buff
+                                                         GtkTextTag         *tag,
+                                                         const gchar       **attribute,
+                                                         gchar             **value);
++/*  ChopGimp  */
++gboolean         gimp_text_buffer_is_chopgimp_attr     (const gchar        *attribute);
++GtkTextTag     * gimp_text_buffer_get_attr_tag         (GimpTextBuffer     *buffer,
++                                                        const gchar        *attribute,
++                                                        const gchar        *value);
++void             gimp_text_buffer_set_attr             (GimpTextBuffer     *buffer,
++                                                        const GtkTextIter  *start,
++                                                        const GtkTextIter  *end,
++                                                        const gchar        *attribute,
++                                                        const gchar        *value);
++const gchar    * gimp_text_buffer_get_iter_attr        (GimpTextBuffer     *buffer,
++                                                        const GtkTextIter  *iter,
++                                                        const gchar        *attribute);
++
+ GtkTextTag     * gimp_text_buffer_name_to_tag          (GimpTextBuffer     *buffer,
+                                                         const gchar        *name,
+                                                         const gchar        *attribute,
+diff --git a/menus/dialogs-menuitems.ui.in b/menus/dialogs-menuitems.ui.in
+index d9e6131..8b83194 100644
+--- a/menus/dialogs-menuitems.ui.in
++++ b/menus/dialogs-menuitems.ui.in
+@@ -12,6 +12,8 @@
+     <item><attribute name="action">@GROUP@.dialogs-selection-editor</attribute></item>
+     <item><attribute name="action">@GROUP@.dialogs-navigation</attribute></item>
+     <item><attribute name="action">@GROUP@.dialogs-undo-history</attribute></item>
++    <item><attribute name="action">@GROUP@.dialogs-character</attribute></item>
++    <item><attribute name="action">@GROUP@.dialogs-paragraph</attribute></item>
+     <item><attribute name="action">@GROUP@.dialogs-cursor</attribute></item>
+     <item><attribute name="action">@GROUP@.dialogs-sample-points</attribute></item>
+     <item><attribute name="action">@GROUP@.dialogs-symmetry</attribute></item>
+-- 
+2.53.0
+

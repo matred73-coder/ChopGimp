@@ -965,7 +965,10 @@
                         "../patches/gimp-3.2.8/0061-ChopGimp-lib2geom-errors-never-crash-catch-all-retry.patch",
                         "../patches/gimp-3.2.8/0062-ChopGimp-Shape-Builder-merges-neighbouring-regions-r.patch",
                         "../patches/gimp-3.2.8/0063-ChopGimp-Photoshop-like-cursors-one-whole-cursor-per.patch",
-                        "../patches/gimp-3.2.8/0064-ChopGimp-zoom-cursor-symbol-without-stretched-edges.patch"
+                        "../patches/gimp-3.2.8/0064-ChopGimp-zoom-cursor-symbol-without-stretched-edges.patch",
+                        "../patches/gimp-3.2.8/0065-ChopGimp-Character-and-Paragraph-panels-selection-or.patch",
+                        "../patches/gimp-3.2.8/0066-ChopGimp-Move-tool-receives-double-clicks-edit-text-.patch",
+                        "../patches/gimp-3.2.8/0067-ChopGimp-double-click-on-a-text-picks-it-by-its-fram.patch"
                     ]
                 }
             ],

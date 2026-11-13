@@ -60,6 +60,7 @@ PS_MAP = [
     ("Outils", "tools-shape-builder",      [S + A + "m"],    "Bâtisseur de formes (Illustrator)"),
     ("Outils", "tools-direct-select",      ["a"],            "Sélection directe (nœuds)"),
     ("Calque", "chopgimp-pathfinder-union",  [P + A + "u"],  "Pathfinder : réunir"),
+    ("Texte",  "chopgimp-text-outline",      [P + S + "o"],  "Vectoriser le texte (Illustrator)"),
     ("Calque", "chopgimp-pathfinder-minus",  [P + A + "y"],  "Pathfinder : soustraire"),
     ("Outils", "tools-zoom",               ["z"],            "Zoom"),
     ("Outils", "tools-unified-transform",  [P + "t"],        "Transformation manuelle (Ctrl+T)"),

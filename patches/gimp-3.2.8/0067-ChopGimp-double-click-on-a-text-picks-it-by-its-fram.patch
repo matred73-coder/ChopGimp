@@ -1,0 +1,66 @@
+From eab99b0ab3414fb68baf8cf8c3492279fb7a9edc Mon Sep 17 00:00:00 2001
+From: ChopGimp <mathieu.redon@proton.me>
+Date: Fri, 13 Nov 2026 11:58:59 +0100
+Subject: [PATCH] ChopGimp: double-click on a text picks it by its frame
+
+---
+ app/tools/gimpmovetool.c | 35 ++++++++++++++++++++++++++++++-----
+ 1 file changed, 30 insertions(+), 5 deletions(-)
+
+diff --git a/app/tools/gimpmovetool.c b/app/tools/gimpmovetool.c
+index 994341e..481edd1 100644
+--- a/app/tools/gimpmovetool.c
++++ b/app/tools/gimpmovetool.c
+@@ -214,12 +214,35 @@ gimp_move_tool_button_press (GimpTool            *tool,
+   /*  ChopGimp (Photoshop): double-click on a text edits it, the cursor
+    *  where the click was
+    */
+-  if (press_type == GIMP_BUTTON_PRESS_DOUBLE &&
+-      options->move_type == GIMP_TRANSFORM_TYPE_LAYER)
++  /*  the second click of a double-click goes to the drag started by the
++   *  first one: recognize it here, from the time and place of the clicks
++   */
++  {
++    static guint32 last_time = 0;
++    static gdouble last_x    = 0.0;
++    static gdouble last_y    = 0.0;
++    gint           dbl_time  = 400;
++    gboolean       dbl;
++
++    g_object_get (gtk_settings_get_default (), "gtk-double-click-time", &dbl_time, NULL);
++
++    dbl = (press_type == GIMP_BUTTON_PRESS_DOUBLE ||
++           (time - last_time < (guint32) dbl_time &&
++            fabs (coords->x - last_x) < 8 && fabs (coords->y - last_y) < 8));
++
++    last_time = time;
++    last_x    = coords->x;
++    last_y    = coords->y;
++
++    if (! dbl)
++      goto chopgimp_not_double;
++  }
++
++  if (options->move_type == GIMP_TRANSFORM_TYPE_LAYER)
+     {
+-      GimpLayer *picked = gimp_image_pick_layer (image,
+-                                                 coords->x, coords->y,
+-                                                 NULL);
++      /*  by the frame of the layer: a click between two letters counts  */
++      GimpLayer *picked = GIMP_LAYER (gimp_image_pick_text_layer (image,
++                                                                  coords->x, coords->y));
+ 
+       if (picked && gimp_item_is_text_layer (GIMP_ITEM (picked)))
+         {
+@@ -235,6 +258,8 @@ gimp_move_tool_button_press (GimpTool            *tool,
+         }
+     }
+ 
++ chopgimp_not_double:
++
+   /*  ChopGimp: dragging a handle of the transform controls resizes the
+    *  object directly (Photoshop): fit the layer to its content, then hand
+    *  the press over to the unified transform tool.
+-- 
+2.53.0
+

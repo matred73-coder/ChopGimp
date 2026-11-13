@@ -39,6 +39,14 @@
                 (tab-style automatic)
                 (aux-info
                     (show-button-bar "true")))
+            (dockable "chopgimp-character"
+                (tab-style automatic)
+                (aux-info
+                    (show-button-bar "true")))
+            (dockable "chopgimp-paragraph"
+                (tab-style automatic)
+                (aux-info
+                    (show-button-bar "true")))
             (dockable "gimp-brush-grid"
                 (tab-style automatic)
                 (aux-info
@@ -54,7 +62,7 @@
             (current-page 0)
             (dockable "gimp-layer-list"
                 (tab-style name)
-                (preview-size 32)
+                (preview-size 64)
                 (aux-info
                     (show-button-bar "true")))
             (dockable "gimp-channel-list"

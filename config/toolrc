@@ -66,9 +66,16 @@
         (GimpToolInfo "gimp-measure-tool"
             (icon-name "gimp-tool-measure")
             (visible yes))))
-(GimpToolInfo "gimp-heal-tool"
-    (icon-name "gimp-tool-heal")
-    (visible yes))
+(GimpToolGroup "tool group"
+    (visible yes)
+    (active-tool "gimp-spot-heal-tool")
+    (children
+        (GimpToolInfo "gimp-spot-heal-tool"
+            (icon-name "chopgimp-tool-spot-heal")
+            (visible yes))
+        (GimpToolInfo "gimp-heal-tool"
+            (icon-name "gimp-tool-heal")
+            (visible yes))))
 (GimpToolGroup "tool group"
     (visible yes)
     (active-tool "gimp-paintbrush-tool")
@@ -124,15 +131,29 @@
 (GimpToolInfo "gimp-dodge-burn-tool"
     (icon-name "gimp-tool-dodge")
     (visible yes))
-(GimpToolInfo "gimp-path-tool"
-    (icon-name "gimp-tool-path")
-    (visible yes))
+(GimpToolGroup "tool group"
+    (visible yes)
+    (active-tool "gimp-path-tool")
+    (children
+        (GimpToolInfo "gimp-path-tool"
+            (icon-name "gimp-tool-path")
+            (visible yes))
+        (GimpToolInfo "gimp-direct-select-tool"
+            (icon-name "chopgimp-tool-direct-select")
+            (visible yes))))
 (GimpToolInfo "gimp-text-tool"
     (icon-name "gimp-tool-text")
     (visible yes))
-(GimpToolInfo "gimp-shape-tool"
-    (icon-name "chopgimp-tool-shape")
-    (visible yes))
+(GimpToolGroup "tool group"
+    (visible yes)
+    (active-tool "gimp-shape-tool")
+    (children
+        (GimpToolInfo "gimp-shape-tool"
+            (icon-name "chopgimp-tool-shape")
+            (visible yes))
+        (GimpToolInfo "gimp-shape-builder-tool"
+            (icon-name "chopgimp-tool-shape-builder")
+            (visible yes))))
 (GimpToolGroup "tool group"
     (visible yes)
     (active-tool "gimp-unified-transform-tool")

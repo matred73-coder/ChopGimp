@@ -78,6 +78,12 @@
 # ── Calque ──────────────────────────────────────────────────────
 # Pathfinder : réunir
 (action "chopgimp-pathfinder-union" "<Primary><Alt>u")
+
+# ── Texte ───────────────────────────────────────────────────────
+# Vectoriser le texte (Illustrator)
+(action "chopgimp-text-outline" "<Primary><Shift>o")
+
+# ── Calque ──────────────────────────────────────────────────────
 # Pathfinder : soustraire
 (action "chopgimp-pathfinder-minus" "<Primary><Alt>y")
 
@@ -326,6 +332,8 @@
 (action "file-open-as-link-layers")
 # était : <primary><alt>F
 (action "file-show-in-file-manager")
+# était : <primary><shift>O
+(action "filters-offset")
 # était : <shift>V
 (action "paths-selection-from-paths")
 # était : <shift>L

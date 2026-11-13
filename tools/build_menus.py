@@ -93,6 +93,7 @@ image = get["_Image"][:2] + reglages + get["_Image"][2:]
 PANNEAUX = [["dialogs-layers", "dialogs-channels", "dialogs-paths"],
             ["dialogs-colors", "dialogs-palettes", "dialogs-gradients", "dialogs-patterns",
              "dialogs-brushes", "dialogs-fonts"],
+            ["dialogs-character", "dialogs-paragraph"],
             ["dialogs-undo-history", "dialogs-navigation", "dialogs-histogram", "dialogs-cursor"]]
 panneaux = []
 for sec in PANNEAUX:
@@ -107,6 +108,17 @@ texte = """    <submenu>
       <section>
         <item><attribute name="action">app.tools-text</attribute></item>
         <item><attribute name="action">app.dialogs-fonts</attribute></item>
+        <item><attribute name="action">app.dialogs-character</attribute></item>
+        <item><attribute name="action">app.dialogs-paragraph</attribute></item>
+      </section>
+      <section>
+        <item><attribute name="action">app.chopgimp-text-outline</attribute></item>
+        <item><attribute name="action">app.chopgimp-text-outline-letters</attribute></item>
+        <item><attribute name="action">app.chopgimp-text-work-path</attribute></item>
+      </section>
+      <section>
+        <item><attribute name="action">app.chopgimp-text-find-replace</attribute></item>
+        <item><attribute name="action">app.chopgimp-text-lorem</attribute></item>
       </section>
       <section>
         <item><attribute name="action">app.layers-text-to-path</attribute></item>
