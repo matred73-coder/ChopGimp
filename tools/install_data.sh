@@ -44,6 +44,11 @@ for i in "$SRC/icons/PS-Line/overlay/scalable/apps/"chopgimp-panel-*.svg \
     install -m 644 "$i" "$DATA/icons/hicolor/scalable/actions/"
 done
 
+# 3c. Curseurs « façon Photoshop » (un par outil, tools/build_cursors.py),
+#     chargés par app/widgets/gimpcursor.c depuis cursors/chopgimp
+mkdir -p "$DATA/cursors/chopgimp"
+cp "$SRC/cursors/PS-Line/"*.png "$SRC/cursors/PS-Line/chopgimp-cursors.ini" "$DATA/cursors/chopgimp/"
+
 # 4. Menus Photoshop (remplacent ceux de GIMP)
 python3 "$SRC/tools/build_menus.py" "$DATA/menus" "$TMP/menus"
 cp "$TMP/menus/"*.ui "$DATA/menus/"

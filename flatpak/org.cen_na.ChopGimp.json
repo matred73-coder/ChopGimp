@@ -963,7 +963,9 @@
                         "../patches/gimp-3.2.8/0059-ChopGimp-holes-detected-from-the-middle-of-a-segment.patch",
                         "../patches/gimp-3.2.8/0060-ChopGimp-Shape-Builder-works-on-vector-layers-not-de.patch",
                         "../patches/gimp-3.2.8/0061-ChopGimp-lib2geom-errors-never-crash-catch-all-retry.patch",
-                        "../patches/gimp-3.2.8/0062-ChopGimp-Shape-Builder-merges-neighbouring-regions-r.patch"
+                        "../patches/gimp-3.2.8/0062-ChopGimp-Shape-Builder-merges-neighbouring-regions-r.patch",
+                        "../patches/gimp-3.2.8/0063-ChopGimp-Photoshop-like-cursors-one-whole-cursor-per.patch",
+                        "../patches/gimp-3.2.8/0064-ChopGimp-zoom-cursor-symbol-without-stretched-edges.patch"
                     ]
                 }
             ],

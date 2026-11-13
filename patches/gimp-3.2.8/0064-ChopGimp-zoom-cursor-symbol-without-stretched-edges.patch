@@ -1,0 +1,44 @@
+From 633ca90cabd2153c69780913ba30eedf7ea69a8f Mon Sep 17 00:00:00 2001
+From: ChopGimp <mathieu.redon@proton.me>
+Date: Fri, 13 Nov 2026 11:06:30 +0100
+Subject: [PATCH] ChopGimp: zoom cursor symbol without stretched edges
+
+---
+ app/widgets/gimpcursor.c | 12 +++++++-----
+ 1 file changed, 7 insertions(+), 5 deletions(-)
+
+diff --git a/app/widgets/gimpcursor.c b/app/widgets/gimpcursor.c
+index f907f7d..f9c7a9a 100644
+--- a/app/widgets/gimpcursor.c
++++ b/app/widgets/gimpcursor.c
+@@ -451,20 +451,22 @@ chopgimp_cursor_new (GdkWindow          *window,
+       GdkPixbuf *m      = (scale_factor == 2 && mod->pixbuf_x2) ? mod->pixbuf_x2 : mod->pixbuf;
+       gint       width  = gdk_pixbuf_get_width  (pixbuf);
+       gint       height = gdk_pixbuf_get_height (pixbuf);
+-      gdouble    dx     = 0.0;
+-      gdouble    dy     = 0.0;
++      gint       off    = 0;
+ 
+       /*  zoom: « + » / « − » inside the lens, like Photoshop  */
+       if (tool_cursor == GIMP_TOOL_CURSOR_ZOOM &&
+           (modifier == GIMP_CURSOR_MODIFIER_PLUS ||
+            modifier == GIMP_CURSOR_MODIFIER_MINUS))
+         {
+-          dx = dy = -14.5 * scale_factor;
++          off = 14 * scale_factor;
+         }
+ 
++      /*  only where the moved symbol image exists (composite would
++       *  stretch its edges over the rest)
++       */
+       if (gdk_pixbuf_get_width (m) == width)
+-        gdk_pixbuf_composite (m, pixbuf, 0, 0, width, height,
+-                              dx, dy, 1.0, 1.0, GDK_INTERP_NEAREST, 255);
++        gdk_pixbuf_composite (m, pixbuf, 0, 0, width - off, height - off,
++                              -off, -off, 1.0, 1.0, GDK_INTERP_NEAREST, 255);
+     }
+ 
+   hot_x = tool->hot_x * scale_factor;
+-- 
+2.53.0
+

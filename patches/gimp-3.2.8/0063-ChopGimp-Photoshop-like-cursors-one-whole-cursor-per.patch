@@ -1,0 +1,302 @@
+From f82578a7bfa376a805435f8a329a68ae396b5355 Mon Sep 17 00:00:00 2001
+From: ChopGimp <mathieu.redon@proton.me>
+Date: Fri, 13 Nov 2026 10:58:20 +0100
+Subject: [PATCH] ChopGimp: Photoshop-like cursors (one whole cursor per tool,
+ modifiers as small symbols, Caps Lock = precise crosshair)
+
+---
+ app/display/gimpdisplayshell-cursor.c |  16 +-
+ app/widgets/gimpcursor.c              | 225 ++++++++++++++++++++++++++
+ 2 files changed, 240 insertions(+), 1 deletion(-)
+
+diff --git a/app/display/gimpdisplayshell-cursor.c b/app/display/gimpdisplayshell-cursor.c
+index 014a7ad..1988d42 100644
+--- a/app/display/gimpdisplayshell-cursor.c
++++ b/app/display/gimpdisplayshell-cursor.c
+@@ -227,6 +227,7 @@ gimp_display_shell_real_set_cursor (GimpDisplayShell   *shell,
+                                     GimpCursorModifier  modifier,
+                                     gboolean            always_install)
+ {
++  GimpCursorMode cursor_mode;
+   GimpHandedness cursor_handedness;
+ 
+   g_return_if_fail (GIMP_IS_DISPLAY_SHELL (shell));
+@@ -241,11 +242,24 @@ gimp_display_shell_real_set_cursor (GimpDisplayShell   *shell,
+       return;
+     }
+ 
++  /*  ChopGimp (Photoshop): Caps Lock gives the precise crosshair, also
++   *  for the paint tools that otherwise only show the brush outline
++   */
++  cursor_mode = shell->display->config->cursor_mode;
++
++  if (gdk_keymap_get_caps_lock_state (gdk_keymap_get_for_display (gtk_widget_get_display (shell->canvas))))
++    {
++      cursor_mode = GIMP_CURSOR_MODE_CROSSHAIR;
++
++      if (cursor_type == GIMP_CURSOR_NONE || cursor_type == GIMP_CURSOR_SINGLE_DOT)
++        cursor_type = GIMP_CURSOR_CROSSHAIR;
++    }
++
+   if (cursor_type != GIMP_CURSOR_NONE &&
+       cursor_type != GIMP_CURSOR_BAD  &&
+       cursor_type != GIMP_CURSOR_SINGLE_DOT)
+     {
+-      switch (shell->display->config->cursor_mode)
++      switch (cursor_mode)
+         {
+         case GIMP_CURSOR_MODE_TOOL_ICON:
+           break;
+diff --git a/app/widgets/gimpcursor.c b/app/widgets/gimpcursor.c
+index 2097d25..f907f7d 100644
+--- a/app/widgets/gimpcursor.c
++++ b/app/widgets/gimpcursor.c
+@@ -28,6 +28,8 @@
+ #include <gdk/gdkwin32.h>
+ #endif
+ 
++#include "libgimpbase/gimpbase.h"
++
+ #include "widgets-types.h"
+ 
+ #include "gimpcursor.h"
+@@ -295,6 +297,202 @@ get_cursor_pixbuf (GimpCursor *cursor,
+     return cursor->pixbuf;
+ }
+ 
++/* ─── ChopGimp: Photoshop-like cursors ──────────────────────────────
++ *
++ *  One whole cursor per tool (cursors/chopgimp/<name>.png and -x2.png,
++ *  hot spots in chopgimp-cursors.ini, drawn by tools/build_cursors.py)
++ *  instead of a crosshair with a small tool icon; the modifiers are small
++ *  symbols in the bottom right corner (inside the lens for the zoom).
++ */
++
++typedef struct
++{
++  GdkPixbuf *pixbuf;
++  GdkPixbuf *pixbuf_x2;
++  gint       hot_x;
++  gint       hot_y;
++  gboolean   loaded;
++} ChopGimpCursor;
++
++static ChopGimpCursor chopgimp_tool_cursors[GIMP_TOOL_CURSOR_LAST];
++static ChopGimpCursor chopgimp_modifiers[GIMP_CURSOR_MODIFIER_LAST];
++static GKeyFile      *chopgimp_hotspots = NULL;
++
++static GdkPixbuf *
++chopgimp_cursor_load (const gchar *name,
++                      const gchar *suffix)
++{
++  gchar     *file_name = g_strconcat (name, suffix, ".png", NULL);
++  GFile     *file      = gimp_data_directory_file ("cursors", "chopgimp",
++                                                   file_name, NULL);
++  GdkPixbuf *pixbuf    = gdk_pixbuf_new_from_file (g_file_peek_path (file), NULL);
++
++  g_object_unref (file);
++  g_free (file_name);
++
++  return pixbuf;
++}
++
++static ChopGimpCursor *
++chopgimp_cursor_get (ChopGimpCursor *table,
++                     gint            index,
++                     const gchar    *name)
++{
++  ChopGimpCursor *c = &table[index];
++
++  if (! name)
++    return NULL;
++
++  if (! c->loaded)
++    {
++      c->loaded    = TRUE;
++      c->pixbuf    = chopgimp_cursor_load (name, "");
++      c->pixbuf_x2 = chopgimp_cursor_load (name, "-x2");
++
++      if (! chopgimp_hotspots)
++        {
++          GFile *file = gimp_data_directory_file ("cursors", "chopgimp",
++                                                  "chopgimp-cursors.ini", NULL);
++
++          chopgimp_hotspots = g_key_file_new ();
++          g_key_file_load_from_file (chopgimp_hotspots, g_file_peek_path (file),
++                                     G_KEY_FILE_NONE, NULL);
++          g_object_unref (file);
++        }
++
++      {
++        gsize  n   = 0;
++        gint  *hot = g_key_file_get_integer_list (chopgimp_hotspots, name, "hot",
++                                                  &n, NULL);
++
++        if (hot && n == 2)
++          {
++            c->hot_x = hot[0];
++            c->hot_y = hot[1];
++          }
++        g_free (hot);
++      }
++    }
++
++  return c->pixbuf ? c : NULL;
++}
++
++static GdkCursor *
++chopgimp_cursor_from_pixbuf (GdkDisplay *display,
++                             GdkPixbuf  *pixbuf,
++                             gint        hot_x,
++                             gint        hot_y,
++                             gint        scale_factor)
++{
++  GdkCursor *cursor;
++
++  if (scale_factor > 1)
++    {
++      cairo_surface_t *surface =
++        gdk_cairo_surface_create_from_pixbuf (pixbuf, scale_factor, NULL);
++
++      if (FALSE                            ||
++#ifdef GDK_WINDOWING_QUARTZ
++          GDK_IS_QUARTZ_DISPLAY (display)  ||
++#endif
++#ifdef GDK_WINDOWING_WIN32
++          GDK_IS_WIN32_DISPLAY (display)   ||
++#endif
++          FALSE)
++        {
++          hot_x *= scale_factor;
++          hot_y *= scale_factor;
++        }
++
++      cursor = gdk_cursor_new_from_surface (display, surface, hot_x, hot_y);
++      cairo_surface_destroy (surface);
++    }
++  else
++    {
++      cursor = gdk_cursor_new_from_pixbuf (display, pixbuf, hot_x, hot_y);
++    }
++
++  return cursor;
++}
++
++static GdkCursor *
++chopgimp_cursor_new (GdkWindow          *window,
++                     GimpHandedness      cursor_handedness,
++                     GimpToolCursorType  tool_cursor,
++                     GimpCursorModifier  modifier)
++{
++  ChopGimpCursor *tool;
++  ChopGimpCursor *mod = NULL;
++  GdkPixbuf      *src;
++  GdkPixbuf      *pixbuf;
++  gint            scale_factor;
++  gint            hot_x, hot_y;
++  GdkCursor      *cursor;
++
++  tool = chopgimp_cursor_get (chopgimp_tool_cursors, tool_cursor,
++                              gimp_tool_cursors[tool_cursor].resource_name);
++  if (! tool)
++    return NULL;
++
++  if (modifier > GIMP_CURSOR_MODIFIER_NONE && modifier < GIMP_CURSOR_MODIFIER_LAST)
++    mod = chopgimp_cursor_get (chopgimp_modifiers, modifier,
++                               gimp_cursor_modifiers[modifier].resource_name);
++
++  scale_factor = CLAMP (gdk_window_get_scale_factor (window), 1, 2);
++
++  src = (scale_factor == 2 && tool->pixbuf_x2) ? tool->pixbuf_x2 : tool->pixbuf;
++  if (scale_factor == 2 && ! tool->pixbuf_x2)
++    scale_factor = 1;
++
++  pixbuf = gdk_pixbuf_copy (src);
++
++  if (mod)
++    {
++      GdkPixbuf *m      = (scale_factor == 2 && mod->pixbuf_x2) ? mod->pixbuf_x2 : mod->pixbuf;
++      gint       width  = gdk_pixbuf_get_width  (pixbuf);
++      gint       height = gdk_pixbuf_get_height (pixbuf);
++      gdouble    dx     = 0.0;
++      gdouble    dy     = 0.0;
++
++      /*  zoom: « + » / « − » inside the lens, like Photoshop  */
++      if (tool_cursor == GIMP_TOOL_CURSOR_ZOOM &&
++          (modifier == GIMP_CURSOR_MODIFIER_PLUS ||
++           modifier == GIMP_CURSOR_MODIFIER_MINUS))
++        {
++          dx = dy = -14.5 * scale_factor;
++        }
++
++      if (gdk_pixbuf_get_width (m) == width)
++        gdk_pixbuf_composite (m, pixbuf, 0, 0, width, height,
++                              dx, dy, 1.0, 1.0, GDK_INTERP_NEAREST, 255);
++    }
++
++  hot_x = tool->hot_x * scale_factor;
++  hot_y = tool->hot_y * scale_factor;
++
++  if (scale_factor > 1)
++    {
++      /*  surface cursors take the hot spot in surface coordinates  */
++      hot_x /= scale_factor;
++      hot_y /= scale_factor;
++    }
++
++  if (cursor_handedness == GIMP_HANDEDNESS_LEFT)
++    {
++      GdkPixbuf *flipped = gdk_pixbuf_flip (pixbuf, TRUE);
++
++      g_object_unref (pixbuf);
++      pixbuf = flipped;
++      hot_x  = (gdk_pixbuf_get_width (pixbuf) / scale_factor - 1) - hot_x;
++    }
++
++  cursor = chopgimp_cursor_from_pixbuf (gdk_window_get_display (window), pixbuf,
++                                        hot_x, hot_y, scale_factor);
++  g_object_unref (pixbuf);
++
++  return cursor;
++}
++
+ GdkCursor *
+ gimp_cursor_new (GdkWindow          *window,
+                  GimpHandedness      cursor_handedness,
+@@ -322,6 +520,33 @@ gimp_cursor_new (GdkWindow          *window,
+ 
+   g_return_val_if_fail (cursor_type >= GIMP_CURSOR_NONE, NULL);
+ 
++  /*  ChopGimp: the whole tool cursor, unless a resize / « bad » / plain
++   *  crosshair cursor is asked for
++   */
++  {
++    GimpToolCursorType tool = tool_cursor;
++
++    if (tool == GIMP_TOOL_CURSOR_NONE && cursor_type == GIMP_CURSOR_ZOOM)
++      tool = GIMP_TOOL_CURSOR_ZOOM;
++    else if (tool == GIMP_TOOL_CURSOR_NONE && cursor_type == GIMP_CURSOR_COLOR_PICKER)
++      tool = GIMP_TOOL_CURSOR_COLOR_PICKER;
++
++    if (tool > GIMP_TOOL_CURSOR_NONE && tool < GIMP_TOOL_CURSOR_LAST &&
++        cursor_type != GIMP_CURSOR_NONE       &&
++        cursor_type != GIMP_CURSOR_BAD        &&
++        cursor_type != GIMP_CURSOR_CROSSHAIR  &&
++        cursor_type != GIMP_CURSOR_SINGLE_DOT &&
++        (cursor_type < GIMP_CURSOR_CORNER_TOP ||
++         cursor_type > GIMP_CURSOR_SIDE_TOP_LEFT))
++      {
++        GdkCursor *cursor = chopgimp_cursor_new (window, cursor_handedness,
++                                                 tool, modifier);
++
++        if (cursor)
++          return cursor;
++      }
++  }
++
+   /*  disallow the small tool cursor with some cursors
+    */
+   if (cursor_type <= GIMP_CURSOR_NONE         ||
+-- 
+2.53.0
+

@@ -58,3 +58,9 @@
     (image-type rgb)
     (precision u8-non-linear)
     (fill-type white))
+
+# Curseurs façon Photoshop : un curseur par outil (sans croix), les pinceaux
+# n'affichent que le contour de la brosse ; Verr. Maj = croix de précision.
+(cursor-mode tool-icon)
+(show-paint-tool-cursor no)
+(show-brush-outline yes)
