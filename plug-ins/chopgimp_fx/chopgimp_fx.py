@@ -623,9 +623,12 @@ def style_props(key, v, color, opacity):
             "color": color, "opacity": opacity}
 
 
-def apply_styles(layer, chosen):
+def apply_styles(layer, chosen, keep=None):
+    """Remplace les filtres de style du calque par ceux de « chosen ».
+    keep : identifiants de filtres à ne pas supprimer (aperçu)."""
+    keep = keep or set()
     for f in list(layer.get_filters() or []):
-        if f.get_name().startswith(STYLE_PREFIX):
+        if f.get_name().startswith(STYLE_PREFIX) and f.get_id() not in keep:
             f.delete()
     for key, label, op, _ in STYLES:
         if key not in chosen:
@@ -712,12 +715,37 @@ def layer_style_dialog(image, layer):
             chosen[key] = ({k: sp.get_value() for k, sp in pw.items()}, color, op_spin.get_value() / 100.0)
         return chosen
 
-    original = collect()            # état à rétablir si l'on annule
+    # L'aperçu ne doit laisser aucune trace dans l'historique : les filtres
+    # d'origine sont seulement masqués pendant l'aperçu (Annuler les rend
+    # tels quels, réglages faits ailleurs compris) et l'historique est gelé ;
+    # OK applique le résultat en une seule étape d'annulation.
+    state = {}
+
+    def snapshot():
+        state["orig"] = [f for f in (layer.get_filters() or [])
+                         if f.get_name().startswith(STYLE_PREFIX)]
+        state["ids"] = {f.get_id() for f in state["orig"]}
+        state["vis"] = {f.get_id(): f.get_visible() for f in state["orig"]}
+
+    def show_originals(show):
+        for f in state["orig"]:
+            f.set_visible(show and state["vis"][f.get_id()])
+
+    def back_to_original():
+        apply_styles(layer, {}, keep=state["ids"])
+        show_originals(True)
+
+    snapshot()
+    image.undo_freeze()
     pending = [0]
 
     def refresh():
         pending[0] = 0
-        apply_styles(layer, collect() if preview.get_active() else original)
+        if preview.get_active():
+            show_originals(False)
+            apply_styles(layer, collect(), keep=state["ids"])
+        else:
+            back_to_original()
         Gimp.displays_flush()
         return False
 
@@ -735,22 +763,29 @@ def layer_style_dialog(image, layer):
     preview.connect("toggled", changed)
 
     dialog.show_all()
-    while True:
-        resp = dialog.run()
-        if pending[0]:
-            GLib.source_remove(pending[0])
-            pending[0] = 0
-        if resp in (Gtk.ResponseType.APPLY, Gtk.ResponseType.OK):
-            original = collect()
-            apply_styles(layer, original)
-            parasite_set(layer, STYLE_PARASITE, style_to_json(original))
+    try:
+        while True:
+            resp = dialog.run()
+            if pending[0]:
+                GLib.source_remove(pending[0])
+                pending[0] = 0
+            back_to_original()
+            image.undo_thaw()
+            if resp in (Gtk.ResponseType.APPLY, Gtk.ResponseType.OK):
+                final = collect()
+                image.undo_group_start()
+                try:
+                    apply_styles(layer, final)
+                    parasite_set(layer, STYLE_PARASITE, style_to_json(final))
+                finally:
+                    image.undo_group_end()
             Gimp.displays_flush()
-        else:
-            apply_styles(layer, original)
-            Gimp.displays_flush()
-        if resp != Gtk.ResponseType.APPLY:
-            break
-    dialog.destroy()
+            if resp != Gtk.ResponseType.APPLY:
+                break
+            snapshot()
+            image.undo_freeze()
+    finally:
+        dialog.destroy()
 
 
 def Gdk_rgba(rgb):
@@ -934,15 +969,16 @@ class ChopGimpFx(Gimp.PlugIn):
             return self.content_aware_fill(procedure, image, layers)
 
         if name in ("chopgimp-fx-edit", "chopgimp-fx-remove"):
-            image.undo_group_start()
-            try:
-                if name == "chopgimp-fx-edit":
-                    msg = self.edit_effect(image, layers[0], run_mode)
-                else:
+            if name == "chopgimp-fx-edit":
+                # (les dialogues d'abord, l'étape d'annulation ensuite)
+                msg = self.edit_effect(image, layers[0], run_mode)
+            else:
+                image.undo_group_start()
+                try:
                     msg = self.remove_effect(image, layers[0])
-            finally:
-                image.undo_group_end()
-                Gimp.displays_flush()
+                finally:
+                    image.undo_group_end()
+            Gimp.displays_flush()
             if msg == "cancel":
                 return cancel
             return fail(procedure, msg) if msg else ok(procedure)
@@ -962,16 +998,17 @@ class ChopGimpFx(Gimp.PlugIn):
         def A(k):
             return config.get_property(k)
 
+        if name == "chopgimp-layer-style" and run_mode == Gimp.RunMode.INTERACTIVE:
+            layer_style_dialog(image, layers[0])      # gère son historique
+            return ok(procedure)
+
         image.undo_group_start()
         try:
             if name == "chopgimp-layer-style":
-                if run_mode == Gimp.RunMode.INTERACTIVE:
-                    layer_style_dialog(image, layers[0])
-                else:
-                    chosen = {"drop-shadow": ({"dist": 8, "radius": 10, "angle": 120},
-                                              gegl_color(0, 0, 0), 0.75)}
-                    apply_styles(layers[0], chosen)
-                    parasite_set(layers[0], STYLE_PARASITE, style_to_json(chosen))
+                chosen = {"drop-shadow": ({"dist": 8, "radius": 10, "angle": 120},
+                                          gegl_color(0, 0, 0), 0.75)}
+                apply_styles(layers[0], chosen)
+                parasite_set(layers[0], STYLE_PARASITE, style_to_json(chosen))
                 return ok(procedure)
             if name == "chopgimp-fx-gradient-overlay":
                 g = gradient_overlay(image, layers[0], A("angle"), A("reverse"), A("color1"), A("color2"))
@@ -1035,6 +1072,14 @@ class ChopGimpFx(Gimp.PlugIn):
                     return "cancel"
             A = cfg.get_property
 
+        # les boîtes de dialogue sont fermées : une seule étape d'annulation
+        image.undo_group_start()
+        try:
+            return self.apply_edit(image, layer, info, target, A)
+        finally:
+            image.undo_group_end()
+
+    def apply_edit(self, image, layer, info, target, A):
         if target in VECTOR_FX:
             src = rebuild_source(image, layer, info["src"])
             res = apply_vector_fx(image, src, target, A)

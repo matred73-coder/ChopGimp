@@ -1,0 +1,899 @@
+From a122c23c2d920222834d3a9269fc13c9bf5df276 Mon Sep 17 00:00:00 2001
+From: ChopGimp <mathieu.redon@proton.me>
+Date: Fri, 13 Nov 2026 18:48:54 +0100
+Subject: [PATCH] ChopGimp: end of review (docks own window, re-clamp, styles
+ undo, text fixes, thumbnails debug)
+
+---
+ app/core/chopgimp-alpha-bounds.c       | 103 ++++++++++++++++
+ app/core/chopgimp-alpha-bounds.h       |  21 ++++
+ app/core/meson.build                   |   1 +
+ app/dialogs/chopgimp-textpanels.c      |  53 ++++++---
+ app/path/gimpvectorlayer.c             |  12 +-
+ app/text/chopgimp-textfx.c             |  52 ++++++++-
+ app/text/chopgimp-textfx.h             |   1 +
+ app/tools/chopgimp-tools.c             |  14 +--
+ app/tools/gimptexttool-editor.c        |  46 ++++----
+ app/tools/gimptexttool.c               |  24 +++-
+ app/widgets/gimpdockable.c             |  50 +++++++-
+ app/widgets/gimplayertreeview.c        |  12 ++
+ app/widgets/gimppanedbox.c             | 155 ++++++++++++++++++++++++-
+ app/widgets/gimpviewrendererdrawable.c |  12 +-
+ 14 files changed, 490 insertions(+), 66 deletions(-)
+ create mode 100644 app/core/chopgimp-alpha-bounds.c
+ create mode 100644 app/core/chopgimp-alpha-bounds.h
+
+diff --git a/app/core/chopgimp-alpha-bounds.c b/app/core/chopgimp-alpha-bounds.c
+new file mode 100644
+index 0000000..4825b19
+--- /dev/null
++++ b/app/core/chopgimp-alpha-bounds.c
+@@ -0,0 +1,103 @@
++/* GIMP - The GNU Image Manipulation Program
++ * chopgimp-alpha-bounds.c — ChopGimp: bounds of the visible pixels
++ *
++ * This program is free software: you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation; either version 3 of the License, or
++ * (at your option) any later version.
++ */
++
++#include "config.h"
++
++#include <gdk-pixbuf/gdk-pixbuf.h>
++#include <gegl.h>
++
++#include "core-types.h"
++
++#include "gimpdrawable.h"
++#include "gimpitem.h"
++#include "gimppickable-auto-shrink.h"
++#include "chopgimp-alpha-bounds.h"
++
++
++GimpAutoShrink
++chopgimp_alpha_bounds (GimpDrawable *drawable,
++                       gint         *x,
++                       gint         *y,
++                       gint         *width,
++                       gint         *height)
++{
++  GeglBuffer         *buffer;
++  GeglBufferIterator *iter;
++  gint                w, h;
++  gint                x1 = G_MAXINT, y1 = G_MAXINT;
++  gint                x2 = G_MININT, y2 = G_MININT;
++
++  g_return_val_if_fail (GIMP_IS_DRAWABLE (drawable), GIMP_AUTO_SHRINK_UNSHRINKABLE);
++
++  w = gimp_item_get_width  (GIMP_ITEM (drawable));
++  h = gimp_item_get_height (GIMP_ITEM (drawable));
++
++  *x = 0; *y = 0; *width = w; *height = h;
++
++  if (! gimp_drawable_has_alpha (drawable))
++    return GIMP_AUTO_SHRINK_UNSHRINKABLE;
++
++  buffer = gimp_drawable_get_buffer (drawable);
++  iter   = gegl_buffer_iterator_new (buffer, GEGL_RECTANGLE (0, 0, w, h), 0,
++                                     babl_format ("A u8"),
++                                     GEGL_ACCESS_READ, GEGL_ABYSS_NONE, 1);
++
++  while (gegl_buffer_iterator_next (iter))
++    {
++      const guchar        *data = iter->items[0].data;
++      const GeglRectangle *roi  = &iter->items[0].roi;
++      gint                 row, col;
++
++      /*  a chunk already inside the bounds found so far adds nothing  */
++      if (roi->x >= x1 && roi->y >= y1 &&
++          roi->x + roi->width <= x2 + 1 && roi->y + roi->height <= y2 + 1)
++        continue;
++
++      for (row = 0; row < roi->height; row++)
++        {
++          const guchar *p = data + row * roi->width;
++          gint          first = -1, last = -1;
++
++          for (col = 0; col < roi->width; col++)
++            if (p[col])
++              {
++                first = col;
++                break;
++              }
++
++          if (first < 0)
++            continue;
++
++          for (col = roi->width - 1; col >= first; col--)
++            if (p[col])
++              {
++                last = col;
++                break;
++              }
++
++          x1 = MIN (x1, roi->x + first);
++          x2 = MAX (x2, roi->x + last);
++          y1 = MIN (y1, roi->y + row);
++          y2 = MAX (y2, roi->y + row);
++        }
++    }
++
++  if (x1 > x2 || y1 > y2)
++    return GIMP_AUTO_SHRINK_EMPTY;
++
++  *x      = x1;
++  *y      = y1;
++  *width  = x2 - x1 + 1;
++  *height = y2 - y1 + 1;
++
++  if (*width == w && *height == h)
++    return GIMP_AUTO_SHRINK_UNSHRINKABLE;
++
++  return GIMP_AUTO_SHRINK_SHRINK;
++}
+diff --git a/app/core/chopgimp-alpha-bounds.h b/app/core/chopgimp-alpha-bounds.h
+new file mode 100644
+index 0000000..3f17f59
+--- /dev/null
++++ b/app/core/chopgimp-alpha-bounds.h
+@@ -0,0 +1,21 @@
++/* GIMP - The GNU Image Manipulation Program
++ * chopgimp-alpha-bounds.h — ChopGimp: bounds of the visible pixels
++ *
++ * This program is free software: you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation; either version 3 of the License, or
++ * (at your option) any later version.
++ */
++
++#pragma once
++
++/*  Bounds of the non-transparent pixels of @drawable, in its own
++ *  coordinates.  Unlike gimp_pickable_auto_shrink(), which crops away
++ *  the colour of the corners (« autocrop »), only the alpha counts: an
++ *  opaque shape that fills its layer keeps all its pixels.
++ */
++GimpAutoShrink   chopgimp_alpha_bounds (GimpDrawable *drawable,
++                                        gint         *x,
++                                        gint         *y,
++                                        gint         *width,
++                                        gint         *height);
+diff --git a/app/core/meson.build b/app/core/meson.build
+index 2c8db3b..82012d3 100644
+--- a/app/core/meson.build
++++ b/app/core/meson.build
+@@ -219,6 +219,7 @@ libappcore_sources = [
+   'gimppatternclipboard.c',
+   'gimppdbprogress.c',
+   'gimppickable-auto-shrink.c',
++  'chopgimp-alpha-bounds.c',
+   'gimppickable-contiguous-region.cc',
+   'gimppickable.c',
+   'gimpprogress.c',
+diff --git a/app/dialogs/chopgimp-textpanels.c b/app/dialogs/chopgimp-textpanels.c
+index f0e8174..835ec35 100644
+--- a/app/dialogs/chopgimp-textpanels.c
++++ b/app/dialogs/chopgimp-textpanels.c
+@@ -1548,7 +1548,14 @@ styles_apply (Styles *st, const gchar *name)
+       }
+     }
+ 
+-  gimp_image_undo_group_start (image, GIMP_UNDO_GROUP_TEXT, _("Style de texte"));
++  /*  while the text tool edits the layer, everything goes through the
++   *  tool (its buffer and its text), which applies it as ONE change;
++   *  otherwise, one undo group
++   */
++  if (tool)
++    gtk_text_buffer_begin_user_action (GTK_TEXT_BUFFER (tool->buffer));
++  else
++    gimp_image_undo_group_start (image, GIMP_UNDO_GROUP_TEXT, _("Style de texte"));
+ 
+   if (selection)
+     {
+@@ -1572,17 +1579,34 @@ styles_apply (Styles *st, const gchar *name)
+         }
+ 
+       /*  paragraph style on the whole layer  */
+-      if (f)
+-        gimp_text_layer_set (t.layer, NULL, "font", f, NULL);
+-      if (size > 0)
+-        gimp_text_layer_set (t.layer, NULL, "font-size", size, "unit", gimp_unit_pixel (), NULL);
+-      if (gcolor)
+-        gimp_text_layer_set (t.layer, NULL, "color", gcolor, NULL);
+-      gimp_text_layer_set (t.layer, NULL,
+-                           "letter-spacing", g_key_file_get_double (kf, name, "tracking", NULL),
+-                           "line-spacing",   g_key_file_get_double (kf, name, "leading", NULL),
+-                           "justify",        g_key_file_get_integer (kf, name, "justify", NULL),
+-                           NULL);
++      if (tool)
++        {
++          if (f)
++            g_object_set (tool->proxy, "font", f, NULL);
++          if (size > 0)
++            g_object_set (tool->proxy, "font-size", size, "unit", gimp_unit_pixel (), NULL);
++          if (gcolor)
++            g_object_set (tool->proxy, "color", gcolor, NULL);
++          g_object_set (tool->proxy,
++                        "letter-spacing", g_key_file_get_double (kf, name, "tracking", NULL),
++                        "line-spacing",   g_key_file_get_double (kf, name, "leading", NULL),
++                        "justify",        g_key_file_get_integer (kf, name, "justify", NULL),
++                        NULL);
++        }
++      else
++        {
++          if (f)
++            gimp_text_layer_set (t.layer, NULL, "font", f, NULL);
++          if (size > 0)
++            gimp_text_layer_set (t.layer, NULL, "font-size", size, "unit", gimp_unit_pixel (), NULL);
++          if (gcolor)
++            gimp_text_layer_set (t.layer, NULL, "color", gcolor, NULL);
++          gimp_text_layer_set (t.layer, NULL,
++                               "letter-spacing", g_key_file_get_double (kf, name, "tracking", NULL),
++                               "line-spacing",   g_key_file_get_double (kf, name, "leading", NULL),
++                               "justify",        g_key_file_get_integer (kf, name, "justify", NULL),
++                               NULL);
++        }
+ 
+       /*  … and the character attributes on all of it  */
+       target_begin (st->panel, &t);
+@@ -1599,7 +1623,10 @@ styles_apply (Styles *st, const gchar *name)
+ 
+   target_end (&t, NULL);
+ 
+-  gimp_image_undo_group_end (image);
++  if (tool)
++    gtk_text_buffer_end_user_action (GTK_TEXT_BUFFER (tool->buffer));
++  else
++    gimp_image_undo_group_end (image);
+   gimp_image_flush (image);
+ 
+   g_clear_object (&gcolor);
+diff --git a/app/path/gimpvectorlayer.c b/app/path/gimpvectorlayer.c
+index 7a2591c..96f0401 100644
+--- a/app/path/gimpvectorlayer.c
++++ b/app/path/gimpvectorlayer.c
+@@ -806,11 +806,6 @@ gimp_vector_layer_refresh (GimpVectorLayer *layer)
+   if (layer->options)
+     {
+       gimp_vector_layer_render (layer);
+-
+-      /*  ChopGimp: the layer thumbnail follows (a new shape showed an
+-       *  empty thumbnail until something else redrew it)
+-       */
+-      gimp_viewable_invalidate_preview (GIMP_VIEWABLE (layer));
+     }
+ }
+ 
+@@ -875,6 +870,13 @@ gimp_vector_layer_render (GimpVectorLayer *layer)
+ 
+   g_object_thaw_notify (G_OBJECT (drawable));
+ 
++  /*  ChopGimp: the thumbnail follows every render (the path of a new
++   *  shape is built after the layer, the first preview showed only a
++   *  part of it)
++   */
++  gimp_drawable_update (drawable, 0, 0, -1, -1);
++  gimp_viewable_invalidate_preview (GIMP_VIEWABLE (layer));
++
+   return TRUE;
+ }
+ 
+diff --git a/app/text/chopgimp-textfx.c b/app/text/chopgimp-textfx.c
+index 24815c3..a24a2b7 100644
+--- a/app/text/chopgimp-textfx.c
++++ b/app/text/chopgimp-textfx.c
+@@ -1350,7 +1350,22 @@ chopgimp_text_fx_build (GimpTextLayer  *layer,
+ 
+   if (mode == FX_PATH || mode == FX_SHAPE)
+     {
++      gchar *pname = chopgimp_text_fx_get_value (spec, "pname");
++
+       path = chopgimp_text_fx_find_path (image, (GimpTattoo) atoi (v));
++
++      /*  tattoos are only unique in one image: after a copy into another
++       *  image, the same number may be another path
++       */
++      if (path && pname)
++        {
++          gchar *name = chopgimp_text_fx_path_name (path);
++
++          if (strcmp (name, pname))
++            path = NULL;
++          g_free (name);
++        }
++      g_free (pname);
+     }
+   g_free (v);
+ 
+@@ -1419,7 +1434,9 @@ chopgimp_text_fx_build (GimpTextLayer  *layer,
+ 
+   pad = 2.0;
+   if (text->outline != GIMP_TEXT_OUTLINE_NONE)
+-    pad += text->outline_width;
++    pad += text->outline_width *
++           (text->outline_join_style == GIMP_JOIN_MITER ?
++            MAX (1.0, MIN (text->outline_miter_limit, 4.0)) : 1.0);
+ 
+   fx->ox     = (gint) floor (x1 - pad);
+   fx->oy     = (gint) floor (y1 - pad);
+@@ -1510,6 +1527,20 @@ chopgimp_text_fx_moves_glyphs (const gchar *spec)
+   return moves;
+ }
+ 
++/*  the name of a path as written in a spec (no « ; » nor « = »)  */
++gchar *
++chopgimp_text_fx_path_name (GimpPath *path)
++{
++  gchar *name = g_strdup (gimp_object_get_name (path));
++  gchar *p;
++
++  for (p = name; *p; p++)
++    if (*p == ';' || *p == '=')
++      *p = '_';
++
++  return name;
++}
++
+ void
+ chopgimp_text_fx_get_anchor (GimpTextLayer *layer,
+                              gint          *x,
+@@ -1589,8 +1620,27 @@ fx_stroke (ChopGimpTextFx *fx,
+                        text->outline_join_style == GIMP_JOIN_ROUND ? CAIRO_LINE_JOIN_ROUND :
+                        CAIRO_LINE_JOIN_BEVEL);
+   cairo_set_miter_limit (cr, text->outline_miter_limit);
++  cairo_set_line_cap (cr,
++                      text->outline_cap_style == GIMP_CAP_BUTT  ? CAIRO_LINE_CAP_BUTT :
++                      text->outline_cap_style == GIMP_CAP_ROUND ? CAIRO_LINE_CAP_ROUND :
++                      CAIRO_LINE_CAP_SQUARE);
+   cairo_set_line_width (cr, text->outline_width * 2);
+ 
++  /*  dashes, in multiples of the outline width (as the plain renderer)  */
++  if (text->outline_dash_info && text->outline_dash_info->len >= 2)
++    {
++      gint     n      = text->outline_dash_info->len;
++      gdouble *dashes = g_new (gdouble, n);
++      gdouble  unit   = MAX (text->outline_width, 1.0);
++      gint     k;
++
++      for (k = 0; k < n; k++)
++        dashes[k] = unit * g_array_index (text->outline_dash_info, gdouble, k);
++
++      cairo_set_dash (cr, dashes, n, text->outline_dash_offset * unit);
++      g_free (dashes);
++    }
++
+   if (text->outline_direction == GIMP_TEXT_OUTLINE_DIRECTION_INNER)
+     {
+       cairo_new_path (cr);
+diff --git a/app/text/chopgimp-textfx.h b/app/text/chopgimp-textfx.h
+index e11e510..f995590 100644
+--- a/app/text/chopgimp-textfx.h
++++ b/app/text/chopgimp-textfx.h
+@@ -47,6 +47,7 @@ void             chopgimp_text_fx_get_anchor (GimpTextLayer *layer,
+ GimpPath       * chopgimp_text_fx_find_path  (GimpImage     *image,
+                                               GimpTattoo     tattoo);
+ 
++gchar          * chopgimp_text_fx_path_name    (GimpPath      *path);
+ void             chopgimp_text_fx_sync_mask    (GimpTextLayer *layer);
+ void             chopgimp_text_fx_reset_anchor (GimpTextLayer *layer);
+ gboolean         chopgimp_text_fx_moves_glyphs (const gchar   *spec);
+diff --git a/app/tools/chopgimp-tools.c b/app/tools/chopgimp-tools.c
+index 290a71c..3f997d3 100644
+--- a/app/tools/chopgimp-tools.c
++++ b/app/tools/chopgimp-tools.c
+@@ -32,6 +32,7 @@
+ #include "core/gimplayer-floating-selection.h"
+ #include "core/gimppickable.h"
+ #include "core/gimppickable-auto-shrink.h"
++#include "core/chopgimp-alpha-bounds.h"
+ #include "core/gimptoolinfo.h"
+ 
+ #include "path/gimpvectorlayer.h"
+@@ -80,8 +81,7 @@ chopgimp_layer_content_bounds (GimpLayer *layer,
+ 
+   if (chopgimp_layer_is_croppable (layer))
+     {
+-      switch (gimp_pickable_auto_shrink (GIMP_PICKABLE (layer), 0, 0, w, h,
+-                                         &sx, &sy, &sw, &sh))
++      switch (chopgimp_alpha_bounds (GIMP_DRAWABLE (layer), &sx, &sy, &sw, &sh))
+         {
+         case GIMP_AUTO_SHRINK_EMPTY:
+           return FALSE;
+@@ -118,10 +118,7 @@ chopgimp_crop_layer_to_content (GimpImage   *image,
+       gimp_item_is_position_locked (GIMP_ITEM (layer), NULL))
+     return FALSE;
+ 
+-  if (gimp_pickable_auto_shrink (GIMP_PICKABLE (layer), 0, 0,
+-                                 gimp_item_get_width  (GIMP_ITEM (layer)),
+-                                 gimp_item_get_height (GIMP_ITEM (layer)),
+-                                 &x, &y, &w, &h) != GIMP_AUTO_SHRINK_SHRINK)
++  if (chopgimp_alpha_bounds (GIMP_DRAWABLE (layer), &x, &y, &w, &h) != GIMP_AUTO_SHRINK_SHRINK)
+     return FALSE;
+ 
+   gimp_image_undo_group_start (image, GIMP_UNDO_GROUP_ITEM_RESIZE,
+@@ -152,10 +149,7 @@ chopgimp_crop_selected_layers (GimpImage   *image,
+       if (chopgimp_layer_is_croppable (layer)                    &&
+           ! gimp_item_is_content_locked  (GIMP_ITEM (layer), NULL) &&
+           ! gimp_item_is_position_locked (GIMP_ITEM (layer), NULL) &&
+-          gimp_pickable_auto_shrink (GIMP_PICKABLE (layer), 0, 0,
+-                                     gimp_item_get_width  (GIMP_ITEM (layer)),
+-                                     gimp_item_get_height (GIMP_ITEM (layer)),
+-                                     &x, &y, &w, &h) == GIMP_AUTO_SHRINK_SHRINK)
++          chopgimp_alpha_bounds (GIMP_DRAWABLE (layer), &x, &y, &w, &h) == GIMP_AUTO_SHRINK_SHRINK)
+         needed = TRUE;
+     }
+ 
+diff --git a/app/tools/gimptexttool-editor.c b/app/tools/gimptexttool-editor.c
+index 904810a..d6c5539 100644
+--- a/app/tools/gimptexttool-editor.c
++++ b/app/tools/gimptexttool-editor.c
+@@ -1529,6 +1529,28 @@ gimp_text_tool_enter_text (GimpTextTool *text_tool,
+ 
+   gtk_text_buffer_begin_user_action (buffer);
+ 
++  /*  ChopGimp: typographic quotes and apostrophes  */
++  if ((! strcmp (str, "'") || ! strcmp (str, "\"")) &&
++      chopgimp_rc_get_boolean ("text", "smart-quotes", TRUE))
++    {
++      GtkTextIter cursor;
++      gunichar    prev = 0;
++
++      gtk_text_buffer_get_iter_at_mark (buffer, &cursor,
++                                        gtk_text_buffer_get_insert (buffer));
++      if (gtk_text_iter_backward_char (&cursor))
++        prev = gtk_text_iter_get_char (&cursor);
++
++      if (! strcmp (str, "'"))
++        str = "\u2019";
++      else if (prev == 0 || g_unichar_isspace (prev) || prev == '(' ||
++               prev == '[' || prev == 0x2019)
++        str = "\u00ab\u00a0";   /* « */
++      else
++        str = "\u00a0\u00bb";   /* » */
++    }
++
++
+   if (! had_selection && text_tool->overwrite_mode && strcmp (str, "\n"))
+     {
+       GtkTextIter cursor;
+@@ -1537,7 +1559,8 @@ gimp_text_tool_enter_text (GimpTextTool *text_tool,
+                                         gtk_text_buffer_get_insert (buffer));
+ 
+       if (! gtk_text_iter_ends_line (&cursor))
+-        gimp_text_tool_delete_from_cursor (text_tool, GTK_DELETE_CHARS, 1);
++        gimp_text_tool_delete_from_cursor (text_tool, GTK_DELETE_CHARS,
++                                           g_utf8_strlen (str, -1));
+     }
+ 
+   if (had_selection)
+@@ -1558,27 +1581,6 @@ gimp_text_tool_enter_text (GimpTextTool *text_tool,
+                                         insert_tags, remove_tags);
+     }
+ 
+-  /*  ChopGimp: typographic quotes and apostrophes  */
+-  if ((! strcmp (str, "'") || ! strcmp (str, "\"")) &&
+-      chopgimp_rc_get_boolean ("text", "smart-quotes", TRUE))
+-    {
+-      GtkTextIter cursor;
+-      gunichar    prev = 0;
+-
+-      gtk_text_buffer_get_iter_at_mark (buffer, &cursor,
+-                                        gtk_text_buffer_get_insert (buffer));
+-      if (gtk_text_iter_backward_char (&cursor))
+-        prev = gtk_text_iter_get_char (&cursor);
+-
+-      if (! strcmp (str, "'"))
+-        str = "\u2019";
+-      else if (prev == 0 || g_unichar_isspace (prev) || prev == '(' ||
+-               prev == '[' || prev == 0x2019)
+-        str = "\u00ab\u00a0";   /* « */
+-      else
+-        str = "\u00a0\u00bb";   /* » */
+-    }
+-
+   gimp_text_buffer_insert (text_tool->buffer, str);
+ 
+   gtk_text_buffer_end_user_action (buffer);
+diff --git a/app/tools/gimptexttool.c b/app/tools/gimptexttool.c
+index d0328f3..38817f6 100644
+--- a/app/tools/gimptexttool.c
++++ b/app/tools/gimptexttool.c
+@@ -436,20 +436,32 @@ chopgimp_text_tool_fx_at (GimpImage        *image,
+       path = list->data;
+ 
+   if (path)
+-    return g_strdup_printf ("path=%u;start=0;flip=0;shift=0",
+-                            gimp_item_get_tattoo (GIMP_ITEM (path)));
++    {
++      gchar *name = chopgimp_text_fx_path_name (path);
++      gchar *spec = g_strdup_printf ("path=%u;pname=%s;start=0;flip=0;shift=0",
++                                     gimp_item_get_tattoo (GIMP_ITEM (path)), name);
++
++      g_free (name);
++      return spec;
++    }
+ 
+   layer = gimp_image_pick_layer (image, coords->x, coords->y, NULL);
+ 
+   if (GIMP_IS_VECTOR_LAYER (layer) &&
+       (path = gimp_vector_layer_get_path (GIMP_VECTOR_LAYER (layer))))
+     {
++      gchar *name = chopgimp_text_fx_path_name (path);
++      gchar *spec;
++
+       if (chopgimp_path_distance (path, coords->x, coords->y) < eps)
+-        return g_strdup_printf ("path=%u;start=0;flip=0;shift=0",
+-                                gimp_item_get_tattoo (GIMP_ITEM (path)));
++        spec = g_strdup_printf ("path=%u;pname=%s;start=0;flip=0;shift=0",
++                                gimp_item_get_tattoo (GIMP_ITEM (path)), name);
++      else
++        spec = g_strdup_printf ("shape=%u;pname=%s;inset=6",
++                                gimp_item_get_tattoo (GIMP_ITEM (path)), name);
+ 
+-      return g_strdup_printf ("shape=%u;inset=6",
+-                              gimp_item_get_tattoo (GIMP_ITEM (path)));
++      g_free (name);
++      return spec;
+     }
+ 
+   return NULL;
+diff --git a/app/widgets/gimpdockable.c b/app/widgets/gimpdockable.c
+index a39283f..188e649 100644
+--- a/app/widgets/gimpdockable.c
++++ b/app/widgets/gimpdockable.c
+@@ -125,6 +125,37 @@ gimp_dockable_get_preferred_height_for_width (GtkWidget *widget,
+   *minimum = MIN (*minimum, CHOPGIMP_DOCKABLE_MIN_HEIGHT);
+ }
+ 
++/*  the panel has its own window: the part of the content cut at the
++ *  bottom is clipped for drawing AND for the pointer (the hidden buttons
++ *  of a shrunk panel must not catch the clicks of the group below)
++ */
++static void
++gimp_dockable_realize (GtkWidget *widget)
++{
++  GtkAllocation  allocation;
++  GdkWindow     *window;
++  GdkWindowAttr  attributes;
++  gint           attributes_mask;
++
++  gtk_widget_set_realized (widget, TRUE);
++  gtk_widget_get_allocation (widget, &allocation);
++
++  attributes.window_type = GDK_WINDOW_CHILD;
++  attributes.x           = allocation.x;
++  attributes.y           = allocation.y;
++  attributes.width       = allocation.width;
++  attributes.height      = allocation.height;
++  attributes.wclass      = GDK_INPUT_OUTPUT;
++  attributes.visual      = gtk_widget_get_visual (widget);
++  attributes.event_mask  = gtk_widget_get_events (widget) | GDK_EXPOSURE_MASK;
++  attributes_mask        = GDK_WA_X | GDK_WA_Y | GDK_WA_VISUAL;
++
++  window = gdk_window_new (gtk_widget_get_parent_window (widget),
++                           &attributes, attributes_mask);
++  gtk_widget_register_window (widget, window);
++  gtk_widget_set_window (widget, window);
++}
++
+ static void
+ gimp_dockable_size_allocate (GtkWidget     *widget,
+                              GtkAllocation *allocation)
+@@ -133,13 +164,22 @@ gimp_dockable_size_allocate (GtkWidget     *widget,
+ 
+   gtk_widget_set_allocation (widget, allocation);
+ 
++  if (gtk_widget_get_realized (widget))
++    gdk_window_move_resize (gtk_widget_get_window (widget),
++                            allocation->x, allocation->y,
++                            allocation->width, allocation->height);
++
+   if (child && gtk_widget_get_visible (child))
+     {
+       GtkAllocation child_alloc;
+       gint          child_min;
+ 
+-      /*  the border width is already removed (handle_border_width)  */
++      /*  the border width is already removed (handle_border_width);
++       *  coordinates are those of the panel's own window
++       */
+       child_alloc        = *allocation;
++      child_alloc.x      = 0;
++      child_alloc.y      = 0;
+       child_alloc.width  = MAX (1, child_alloc.width);
+       child_alloc.height = MAX (1, child_alloc.height);
+ 
+@@ -161,6 +201,11 @@ gimp_dockable_draw (GtkWidget *widget,
+ {
+   gboolean handled;
+ 
++  /*  own window: paint the panel background  */
++  gtk_render_background (gtk_widget_get_style_context (widget), cr, 0, 0,
++                         gtk_widget_get_allocated_width  (widget),
++                         gtk_widget_get_allocated_height (widget));
++
+   cairo_save (cr);
+   cairo_rectangle (cr, 0, 0,
+                    gtk_widget_get_allocated_width  (widget),
+@@ -198,6 +243,7 @@ gimp_dockable_class_init (GimpDockableClass *klass)
+   widget_class->get_preferred_height           = gimp_dockable_get_preferred_height;
+   widget_class->get_preferred_height_for_width = gimp_dockable_get_preferred_height_for_width;
+   widget_class->size_allocate                  = gimp_dockable_size_allocate;
++  widget_class->realize                        = gimp_dockable_realize;
+   widget_class->draw                           = gimp_dockable_draw;
+ 
+   container_class->add        = gimp_dockable_add;
+@@ -226,6 +272,8 @@ gimp_dockable_init (GimpDockable *dockable)
+ 
+   dockable->p->tab_style = GIMP_TAB_STYLE_PREVIEW;
+ 
++  gtk_widget_set_has_window (GTK_WIDGET (dockable), TRUE);
++
+   gtk_drag_dest_set (GTK_WIDGET (dockable),
+                      0,
+                      dialog_target_table, G_N_ELEMENTS (dialog_target_table),
+diff --git a/app/widgets/gimplayertreeview.c b/app/widgets/gimplayertreeview.c
+index 136a583..dde8444 100644
+--- a/app/widgets/gimplayertreeview.c
++++ b/app/widgets/gimplayertreeview.c
+@@ -350,6 +350,15 @@ gimp_layer_tree_view_thumb_crop_toggled (GtkToggleButton   *toggle,
+                             gtk_toggle_button_get_active (toggle));
+ }
+ 
++static void
++gimp_layer_tree_view_thumb_crop_sync (GtkWidget         *toggle,
++                                      GimpLayerTreeView *view)
++{
++  g_signal_handlers_block_by_func (toggle, gimp_layer_tree_view_thumb_crop_toggled, view);
++  gtk_toggle_button_set_active (GTK_TOGGLE_BUTTON (toggle), chopgimp_thumbs_get_crop ());
++  g_signal_handlers_unblock_by_func (toggle, gimp_layer_tree_view_thumb_crop_toggled, view);
++}
++
+ static void
+ gimp_layer_tree_view_photogimp_menu_clicked (GtkWidget         *button,
+                                              GimpLayerTreeView *view)
+@@ -518,6 +527,9 @@ gimp_layer_tree_view_constructed (GObject *object)
+     gimp_help_set_help_data (crop, _("Vignettes recadrées sur le contenu du calque"), NULL);
+     g_signal_connect (crop, "toggled",
+                       G_CALLBACK (gimp_layer_tree_view_thumb_crop_toggled), layer_view);
++    /*  several Layers panels: each one shows the shared setting  */
++    g_signal_connect (crop, "map",
++                      G_CALLBACK (gimp_layer_tree_view_thumb_crop_sync), layer_view);
+     gtk_box_pack_start (GTK_BOX (row), crop, FALSE, FALSE, 0);
+ 
+     gtk_box_pack_end (GTK_BOX (layer_view), row, FALSE, FALSE, 0);
+diff --git a/app/widgets/gimppanedbox.c b/app/widgets/gimppanedbox.c
+index f912029..0a340ef 100644
+--- a/app/widgets/gimppanedbox.c
++++ b/app/widgets/gimppanedbox.c
+@@ -139,6 +139,10 @@ G_DEFINE_TYPE_WITH_PRIVATE (GimpPanedBox, gimp_paned_box, GTK_TYPE_BOX)
+ 
+ #define parent_class gimp_paned_box_parent_class
+ 
++static void      gimp_paned_box_size_allocated          (GtkWidget      *widget,
++                                                         GtkAllocation  *allocation,
++                                                         gpointer        data);
++
+ static const GtkTargetEntry dialog_target_table[] = { GIMP_TARGET_NOTEBOOK_TAB };
+ 
+ static GSList *drop_hints = NULL;
+@@ -172,6 +176,12 @@ gimp_paned_box_init (GimpPanedBox *paned_box)
+   gimp_dockbook_add_drag_callback (
+     (GimpDockbookDragCallback) gimp_paned_box_drag_callback,
+     paned_box);
++
++  /*  ChopGimp: a smaller window must not crush the groups under their
++   *  tab bar
++   */
++  g_signal_connect_after (paned_box, "size-allocate",
++                          G_CALLBACK (gimp_paned_box_size_allocated), NULL);
+ }
+ 
+ static void
+@@ -190,6 +200,14 @@ gimp_paned_box_dispose (GObject *object)
+       paned_box->p->dnd_idle_id = 0;
+     }
+ 
++  {
++    guint id = GPOINTER_TO_UINT (g_object_get_data (object, "chopgimp-reclamp-id"));
++
++    if (id)
++      g_source_remove (id);
++    g_object_set_data (object, "chopgimp-reclamp-id", NULL);
++  }
++
+   while (paned_box->p->widgets)
+     {
+       GtkWidget *widget = paned_box->p->widgets->data;
+@@ -347,8 +365,20 @@ gimp_paned_box_get_handle_drag (GimpPanedBox   *paned_box,
+       if (! paned_box->p->widgets)
+         area_h = allocation.height;
+       else
+-        end_size = MIN (DROP_AREA_SIZE_END,
+-                        MAX (drop_area_size, allocation.height / 3));
++        {
++          GList *last = g_list_last (paned_box->p->widgets);
++
++          end_size = MIN (DROP_AREA_SIZE_END,
++                          MAX (drop_area_size, allocation.height / 3));
++
++          /*  ChopGimp: a collapsed last group is only its tab bar: the
++           *  wide zone would cover it entirely and its tabs could not
++           *  receive a tab any more
++           */
++          if (last && GIMP_IS_DOCKBOOK (last->data) &&
++              gimp_dockbook_get_collapsed (GIMP_DOCKBOOK (last->data)))
++            end_size = MIN (end_size, drop_area_size);
++        }
+ 
+       if (y < start_size)
+         {
+@@ -1253,6 +1283,127 @@ gimp_paned_box_flexible_position (GtkPaned     *paned,
+   g_ptr_array_unref (leaves);
+ }
+ 
++/*  after a size change (window made smaller…), GtkPaned takes the lost
++ *  room from the last groups, down to nothing: give every group its tab
++ *  bar back, taken from the groups that have room to spare
++ */
++static gboolean
++gimp_paned_box_reclamp_idle (gpointer data)
++{
++  GimpPanedBox *paned_box = data;
++  GtkWidget    *root      = NULL;
++  GList        *children, *iter;
++  GPtrArray    *leaves;
++  GHashTable   *targets;
++  gboolean      marked = FALSE;
++  gint         *size, *min;
++  gint          n, i, j, total, deficit = 0, spare = 0;
++
++  g_object_set_data (G_OBJECT (paned_box), "chopgimp-reclamp-id", NULL);
++
++  if (g_object_get_data (G_OBJECT (paned_box), CHOPGIMP_LAYOUT_GUARD_KEY))
++    return G_SOURCE_REMOVE;
++
++  children = gtk_container_get_children (GTK_CONTAINER (paned_box));
++  for (iter = children; iter; iter = g_list_next (iter))
++    if (GTK_IS_PANED (iter->data))
++      root = iter->data;
++  g_list_free (children);
++
++  if (! root)
++    return G_SOURCE_REMOVE;
++
++  leaves = g_ptr_array_new ();
++  gimp_paned_box_collect_leaves (root, leaves, &marked);
++  n = leaves->len;
++
++  if (n < 2)
++    {
++      g_ptr_array_unref (leaves);
++      return G_SOURCE_REMOVE;
++    }
++
++  size = g_new0 (gint, n);
++  min  = g_new0 (gint, n);
++
++  for (i = 0; i < n; i++)
++    {
++      GtkWidget *leaf = g_ptr_array_index (leaves, i);
++
++      size[i] = gimp_paned_box_widget_size (leaf, GTK_ORIENTATION_VERTICAL);
++      min[i]  = gimp_paned_box_leaf_min (leaf, GTK_ORIENTATION_VERTICAL);
++
++      if (size[i] + 1 < min[i])
++        deficit += min[i] - size[i];
++      else if (size[i] > min[i])
++        spare += size[i] - min[i];
++    }
++
++  if (deficit > 0 && spare >= deficit)
++    {
++      /*  take the room from the largest groups first  */
++      while (deficit > 0)
++        {
++          gint best = -1;
++
++          for (j = 0; j < n; j++)
++            if (size[j] > min[j] && (best < 0 || size[j] - min[j] > size[best] - min[best]))
++              best = j;
++
++          if (best < 0)
++            break;
++
++          for (i = 0; i < n && deficit > 0; i++)
++            if (size[i] < min[i])
++              {
++                gint take = MIN (MIN (min[i] - size[i], size[best] - min[best]), deficit);
++
++                size[i]    += take;
++                size[best] -= take;
++                deficit    -= take;
++
++                if (size[best] <= min[best])
++                  break;
++              }
++        }
++
++      targets = g_hash_table_new (NULL, NULL);
++      for (i = 0; i < n; i++)
++        g_hash_table_insert (targets, g_ptr_array_index (leaves, i),
++                             GINT_TO_POINTER (size[i]));
++
++      total = gimp_paned_box_widget_size (root, GTK_ORIENTATION_VERTICAL);
++
++      g_object_set_data (G_OBJECT (paned_box), CHOPGIMP_LAYOUT_GUARD_KEY,
++                         GINT_TO_POINTER (TRUE));
++      gimp_paned_box_apply_collapsed (root, GTK_ORIENTATION_VERTICAL,
++                                      targets, TRUE, &total);
++      g_object_set_data (G_OBJECT (paned_box), CHOPGIMP_LAYOUT_GUARD_KEY, NULL);
++
++      g_hash_table_unref (targets);
++    }
++
++  g_free (size);
++  g_free (min);
++  g_ptr_array_unref (leaves);
++
++  return G_SOURCE_REMOVE;
++}
++
++static void
++gimp_paned_box_size_allocated (GtkWidget     *widget,
++                               GtkAllocation *allocation,
++                               gpointer       data)
++{
++  if (gtk_orientable_get_orientation (GTK_ORIENTABLE (widget)) != GTK_ORIENTATION_VERTICAL ||
++      g_object_get_data (G_OBJECT (widget), CHOPGIMP_LAYOUT_GUARD_KEY) ||
++      g_object_get_data (G_OBJECT (widget), "chopgimp-reclamp-id"))
++    return;
++
++  g_object_set_data (G_OBJECT (widget), "chopgimp-reclamp-id",
++                     GUINT_TO_POINTER (g_idle_add (gimp_paned_box_reclamp_idle, widget)));
++}
++
+ GtkWidget *
+ gimp_paned_box_new (gboolean       homogeneous,
+                     gint           spacing,
+diff --git a/app/widgets/gimpviewrendererdrawable.c b/app/widgets/gimpviewrendererdrawable.c
+index 4c8989f..fd8360d 100644
+--- a/app/widgets/gimpviewrendererdrawable.c
++++ b/app/widgets/gimpviewrendererdrawable.c
+@@ -42,6 +42,7 @@
+ #include "core/gimplayermask.h"
+ #include "core/gimppickable.h"
+ #include "core/gimppickable-auto-shrink.h"
++#include "core/chopgimp-alpha-bounds.h"
+ #include "core/gimptempbuf.h"
+ 
+ #include "chopgimp-rc.h"
+@@ -363,10 +364,7 @@ chopgimp_content_bounds (GimpLayer *layer,
+         return cb->ok;
+       }
+ 
+-    switch (gimp_pickable_auto_shrink (GIMP_PICKABLE (layer), 0, 0,
+-                                       gimp_item_get_width (item),
+-                                       gimp_item_get_height (item),
+-                                       x, y, w, h))
++    switch (chopgimp_alpha_bounds (GIMP_DRAWABLE (layer), x, y, w, h))
+       {
+       case GIMP_AUTO_SHRINK_SHRINK:
+         cb->ok = TRUE;
+@@ -466,8 +464,10 @@ gimp_view_renderer_drawable_render (GimpViewRenderer *renderer,
+     {
+       gint cx, cy, cw, ch;
+ 
+-      if (chopgimp_content_bounds (GIMP_LAYER (drawable), &cx, &cy, &cw, &ch) &&
+-          (cw < gimp_item_get_width (item) || ch < gimp_item_get_height (item)))
++      /*  even a layer exactly the size of its content is shown alone,
++       *  not inside the whole image area
++       */
++      if (chopgimp_content_bounds (GIMP_LAYER (drawable), &cx, &cy, &cw, &ch))
+         {
+           gimp_viewable_calc_preview_size (cw, ch,
+                                            renderer->width, renderer->height,
+-- 
+2.53.0
+

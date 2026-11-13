@@ -1,0 +1,41 @@
+# ChopGimp — suivi du plan d'attaque (depuis la 3.16.1)
+
+Plan complet : lots 0 à 6, idées en plus, calendrier de 17 étapes (voir l'historique des commits « ChopGimp 3.x »).
+
+| Étape | Version | Contenu | État |
+|---|---|---|---|
+| 1 | 3.16.2 | Fin de la revue de code | ✅ livrée |
+| 2 | 3.17.0 | Apparence I (variantes, rem, accent, densité, polices, menu) | à faire |
+| 3 | 3.17.1 | Apparence II (préférences, espaces de travail, barre d'outils, écran d'accueil) | à faire |
+| 4 | 3.18.0 | Refonte de l'outil Texte | à faire |
+| 5 | 3.19.0 | PSD I | à faire |
+| 6 | 3.19.1 | PSD II | à faire |
+| 7 | 3.20.0 | Vectoriel I (PDF/AI) | à faire |
+| 8 | 3.20.1 | Vectoriel II (EPS, SVG, aperçus, Placer) | à faire |
+| 9 | 3.20.2 | Vectoriel III (SVG natif, export SVG) | à faire |
+| 10 | 3.21.0 | Base I | à faire |
+| 11 | 3.21.1 | Base II | à faire |
+| 12 | 3.21.2 | Base III | à faire |
+| 13 | 3.22.0 | IA locale | à faire |
+| 14 | 3.23.0 | Dessin I « Confort » | à faire |
+| 15 | 3.23.1 | Dessin II « Peintre » | à faire |
+| 16 | 3.23.2 | Dessin III « Atelier / BD » | à faire |
+| 17 | 3.24.0 | Revue finale | à faire |
+
+## 3.16.2 — fin de la revue de code
+
+- **Panneaux** :
+  - un panneau a maintenant sa propre fenêtre : la partie coupée d'un groupe réduit ne capte plus les clics du groupe d'en dessous ;
+  - réduire la fenêtre n'écrase plus les groupes du bas sous leur barre d'onglets ;
+  - la zone de dépôt ne recouvre plus un dernier groupe réduit ;
+  - le bouton « vignettes recadrées » est synchronisé entre panneaux Calques.
+- **Vignettes** : le recadrage se fait sur la transparence. Avant, il se faisait sur la couleur des coins, d'où une vignette vide pour une forme pleine. Le même correctif protège le recadrage automatique fait avant une transformation, qui pouvait rogner un calque opaque à bords unis.
+- **Styles de calque** : l'aperçu ne laisse plus de trace dans l'historique, Annuler rend les filtres d'origine à l'identique, et une seule étape est créée à la validation. Appliquer un style de texte pendant l'édition crée aussi une seule étape.
+- **Texte** :
+  - texte sur tracé : on vérifie le nom du tracé (copie dans une autre image) ;
+  - tirets et extrémités du contour respectés sur un texte déformé ;
+  - guillemets typographiques corrects en mode refrappe.
+- **Raccourci Maj+C** renommé « Perspective (transformation) » ; le vrai recadrage en perspective arrive à l'étape 10.
+- **Banc de test graphique** : la vue d'ensemble GNOME est fermée par D-Bus (commande `nooverview`), et `CHOPGIMP_GUITEST_FLATPAK_ARGS` permet de passer des variables à l'application.
+
+**Bugs connus restants** : Ctrl+poignée dérive légèrement sur un texte transformé (sera revu avec la refonte du Texte, étape 4).

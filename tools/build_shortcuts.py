@@ -35,7 +35,7 @@ PS_MAP = [
     ("Outils", "tools-foreground-select",  [S + "w"],        "Sélection d'objet / rapide (premier plan)"),
     ("Outils", "tools-by-color-select",    [S + A + "w"],    "Plage de couleurs"),
     ("Outils", "tools-crop",               ["c"],            "Recadrage"),
-    ("Outils", "tools-perspective",        [S + "c"],        "Recadrage perspective"),
+    ("Outils", "tools-perspective",        [S + "c"],        "Perspective (transformation)"),
     ("Outils", "tools-color-picker",       ["i"],            "Pipette"),
     ("Outils", "tools-measure",            [S + "i"],        "Règle"),
     ("Outils", "tools-spot-heal",          ["j"],            "Correcteur localisé"),

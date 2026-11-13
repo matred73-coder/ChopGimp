@@ -11,6 +11,7 @@
 #   tools/gui-test/guitest.sh start            compositeur + ChopGimp
 #   tools/gui-test/guitest.sh gimp [fichier]   (re)lance seulement ChopGimp
 #   tools/gui-test/guitest.sh ui <commandes>   voir ui.py (shot, click, drag…)
+#   tools/gui-test/guitest.sh nooverview      ferme la vue d'ensemble GNOME
 #   tools/gui-test/guitest.sh stop             arrête tout et nettoie
 #
 # Dossier de travail : $CHOPGIMP_GUITEST (défaut /tmp/cg-guitest-$UID).
@@ -40,11 +41,24 @@ start_shell() {
 start_gimp() {
     setsid $CLEAN XDG_RUNTIME_DIR="$D/run" WAYLAND_DISPLAY=wl-chop XDG_SESSION_TYPE=wayland \
         DBUS_SESSION_BUS_ADDRESS="$(cat "$D/bus")" \
-        flatpak run --env=GIMP3_DIRECTORY="$D/cfg" --filesystem="$D" $APP "$@" \
+        flatpak run --env=GIMP3_DIRECTORY="$D/cfg" --filesystem="$D" ${CHOPGIMP_GUITEST_FLATPAK_ARGS:-} $APP "$@" \
         < /dev/null > "$D/gimp.log" 2>&1 &
     sleep "${CHOPGIMP_GUITEST_WAIT:-28}"
-    # GNOME démarre dans la vue d'ensemble : Échap pour en sortir
-    "$0" ui key Escape
+    # GNOME démarre dans la vue d'ensemble : on la ferme par D-Bus (mode
+    # « unsafe » de GNOME Shell), puis on ferme la fenêtre d'accueil
+    no_overview
+}
+
+# Ferme la vue d'ensemble de GNOME Shell (elle revient parfois toute seule)
+no_overview() {
+    for _ in 1 2 3; do
+        $CLEAN DBUS_SESSION_BUS_ADDRESS="$(cat "$D/bus")" gdbus call --session \
+            --dest org.gnome.Shell --object-path /org/gnome/Shell \
+            --method org.gnome.Shell.Eval "Main.overview.hide(); Main.overview.show = () => {}; Main.overview.toggle = () => {}; Main.overview.visible" \
+            > "$D/overview.txt" 2>&1
+        sleep 0.8
+        grep -q "'false'" "$D/overview.txt" && break
+    done
 }
 
 stop_gimp() {
@@ -56,6 +70,7 @@ case "${1:-}" in
     start) start_shell; shift; start_gimp "$@" ;;
     gimp)  stop_gimp; shift; start_gimp "$@" ;;
     ui)    shift; exec $CLEAN python3 -I "$HERE/ui.py" "$D" "$@" ;;
+    nooverview) no_overview ;;
     stop)  stop_gimp
            pkill -f "[g]nome-shell --headless --virtual-monitor 1600x900 --wayland-display wl-chop"
            sleep 1; rm -rf "$D" ;;

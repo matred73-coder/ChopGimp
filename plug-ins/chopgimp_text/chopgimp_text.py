@@ -190,6 +190,12 @@ def spec_join(d):
     return ";".join("%s=%s" % (k, v) for k, v in d.items())
 
 
+def path_name(path):
+    """Nom du tracé tel qu'écrit dans l'effet (sans « ; » ni « = ») : il
+    vérifie que le numéro (tatouage) désigne bien ce tracé."""
+    return (path.get_name() or "").replace(";", "_").replace("=", "_")
+
+
 def target_path(image, drawables):
     """Le chemin visé : chemin sélectionné, sinon celui d'un calque
     vectoriel sélectionné."""
@@ -302,7 +308,8 @@ def path_dialog(layer, path):
     flip.set_active("path" in cur and cur.get("flip") == "1")
 
     def make():
-        return spec_join({"path": tattoo, "start": int(start.get_value()),
+        return spec_join({"path": tattoo, "pname": path_name(path),
+                          "start": int(start.get_value()),
                           "flip": int(flip.get_active()), "shift": int(shift.get_value())})
 
     fx_dialog("Texte sur le tracé", layer,
@@ -316,7 +323,8 @@ def shape_dialog(layer, path):
     inset = slider(0, 500, float(cur.get("inset", 6)) if "shape" in cur else 6)
 
     def make():
-        return spec_join({"shape": tattoo, "inset": int(inset.get_value())})
+        return spec_join({"shape": tattoo, "pname": path_name(path),
+                          "inset": int(inset.get_value())})
 
     fx_dialog("Texte dans la forme", layer, [("Marge intérieure (px) :", inset)], make)
 
@@ -447,7 +455,7 @@ class ChopGimpText(Gimp.PlugIn):
                                        "ou un calque vectoriel.")
             if run_mode != Gimp.RunMode.INTERACTIVE:
                 key = "path" if name == "chopgimp-text-on-path" else "shape"
-                fx_set(layer, "%s=%d" % (key, path.get_tattoo()), True)
+                fx_set(layer, "%s=%d;pname=%s" % (key, path.get_tattoo(), path_name(path)), True)
             elif name == "chopgimp-text-on-path":
                 path_dialog(layer, path)
             else:
