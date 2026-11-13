@@ -1,7 +1,7 @@
 # ═══════════════════════════════════════════════════════════════
 # ChopGimp (ex-PhotoGIMP Pro v3) — GIMP recompilé façon Photoshop (Flatpak)
 #
-#   make patches   exporte les patchs depuis build/gimp-src (branche photogimp)
+#   make patches   exporte les nouveaux patchs depuis build/gimp-src (branche photogimp)
 #   make build     compile le Flatpak (GIMP 3.2.8 + patchs + données)
 #   make bundle    produit dist/ChopGimp-<version>.flatpak (installable hors ligne)
 #   make install   installe le paquet pour l'utilisateur courant
@@ -25,11 +25,20 @@ FB        := flatpak-builder --user --ccache --disable-rofiles-fuse --force-clea
 
 .PHONY: patches manifest build bundle install run repo vanilla clean
 
+# N'exporte que les NOUVEAUX commits de build/gimp-src (ceux qui suivent les
+# patchs déjà présents) : un patch existant n'est jamais réécrit. Certains ne
+# peuvent pas être régénérés depuis gimp-src (0045 : icône Windows dans le
+# sous-module gimp-data) et une régénération complète les abîmait.
 patches:
-	cd build/gimp-src && rm -f ../../patches/gimp-3.2.8/*.patch && \
-	  git format-patch -q -o ../../patches/gimp-3.2.8 GIMP_3_2_8..photogimp 2>/dev/null || \
-	  git format-patch -q -o ../../patches/gimp-3.2.8 7addd2b..photogimp
-	@ls patches/gimp-3.2.8
+	@n=$$(ls patches/gimp-3.2.8/*.patch 2>/dev/null | wc -l); \
+	 c=$$(git -C build/gimp-src rev-list --count GIMP_3_2_8..photogimp); \
+	 if [ $$c -lt $$n ]; then \
+	   echo "ERREUR : $$n patchs mais $$c commits dans build/gimp-src (dépôt en avance ?)"; exit 1; \
+	 elif [ $$c -gt $$n ]; then \
+	   git -C build/gimp-src format-patch -q --start-number $$((n + 1)) \
+	     -o $(CURDIR)/patches/gimp-3.2.8 photogimp~$$((c - n))..photogimp; \
+	 fi; \
+	 echo "$$((c - n)) nouveau(x) patch(s), $$c au total"
 
 manifest:
 	python3 tools/make_manifest.py

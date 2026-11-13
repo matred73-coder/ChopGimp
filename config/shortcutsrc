@@ -32,8 +32,10 @@
 (action "tools-color-picker" "i")
 # Règle
 (action "tools-measure" "<Shift>i")
+# Correcteur localisé
+(action "tools-spot-heal" "j")
 # Correcteur
-(action "tools-heal" "j")
+(action "tools-heal" "<Shift>j")
 # Pinceau
 (action "tools-paintbrush" "b")
 # Crayon
@@ -280,6 +282,8 @@
 (action "view-fullscreen" "f" "F11")
 # Masquer les panneaux
 (action "windows-hide-docks" "Tab")
+# Masquer les panneaux de droite
+(action "windows-hide-right-docks" "<Shift>Tab")
 # Réinitialiser la rotation
 (action "view-rotate-reset" "<Shift>Escape")
 
@@ -316,6 +320,8 @@
 (action "tools-handle-transform")
 # était : <shift>W
 (action "tools-transform-3d")
+# était : <shift>J
+(action "view-scroll-center")
 # était : <primary>J
 (action "view-shrink-wrap")
 # était : 5 KP_5

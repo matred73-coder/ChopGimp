@@ -865,7 +865,12 @@
                         "../patches/gimp-3.2.8/0044-ChopGimp-own-Windows-mutexes-and-single-instance-win.patch",
                         "../patches/gimp-3.2.8/0045-ChopGimp-Windows-identity-of-the-executables.patch",
                         "../patches/gimp-3.2.8/0046-ChopGimp-Inno-installer-named-ChopGimp.patch",
-                        "../patches/gimp-3.2.8/0047-ChopGimp-register-log-handler-enum-types-at-startup-.patch"
+                        "../patches/gimp-3.2.8/0047-ChopGimp-register-log-handler-enum-types-at-startup-.patch",
+                        "../patches/gimp-3.2.8/0048-ChopGimp-panels-easier-to-handle-collapse-close-a-gr.patch",
+                        "../patches/gimp-3.2.8/0049-ChopGimp-room-freed-by-a-collapsed-group-goes-to-the.patch",
+                        "../patches/gimp-3.2.8/0050-ChopGimp-collapsed-groups-sizes-from-paned-positions.patch",
+                        "../patches/gimp-3.2.8/0051-ChopGimp-panel-strip-without-widget-margin-no-alloca.patch",
+                        "../patches/gimp-3.2.8/0052-ChopGimp-Tab-Shift-Tab-hide-the-panels-wherever-the-.patch"
                     ]
                 }
             ],

@@ -1,0 +1,54 @@
+From 8363f998ef8de3cfb518b0c08337a6dbb5f1447d Mon Sep 17 00:00:00 2001
+From: ChopGimp <mathieu.redon@proton.me>
+Date: Fri, 13 Nov 2026 07:47:30 +0100
+Subject: [PATCH] ChopGimp: Tab / Shift+Tab hide the panels wherever the focus
+ is, except in text fields
+
+---
+ app/widgets/gimpwindow.c | 30 ++++++++++++++++++++++++++++++
+ 1 file changed, 30 insertions(+)
+
+diff --git a/app/widgets/gimpwindow.c b/app/widgets/gimpwindow.c
+index 06f5936..a81400e 100644
+--- a/app/widgets/gimpwindow.c
++++ b/app/widgets/gimpwindow.c
+@@ -189,6 +189,36 @@ gimp_window_key_press_event (GtkWidget   *widget,
+         geimnum (eb);
+     }
+ 
++  /*  ChopGimp (Photoshop): Tab hides all the panels, Shift+Tab the panel
++   *  column only, wherever the keyboard focus is (a panel, a tab…), except
++   *  in a text field; GTK would otherwise use Tab to move the focus.
++   */
++  if (! handled &&
++      (event->keyval == GDK_KEY_Tab    ||
++       event->keyval == GDK_KEY_KP_Tab ||
++       event->keyval == GDK_KEY_ISO_Left_Tab) &&
++      ! (event->state & (GDK_CONTROL_MASK | GDK_MOD1_MASK)) &&
++      ! (focus && (GTK_IS_EDITABLE (focus) || GTK_IS_TEXT_VIEW (focus))))
++    {
++      GApplication *app    = g_application_get_default ();
++      GAction      *action = NULL;
++
++      if (G_IS_ACTION_MAP (app))
++        action = g_action_map_lookup_action (G_ACTION_MAP (app),
++                                             (event->state & GDK_SHIFT_MASK ||
++                                              event->keyval == GDK_KEY_ISO_Left_Tab) ?
++                                             "windows-hide-right-docks" :
++                                             "windows-hide-docks");
++
++      if (action && g_action_get_enabled (action))
++        {
++          /*  a toggle action: activating it flips it  */
++          g_action_activate (action, NULL);
++
++          return TRUE;
++        }
++    }
++
+   if (! handled &&
+       event->keyval == GDK_KEY_Escape &&
+       gimp_window->private->primary_focus_widget)
+-- 
+2.53.0
+

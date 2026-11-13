@@ -1,0 +1,25 @@
+From 08b35f7d307c4302e62a44367d76aec2c8878a9e Mon Sep 17 00:00:00 2001
+From: ChopGimp <mathieu.redon@proton.me>
+Date: Fri, 13 Nov 2026 07:35:20 +0100
+Subject: [PATCH 51/51] ChopGimp: panel strip without widget margin (no
+ allocation warning at startup)
+
+---
+ app/display/gimpimagewindow.c | 1 -
+ 1 file changed, 1 deletion(-)
+
+diff --git a/app/display/gimpimagewindow.c b/app/display/gimpimagewindow.c
+index b1030c9..ad07227af 100644
+--- a/app/display/gimpimagewindow.c
++++ b/app/display/gimpimagewindow.c
+@@ -695,7 +695,6 @@ gimp_image_window_constructed (GObject *object)
+   private->right_strip_image = gtk_image_new ();
+   gtk_image_set_pixel_size (GTK_IMAGE (private->right_strip_image), 10);
+   gtk_widget_set_valign (private->right_strip_image, GTK_ALIGN_START);
+-  gtk_widget_set_margin_top (private->right_strip_image, 8);
+   gtk_container_add (GTK_CONTAINER (private->right_strip),
+                      private->right_strip_image);
+   gtk_widget_set_visible (private->right_strip_image, TRUE);
+-- 
+2.53.0
+

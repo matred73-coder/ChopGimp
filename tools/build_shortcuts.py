@@ -170,6 +170,7 @@ PS_MAP = [
     ("Affichage", "view-show-selection",   [P + "h"],        "Extras (afficher la sélection)"),
     ("Affichage", "view-fullscreen",       ["f", "F11"],     "Mode plein écran"),
     ("Affichage", "windows-hide-docks",    ["Tab"],          "Masquer les panneaux"),
+    ("Affichage", "windows-hide-right-docks", [S + "Tab"],   "Masquer les panneaux de droite"),
     ("Affichage", "view-rotate-reset",     [S + "Escape"],   "Réinitialiser la rotation"),
 
     # ── Fenêtre ────────────────────────────────────────────────────────
@@ -196,13 +197,13 @@ def main():
     if "--v2" in sys.argv:   # GIMP non recompilé : actions ajoutées par les patchs absentes
         PS_MAP = [e for e in PS_MAP if not e[1].startswith(("tools-opacity-ps-", "tools-hand",
                                                              "tools-rotate-view", "tools-shape",
-                                                             "tools-spot-heal"))]
+                                                             "tools-spot-heal", "windows-hide-right-docks"))]
     defaults = json.load(open(DEFAULTS))
     errors = []
 
     # 1. actions valides
     for _, act, _, _ in PS_MAP:
-        if act not in defaults and not act.startswith(("photogimp-", "chopgimp-", "tools-opacity-ps-", "tools-hand", "tools-rotate-view", "tools-shape", "tools-spot-heal")):
+        if act not in defaults and not act.startswith(("photogimp-", "chopgimp-", "tools-opacity-ps-", "tools-hand", "tools-rotate-view", "tools-shape", "tools-spot-heal", "windows-hide-right-docks")):
             errors.append("action inconnue de GIMP 3.2.8 : %s" % act)
 
     # 2. aucune touche attribuée deux fois dans PS_MAP

@@ -1,0 +1,1506 @@
+From 20c48af672722b01089cbd7131a60bcb0edaab04 Mon Sep 17 00:00:00 2001
+From: ChopGimp <mathieu.redon@proton.me>
+Date: Fri, 13 Nov 2026 07:19:49 +0100
+Subject: [PATCH 48/51] =?UTF-8?q?ChopGimp:=20panels=20easier=20to=20handle?=
+ =?UTF-8?q?=20=E2=80=94=20collapse=20/=20close=20a=20group,=20strip=20hidi?=
+ =?UTF-8?q?ng=20the=20panel=20column=20(Shift+Tab),=20bigger=20drop=20area?=
+ =?UTF-8?q?s,=20reset=20panels?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+---
+ app/actions/dockable-actions.c             |  15 +-
+ app/actions/dockable-commands.c            |  19 ++
+ app/actions/dockable-commands.h            |   6 +
+ app/actions/windows-actions.c              |  18 ++
+ app/actions/windows-commands.c             |  57 +++++
+ app/actions/windows-commands.h             |   6 +
+ app/display/gimpdisplayshell-tool-events.c |   8 +
+ app/display/gimpimagewindow.c              | 232 +++++++++++++++++-
+ app/display/gimpimagewindow.h              |   4 +
+ app/widgets/chopgimp-rc.c                  |  93 ++++++++
+ app/widgets/chopgimp-rc.h                  |  17 ++
+ app/widgets/gimpdockbook.c                 | 261 ++++++++++++++++++++-
+ app/widgets/gimpdockbook.h                 |   5 +
+ app/widgets/gimppanedbox.c                 | 156 +++++++++++-
+ app/widgets/gimppanedbox.h                 |   2 +
+ app/widgets/gimpsessioninfo-book.c         |   4 +-
+ app/widgets/gimpsessioninfo.c              |  60 +++++
+ app/widgets/gimpsessioninfo.h              |   7 +
+ app/widgets/gimpviewrendererdrawable.c     |  45 +---
+ app/widgets/meson.build                    |   1 +
+ menus/dockable-menu.ui.in.in               |   2 +
+ menus/image-menu.ui.in.in                  |   2 +
+ 22 files changed, 966 insertions(+), 54 deletions(-)
+ create mode 100644 app/widgets/chopgimp-rc.c
+ create mode 100644 app/widgets/chopgimp-rc.h
+
+diff --git a/app/actions/dockable-actions.c b/app/actions/dockable-actions.c
+index 912467a..1fb200a 100644
+--- a/app/actions/dockable-actions.c
++++ b/app/actions/dockable-actions.c
+@@ -53,7 +53,20 @@ static const GimpActionEntry dockable_actions[] =
+   { "dockable-detach-tab", GIMP_ICON_DETACH,
+     NC_("dockable-action", "_Detach Tab"), NULL, { NULL }, NULL,
+     dockable_detach_tab_cmd_callback,
+-    GIMP_HELP_DOCK_TAB_DETACH }
++    GIMP_HELP_DOCK_TAB_DETACH },
++
++  /*  ChopGimp (Photoshop: « Close Tab Group », double-click on a tab)  */
++  { "dockable-close-group", "window-close",
++    NC_("dockable-action", "Fermer le _groupe d'onglets"), NULL, { NULL },
++    NC_("dockable-action", "Ferme tous les panneaux de ce groupe"),
++    dockable_close_group_cmd_callback,
++    GIMP_HELP_DOCK_TAB_CLOSE },
++
++  { "dockable-collapse-group", NULL,
++    NC_("dockable-action", "_Réduire / développer le groupe"), NULL, { NULL },
++    NC_("dockable-action", "Réduit le groupe à sa barre d'onglets, ou le développe"),
++    dockable_collapse_group_cmd_callback,
++    GIMP_HELP_DOCK_TAB_MENU }
+ };
+ 
+ #define VIEW_SIZE(action,label,size) \
+diff --git a/app/actions/dockable-commands.c b/app/actions/dockable-commands.c
+index 93c04b4..214ba5b 100644
+--- a/app/actions/dockable-commands.c
++++ b/app/actions/dockable-commands.c
+@@ -67,6 +67,25 @@ dockable_close_tab_cmd_callback (GimpAction *action,
+                           GTK_WIDGET (dockable));
+ }
+ 
++void
++dockable_close_group_cmd_callback (GimpAction *action,
++                                   GVariant   *value,
++                                   gpointer    data)
++{
++  gimp_dockbook_close_group (GIMP_DOCKBOOK (data));
++}
++
++void
++dockable_collapse_group_cmd_callback (GimpAction *action,
++                                      GVariant   *value,
++                                      gpointer    data)
++{
++  GimpDockbook *dockbook = GIMP_DOCKBOOK (data);
++
++  gimp_dockbook_set_collapsed (dockbook,
++                               ! gimp_dockbook_get_collapsed (dockbook));
++}
++
+ void
+ dockable_detach_tab_cmd_callback (GimpAction *action,
+                                   GVariant   *value,
+diff --git a/app/actions/dockable-commands.h b/app/actions/dockable-commands.h
+index f89b433..44b70ba 100644
+--- a/app/actions/dockable-commands.h
++++ b/app/actions/dockable-commands.h
+@@ -27,6 +27,12 @@ void   dockable_close_tab_cmd_callback       (GimpAction *action,
+ void   dockable_detach_tab_cmd_callback      (GimpAction *action,
+                                               GVariant   *value,
+                                               gpointer    data);
++void   dockable_close_group_cmd_callback     (GimpAction *action,
++                                              GVariant   *value,
++                                              gpointer    data);
++void   dockable_collapse_group_cmd_callback  (GimpAction *action,
++                                              GVariant   *value,
++                                              gpointer    data);
+ void   dockable_lock_tab_cmd_callback        (GimpAction *action,
+                                               GVariant   *value,
+                                               gpointer    data);
+diff --git a/app/actions/windows-actions.c b/app/actions/windows-actions.c
+index 88d6220..866740d 100644
+--- a/app/actions/windows-actions.c
++++ b/app/actions/windows-actions.c
+@@ -38,6 +38,7 @@
+ #include "widgets/gimpdialogfactory.h"
+ #include "widgets/gimpdock.h"
+ #include "widgets/gimpdockwindow.h"
++#include "widgets/chopgimp-rc.h"
+ #include "widgets/gimphelp-ids.h"
+ 
+ #include "display/gimpdisplay.h"
+@@ -122,6 +123,13 @@ static const GimpActionEntry windows_actions[] =
+ 
+   { "windows-tab-position",        NULL, NC_("windows-action",
+                                              "_Tabs Position")   },
++
++  /*  ChopGimp (Photoshop: Window > Workspace > Reset)  */
++  { "windows-reset-panels", GIMP_ICON_RESET,
++    NC_("windows-action", "_Réinitialiser les panneaux"), NULL, { NULL },
++    NC_("windows-action", "Referme tous les panneaux et rétablit leur disposition d'origine"),
++    windows_reset_panels_cmd_callback,
++    GIMP_HELP_WINDOWS_HIDE_DOCKS }
+ };
+ 
+ static const GimpToggleActionEntry windows_toggle_actions[] =
+@@ -133,6 +141,14 @@ static const GimpToggleActionEntry windows_toggle_actions[] =
+     FALSE,
+     GIMP_HELP_WINDOWS_HIDE_DOCKS },
+ 
++  /*  ChopGimp (Photoshop Shift+Tab): only the column of panels  */
++  { "windows-hide-right-docks", NULL,
++    NC_("windows-action", "Masquer les _panneaux de droite"), NULL, { NULL },
++    NC_("windows-action", "Masque la colonne de panneaux à droite de l'image ; la boîte à outils et la barre d'options restent affichées."),
++    windows_hide_right_docks_cmd_callback,
++    FALSE,
++    GIMP_HELP_WINDOWS_HIDE_DOCKS },
++
+   { "windows-show-tabs", NULL,
+     NC_("windows-action", "_Show Tabs"), NULL, { NULL },
+     NC_("windows-action", "When enabled, the image tabs bar is shown."),
+@@ -261,6 +277,8 @@ windows_actions_update (GimpActionGroup *group,
+ 
+   SET_ACTIVE ("windows-use-single-window-mode", config->single_window_mode);
+   SET_ACTIVE ("windows-hide-docks", config->hide_docks);
++  SET_ACTIVE ("windows-hide-right-docks",
++              chopgimp_rc_get_boolean ("panels", "right-hidden", FALSE));
+   SET_ACTIVE ("windows-show-tabs", config->show_tabs);
+ 
+   switch (config->tabs_position)
+diff --git a/app/actions/windows-commands.c b/app/actions/windows-commands.c
+index 9bd6798..a7b11a4 100644
+--- a/app/actions/windows-commands.c
++++ b/app/actions/windows-commands.c
+@@ -35,10 +35,16 @@
+ #include "widgets/gimpactiongroup.h"
+ #include "widgets/gimpdialogfactory.h"
+ #include "widgets/gimpsessioninfo.h"
++#include "widgets/gimptoggleaction.h"
++#include "widgets/gimpuimanager.h"
+ #include "widgets/gimpwidgets-utils.h"
++#include "widgets/chopgimp-rc.h"
++
++#include "menus/menus.h"
+ 
+ #include "display/gimpdisplay.h"
+ #include "display/gimpdisplayshell.h"
++#include "display/gimpimagewindow.h"
+ 
+ #include "dialogs/dialogs.h"
+ 
+@@ -66,6 +72,57 @@ windows_hide_docks_cmd_callback (GimpAction *action,
+                   NULL);
+ }
+ 
++/*  ChopGimp: hide / show the column of panels on the right  */
++void
++windows_hide_right_docks_cmd_callback (GimpAction *action,
++                                       GVariant   *value,
++                                       gpointer    data)
++{
++  Gimp     *gimp;
++  GList    *windows;
++  GList    *iter;
++  gboolean  active;
++  return_if_no_gimp (gimp, data);
++
++  active = g_variant_get_boolean (value);
++
++  if (active == chopgimp_rc_get_boolean ("panels", "right-hidden", FALSE))
++    return;
++
++  chopgimp_rc_set_boolean ("panels", "right-hidden", active);
++
++  windows = gimp_get_image_windows (gimp);
++  for (iter = windows; iter; iter = g_list_next (iter))
++    gimp_image_window_right_docks_changed (iter->data);
++  g_list_free (windows);
++}
++
++/*  ChopGimp: back to the factory arrangement of the panels  */
++void
++windows_reset_panels_cmd_callback (GimpAction *action,
++                                   GVariant   *value,
++                                   gpointer    data)
++{
++  Gimp       *gimp;
++  GList      *windows;
++  GimpAction *hide;
++  return_if_no_gimp (gimp, data);
++
++  /*  show the column again if it was hidden  */
++  hide = gimp_ui_manager_find_action (menus_get_image_manager_singleton (gimp),
++                                      "windows", "windows-hide-right-docks");
++  if (hide)
++    gimp_toggle_action_set_active (GIMP_TOGGLE_ACTION (hide), FALSE);
++
++  if (GIMP_GUI_CONFIG (gimp->config)->hide_docks)
++    g_object_set (gimp->config, "hide-docks", FALSE, NULL);
++
++  windows = gimp_get_image_windows (gimp);
++  if (windows)
++    gimp_image_window_reset_panels (windows->data);
++  g_list_free (windows);
++}
++
+ void
+ windows_use_single_window_mode_cmd_callback (GimpAction *action,
+                                              GVariant   *value,
+diff --git a/app/actions/windows-commands.h b/app/actions/windows-commands.h
+index a7de8ff..28fffb8 100644
+--- a/app/actions/windows-commands.h
++++ b/app/actions/windows-commands.h
+@@ -18,6 +18,12 @@
+ #pragma once
+ 
+ 
++void  windows_hide_right_docks_cmd_callback        (GimpAction *action,
++                                                    GVariant   *value,
++                                                    gpointer    data);
++void  windows_reset_panels_cmd_callback            (GimpAction *action,
++                                                    GVariant   *value,
++                                                    gpointer    data);
+ void  windows_hide_docks_cmd_callback             (GimpAction *action,
+                                                    GVariant   *value,
+                                                    gpointer    data);
+diff --git a/app/display/gimpdisplayshell-tool-events.c b/app/display/gimpdisplayshell-tool-events.c
+index 40d8bb7..54867cc 100644
+--- a/app/display/gimpdisplayshell-tool-events.c
++++ b/app/display/gimpdisplayshell-tool-events.c
+@@ -2211,6 +2211,14 @@ gimp_display_shell_tab_pressed (GimpDisplayShell  *shell,
+       return FALSE;
+     }
+ #endif
++  else if (kevent->state & GDK_SHIFT_MASK)
++    {
++      /*  ChopGimp (Photoshop): Shift+Tab hides the panels only  */
++      gimp_ui_manager_activate_action (manager, "windows",
++                                       "windows-hide-right-docks");
++
++      return TRUE;
++    }
+   else
+     {
+       gimp_ui_manager_activate_action (manager, "windows",
+diff --git a/app/display/gimpimagewindow.c b/app/display/gimpimagewindow.c
+index 84b87ee..b1030c9 100644
+--- a/app/display/gimpimagewindow.c
++++ b/app/display/gimpimagewindow.c
+@@ -19,6 +19,8 @@
+ 
+ #include <math.h>
+ 
++#include <stdlib.h>
++
+ #include <gegl.h>
+ #include <gtk/gtk.h>
+ #include <gdk/gdk.h>
+@@ -43,6 +45,7 @@
+ #include "libgimpbase/gimpbase.h"
+ #include "libgimpmath/gimpmath.h"
+ #include "libgimpcolor/gimpcolor.h"
++#include "libgimpconfig/gimpconfig.h"
+ #include "libgimpwidgets/gimpwidgets.h"
+ #include "libgimpwidgets/gimpwidgets-private.h"
+ 
+@@ -68,6 +71,8 @@
+ #include "widgets/gimpdockbook.h"
+ #include "widgets/gimpdockcolumns.h"
+ #include "widgets/gimpdockcontainer.h"
++#include "widgets/gimpdockwindow.h"
++#include "widgets/chopgimp-rc.h"
+ #include "widgets/gimphelp-ids.h"
+ #include "widgets/gimpmenubar.h"
+ #include "widgets/gimpmenufactory.h"
+@@ -148,6 +153,10 @@ struct _GimpImageWindowPrivate
+   GtkWidget         *notebook;
+   GtkWidget         *right_docks;
+ 
++  /*  ChopGimp: strip at the window edge hiding / showing the panels  */
++  GtkWidget         *right_strip;
++  GtkWidget         *right_strip_image;
++
+   GHashTable        *pad_controllers;
+ 
+   GdkWindowState     window_state;
+@@ -227,6 +236,8 @@ static GimpDialogFactory *
+ static GimpUIManager *
+                  gimp_image_window_dock_container_get_ui_manager
+                                                        (GimpDockContainer   *dock_container);
++static void      gimp_image_window_update_right_docks  (GimpImageWindow     *window);
++static void      gimp_image_window_right_strip_clicked (GimpImageWindow     *window);
+ static void      gimp_image_window_add_dock            (GimpDockContainer   *dock_container,
+                                                         GimpDock            *dock,
+                                                         GimpSessionInfoDock *dock_info);
+@@ -672,6 +683,30 @@ gimp_image_window_constructed (GObject *object)
+                    FALSE, FALSE);
+   gtk_widget_set_visible (private->right_docks, config->single_window_mode);
+ 
++  /*  ChopGimp: a thin strip along the right edge of the window hides
++   *  the whole column of panels and shows it again (Photoshop Shift+Tab);
++   *  it stays in place when the panels are hidden.
++   */
++  private->right_strip = gtk_button_new ();
++  gtk_widget_set_name (private->right_strip, "chopgimp-dock-strip");
++  gtk_widget_set_can_focus (private->right_strip, FALSE);
++  gtk_button_set_relief (GTK_BUTTON (private->right_strip), GTK_RELIEF_NONE);
++
++  private->right_strip_image = gtk_image_new ();
++  gtk_image_set_pixel_size (GTK_IMAGE (private->right_strip_image), 10);
++  gtk_widget_set_valign (private->right_strip_image, GTK_ALIGN_START);
++  gtk_widget_set_margin_top (private->right_strip_image, 8);
++  gtk_container_add (GTK_CONTAINER (private->right_strip),
++                     private->right_strip_image);
++  gtk_widget_set_visible (private->right_strip_image, TRUE);
++
++  gtk_box_pack_end (GTK_BOX (private->hbox), private->right_strip,
++                    FALSE, FALSE, 0);
++  g_signal_connect_swapped (private->right_strip, "clicked",
++                            G_CALLBACK (gimp_image_window_right_strip_clicked),
++                            window);
++  gimp_image_window_update_right_docks (window);
++
+   g_signal_connect_object (config, "notify::single-window-mode",
+                            G_CALLBACK (gimp_image_window_config_notify),
+                            window, G_CONNECT_SWAPPED);
+@@ -2157,6 +2192,201 @@ gimp_image_window_show_tooltip (GimpUIManager   *manager,
+                        NULL, "%s", tooltip);
+ }
+ 
++/*  ChopGimp: the column of panels on the right, and its strip  */
++
++static void
++gimp_image_window_update_right_docks (GimpImageWindow *window)
++{
++  GimpImageWindowPrivate *private = GIMP_IMAGE_WINDOW_GET_PRIVATE (window);
++  GimpGuiConfig          *config  = GIMP_GUI_CONFIG (private->gimp->config);
++  gboolean                show    = (config->single_window_mode &&
++                                     ! config->hide_docks);
++  gboolean                hidden  = chopgimp_rc_get_boolean ("panels",
++                                                             "right-hidden",
++                                                             FALSE);
++  const gchar            *names[] = { hidden ? "chopgimp-dock-show-symbolic" :
++                                               "chopgimp-dock-hide-symbolic",
++                                      hidden ? GIMP_ICON_MENU_LEFT :
++                                               GIMP_ICON_MENU_RIGHT,
++                                      NULL };
++  GIcon                  *icon;
++
++  gtk_widget_set_visible (private->right_docks, show && ! hidden);
++  gtk_widget_set_visible (private->right_strip, show);
++
++  icon = g_themed_icon_new_from_names ((gchar **) names, -1);
++  gtk_image_set_from_gicon (GTK_IMAGE (private->right_strip_image), icon,
++                            GTK_ICON_SIZE_MENU);
++  g_object_unref (icon);
++
++  gimp_help_set_help_data (private->right_strip,
++                           hidden ? _("Afficher les panneaux (Maj+Tab)") :
++                                    _("Masquer les panneaux (Maj+Tab)"),
++                           NULL);
++}
++
++static void
++gimp_image_window_right_strip_clicked (GimpImageWindow *window)
++{
++  GimpImageWindowPrivate *private = GIMP_IMAGE_WINDOW_GET_PRIVATE (window);
++
++  gimp_ui_manager_activate_action (menus_get_image_manager_singleton (private->gimp),
++                                   "windows", "windows-hide-right-docks");
++}
++
++/*  called when the « right-hidden » setting changed  */
++void
++gimp_image_window_right_docks_changed (GimpImageWindow *window)
++{
++  g_return_if_fail (GIMP_IS_IMAGE_WINDOW (window));
++
++  gimp_image_window_keep_canvas_pos (window);
++  gimp_image_window_update_right_docks (window);
++}
++
++static void
++gimp_image_window_close_books (GimpDockColumns *columns)
++{
++  GList *docks = g_list_copy (gimp_dock_columns_get_docks (columns));
++  GList *iter;
++
++  g_list_foreach (docks, (GFunc) g_object_ref, NULL);
++
++  for (iter = docks; iter; iter = g_list_next (iter))
++    {
++      GList *books = g_list_copy (gimp_dock_get_dockbooks (iter->data));
++      GList *book;
++
++      g_list_foreach (books, (GFunc) g_object_ref, NULL);
++
++      /*  an empty group removes itself, and so does an empty dock  */
++      for (book = books; book; book = g_list_next (book))
++        gimp_dockbook_close_group (book->data);
++
++      g_list_free_full (books, g_object_unref);
++    }
++
++  g_list_free_full (docks, g_object_unref);
++}
++
++/**
++ * gimp_image_window_reset_panels:
++ * @window:
++ *
++ * ChopGimp (Photoshop « Reset Essentials »): closes every panel and
++ * builds again the factory arrangement of the system sessionrc, without
++ * restarting. The toolbox itself is not touched.
++ **/
++void
++gimp_image_window_reset_panels (GimpImageWindow *window)
++{
++  GimpImageWindowPrivate *private;
++  GimpSessionInfo        *info    = NULL;
++  GFile                  *file;
++  GimpScanner            *scanner;
++  GList                  *dialogs;
++  GList                  *iter;
++  GtkAllocation           allocation;
++  const gchar            *value;
++
++  g_return_if_fail (GIMP_IS_IMAGE_WINDOW (window));
++
++  private = GIMP_IMAGE_WINDOW_GET_PRIVATE (window);
++
++  /*  the factory arrangement of the single-window mode  */
++  file    = gimp_sysconf_directory_file ("sessionrc", NULL);
++  scanner = gimp_scanner_new_file (file, NULL);
++  g_object_unref (file);
++
++  if (scanner)
++    {
++      GTokenType token;
++
++      g_scanner_scope_add_symbol (scanner, 0, "session-info",
++                                  GINT_TO_POINTER (1));
++
++      while (! info &&
++             (token = g_scanner_get_next_token (scanner)) != G_TOKEN_EOF &&
++             token != G_TOKEN_ERROR)
++        {
++          if (token == G_TOKEN_SYMBOL &&
++              scanner->value.v_symbol == GINT_TO_POINTER (1))
++            {
++              GimpDialogFactoryEntry *entry;
++              gchar                  *factory_name = NULL;
++
++              if (! gimp_scanner_parse_string (scanner, &factory_name))
++                break;
++              g_free (factory_name);
++
++              info = gimp_session_info_new ();
++
++              if (! gimp_config_deserialize (GIMP_CONFIG (info), scanner,
++                                             1, NULL))
++                {
++                  g_clear_object (&info);
++                  break;
++                }
++
++              entry = gimp_session_info_get_factory_entry (info);
++
++              if (! entry ||
++                  g_strcmp0 (entry->identifier, "gimp-single-image-window"))
++                g_clear_object (&info);
++            }
++        }
++
++      gimp_scanner_unref (scanner);
++    }
++
++  if (! info)
++    {
++      gimp_message_literal (private->gimp, G_OBJECT (window),
++                            GIMP_MESSAGE_WARNING,
++                            _("Disposition d'origine des panneaux introuvable."));
++      return;
++    }
++
++  gimp_image_window_keep_canvas_pos (window);
++
++  /*  floating dock windows first: their panels are singletons  */
++  dialogs = g_list_copy (gimp_dialog_factory_get_open_dialogs (private->dialog_factory));
++  g_list_foreach (dialogs, (GFunc) g_object_ref, NULL);
++  for (iter = dialogs; iter; iter = g_list_next (iter))
++    if (GIMP_IS_DOCK_WINDOW (iter->data))
++      gtk_widget_destroy (iter->data);
++  g_list_free_full (dialogs, g_object_unref);
++
++  gimp_image_window_close_books (GIMP_DOCK_COLUMNS (private->left_docks));
++  gimp_image_window_close_books (GIMP_DOCK_COLUMNS (private->right_docks));
++
++  gimp_session_info_restore_side (info, private->dialog_factory,
++                                  gimp_widget_get_monitor (GTK_WIDGET (window)),
++                                  GIMP_DOCK_CONTAINER (window),
++                                  GIMP_ALIGN_LEFT);
++  gimp_session_info_restore_side (info, private->dialog_factory,
++                                  gimp_widget_get_monitor (GTK_WIDGET (window)),
++                                  GIMP_DOCK_CONTAINER (window),
++                                  GIMP_ALIGN_RIGHT);
++
++  /*  widths of the two columns  */
++  value = gimp_session_info_get_aux_value (info,
++                                           GIMP_IMAGE_WINDOW_LEFT_DOCKS_WIDTH);
++  if (value && atoi (value) > 0)
++    gtk_paned_set_position (GTK_PANED (private->left_hpane), atoi (value));
++
++  value = gimp_session_info_get_aux_value (info,
++                                           GIMP_IMAGE_WINDOW_RIGHT_DOCKS_WIDTH);
++  gtk_widget_get_allocation (private->right_hpane, &allocation);
++  if (value && atoi (value) > 0 && allocation.width > atoi (value))
++    gtk_paned_set_position (GTK_PANED (private->right_hpane),
++                            allocation.width - atoi (value));
++
++  g_object_unref (info);
++
++  gimp_image_window_update_right_docks (window);
++}
++
+ static void
+ gimp_image_window_config_notify (GimpImageWindow *window,
+                                  GParamSpec      *pspec,
+@@ -2178,7 +2408,7 @@ gimp_image_window_config_notify (GimpImageWindow *window,
+ 
+           gimp_image_window_keep_canvas_pos (window);
+           gtk_widget_set_visible (private->left_docks, show_docks);
+-          gtk_widget_set_visible (private->right_docks, show_docks);
++          gimp_image_window_update_right_docks (window);
+ 
+           /* If docks are being shown, and we are in multi-window-mode,
+            * and this is the window of the active display, try to set
+diff --git a/app/display/gimpimagewindow.h b/app/display/gimpimagewindow.h
+index e9170c7..9349e50 100644
+--- a/app/display/gimpimagewindow.h
++++ b/app/display/gimpimagewindow.h
+@@ -90,6 +90,10 @@ void               gimp_image_window_shrink_wrap          (GimpImageWindow  *win
+ GtkWidget        * gimp_image_window_get_default_dockbook (GimpImageWindow  *window);
+ 
+ void               gimp_image_window_keep_canvas_pos      (GimpImageWindow  *window);
++
++/*  ChopGimp  */
++void               gimp_image_window_right_docks_changed  (GimpImageWindow  *window);
++void               gimp_image_window_reset_panels         (GimpImageWindow  *window);
+ void               gimp_image_window_suspend_keep_pos     (GimpImageWindow  *window);
+ void               gimp_image_window_resume_keep_pos      (GimpImageWindow  *window);
+ 
+diff --git a/app/widgets/chopgimp-rc.c b/app/widgets/chopgimp-rc.c
+new file mode 100644
+index 0000000..0fa2fbb
+--- /dev/null
++++ b/app/widgets/chopgimp-rc.c
+@@ -0,0 +1,93 @@
++/* GIMP - The GNU Image Manipulation Program
++ * Copyright (C) 1995 Spencer Kimball and Peter Mattis
++ *
++ * chopgimp-rc.c — ChopGimp: small persistent settings, kept in
++ * ${gimp_dir}/chopgimprc (a key file), for options that have no place
++ * in gimprc: thumbnail cropping, hidden panel column…
++ *
++ * This program is free software: you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation; either version 3 of the License, or
++ * (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License
++ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
++ */
++
++#include "config.h"
++
++#include <gegl.h>
++#include <gtk/gtk.h>
++
++#include "libgimpbase/gimpbase.h"
++
++#include "widgets-types.h"
++
++#include "chopgimp-rc.h"
++
++
++static GKeyFile *chopgimp_rc = NULL;
++
++
++static gchar *
++chopgimp_rc_path (void)
++{
++  GFile *file = gimp_directory_file ("chopgimprc", NULL);
++  gchar *path = g_file_get_path (file);
++
++  g_object_unref (file);
++
++  return path;
++}
++
++static GKeyFile *
++chopgimp_rc_get (void)
++{
++  if (! chopgimp_rc)
++    {
++      gchar *path = chopgimp_rc_path ();
++
++      chopgimp_rc = g_key_file_new ();
++      g_key_file_load_from_file (chopgimp_rc, path,
++                                 G_KEY_FILE_KEEP_COMMENTS, NULL);
++      g_free (path);
++    }
++
++  return chopgimp_rc;
++}
++
++gboolean
++chopgimp_rc_get_boolean (const gchar *group,
++                         const gchar *key,
++                         gboolean     default_value)
++{
++  GError   *error = NULL;
++  gboolean  value = g_key_file_get_boolean (chopgimp_rc_get (),
++                                            group, key, &error);
++
++  if (error)
++    {
++      g_clear_error (&error);
++      return default_value;
++    }
++
++  return value;
++}
++
++void
++chopgimp_rc_set_boolean (const gchar *group,
++                         const gchar *key,
++                         gboolean     value)
++{
++  gchar *path = chopgimp_rc_path ();
++
++  g_key_file_set_boolean (chopgimp_rc_get (), group, key, value);
++  g_key_file_save_to_file (chopgimp_rc, path, NULL);
++
++  g_free (path);
++}
+diff --git a/app/widgets/chopgimp-rc.h b/app/widgets/chopgimp-rc.h
+new file mode 100644
+index 0000000..fbdc909
+--- /dev/null
++++ b/app/widgets/chopgimp-rc.h
+@@ -0,0 +1,17 @@
++/* GIMP - The GNU Image Manipulation Program
++ * chopgimp-rc.h — ChopGimp: small persistent settings (chopgimprc)
++ *
++ * This program is free software: you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation; either version 3 of the License, or
++ * (at your option) any later version.
++ */
++
++#pragma once
++
++gboolean   chopgimp_rc_get_boolean (const gchar *group,
++                                    const gchar *key,
++                                    gboolean     default_value);
++void       chopgimp_rc_set_boolean (const gchar *group,
++                                    const gchar *key,
++                                    gboolean     value);
+diff --git a/app/widgets/gimpdockbook.c b/app/widgets/gimpdockbook.c
+index 328c46f..6ef63b6 100644
+--- a/app/widgets/gimpdockbook.c
++++ b/app/widgets/gimpdockbook.c
+@@ -92,6 +92,13 @@ struct _GimpDockbookPrivate
+   GimpPanedBox   *drag_handler;
+ 
+   GtkWidget      *menu_button;
++
++  /*  ChopGimp: collapse / close the whole group  */
++  GtkWidget      *collapse_button;
++  GtkWidget      *collapse_image;
++  GtkWidget      *close_image;
++  gboolean        collapsed;
++  guint32         expand_time;
+ };
+ 
+ 
+@@ -141,6 +148,18 @@ static void         gimp_dockbook_tab_locked_notify (GimpDockable   *dockable,
+ static void         gimp_dockbook_help_func         (const gchar    *help_id,
+                                                      gpointer        help_data);
+ 
++static GtkWidget  * gimp_dockbook_chop_button       (GimpDockbook   *dockbook,
++                                                     const gchar    *icon_name,
++                                                     const gchar    *fallback,
++                                                     const gchar    *tooltip,
++                                                     GCallback       callback,
++                                                     GtkWidget     **image);
++static void         gimp_dockbook_collapse_clicked  (GimpDockbook   *dockbook);
++static void         gimp_dockbook_close_clicked     (GimpDockbook   *dockbook);
++static gboolean     gimp_dockbook_button_press      (GtkWidget      *widget,
++                                                     GdkEventButton *bevent,
++                                                     gpointer        data);
++
+ 
+ G_DEFINE_TYPE_WITH_PRIVATE (GimpDockbook, gimp_dockbook, GTK_TYPE_NOTEBOOK)
+ 
+@@ -215,6 +234,8 @@ gimp_dockbook_init (GimpDockbook *dockbook)
+ {
+   GtkNotebook *notebook = GTK_NOTEBOOK (dockbook);
+   GtkWidget   *image;
++  GtkWidget   *box;
++  GtkWidget   *button;
+ 
+   dockbook->p = gimp_dockbook_get_instance_private (dockbook);
+ 
+@@ -241,11 +262,41 @@ gimp_dockbook_init (GimpDockbook *dockbook)
+   gtk_widget_set_can_focus (dockbook->p->menu_button, FALSE);
+   gtk_button_set_relief (GTK_BUTTON (dockbook->p->menu_button),
+                          GTK_RELIEF_NONE);
+-  gtk_notebook_set_action_widget (notebook,
+-                                  dockbook->p->menu_button,
+-                                  GTK_PACK_END);
+   gtk_widget_set_visible (dockbook->p->menu_button, TRUE);
+ 
++  /*  ChopGimp: [collapse] [menu] [close group] at the end of the tab bar  */
++  box = gtk_box_new (GTK_ORIENTATION_HORIZONTAL, 0);
++  gtk_widget_set_name (box, "chopgimp-dockbook-buttons");
++
++  dockbook->p->collapse_button =
++    gimp_dockbook_chop_button (dockbook,
++                               "chopgimp-panel-collapse-symbolic", "go-down-symbolic",
++                               _("Réduire ce groupe de panneaux "
++                                 "(ou double-clic sur un onglet)"),
++                               G_CALLBACK (gimp_dockbook_collapse_clicked),
++                               &dockbook->p->collapse_image);
++  gtk_box_pack_start (GTK_BOX (box), dockbook->p->collapse_button,
++                      FALSE, FALSE, 0);
++
++  gtk_box_pack_start (GTK_BOX (box), dockbook->p->menu_button,
++                      FALSE, FALSE, 0);
++
++  button =
++    gimp_dockbook_chop_button (dockbook,
++                               "chopgimp-panel-close-symbolic", "gimp-close",
++                               _("Fermer ce groupe de panneaux "
++                                 "(Fenêtres > … pour les rouvrir)"),
++                               G_CALLBACK (gimp_dockbook_close_clicked),
++                               &dockbook->p->close_image);
++  gtk_box_pack_start (GTK_BOX (box), button, FALSE, FALSE, 0);
++
++  gtk_notebook_set_action_widget (notebook, box, GTK_PACK_END);
++  gtk_widget_set_visible (box, TRUE);
++
++  g_signal_connect (notebook, "button-press-event",
++                    G_CALLBACK (gimp_dockbook_button_press),
++                    NULL);
++
+   image = gtk_image_new_from_icon_name (GIMP_ICON_MENU_LEFT,
+                                         GTK_ICON_SIZE_MENU);
+   gtk_image_set_pixel_size (GTK_IMAGE (image), 12);
+@@ -300,6 +351,11 @@ gimp_dockbook_style_updated (GtkWidget *widget)
+   gtk_image_set_pixel_size (GTK_IMAGE (children->data), icon_size * 0.75f);
+   g_list_free (children);
+ 
++  gtk_image_set_pixel_size (GTK_IMAGE (dockbook->p->collapse_image),
++                            icon_size * 0.75f);
++  gtk_image_set_pixel_size (GTK_IMAGE (dockbook->p->close_image),
++                            icon_size * 0.75f);
++
+   gimp_dock_invalidate_geometry (GIMP_DOCK (dockbook->p->dock));
+ }
+ 
+@@ -496,6 +552,10 @@ gimp_dockbook_page_added (GtkNotebook *notebook,
+   gtk_widget_set_visible (child, TRUE);
+   gtk_notebook_set_current_page (notebook, page_num);
+ 
++  /*  ChopGimp: a panel added to a collapsed group shows it again  */
++  if (dockbook->p->collapsed)
++    gimp_dockbook_set_collapsed (dockbook, FALSE);
++
+   g_signal_emit (dockbook, dockbook_signals[DOCKABLE_ADDED], 0, dockable);
+ }
+ 
+@@ -518,6 +578,10 @@ gimp_dockbook_page_removed (GtkNotebook *notebook,
+ 
+   gimp_dockable_set_context (dockable, NULL);
+ 
++  /*  ChopGimp: a panel dragged out of a collapsed group has content again  */
++  if (dockbook->p->collapsed && gtk_bin_get_child (GTK_BIN (child)))
++    gtk_widget_set_visible (gtk_bin_get_child (GTK_BIN (child)), TRUE);
++
+   g_signal_emit (dockbook, dockbook_signals[DOCKABLE_REMOVED], 0, dockable);
+ 
+   if (dockbook->p->dock)
+@@ -648,8 +712,199 @@ gimp_dockbook_menu_end (GimpDockable *dockable)
+ }
+ 
+ 
++/*  ChopGimp: collapse / close a whole group of panels  */
++
++static GtkWidget *
++gimp_dockbook_chop_button (GimpDockbook  *dockbook,
++                           const gchar   *icon_name,
++                           const gchar   *fallback,
++                           const gchar   *tooltip,
++                           GCallback      callback,
++                           GtkWidget    **image)
++{
++  const gchar *names[] = { icon_name, fallback, NULL };
++  GIcon       *icon    = g_themed_icon_new_from_names ((gchar **) names, -1);
++  GtkWidget   *button  = gtk_button_new ();
++
++  *image = gtk_image_new_from_gicon (icon, GTK_ICON_SIZE_MENU);
++  g_object_unref (icon);
++
++  gtk_image_set_pixel_size (GTK_IMAGE (*image), 12);
++  gtk_container_add (GTK_CONTAINER (button), *image);
++  gtk_widget_set_visible (*image, TRUE);
++
++  gtk_widget_set_can_focus (button, FALSE);
++  gtk_button_set_relief (GTK_BUTTON (button), GTK_RELIEF_NONE);
++  gimp_help_set_help_data (button, tooltip, NULL);
++  gtk_widget_set_visible (button, TRUE);
++
++  g_signal_connect_swapped (button, "clicked", callback, dockbook);
++
++  return button;
++}
++
++static void
++gimp_dockbook_collapse_clicked (GimpDockbook *dockbook)
++{
++  gimp_dockbook_set_collapsed (dockbook, ! dockbook->p->collapsed);
++}
++
++static gboolean
++gimp_dockbook_close_idle (gpointer data)
++{
++  GimpDockbook *dockbook = data;
++
++  gimp_dockbook_close_group (dockbook);
++  g_object_unref (dockbook);
++
++  return G_SOURCE_REMOVE;
++}
++
++static void
++gimp_dockbook_close_clicked (GimpDockbook *dockbook)
++{
++  /*  the button is destroyed with the group: not from its own handler  */
++  g_idle_add (gimp_dockbook_close_idle, g_object_ref (dockbook));
++}
++
++/*  Photoshop: double-click on a tab collapses the group to its tab bar,
++ *  a click on a tab of a collapsed group shows it again.
++ */
++static gboolean
++gimp_dockbook_button_press (GtkWidget      *widget,
++                            GdkEventButton *bevent,
++                            gpointer        data)
++{
++  GimpDockbook  *dockbook = GIMP_DOCKBOOK (widget);
++  GtkNotebook   *notebook = GTK_NOTEBOOK (widget);
++  GtkWidget     *page;
++  GdkWindow     *window;
++  GtkAllocation  allocation;
++  gint           root_x;
++  gint           root_y;
++
++  if (bevent->button != 1)
++    return FALSE;
++
++  page = gtk_notebook_get_nth_page (notebook,
++                                    gtk_notebook_get_current_page (notebook));
++  if (! page || ! (window = gtk_widget_get_parent_window (page)))
++    return FALSE;
++
++  /*  only in the tab bar, above the page  */
++  gtk_widget_get_allocation (page, &allocation);
++  gdk_window_get_root_coords (window, allocation.x, allocation.y,
++                              &root_x, &root_y);
++
++  if (bevent->y_root >= root_y)
++    return FALSE;
++
++  if (bevent->type == GDK_2BUTTON_PRESS)
++    {
++      /*  not the double click whose first click just expanded the group  */
++      if (! dockbook->p->expand_time ||
++          bevent->time - dockbook->p->expand_time > 700)
++        gimp_dockbook_set_collapsed (dockbook, ! dockbook->p->collapsed);
++
++      return TRUE;
++    }
++  else if (bevent->type == GDK_BUTTON_PRESS && dockbook->p->collapsed)
++    {
++      dockbook->p->expand_time = bevent->time;
++      gimp_dockbook_set_collapsed (dockbook, FALSE);
++    }
++
++  return FALSE;
++}
++
++
+ /*  public functions  */
+ 
++gboolean
++gimp_dockbook_get_collapsed (GimpDockbook *dockbook)
++{
++  g_return_val_if_fail (GIMP_IS_DOCKBOOK (dockbook), FALSE);
++
++  return dockbook->p->collapsed;
++}
++
++void
++gimp_dockbook_set_collapsed (GimpDockbook *dockbook,
++                             gboolean      collapsed)
++{
++  const gchar *names[3] = { NULL, NULL, NULL };
++  GIcon       *icon;
++  GtkWidget   *paned_box;
++  GList       *children;
++  GList       *iter;
++
++  g_return_if_fail (GIMP_IS_DOCKBOOK (dockbook));
++
++  collapsed = collapsed ? TRUE : FALSE;
++
++  if (collapsed == dockbook->p->collapsed)
++    return;
++
++  dockbook->p->collapsed = collapsed;
++
++  /*  read by GimpPanedBox  */
++  g_object_set_data (G_OBJECT (dockbook), "chopgimp-collapsed",
++                     GINT_TO_POINTER (collapsed));
++
++  /*  the pages keep their tabs but lose their content: the notebook
++   *  then only asks for the height of its tab bar
++   */
++  children = gtk_container_get_children (GTK_CONTAINER (dockbook));
++  for (iter = children; iter; iter = g_list_next (iter))
++    {
++      GtkWidget *content = gtk_bin_get_child (GTK_BIN (iter->data));
++
++      if (content)
++        gtk_widget_set_visible (content, ! collapsed);
++    }
++  g_list_free (children);
++
++  names[0] = collapsed ? "chopgimp-panel-expand-symbolic" : "chopgimp-panel-collapse-symbolic";
++  names[1] = collapsed ? "go-next-symbolic"      : "go-down-symbolic";
++  icon = g_themed_icon_new_from_names ((gchar **) names, -1);
++  gtk_image_set_from_gicon (GTK_IMAGE (dockbook->p->collapse_image), icon,
++                            GTK_ICON_SIZE_MENU);
++  g_object_unref (icon);
++
++  gimp_help_set_help_data (dockbook->p->collapse_button,
++                           collapsed ?
++                           _("Développer ce groupe de panneaux "
++                             "(ou clic sur un onglet)") :
++                           _("Réduire ce groupe de panneaux "
++                             "(ou double-clic sur un onglet)"),
++                           NULL);
++
++  paned_box = gtk_widget_get_ancestor (GTK_WIDGET (dockbook),
++                                       GIMP_TYPE_PANED_BOX);
++  if (paned_box)
++    gimp_paned_box_update_collapsed (GIMP_PANED_BOX (paned_box));
++}
++
++/*  closes every panel of the group; the empty group removes itself  */
++void
++gimp_dockbook_close_group (GimpDockbook *dockbook)
++{
++  GList *children;
++  GList *iter;
++
++  g_return_if_fail (GIMP_IS_DOCKBOOK (dockbook));
++
++  g_object_ref (dockbook);
++
++  children = gtk_container_get_children (GTK_CONTAINER (dockbook));
++  for (iter = children; iter; iter = g_list_next (iter))
++    if (gtk_widget_get_parent (iter->data) == GTK_WIDGET (dockbook))
++      gtk_container_remove (GTK_CONTAINER (dockbook), iter->data);
++  g_list_free (children);
++
++  g_object_unref (dockbook);
++}
++
+ GtkWidget *
+ gimp_dockbook_new (GimpMenuFactory *menu_factory)
+ {
+diff --git a/app/widgets/gimpdockbook.h b/app/widgets/gimpdockbook.h
+index 89e1daf..f44b6f0 100644
+--- a/app/widgets/gimpdockbook.h
++++ b/app/widgets/gimpdockbook.h
+@@ -66,6 +66,11 @@ struct _GimpDockbookClass
+ GType           gimp_dockbook_get_type                (void);
+ GtkWidget     * gimp_dockbook_new                     (GimpMenuFactory          *menu_factory);
+ 
++gboolean        gimp_dockbook_get_collapsed           (GimpDockbook             *dockbook);
++void            gimp_dockbook_set_collapsed           (GimpDockbook             *dockbook,
++                                                       gboolean                  collapsed);
++void            gimp_dockbook_close_group             (GimpDockbook             *dockbook);
++
+ void            gimp_dockbook_set_dock                (GimpDockbook             *dockbook,
+                                                        GimpDock                 *dock);
+ GimpDock      * gimp_dockbook_get_dock                (GimpDockbook             *dockbook);
+diff --git a/app/widgets/gimppanedbox.c b/app/widgets/gimppanedbox.c
+index db3f585..cff03f9 100644
+--- a/app/widgets/gimppanedbox.c
++++ b/app/widgets/gimppanedbox.c
+@@ -51,6 +51,17 @@
+  */
+ #define DROP_AREA_SIZE                  6
+ 
++/*  ChopGimp: easier targets when dragging a panel tab to make a new group
++ *  below the others, or a new column beside them. The top one stays thin:
++ *  it lies over the tab bar, where a drop means « add to this group ».
++ */
++#define DROP_AREA_SIZE_END              28
++#define DROP_AREA_SIZE_SIDE             20
++
++#define CHOPGIMP_COLLAPSED_KEY          "chopgimp-collapsed"
++#define CHOPGIMP_FORCED_KEY             "chopgimp-forced"
++#define CHOPGIMP_SAVED_POS_KEY          "chopgimp-saved-pos"
++
+ #define DROP_HIGHLIGHT_MIN_SIZE         32
+ #define DROP_HIGHLIGHT_COLOR            "#215d9c"
+ #define DROP_HIGHLIGHT_OPACITY_ACTIVE   0.8
+@@ -271,6 +282,8 @@ gimp_paned_box_get_handle_drag (GimpPanedBox   *paned_box,
+   gint           area_h         = 0;
+   GtkOrientation orientation    = 0;
+   gint           drop_area_size = gimp_paned_box_get_drop_area_size (paned_box);
++  gint           start_size     = drop_area_size;
++  gint           end_size       = drop_area_size;
+ 
+   if (gimp_paned_box_will_handle_drag (paned_box->p->drag_handler,
+                                        GTK_WIDGET (paned_box),
+@@ -304,17 +317,22 @@ gimp_paned_box_get_handle_drag (GimpPanedBox   *paned_box,
+       if (! paned_box->p->widgets)
+         area_w = allocation.width;
+       else
+-        area_w = drop_area_size;
++        start_size = end_size = MIN (DROP_AREA_SIZE_SIDE,
++                                     MAX (drop_area_size, allocation.width / 3));
+ 
+-      if (x < drop_area_size)
++      if (x < start_size)
+         {
+           index = 0;
+           area_x = 0;
++          if (paned_box->p->widgets)
++            area_w = start_size;
+         }
+-      if (x > allocation.width - drop_area_size)
++      if (x > allocation.width - end_size)
+         {
+           index = -1;
+-          area_x = allocation.width - drop_area_size;
++          area_x = allocation.width - end_size;
++          if (paned_box->p->widgets)
++            area_w = end_size;
+         }
+     }
+   else /* if (orientation = GTK_ORIENTATION_VERTICAL) */
+@@ -328,17 +346,22 @@ gimp_paned_box_get_handle_drag (GimpPanedBox   *paned_box,
+       if (! paned_box->p->widgets)
+         area_h = allocation.height;
+       else
+-        area_h = drop_area_size;
++        end_size = MIN (DROP_AREA_SIZE_END,
++                        MAX (drop_area_size, allocation.height / 3));
+ 
+-      if (y < drop_area_size)
++      if (y < start_size)
+         {
+           index = 0;
+           area_y = 0;
++          if (paned_box->p->widgets)
++            area_h = start_size;
+         }
+-      if (y > allocation.height - drop_area_size)
++      if (y > allocation.height - end_size)
+         {
+           index = -1;
+-          area_y = allocation.height - drop_area_size;
++          area_y = allocation.height - end_size;
++          if (paned_box->p->widgets)
++            area_h = end_size;
+         }
+     }
+ 
+@@ -681,6 +704,119 @@ gimp_paned_box_drag_callback (GdkDragContext *context,
+     }
+ }
+ 
++/*  ChopGimp: collapsed panel groups (Photoshop: double-click on a tab).
++ *
++ *  A collapsed widget only asks for its tab bar. Walk the GtkPaned
++ *  hierarchy and give every collapsed side its minimum, the room going
++ *  to the side that still has an expanded widget (or to the last one,
++ *  so the free space ends up at the bottom). The position the user had
++ *  set is remembered and put back when both sides are expanded again.
++ */
++static gboolean
++gimp_paned_box_relayout_collapsed (GtkWidget *widget)
++{
++  GtkPaned  *paned;
++  GtkWidget *child1;
++  GtkWidget *child2;
++  gboolean   expanded1;
++  gboolean   expanded2;
++  gboolean   forced;
++
++  if (! GTK_IS_PANED (widget))
++    return ! g_object_get_data (G_OBJECT (widget), CHOPGIMP_COLLAPSED_KEY);
++
++  paned  = GTK_PANED (widget);
++  child1 = gtk_paned_get_child1 (paned);
++  child2 = gtk_paned_get_child2 (paned);
++
++  expanded1 = child1 ? gimp_paned_box_relayout_collapsed (child1) : FALSE;
++  expanded2 = child2 ? gimp_paned_box_relayout_collapsed (child2) : FALSE;
++
++  if (! child1 || ! child2)
++    return expanded1 || expanded2;
++
++  forced = g_object_get_data (G_OBJECT (paned), CHOPGIMP_FORCED_KEY) != NULL;
++
++  if (expanded1 && expanded2)
++    {
++      if (forced)
++        {
++          gint position =
++            GPOINTER_TO_INT (g_object_get_data (G_OBJECT (paned),
++                                                CHOPGIMP_SAVED_POS_KEY));
++
++          gtk_container_child_set (GTK_CONTAINER (paned), child1,
++                                   "resize", TRUE, NULL);
++          gtk_container_child_set (GTK_CONTAINER (paned), child2,
++                                   "resize", TRUE, NULL);
++
++          if (position > 0)
++            gtk_paned_set_position (paned, position);
++
++          g_object_set_data (G_OBJECT (paned), CHOPGIMP_FORCED_KEY, NULL);
++        }
++    }
++  else
++    {
++      GtkAllocation allocation;
++
++      gtk_widget_get_allocation (widget, &allocation);
++
++      if (! forced)
++        {
++          g_object_set_data (G_OBJECT (paned), CHOPGIMP_SAVED_POS_KEY,
++                             GINT_TO_POINTER (gtk_paned_get_position (paned)));
++          g_object_set_data (G_OBJECT (paned), CHOPGIMP_FORCED_KEY,
++                             GINT_TO_POINTER (TRUE));
++        }
++
++      /*  the expanded side takes the room; none expanded: the second one  */
++      gtk_container_child_set (GTK_CONTAINER (paned), child1,
++                               "resize", expanded1, NULL);
++      gtk_container_child_set (GTK_CONTAINER (paned), child2,
++                               "resize", ! expanded1, NULL);
++
++      /*  clamped by GtkPaned to the minimum size of the collapsed side  */
++      gtk_paned_set_position (paned,
++                              expanded1 ?
++                              MAX (allocation.width, allocation.height) : 0);
++    }
++
++  return expanded1 || expanded2;
++}
++
++void
++gimp_paned_box_update_collapsed (GimpPanedBox *paned_box)
++{
++  GList *children;
++  GList *iter;
++
++  g_return_if_fail (GIMP_IS_PANED_BOX (paned_box));
++
++  children = gtk_container_get_children (GTK_CONTAINER (paned_box));
++
++  for (iter = children; iter; iter = g_list_next (iter))
++    if (GTK_IS_PANED (iter->data))
++      gimp_paned_box_relayout_collapsed (iter->data);
++
++  g_list_free (children);
++}
++
++/*  the position to save in the session: never the one forced by a
++ *  collapsed group
++ */
++gint
++gimp_paned_box_get_user_position (GtkPaned *paned)
++{
++  g_return_val_if_fail (GTK_IS_PANED (paned), 0);
++
++  if (g_object_get_data (G_OBJECT (paned), CHOPGIMP_FORCED_KEY))
++    return GPOINTER_TO_INT (g_object_get_data (G_OBJECT (paned),
++                                               CHOPGIMP_SAVED_POS_KEY));
++
++  return gtk_paned_get_position (paned);
++}
++
+ GtkWidget *
+ gimp_paned_box_new (gboolean       homogeneous,
+                     gint           spacing,
+@@ -814,6 +950,8 @@ gimp_paned_box_add_widget (GimpPanedBox *paned_box,
+ 
+       g_object_unref (old_widget);
+     }
++
++  gimp_paned_box_update_collapsed (paned_box);
+ }
+ 
+ /**
+@@ -890,6 +1028,8 @@ gimp_paned_box_remove_widget (GimpPanedBox *paned_box,
+ 
+       g_object_unref (widget);
+     }
++
++  gimp_paned_box_update_collapsed (paned_box);
+ }
+ 
+ /**
+diff --git a/app/widgets/gimppanedbox.h b/app/widgets/gimppanedbox.h
+index df11363..dd7359e 100644
+--- a/app/widgets/gimppanedbox.h
++++ b/app/widgets/gimppanedbox.h
+@@ -73,3 +73,5 @@ gboolean    gimp_paned_box_will_handle_drag (GimpPanedBox            *paned_box,
+                                              gint                     time);
+ void        gimp_paned_box_set_drag_handler (GimpPanedBox            *paned_box,
+                                              GimpPanedBox            *drag_handler);
++void        gimp_paned_box_update_collapsed  (GimpPanedBox           *paned_box);
++gint        gimp_paned_box_get_user_position (GtkPaned               *paned);
+diff --git a/app/widgets/gimpsessioninfo-book.c b/app/widgets/gimpsessioninfo-book.c
+index 0049ec8..ce12b0d 100644
+--- a/app/widgets/gimpsessioninfo-book.c
++++ b/app/widgets/gimpsessioninfo-book.c
+@@ -34,6 +34,7 @@
+ #include "gimpdock.h"
+ #include "gimpdockbook.h"
+ #include "gimpsessioninfo.h"
++#include "gimppanedbox.h"
+ #include "gimpsessioninfo-book.h"
+ #include "gimpsessioninfo-dockable.h"
+ 
+@@ -215,8 +216,9 @@ gimp_session_info_book_from_widget (GimpDockbook *dockbook)
+     {
+       GtkPaned *paned = GTK_PANED (parent);
+ 
++      /*  ChopGimp: not the position forced by a collapsed group  */
+       if (GTK_WIDGET (dockbook) == gtk_paned_get_child2 (paned))
+-        info->position = gtk_paned_get_position (paned);
++        info->position = gimp_paned_box_get_user_position (paned);
+     }
+ 
+   info->current_page =
+diff --git a/app/widgets/gimpsessioninfo.c b/app/widgets/gimpsessioninfo.c
+index 2add7db..3682a75 100644
+--- a/app/widgets/gimpsessioninfo.c
++++ b/app/widgets/gimpsessioninfo.c
+@@ -594,6 +594,66 @@ gimp_session_info_new (void)
+   return g_object_new (GIMP_TYPE_SESSION_INFO, NULL);
+ }
+ 
++/*  ChopGimp « Reset panels »: recreate the docks @info describes for one
++ *  side of an existing dock container (the toolbox is left alone).
++ */
++void
++gimp_session_info_restore_side (GimpSessionInfo   *info,
++                                GimpDialogFactory *factory,
++                                GdkMonitor        *monitor,
++                                GimpDockContainer *container,
++                                GimpAlignmentType  side)
++{
++  GList *iter;
++
++  g_return_if_fail (GIMP_IS_SESSION_INFO (info));
++  g_return_if_fail (GIMP_IS_DIALOG_FACTORY (factory));
++  g_return_if_fail (GDK_IS_MONITOR (monitor));
++  g_return_if_fail (GIMP_IS_DOCK_CONTAINER (container));
++
++  for (iter = info->p->docks; iter; iter = g_list_next (iter))
++    {
++      GimpSessionInfoDock *dock_info = iter->data;
++      GimpDock            *dock;
++
++      if (dock_info->side != side ||
++          ! g_strcmp0 (dock_info->dock_type, "gimp-toolbox"))
++        continue;
++
++      dock = gimp_session_info_dock_restore (dock_info, factory, monitor,
++                                             container);
++
++      if (dock && dock_info->position != 0)
++        {
++          GtkWidget *parent = gtk_widget_get_parent (GTK_WIDGET (dock));
++
++          if (GTK_IS_PANED (parent) &&
++              GTK_WIDGET (dock) == gtk_paned_get_child2 (GTK_PANED (parent)))
++            gtk_paned_set_position (GTK_PANED (parent), dock_info->position);
++        }
++    }
++}
++
++const gchar *
++gimp_session_info_get_aux_value (GimpSessionInfo *info,
++                                 const gchar     *name)
++{
++  GList *iter;
++
++  g_return_val_if_fail (GIMP_IS_SESSION_INFO (info), NULL);
++  g_return_val_if_fail (name != NULL, NULL);
++
++  for (iter = info->p->aux_info; iter; iter = g_list_next (iter))
++    {
++      GimpSessionInfoAux *aux = iter->data;
++
++      if (! g_strcmp0 (aux->name, name))
++        return aux->value;
++    }
++
++  return NULL;
++}
++
+ void
+ gimp_session_info_restore (GimpSessionInfo   *info,
+                            GimpDialogFactory *factory,
+diff --git a/app/widgets/gimpsessioninfo.h b/app/widgets/gimpsessioninfo.h
+index 82d8680..f1875b9 100644
+--- a/app/widgets/gimpsessioninfo.h
++++ b/app/widgets/gimpsessioninfo.h
+@@ -57,6 +57,13 @@ GType             gimp_session_info_get_type                (void);
+ 
+ GimpSessionInfo * gimp_session_info_new                     (void);
+ 
++void              gimp_session_info_restore_side            (GimpSessionInfo        *info,
++                                                             GimpDialogFactory      *factory,
++                                                             GdkMonitor             *monitor,
++                                                             GimpDockContainer      *container,
++                                                             GimpAlignmentType       side);
++const gchar     * gimp_session_info_get_aux_value           (GimpSessionInfo        *info,
++                                                             const gchar            *name);
+ void              gimp_session_info_restore                 (GimpSessionInfo        *info,
+                                                              GimpDialogFactory      *factory,
+                                                              GdkMonitor             *monitor);
+diff --git a/app/widgets/gimpviewrendererdrawable.c b/app/widgets/gimpviewrendererdrawable.c
+index 2561c34..1d1b498 100644
+--- a/app/widgets/gimpviewrendererdrawable.c
++++ b/app/widgets/gimpviewrendererdrawable.c
+@@ -44,6 +44,7 @@
+ #include "core/gimppickable-auto-shrink.h"
+ #include "core/gimptempbuf.h"
+ 
++#include "chopgimp-rc.h"
+ #include "gimpviewrendererdrawable.h"
+ 
+ 
+@@ -161,39 +162,11 @@ gimp_view_renderer_drawable_render_async_callback (GimpAsync                *asy
+ 
+ /*  ── ChopGimp: thumbnails cropped to the content ─────────────────── */
+ 
+-static gint chopgimp_crop_state = -1;   /* -1 = not loaded yet */
+-
+-static GFile *
+-chopgimp_rc_file (void)
+-{
+-  return gimp_directory_file ("chopgimprc", NULL);
+-}
+-
+ gboolean
+ chopgimp_thumbs_get_crop (void)
+ {
+-  if (chopgimp_crop_state < 0)
+-    {
+-      GKeyFile *kf   = g_key_file_new ();
+-      GFile    *file = chopgimp_rc_file ();
+-      GError   *err  = NULL;
+-
+-      chopgimp_crop_state = 1;   /* default: cropped, like Photoshop */
+-
+-      if (g_key_file_load_from_file (kf, g_file_peek_path (file), G_KEY_FILE_NONE, NULL))
+-        {
+-          gboolean v = g_key_file_get_boolean (kf, "layers", "crop-thumbnails", &err);
+-
+-          if (! err)
+-            chopgimp_crop_state = v ? 1 : 0;
+-          g_clear_error (&err);
+-        }
+-
+-      g_object_unref (file);
+-      g_key_file_unref (kf);
+-    }
+-
+-  return chopgimp_crop_state == 1;
++  /*  default: cropped, like Photoshop  */
++  return chopgimp_rc_get_boolean ("layers", "crop-thumbnails", TRUE);
+ }
+ 
+ static void
+@@ -215,17 +188,9 @@ void
+ chopgimp_thumbs_set_crop (Gimp     *gimp,
+                           gboolean  crop)
+ {
+-  GKeyFile *kf   = g_key_file_new ();
+-  GFile    *file = chopgimp_rc_file ();
+-  GList    *list;
+-
+-  chopgimp_crop_state = crop ? 1 : 0;
++  GList *list;
+ 
+-  g_key_file_load_from_file (kf, g_file_peek_path (file), G_KEY_FILE_KEEP_COMMENTS, NULL);
+-  g_key_file_set_boolean (kf, "layers", "crop-thumbnails", crop);
+-  g_key_file_save_to_file (kf, g_file_peek_path (file), NULL);
+-  g_key_file_unref (kf);
+-  g_object_unref (file);
++  chopgimp_rc_set_boolean ("layers", "crop-thumbnails", crop);
+ 
+   if (gimp)
+     for (list = gimp_get_image_iter (gimp); list; list = list->next)
+diff --git a/app/widgets/meson.build b/app/widgets/meson.build
+index d51b375..3aedc1f 100644
+--- a/app/widgets/meson.build
++++ b/app/widgets/meson.build
+@@ -256,6 +256,7 @@ libappwidgets_sources = [
+   'gimpviewrenderer.c',
+   'gimpviewrendererbrush.c',
+   'gimpviewrendererbuffer.c',
++  'chopgimp-rc.c',
+   'gimpviewrendererdrawable.c',
+   'gimpviewrendererfont.c',
+   'gimpviewrenderergradient.c',
+diff --git a/menus/dockable-menu.ui.in.in b/menus/dockable-menu.ui.in.in
+index 3f699a2..aba9f16 100644
+--- a/menus/dockable-menu.ui.in.in
++++ b/menus/dockable-menu.ui.in.in
+@@ -7,6 +7,8 @@
+       <xi:include href="@GROUP@-dialogs-menuitems.ui" />
+     </submenu>
+     <item><attribute name="action">dockable.dockable-close-tab</attribute></item>
++    <item><attribute name="action">dockable.dockable-close-group</attribute></item>
++    <item><attribute name="action">dockable.dockable-collapse-group</attribute></item>
+     <item><attribute name="action">dockable.dockable-detach-tab</attribute></item>
+     <item><attribute name="action">dockable.dockable-lock-tab</attribute></item>
+     <section>
+diff --git a/menus/image-menu.ui.in.in b/menus/image-menu.ui.in.in
+index 27b8185..367d024 100644
+--- a/menus/image-menu.ui.in.in
++++ b/menus/image-menu.ui.in.in
+@@ -886,6 +886,8 @@
+       </section>
+       <section>
+         <item><attribute name="action">app.windows-hide-docks</attribute></item>
++        <item><attribute name="action">app.windows-hide-right-docks</attribute></item>
++        <item><attribute name="action">app.windows-reset-panels</attribute></item>
+         <item><attribute name="action">app.windows-show-tabs</attribute></item>
+         <submenu>
+           <attribute name="label" translatable="yes" context="windows-action">_Tabs Position</attribute>
+-- 
+2.53.0
+

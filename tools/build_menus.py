@@ -87,7 +87,20 @@ reglages += ["        </submenu>", "      </section>"]
 outils = ["      <section>"] + ["  " + l for l in get["_Tools"]] + ["      </section>"]
 
 image = get["_Image"][:2] + reglages + get["_Image"][2:]
-fenetre = insert_before_close(get["_Windows"], outils)
+# Les panneaux courants directement dans le menu, comme Photoshop : c'est là
+# qu'on rouvre un panneau fermé. La liste complète reste dans le sous-menu
+# « Fenêtres ancrables ».
+PANNEAUX = [["dialogs-layers", "dialogs-channels", "dialogs-paths"],
+            ["dialogs-colors", "dialogs-palettes", "dialogs-gradients", "dialogs-patterns",
+             "dialogs-brushes", "dialogs-fonts"],
+            ["dialogs-undo-history", "dialogs-navigation", "dialogs-histogram", "dialogs-cursor"]]
+panneaux = []
+for sec in PANNEAUX:
+    panneaux.append("      <section>")
+    panneaux += ['        <item><attribute name="action">app.%s</attribute></item>' % a for a in sec]
+    panneaux.append("      </section>")
+fenetre = get["_Windows"][:2] + panneaux + get["_Windows"][2:]
+fenetre = insert_before_close(fenetre, outils)
 
 texte = """    <submenu>
       <attribute name="label" translatable="no">_Texte</attribute>

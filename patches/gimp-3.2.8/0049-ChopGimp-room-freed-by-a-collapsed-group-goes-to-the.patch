@@ -1,0 +1,346 @@
+From 6ac7e6eb188d79d087f6261b4b49b88461d69414 Mon Sep 17 00:00:00 2001
+From: ChopGimp <mathieu.redon@proton.me>
+Date: Fri, 13 Nov 2026 07:29:19 +0100
+Subject: [PATCH 49/51] ChopGimp: room freed by a collapsed group goes to the
+ group below
+
+---
+ app/widgets/gimppanedbox.c | 272 +++++++++++++++++++++++++++++++------
+ 1 file changed, 228 insertions(+), 44 deletions(-)
+
+diff --git a/app/widgets/gimppanedbox.c b/app/widgets/gimppanedbox.c
+index cff03f9..f6c9e5c 100644
+--- a/app/widgets/gimppanedbox.c
++++ b/app/widgets/gimppanedbox.c
+@@ -706,63 +706,108 @@ gimp_paned_box_drag_callback (GdkDragContext *context,
+ 
+ /*  ChopGimp: collapsed panel groups (Photoshop: double-click on a tab).
+  *
+- *  A collapsed widget only asks for its tab bar. Walk the GtkPaned
+- *  hierarchy and give every collapsed side its minimum, the room going
+- *  to the side that still has an expanded widget (or to the last one,
+- *  so the free space ends up at the bottom). The position the user had
+- *  set is remembered and put back when both sides are expanded again.
++ *  A collapsed widget only asks for its tab bar. The room it frees goes
++ *  to the next expanded group below it (else above), and comes back from
++ *  there when the group is expanded again. All the GtkPaned positions of
++ *  the hierarchy are then set from these sizes, and the « resize » child
++ *  properties make the collapsed groups keep their size when the window
++ *  is resized.
++ */
++#define CHOPGIMP_SAVED_SIZE_KEY "chopgimp-saved-size"
++
++static void
++gimp_paned_box_collect_leaves (GtkWidget *widget,
++                               GPtrArray *leaves,
++                               gboolean  *marked)
++{
++  if (GTK_IS_PANED (widget))
++    {
++      GtkWidget *child1 = gtk_paned_get_child1 (GTK_PANED (widget));
++      GtkWidget *child2 = gtk_paned_get_child2 (GTK_PANED (widget));
++
++      if (g_object_get_data (G_OBJECT (widget), CHOPGIMP_FORCED_KEY))
++        *marked = TRUE;
++
++      if (child1)
++        gimp_paned_box_collect_leaves (child1, leaves, marked);
++      if (child2)
++        gimp_paned_box_collect_leaves (child2, leaves, marked);
++    }
++  else
++    {
++      g_ptr_array_add (leaves, widget);
++    }
++}
++
++static gint
++gimp_paned_box_widget_size (GtkWidget      *widget,
++                            GtkOrientation  orientation)
++{
++  return (orientation == GTK_ORIENTATION_VERTICAL ?
++          gtk_widget_get_allocated_height (widget) :
++          gtk_widget_get_allocated_width  (widget));
++}
++
++/*  sets the positions and « resize » flags of a subtree; returns its size
++ *  in @size and whether it holds an expanded widget
+  */
+ static gboolean
+-gimp_paned_box_relayout_collapsed (GtkWidget *widget)
++gimp_paned_box_apply_collapsed (GtkWidget      *widget,
++                                GtkOrientation  orientation,
++                                GHashTable     *targets,
++                                gboolean        set_positions,
++                                gint           *size)
+ {
+   GtkPaned  *paned;
+   GtkWidget *child1;
+   GtkWidget *child2;
+   gboolean   expanded1;
+   gboolean   expanded2;
+-  gboolean   forced;
++  gint       size1  = 0;
++  gint       size2  = 0;
++  gint       handle = 0;
+ 
+   if (! GTK_IS_PANED (widget))
+-    return ! g_object_get_data (G_OBJECT (widget), CHOPGIMP_COLLAPSED_KEY);
++    {
++      *size = GPOINTER_TO_INT (g_hash_table_lookup (targets, widget));
++
++      return ! g_object_get_data (G_OBJECT (widget), CHOPGIMP_COLLAPSED_KEY);
++    }
+ 
+   paned  = GTK_PANED (widget);
+   child1 = gtk_paned_get_child1 (paned);
+   child2 = gtk_paned_get_child2 (paned);
+ 
+-  expanded1 = child1 ? gimp_paned_box_relayout_collapsed (child1) : FALSE;
+-  expanded2 = child2 ? gimp_paned_box_relayout_collapsed (child2) : FALSE;
+-
+   if (! child1 || ! child2)
+-    return expanded1 || expanded2;
++    {
++      *size = gimp_paned_box_widget_size (widget, orientation);
+ 
+-  forced = g_object_get_data (G_OBJECT (paned), CHOPGIMP_FORCED_KEY) != NULL;
++      return TRUE;
++    }
+ 
+-  if (expanded1 && expanded2)
+-    {
+-      if (forced)
+-        {
+-          gint position =
+-            GPOINTER_TO_INT (g_object_get_data (G_OBJECT (paned),
+-                                                CHOPGIMP_SAVED_POS_KEY));
++  handle = MAX (0,
++                gimp_paned_box_widget_size (widget, orientation) -
++                gimp_paned_box_widget_size (child1, orientation) -
++                gimp_paned_box_widget_size (child2, orientation));
+ 
+-          gtk_container_child_set (GTK_CONTAINER (paned), child1,
+-                                   "resize", TRUE, NULL);
+-          gtk_container_child_set (GTK_CONTAINER (paned), child2,
+-                                   "resize", TRUE, NULL);
++  expanded1 = gimp_paned_box_apply_collapsed (child1, orientation, targets,
++                                              set_positions, &size1);
++  expanded2 = gimp_paned_box_apply_collapsed (child2, orientation, targets,
++                                              set_positions, &size2);
+ 
+-          if (position > 0)
+-            gtk_paned_set_position (paned, position);
++  if (expanded1 && expanded2)
++    {
++      gtk_container_child_set (GTK_CONTAINER (paned), child1,
++                               "resize", TRUE, NULL);
++      gtk_container_child_set (GTK_CONTAINER (paned), child2,
++                               "resize", TRUE, NULL);
+ 
+-          g_object_set_data (G_OBJECT (paned), CHOPGIMP_FORCED_KEY, NULL);
+-        }
++      g_object_set_data (G_OBJECT (paned), CHOPGIMP_FORCED_KEY, NULL);
+     }
+   else
+     {
+-      GtkAllocation allocation;
+-
+-      gtk_widget_get_allocation (widget, &allocation);
+-
+-      if (! forced)
++      /*  remember the position of the user for the session file  */
++      if (! g_object_get_data (G_OBJECT (paned), CHOPGIMP_FORCED_KEY))
+         {
+           g_object_set_data (G_OBJECT (paned), CHOPGIMP_SAVED_POS_KEY,
+                              GINT_TO_POINTER (gtk_paned_get_position (paned)));
+@@ -770,36 +815,175 @@ gimp_paned_box_relayout_collapsed (GtkWidget *widget)
+                              GINT_TO_POINTER (TRUE));
+         }
+ 
+-      /*  the expanded side takes the room; none expanded: the second one  */
++      /*  the expanded side follows the window; none expanded: the second
++       *  one, so that the free room ends up at the bottom
++       */
+       gtk_container_child_set (GTK_CONTAINER (paned), child1,
+                                "resize", expanded1, NULL);
+       gtk_container_child_set (GTK_CONTAINER (paned), child2,
+                                "resize", ! expanded1, NULL);
+-
+-      /*  clamped by GtkPaned to the minimum size of the collapsed side  */
+-      gtk_paned_set_position (paned,
+-                              expanded1 ?
+-                              MAX (allocation.width, allocation.height) : 0);
+     }
+ 
++  if (set_positions)
++    gtk_paned_set_position (paned, size1);
++
++  *size = size1 + handle + size2;
++
+   return expanded1 || expanded2;
+ }
+ 
+ void
+ gimp_paned_box_update_collapsed (GimpPanedBox *paned_box)
+ {
+-  GList *children;
+-  GList *iter;
++  GtkOrientation  orientation;
++  GtkWidget      *root   = NULL;
++  GPtrArray      *leaves;
++  GHashTable     *targets;
++  GList          *children;
++  GList          *iter;
++  gboolean        marked        = FALSE;
++  gboolean        any_collapsed = FALSE;
++  gboolean        any_restored  = FALSE;
++  gboolean        allocated     = TRUE;
++  gint           *size;
++  gint           *min;
++  gint            total;
++  gint            i, j;
+ 
+   g_return_if_fail (GIMP_IS_PANED_BOX (paned_box));
+ 
+   children = gtk_container_get_children (GTK_CONTAINER (paned_box));
+-
+   for (iter = children; iter; iter = g_list_next (iter))
+     if (GTK_IS_PANED (iter->data))
+-      gimp_paned_box_relayout_collapsed (iter->data);
+-
++      root = iter->data;
+   g_list_free (children);
++
++  if (! root)
++    return;
++
++  orientation = gtk_orientable_get_orientation (GTK_ORIENTABLE (paned_box));
++
++  leaves = g_ptr_array_new ();
++  gimp_paned_box_collect_leaves (root, leaves, &marked);
++
++  size = g_new0 (gint, leaves->len);
++  min  = g_new0 (gint, leaves->len);
++
++  for (i = 0; i < leaves->len; i++)
++    {
++      GtkWidget *leaf = g_ptr_array_index (leaves, i);
++
++      size[i] = gimp_paned_box_widget_size (leaf, orientation);
++
++      if (orientation == GTK_ORIENTATION_VERTICAL)
++        gtk_widget_get_preferred_height (leaf, &min[i], NULL);
++      else
++        gtk_widget_get_preferred_width (leaf, &min[i], NULL);
++
++      if (size[i] <= 1)
++        allocated = FALSE;
++
++      if (g_object_get_data (G_OBJECT (leaf), CHOPGIMP_COLLAPSED_KEY))
++        any_collapsed = TRUE;
++      else if (g_object_get_data (G_OBJECT (leaf), CHOPGIMP_SAVED_SIZE_KEY))
++        any_restored = TRUE;
++    }
++
++  /*  nothing collapsed, now or before: GIMP's own layout is left alone  */
++  if (! any_collapsed && ! any_restored && ! marked)
++    {
++      g_free (size);
++      g_free (min);
++      g_ptr_array_unref (leaves);
++      return;
++    }
++
++#define IS_COLLAPSED(n) \
++  (g_object_get_data (G_OBJECT (g_ptr_array_index (leaves, (n))), \
++                      CHOPGIMP_COLLAPSED_KEY) != NULL)
++
++  if (allocated)
++    {
++      for (i = 0; i < leaves->len; i++)
++        {
++          GObject *leaf = g_ptr_array_index (leaves, i);
++
++          if (IS_COLLAPSED (i))
++            {
++              gint freed = size[i] - min[i];
++              gint to    = -1;
++
++              if (freed <= 0)
++                continue;
++
++              /*  the next expanded group below, else above, else the last  */
++              for (j = i + 1; j < leaves->len && to < 0; j++)
++                if (! IS_COLLAPSED (j))
++                  to = j;
++              for (j = i - 1; j >= 0 && to < 0; j--)
++                if (! IS_COLLAPSED (j))
++                  to = j;
++              if (to < 0)
++                to = leaves->len - 1;
++
++              if (to == i)
++                continue;
++
++              if (! g_object_get_data (leaf, CHOPGIMP_SAVED_SIZE_KEY))
++                g_object_set_data (leaf, CHOPGIMP_SAVED_SIZE_KEY,
++                                   GINT_TO_POINTER (size[i]));
++
++              size[i]   = min[i];
++              size[to] += freed;
++            }
++          else if (g_object_get_data (leaf, CHOPGIMP_SAVED_SIZE_KEY))
++            {
++              /*  expanded again: take its former size back, from the
++               *  groups below first
++               */
++              gint wanted =
++                MAX (GPOINTER_TO_INT (g_object_get_data (leaf,
++                                                         CHOPGIMP_SAVED_SIZE_KEY)),
++                     min[i]) - size[i];
++              gint pass;
++
++              g_object_set_data (leaf, CHOPGIMP_SAVED_SIZE_KEY, NULL);
++
++              for (pass = 0; pass < 2 && wanted > 0; pass++)
++                for (j = (pass == 0 ? i + 1 : i - 1);
++                     j >= 0 && j < leaves->len && wanted > 0;
++                     j += (pass == 0 ? 1 : -1))
++                  {
++                    gint spare = size[j] - min[j];
++                    gint taken;
++
++                    /*  a collapsed group only gives its empty room  */
++                    if (spare <= 0)
++                      continue;
++
++                    taken    = MIN (spare, wanted);
++                    size[j] -= taken;
++                    size[i] += taken;
++                    wanted  -= taken;
++                  }
++            }
++        }
++    }
++
++#undef IS_COLLAPSED
++
++  targets = g_hash_table_new (NULL, NULL);
++  for (i = 0; i < leaves->len; i++)
++    g_hash_table_insert (targets, g_ptr_array_index (leaves, i),
++                         GINT_TO_POINTER (size[i]));
++
++  gimp_paned_box_apply_collapsed (root, orientation, targets,
++                                  allocated, &total);
++
++  g_hash_table_unref (targets);
++  g_free (size);
++  g_free (min);
++  g_ptr_array_unref (leaves);
+ }
+ 
+ /*  the position to save in the session: never the one forced by a
+-- 
+2.53.0
+

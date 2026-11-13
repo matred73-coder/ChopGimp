@@ -1,0 +1,205 @@
+From 3a58bc4f659899c6680f23fa999f08f6145153e4 Mon Sep 17 00:00:00 2001
+From: ChopGimp <mathieu.redon@proton.me>
+Date: Fri, 13 Nov 2026 07:30:22 +0100
+Subject: [PATCH 50/51] =?UTF-8?q?ChopGimp:=20collapsed=20groups=20?=
+ =?UTF-8?q?=E2=80=94=20sizes=20from=20paned=20positions,=20session=20saved?=
+ =?UTF-8?q?=20with=20groups=20expanded?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+---
+ app/widgets/gimppanedbox.c         | 82 +++++++++++++++++++-----------
+ app/widgets/gimppanedbox.h         |  1 -
+ app/widgets/gimpsessioninfo-book.c |  3 +-
+ app/widgets/gimpsessioninfo-dock.c |  5 ++
+ 4 files changed, 59 insertions(+), 32 deletions(-)
+
+diff --git a/app/widgets/gimppanedbox.c b/app/widgets/gimppanedbox.c
+index f6c9e5c..5cb63d4 100644
+--- a/app/widgets/gimppanedbox.c
++++ b/app/widgets/gimppanedbox.c
+@@ -60,7 +60,6 @@
+ 
+ #define CHOPGIMP_COLLAPSED_KEY          "chopgimp-collapsed"
+ #define CHOPGIMP_FORCED_KEY             "chopgimp-forced"
+-#define CHOPGIMP_SAVED_POS_KEY          "chopgimp-saved-pos"
+ 
+ #define DROP_HIGHLIGHT_MIN_SIZE         32
+ #define DROP_HIGHLIGHT_COLOR            "#215d9c"
+@@ -748,6 +747,45 @@ gimp_paned_box_widget_size (GtkWidget      *widget,
+           gtk_widget_get_allocated_width  (widget));
+ }
+ 
++/*  the size every widget gets from the current GtkPaned positions (they
++ *  are up to date even before the next size allocation)
++ */
++static void
++gimp_paned_box_current_sizes (GtkWidget      *widget,
++                              GtkOrientation  orientation,
++                              gint            total,
++                              GHashTable     *sizes)
++{
++  GtkWidget *child1;
++  GtkWidget *child2;
++  gint       handle;
++  gint       position;
++
++  if (! GTK_IS_PANED (widget))
++    {
++      g_hash_table_insert (sizes, widget, GINT_TO_POINTER (total));
++      return;
++    }
++
++  child1 = gtk_paned_get_child1 (GTK_PANED (widget));
++  child2 = gtk_paned_get_child2 (GTK_PANED (widget));
++
++  if (! child1 || ! child2)
++    return;
++
++  handle = MAX (0,
++                gimp_paned_box_widget_size (widget, orientation) -
++                gimp_paned_box_widget_size (child1, orientation) -
++                gimp_paned_box_widget_size (child2, orientation));
++
++  position = CLAMP (gtk_paned_get_position (GTK_PANED (widget)),
++                    0, MAX (0, total - handle));
++
++  gimp_paned_box_current_sizes (child1, orientation, position, sizes);
++  gimp_paned_box_current_sizes (child2, orientation,
++                                total - handle - position, sizes);
++}
++
+ /*  sets the positions and « resize » flags of a subtree; returns its size
+  *  in @size and whether it holds an expanded widget
+  */
+@@ -806,14 +844,9 @@ gimp_paned_box_apply_collapsed (GtkWidget      *widget,
+     }
+   else
+     {
+-      /*  remember the position of the user for the session file  */
+-      if (! g_object_get_data (G_OBJECT (paned), CHOPGIMP_FORCED_KEY))
+-        {
+-          g_object_set_data (G_OBJECT (paned), CHOPGIMP_SAVED_POS_KEY,
+-                             GINT_TO_POINTER (gtk_paned_get_position (paned)));
+-          g_object_set_data (G_OBJECT (paned), CHOPGIMP_FORCED_KEY,
+-                             GINT_TO_POINTER (TRUE));
+-        }
++      /*  marks the hierarchy as handled by us (see update_collapsed)  */
++      g_object_set_data (G_OBJECT (paned), CHOPGIMP_FORCED_KEY,
++                         GINT_TO_POINTER (TRUE));
+ 
+       /*  the expanded side follows the window; none expanded: the second
+        *  one, so that the free room ends up at the bottom
+@@ -869,20 +902,26 @@ gimp_paned_box_update_collapsed (GimpPanedBox *paned_box)
+   size = g_new0 (gint, leaves->len);
+   min  = g_new0 (gint, leaves->len);
+ 
++  targets = g_hash_table_new (NULL, NULL);
++  gimp_paned_box_current_sizes (root, orientation,
++                                gimp_paned_box_widget_size (root, orientation),
++                                targets);
++
+   for (i = 0; i < leaves->len; i++)
+     {
+       GtkWidget *leaf = g_ptr_array_index (leaves, i);
+ 
+-      size[i] = gimp_paned_box_widget_size (leaf, orientation);
++      /*  never laid out yet: positions are left alone  */
++      if (gimp_paned_box_widget_size (leaf, orientation) <= 1)
++        allocated = FALSE;
++
++      size[i] = GPOINTER_TO_INT (g_hash_table_lookup (targets, leaf));
+ 
+       if (orientation == GTK_ORIENTATION_VERTICAL)
+         gtk_widget_get_preferred_height (leaf, &min[i], NULL);
+       else
+         gtk_widget_get_preferred_width (leaf, &min[i], NULL);
+ 
+-      if (size[i] <= 1)
+-        allocated = FALSE;
+-
+       if (g_object_get_data (G_OBJECT (leaf), CHOPGIMP_COLLAPSED_KEY))
+         any_collapsed = TRUE;
+       else if (g_object_get_data (G_OBJECT (leaf), CHOPGIMP_SAVED_SIZE_KEY))
+@@ -892,6 +931,7 @@ gimp_paned_box_update_collapsed (GimpPanedBox *paned_box)
+   /*  nothing collapsed, now or before: GIMP's own layout is left alone  */
+   if (! any_collapsed && ! any_restored && ! marked)
+     {
++      g_hash_table_unref (targets);
+       g_free (size);
+       g_free (min);
+       g_ptr_array_unref (leaves);
+@@ -972,7 +1012,6 @@ gimp_paned_box_update_collapsed (GimpPanedBox *paned_box)
+ 
+ #undef IS_COLLAPSED
+ 
+-  targets = g_hash_table_new (NULL, NULL);
+   for (i = 0; i < leaves->len; i++)
+     g_hash_table_insert (targets, g_ptr_array_index (leaves, i),
+                          GINT_TO_POINTER (size[i]));
+@@ -986,21 +1025,6 @@ gimp_paned_box_update_collapsed (GimpPanedBox *paned_box)
+   g_ptr_array_unref (leaves);
+ }
+ 
+-/*  the position to save in the session: never the one forced by a
+- *  collapsed group
+- */
+-gint
+-gimp_paned_box_get_user_position (GtkPaned *paned)
+-{
+-  g_return_val_if_fail (GTK_IS_PANED (paned), 0);
+-
+-  if (g_object_get_data (G_OBJECT (paned), CHOPGIMP_FORCED_KEY))
+-    return GPOINTER_TO_INT (g_object_get_data (G_OBJECT (paned),
+-                                               CHOPGIMP_SAVED_POS_KEY));
+-
+-  return gtk_paned_get_position (paned);
+-}
+-
+ GtkWidget *
+ gimp_paned_box_new (gboolean       homogeneous,
+                     gint           spacing,
+diff --git a/app/widgets/gimppanedbox.h b/app/widgets/gimppanedbox.h
+index dd7359e..65b17cc 100644
+--- a/app/widgets/gimppanedbox.h
++++ b/app/widgets/gimppanedbox.h
+@@ -74,4 +74,3 @@ gboolean    gimp_paned_box_will_handle_drag (GimpPanedBox            *paned_box,
+ void        gimp_paned_box_set_drag_handler (GimpPanedBox            *paned_box,
+                                              GimpPanedBox            *drag_handler);
+ void        gimp_paned_box_update_collapsed  (GimpPanedBox           *paned_box);
+-gint        gimp_paned_box_get_user_position (GtkPaned               *paned);
+diff --git a/app/widgets/gimpsessioninfo-book.c b/app/widgets/gimpsessioninfo-book.c
+index ce12b0d..717a935 100644
+--- a/app/widgets/gimpsessioninfo-book.c
++++ b/app/widgets/gimpsessioninfo-book.c
+@@ -216,9 +216,8 @@ gimp_session_info_book_from_widget (GimpDockbook *dockbook)
+     {
+       GtkPaned *paned = GTK_PANED (parent);
+ 
+-      /*  ChopGimp: not the position forced by a collapsed group  */
+       if (GTK_WIDGET (dockbook) == gtk_paned_get_child2 (paned))
+-        info->position = gimp_paned_box_get_user_position (paned);
++        info->position = gtk_paned_get_position (paned);
+     }
+ 
+   info->current_page =
+diff --git a/app/widgets/gimpsessioninfo-dock.c b/app/widgets/gimpsessioninfo-dock.c
+index 159ebd9..5d45ae7 100644
+--- a/app/widgets/gimpsessioninfo-dock.c
++++ b/app/widgets/gimpsessioninfo-dock.c
+@@ -244,6 +244,11 @@ gimp_session_info_dock_from_widget (GimpDock *dock)
+                                           "gimp-toolbox" :
+                                           "gimp-dock");
+ 
++  /*  ChopGimp: the session keeps the sizes of the expanded groups  */
++  for (list = gimp_dock_get_dockbooks (dock); list; list = g_list_next (list))
++    if (gimp_dockbook_get_collapsed (list->data))
++      gimp_dockbook_set_collapsed (list->data, FALSE);
++
+   for (list = gimp_dock_get_dockbooks (dock); list; list = g_list_next (list))
+     {
+       GimpSessionInfoBook *book;
+-- 
+2.53.0
+

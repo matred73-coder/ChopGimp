@@ -661,6 +661,36 @@ def _spot_heal():
     return s
 
 
+@icon("chopgimp-panel-collapse")
+def _panel_collapse():
+    # Chevron vers le bas : réduire un groupe de panneaux
+    return polyline([(3.5, 5.5), (8, 10.5), (12.5, 5.5)], 1.7)
+
+
+@icon("chopgimp-panel-expand")
+def _panel_expand():
+    # Chevron vers la droite : développer un groupe réduit
+    return polyline([(5.5, 3.5), (10.5, 8), (5.5, 12.5)], 1.7)
+
+
+@icon("chopgimp-panel-close")
+def _panel_close():
+    # Croix : fermer le groupe
+    return line(4, 4, 12, 12, 1.7) + line(12, 4, 4, 12, 1.7)
+
+
+@icon("chopgimp-dock-hide")
+def _dock_hide():
+    # Double chevron vers la droite : masquer la colonne de panneaux
+    return polyline([(3, 3.5), (7.5, 8), (3, 12.5)], 1.7) + polyline([(8.5, 3.5), (13, 8), (8.5, 12.5)], 1.7)
+
+
+@icon("chopgimp-dock-show")
+def _dock_show():
+    # Double chevron vers la gauche : réafficher la colonne de panneaux
+    return polyline([(7.5, 3.5), (3, 8), (7.5, 12.5)], 1.7) + polyline([(13, 3.5), (8.5, 8), (13, 12.5)], 1.7)
+
+
 @icon("chopgimp-tool-shape")
 def _shape():
     # Carré + cercle superposés (outil Forme)

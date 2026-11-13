@@ -116,15 +116,66 @@ GimpDockable {
   background-color: @bg-color;
 }
 
-/* Séparateurs entre panneaux : fine ligne sombre, sans poignée */
-paned > separator,
-paned.horizontal > separator,
-paned.vertical > separator {
+/* Séparateurs entre panneaux.
+ * Ceux des docks (classe « wide ») font 6 px : c'est toute la zone que la
+ * souris peut saisir pour redimensionner. Ils s'éclairent au survol.
+ * Les autres restent une ligne fine, avec une zone de saisie invisible. */
+paned > separator {
   background-image: none;
   background-color: @edge-border-color;
-  min-width: 2px;
-  min-height: 2px;
+  min-width: 1px;
+  min-height: 1px;
+}
+
+paned.horizontal > separator:not(.wide) {
+  margin: 0 -4px;
+  padding: 0 4px;
+  background-clip: content-box;
+}
+
+paned.vertical > separator:not(.wide) {
+  margin: -4px 0;
+  padding: 4px 0;
+  background-clip: content-box;
+}
+
+paned > separator.wide {
+  min-width: 6px;
+  min-height: 6px;
+  margin: 0;
   padding: 0;
+  background-color: @ps-chrome;
+  border: 1px solid @edge-border-color;
+}
+
+paned > separator.wide:hover {
+  background-color: @ps-accent;
+  border-color: @ps-accent;
+}
+
+/* Boutons de groupe (réduire, menu, fermer) au bout de la barre d'onglets */
+#chopgimp-dockbook-buttons button {
+  min-width: 20px;
+  min-height: 20px;
+  padding: 0;
+  margin: 0 1px;
+}
+
+/* Bande au bord droit de la fenêtre : masque / affiche les panneaux */
+#chopgimp-dock-strip {
+  min-width: 12px;
+  padding: 0;
+  margin: 0;
+  border: none;
+  border-left: 1px solid @edge-border-color;
+  border-radius: 0;
+  background-image: none;
+  background-color: @ps-chrome;
+  box-shadow: none;
+}
+
+#chopgimp-dock-strip:hover {
+  background-color: @hover-color;
 }
 
 /* ── Onglets des panneaux ──────────────────────────────────────

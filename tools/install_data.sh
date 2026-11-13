@@ -36,6 +36,14 @@ sed -i -e 's/^Name=.*/Name=PS-Line/' -e '/^Hidden=/d' \
        -e 's/^Comment=.*/Comment=PhotoGIMP Pro — icônes style Photoshop (originales)/' \
        "$DATA/icons/PS-Line/index.theme"
 
+# 3b. Icônes des boutons de panneaux : aussi dans le thème de secours de GIMP,
+#     pour qu'elles existent quel que soit le thème d'icônes choisi
+mkdir -p "$DATA/icons/hicolor/scalable/actions"
+for i in "$SRC/icons/PS-Line/overlay/scalable/apps/"chopgimp-panel-*.svg \
+         "$SRC/icons/PS-Line/overlay/scalable/apps/"chopgimp-dock-*.svg; do
+    install -m 644 "$i" "$DATA/icons/hicolor/scalable/actions/"
+done
+
 # 4. Menus Photoshop (remplacent ceux de GIMP)
 python3 "$SRC/tools/build_menus.py" "$DATA/menus" "$TMP/menus"
 cp "$TMP/menus/"*.ui "$DATA/menus/"
