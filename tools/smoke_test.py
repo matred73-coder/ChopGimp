@@ -694,6 +694,36 @@ try:
     except Exception as e:
         report(False, "Base III", repr(e)[:200])
 
+    # 3 octies. IA locale (modèles u2netp et super-résolution copiés par le lanceur)
+    try:
+        im = Gimp.Image.new(160, 120, Gimp.ImageBaseType.RGB)
+        bg = Gimp.Layer.new(im, "Photo", 160, 120, Gimp.ImageType.RGB_IMAGE, 100, Gimp.LayerMode.NORMAL)
+        im.insert_layer(bg, None, 0)
+        Gimp.context_set_foreground(color(0.2, 0.4, 0.9))
+        bg.edit_fill(Gimp.FillType.FOREGROUND)
+        im.select_ellipse(Gimp.ChannelOps.REPLACE, 50, 25, 60, 70)
+        Gimp.context_set_foreground(color(0.95, 0.75, 0.6))
+        bg.edit_fill(Gimp.FillType.FOREGROUND)
+        Gimp.Selection.none(im)
+        r = run("chopgimp-ia-remove-background", **{"run-mode": Gimp.RunMode.NONINTERACTIVE, "image": im,
+                                                    "drawables": [bg]})
+        report(r.index(0) == Gimp.PDBStatusType.SUCCESS and bg.get_mask() is not None,
+               "IA : supprimer l'arrière-plan (masque)", str(r.index(1)) if r.length() > 1 else "")
+        r = run("chopgimp-ia-select-subject", **{"run-mode": Gimp.RunMode.NONINTERACTIVE, "image": im,
+                                                 "drawables": [bg]})
+        report(r.index(0) == Gimp.PDBStatusType.SUCCESS and not Gimp.Selection.is_empty(im),
+               "IA : sélection du sujet")
+        before = {i.get_id() for i in Gimp.get_images()}
+        r = run("chopgimp-ia-upscale", **{"run-mode": Gimp.RunMode.NONINTERACTIVE, "image": im,
+                                          "drawables": [bg], "factor": 2})
+        new = [i for i in Gimp.get_images() if i.get_id() not in before]
+        report(r.index(0) == Gimp.PDBStatusType.SUCCESS and new and
+               (new[0].get_width(), new[0].get_height()) == (320, 240),
+               "IA : agrandissement ×2 (super-résolution)",
+               "%dx%d" % (new[0].get_width(), new[0].get_height()) if new else str(r.index(1)))
+    except Exception as e:
+        report(False, "IA locale", repr(e)[:200])
+
     # 4. Réglages d'usine présents (thème, icônes, menus, raccourcis)
     data = Gimp.data_directory()
     sysconf = Gimp.sysconf_directory()

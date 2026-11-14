@@ -889,6 +889,27 @@
             ]
         },
         {
+            "name": "python-ia",
+            "buildsystem": "simple",
+            "build-commands": [
+                "python3 -m pip install --no-index --no-deps --no-build-isolation --prefix=${FLATPAK_DEST} numpy-2.5.4-cp314-cp314-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl onnxruntime-1.32.0-cp314-cp314-manylinux_2_28_x86_64.whl"
+            ],
+            "sources": [
+                {
+                    "type": "file",
+                    "dest-filename": "numpy-2.5.4-cp314-cp314-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl",
+                    "url": "https://files.pythonhosted.org/packages/16/d5/928078d2b28f26829b138b4a6c3980045022fb409f570657a224ae60ef4e/numpy-2.5.4-cp314-cp314-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl",
+                    "sha256": "d549420b8858885cea8838a727842249218b9c1da24dd517e25c9c7a948310a3"
+                },
+                {
+                    "type": "file",
+                    "dest-filename": "onnxruntime-1.32.0-cp314-cp314-manylinux_2_28_x86_64.whl",
+                    "url": "https://files.pythonhosted.org/packages/94/b5/cd55e7f1dfcf2e5fbf3a6915a8c6b4cf81df091e81de2db40e58357ffba4/onnxruntime-1.32.0-cp314-cp314-manylinux_2_28_x86_64.whl",
+                    "sha256": "48b878f9551d465aa79ee94ecaf49a1f6b5d27f2975efa775ded374db14d0af1"
+                }
+            ]
+        },
+        {
             "name": "gimp",
             "sources": [
                 {

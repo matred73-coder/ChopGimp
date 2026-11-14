@@ -117,9 +117,28 @@ LQR_MODULES = [
                   "sha256": "64b0c4ac76d39cca79501b3f53544af3fc5f72b536ac0f28d2928319bfab6def"}]},
 ]
 
+# ── IA locale (plug-in chopgimp_ia) : numpy + onnxruntime, paquets
+#    précompilés pour le Python du runtime (3.14). Les modèles ne sont pas
+#    dans le paquet : téléchargés à la première utilisation, après accord.
+NUMPY_WHL = "numpy-2.5.4-cp314-cp314-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl"
+ORT_WHL = "onnxruntime-1.32.0-cp314-cp314-manylinux_2_28_x86_64.whl"
+IA_MODULES = [
+    {"name": "python-ia",
+     "buildsystem": "simple",
+     "build-commands": ["python3 -m pip install --no-index --no-deps --no-build-isolation "
+                        "--prefix=${FLATPAK_DEST} %s %s" % (NUMPY_WHL, ORT_WHL)],
+     "sources": [
+         {"type": "file", "dest-filename": NUMPY_WHL,
+          "url": "https://files.pythonhosted.org/packages/16/d5/928078d2b28f26829b138b4a6c3980045022fb409f570657a224ae60ef4e/" + NUMPY_WHL,
+          "sha256": "d549420b8858885cea8838a727842249218b9c1da24dd517e25c9c7a948310a3"},
+         {"type": "file", "dest-filename": ORT_WHL,
+          "url": "https://files.pythonhosted.org/packages/94/b5/cd55e7f1dfcf2e5fbf3a6915a8c6b4cf81df091e81de2db40e58357ffba4/" + ORT_WHL,
+          "sha256": "48b878f9551d465aa79ee94ecaf49a1f6b5d27f2975efa775ded374db14d0af1"}]},
+]
+
 if not vanilla:
     gi = m["modules"].index(gimp)
-    m["modules"][gi:gi] = GEOM_MODULES + LQR_MODULES
+    m["modules"][gi:gi] = GEOM_MODULES + LQR_MODULES + IA_MODULES
     # Correctifs GEGL (plantage multi-thread des tuiles mipmap, cf. patches/gegl-0.4.72)
     gegl = next(x for x in m["modules"] if isinstance(x, dict) and x["name"] == "gegl")
     for p in sorted(glob.glob(os.path.join(ROOT, "patches", "gegl-0.4.72", "*.patch"))):

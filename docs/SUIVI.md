@@ -18,7 +18,7 @@ Plan complet : lots 0 à 6, idées en plus, calendrier de 17 étapes (voir l'his
 | 10 | 3.21.0 | Base I | ✅ livrée |
 | 11 | 3.21.1 | Base II | ✅ livrée |
 | 12 | 3.21.2 | Base III | ✅ livrée |
-| 13 | 3.22.0 | IA locale | à faire |
+| 13 | 3.22.0 | IA locale | ✅ livrée |
 | 14 | 3.23.0 | Dessin I « Confort » | à faire |
 | 15 | 3.23.1 | Dessin II « Peintre » | à faire |
 | 16 | 3.23.2 | Dessin III « Atelier / BD » | à faire |
@@ -291,3 +291,20 @@ Signalés le 2026-11-13 en utilisant ChopGimp sur une affiche (scan 2480×3510) 
   - « Générer les ressources à chaque enregistrement » le fait à chaque Ctrl+S (`app/file/file-save.c`).
 - **Fenêtres > Compositions de calques…** : nouvelle, mettre à jour, appliquer (double-clic), supprimer, exporter tout. Une composition mémorise la visibilité, la position et l'opacité ; elle est enregistrée dans le XCF.
 - **1 nouveau test** : 88 tests. La génération à l'enregistrement et les actions ont été vérifiées au banc graphique.
+
+## 3.22.0 — IA locale
+
+- **Moteur** : numpy 2.5.4 et onnxruntime 1.32.0 (paquets précompilés pour Python 3.14) ajoutés au paquet, qui passe de 58 à 92 Mo. Exécution hors ligne, sur le processeur.
+- **Modèles téléchargés à la première utilisation**, après accord : une fenêtre indique la taille et la source. Ils sont rangés dans `<dossier GIMP>/ia-modeles/` et vérifiés par empreinte SHA-256. Les images ne quittent jamais l'ordinateur.
+- **Sélection > Sujet (IA)** : détourage automatique, qui devient une sélection.
+- **Image > Supprimer l'arrière-plan (IA)** : le détourage devient un masque de calque, donc réversible.
+- **Image > Agrandir (IA)…** ×2, ×3 ou ×4 :
+  - réseau de super-résolution (sub-pixel CNN, 240 Ko) appliqué à la luminance, par tuiles de 224 px avec recouvrement ;
+  - chrominance et transparence agrandies en cubique ;
+  - le résultat s'ouvre dans une nouvelle image.
+- **Filtres > Améliorer > Réduire le bruit…** : filtre DCT de GEGL, non destructif. Ce n'est pas un réseau de neurones : aucun modèle de débruitage léger et fiable n'était disponible.
+- **Fichier > Modèles d'IA…** : choix du modèle de détourage, modèles installés, suppression.
+  - Rapide : U²-Net p, 4,5 Mo.
+  - Équilibré : Silueta, 44 Mo (par défaut).
+  - Précis : IS-Net, 178 Mo.
+- **3 nouveaux tests** : 91 tests. Essai sur `face.psd` : le bâtiment est bien isolé.
