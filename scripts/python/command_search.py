@@ -30,78 +30,51 @@ PLUGIN_REGISTRY = [
     ("python-fu-auto-levels", "Niveaux auto", "Image > Reglages auto"),
     ("python-fu-auto-contrast", "Contraste auto", "Image > Reglages auto"),
     ("python-fu-auto-color", "Couleur auto", "Image > Reglages auto"),
-    # Batch Export
-    ("python-fu-batch-export", "Export par lot", "Fichier"),
-    # Bitmap Trace
-    ("python-fu-bitmap-trace", "Vectorisation bitmap", "Filtres > Vectorisation"),
+    # Traitement par lots (ChopGimp)
+    ("chopgimp-batch", "Traitement par lots", "Fichier > Exporter"),
     # Color Palette Generator
     ("python-fu-palette-from-image", "Palette depuis l'image", "Filtres > Couleur"),
     ("python-fu-palette-from-color", "Palette depuis une couleur", "Filtres > Couleur"),
-    # Content Fill
-    ("python-fu-content-fill", "Remplissage selon le contenu", "Edition"),
     # CSS Generator
     ("python-fu-css-generator", "Generateur CSS", "Filtres > Web"),
     # DaFont Installer
     ("python-fu-dafont-installer", "Installer polices DaFont", "Filtres > Typographie"),
     # Dodge & Burn Setup
     ("python-fu-dodge-burn-setup", "Dodge & Burn (configuration)", "Filtres > Retouche"),
-    # Export Layers
-    ("python-fu-export-layers", "Exporter les calques", "Fichier"),
-    # Focus Stacking
-    ("python-fu-focus-stacking", "Focus Stacking", "Filtres > Workflow"),
+    # Exporter les calques → Générer les ressources (ChopGimp)
+    ("chopgimp-generate-assets", "Generer les ressources (calques)", "Fichier > Exporter"),
+    ("chopgimp-export-web", "Exporter pour le web", "Fichier > Exporter"),
     # Frequency Separation
     ("python-fu-frequency-separation", "Separation de frequence", "Filtres > Retouche"),
     # Google Fonts
     ("python-fu-google-fonts", "Google Fonts", "Filtres > Typographie"),
     # Grid System
     ("python-fu-grid-system", "Systeme de grille", "Image > Grille"),
-    # HDR Merge
-    ("python-fu-hdr-merge", "Fusion HDR", "Filtres > Workflow"),
     # Icon Generator
     ("python-fu-icon-generator", "Generateur d'icones", "Filtres > Web"),
-    # Layer Comps
-    ("python-fu-save-layer-comp", "Enregistrer composition de calques", "Filtres > Calques"),
-    ("python-fu-restore-layer-comp", "Restaurer composition de calques", "Filtres > Calques"),
-    # Layer Styles
-    ("python-fu-drop-shadow-style", "Ombre portee (style)", "Filtres > Styles de calques"),
-    ("python-fu-stroke-style", "Contour (style)", "Filtres > Styles de calques"),
-    ("python-fu-bevel-emboss-style", "Biseautage et estampage", "Filtres > Styles de calques"),
-    ("python-fu-inner-glow-style", "Lueur interne", "Filtres > Styles de calques"),
-    ("python-fu-outer-glow-style", "Lueur externe", "Filtres > Styles de calques"),
-    # Lorem Ipsum
-    ("python-fu-lorem-ipsum", "Lorem Ipsum", "Filtres > Typographie"),
-    # LUT Loader
-    ("python-fu-lut-loader", "Chargeur de LUT", "Filtres > Couleur"),
+    # Compositions de calques (ChopGimp)
+    ("chopgimp-layer-comps", "Compositions de calques", "Fenetres"),
+    # Lorem Ipsum (ChopGimp)
+    ("chopgimp-text-lorem", "Texte de remplissage (Lorem ipsum)", "Calque > Texte"),
     # Multi-Page PDF
     ("python-fu-multi-page-pdf", "PDF multi-pages", "Fichier"),
-    # NDE Effects
-    ("python-fu-nde-vignette", "Vignettage non-destructif", "Filtres > NDE"),
-    ("python-fu-nde-grain", "Grain photo non-destructif", "Filtres > NDE"),
-    # Pathfinder
-    ("python-fu-pathfinder-unite", "Pathfinder : Union", "Filtres > Vecteur"),
-    ("python-fu-pathfinder-subtract", "Pathfinder : Soustraction", "Filtres > Vecteur"),
-    ("python-fu-pathfinder-intersect", "Pathfinder : Intersection", "Filtres > Vecteur"),
     # Quick Color
     ("python-fu-quick-color", "Couleur rapide", "Filtres > Couleur"),
     # Quick Effects
     ("python-fu-quick-vignette", "Vignettage rapide", "Filtres > Effets rapides"),
     ("python-fu-quick-film-grain", "Grain film rapide", "Filtres > Effets rapides"),
     ("python-fu-quick-tilt-shift", "Tilt-shift rapide", "Filtres > Effets rapides"),
-    # Seam Carving
-    ("python-fu-seam-carving", "Carving de coutures", "Filtres > Deformation"),
-    # Smart Recents
-    ("python-fu-smart-recents", "Fichiers recents intelligents", "Fichier"),
+    # Mise a l'echelle selon le contenu (ChopGimp, Liquid Rescale)
+    ("chopgimp-liquid-rescale", "Mise a l'echelle selon le contenu", "Image"),
     # Smart Sharpen
     ("python-fu-smart-sharpen", "Nettete intelligente", "Filtres > Amelioration"),
     # Split Toning
     ("python-fu-split-toning", "Virage partiel", "Filtres > Couleur"),
-    # Text Effects
-    ("python-fu-text-3d", "Texte 3D", "Filtres > Typographie"),
-    ("python-fu-text-neon", "Texte neon", "Filtres > Typographie"),
-    ("python-fu-text-chrome", "Texte chrome", "Filtres > Typographie"),
-    ("python-fu-text-outline", "Contour de texte", "Filtres > Typographie"),
-    ("python-fu-text-shadow", "Ombre de texte", "Filtres > Typographie"),
-    ("python-fu-text-arc", "Texte en arc", "Filtres > Typographie"),
+    # Effets de texte (ChopGimp : déformation, styles de calque)
+    ("chopgimp-text-warp", "Deformer le texte (arc, drapeau...)", "Calque > Texte"),
+    ("chopgimp-layer-style", "Style de calque (ombre, lueur, biseau, contour)", "Calque > Style de calque"),
+    # Camera Raw (ChopGimp)
+    ("chopgimp-camera-raw", "Camera Raw", "Filtres"),
     # Vector Align
     ("python-fu-align-left", "Aligner a gauche", "Filtres > Vecteur"),
     ("python-fu-align-center-h", "Centrer horizontalement", "Filtres > Vecteur"),
@@ -109,40 +82,18 @@ PLUGIN_REGISTRY = [
     ("python-fu-align-top", "Aligner en haut", "Filtres > Vecteur"),
     ("python-fu-align-center-v", "Centrer verticalement", "Filtres > Vecteur"),
     ("python-fu-align-bottom", "Aligner en bas", "Filtres > Vecteur"),
-    # Vector Shapes
-    ("python-fu-shape-rectangle", "Rectangle vectoriel", "Filtres > Vecteur"),
-    ("python-fu-shape-ellipse", "Ellipse vectorielle", "Filtres > Vecteur"),
-    ("python-fu-shape-polygon", "Polygone vectoriel", "Filtres > Vecteur"),
-    ("python-fu-shape-star", "Etoile vectorielle", "Filtres > Vecteur"),
-    ("python-fu-shape-arrow", "Fleche vectorielle", "Filtres > Vecteur"),
-    ("python-fu-shape-spiral", "Spirale vectorielle", "Filtres > Vecteur"),
-    # Vector Stroke
-    ("python-fu-stroke-path", "Tracer le chemin", "Filtres > Vecteur"),
-    ("python-fu-dashed-stroke", "Contour en tirets", "Filtres > Vecteur"),
-    ("python-fu-arrow-heads", "Tetes de fleche", "Filtres > Vecteur"),
     # Actions Recorder
     ("python-fu-record-action", "Enregistrer une action", "Filtres > Automatisation"),
     ("python-fu-play-action", "Lire une action", "Filtres > Automatisation"),
-    # Workspace Switcher
-    ("python-fu-workspace-switcher", "Changer d'espace de travail", "Fenetre"),
-    # Shortcut Overlay
-    ("python-fu-shortcut-overlay", "Raccourcis clavier", "Aide"),
 
-    # --- NEW plugins ---
     # Data Merge
     ("python-fu-data-merge", "Fusion de donnees (CSV)", "Filtres > Workflow"),
     # Text Styles
     ("python-fu-save-text-style", "Enregistrer style de texte", "Filtres > Typographie"),
     ("python-fu-apply-text-style", "Appliquer style de texte", "Filtres > Typographie"),
     ("python-fu-manage-text-styles", "Gerer les styles de texte", "Filtres > Typographie"),
-    # Spot Healing
-    ("python-fu-spot-healing", "Correcteur localise", "Filtres > Retouching"),
     # Sample Average
     ("python-fu-sample-average", "Pipette moyenne", "Filtres > Couleur"),
-    # Shape Library
-    ("python-fu-shape-library", "Bibliotheque de formes", "Filtres > Vector"),
-    # Welcome Screen
-    ("python-fu-welcome-screen", "Ecran d'accueil PhotoGIMP Pro", "Aide"),
     # Command Search (self!)
     ("python-fu-command-search", "Recherche de commande", "Edition"),
 ]
@@ -236,7 +187,6 @@ def command_search(procedure, run_mode, image, drawables, config, data):
     search_entry.set_placeholder_text("Rechercher...")
     content.pack_start(search_entry, False, False, 0)
 
-    # Results list
     # ListStore: label, menu_path, procedure_name
     store = Gtk.ListStore(str, str, str)
     filtered_store = store.filter_new()
@@ -253,9 +203,11 @@ def command_search(procedure, run_mode, image, drawables, config, data):
 
     filtered_store.set_visible_func(visible_func)
 
-    # Populate store
+    # Populate store (seulement les procédures réellement installées)
+    pdb = Gimp.get_pdb()
     for proc_name, label, menu in PLUGIN_REGISTRY:
-        store.append([label, menu, proc_name])
+        if pdb.procedure_exists(proc_name):
+            store.append([label, menu, proc_name])
 
     # Sorted model (sort by label)
     sorted_store = Gtk.TreeModelSort(model=filtered_store)

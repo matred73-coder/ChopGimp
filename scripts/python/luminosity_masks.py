@@ -12,7 +12,6 @@ gi.require_version('Gimp', '3.0')
 from gi.repository import Gimp
 gi.require_version('Gegl', '0.4')
 from gi.repository import Gegl
-from gi.repository import GObject
 from gi.repository import GLib
 import sys
 

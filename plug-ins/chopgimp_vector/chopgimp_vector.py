@@ -22,6 +22,9 @@ gi.require_version("GimpUi", "3.0")
 gi.require_version("Gtk", "3.0")
 from gi.repository import Gimp, GimpUi, GLib, GObject, Gtk
 
+from chopgimp_common import (ok, fail, pdb_call as call, copy_vector_style,
+                             get_parasite_text, set_parasite_text, walk_layers)
+
 AUTHOR = "ChopGimp"
 YEAR = "2026"
 LPE_PARASITE = "chopgimp-lpe"
@@ -34,55 +37,8 @@ ND = "<Image>/Layer/Nœuds"
 TRACE = "<Image>/Layer/Effets de tracé"
 TRACE_L = "<Layers>/Layers Menu/Effets de tracé"
 
-def ok(procedure):
-    return procedure.new_return_values(Gimp.PDBStatusType.SUCCESS, GLib.Error())
-
-
-def fail(procedure, msg):
-    return procedure.new_return_values(
-        Gimp.PDBStatusType.EXECUTION_ERROR,
-        GLib.Error.new_literal(GLib.quark_from_string("chopgimp"), msg, 0))
-
-
-def call(name, **kw):
-    # (Gimp.get_pdb() n'est valable qu'une fois le plug-in lancé)
-    p = Gimp.get_pdb().lookup_procedure(name)
-    if p is None:               # procédure absente (GIMP non recompilé ?)
-        return None
-    cfg = p.create_config()
-    for k, v in kw.items():
-        if k in ("paths",):
-            cfg.set_core_object_array(k, v)
-        else:
-            cfg.set_property(k, v)
-    res = p.run(cfg)
-    if res.index(0) != Gimp.PDBStatusType.SUCCESS:
-        return None
-    return res
-
 
 # ─── calques vectoriels ─────────────────────────────────────────────────
-
-def copy_vector_style(src, dst):
-    for getter, setter in [("get_enable_fill", "set_enable_fill"), ("get_fill_color", "set_fill_color"),
-                           ("get_enable_stroke", "set_enable_stroke"), ("get_stroke_color", "set_stroke_color"),
-                           ("get_stroke_width", "set_stroke_width"),
-                           ("get_stroke_width_unit", "set_stroke_width_unit"),
-                           ("get_stroke_cap_style", "set_stroke_cap_style"),
-                           ("get_stroke_join_style", "set_stroke_join_style"),
-                           ("get_stroke_miter_limit", "set_stroke_miter_limit"),
-                           ("get_stroke_dash_pattern", "set_stroke_dash_pattern"),
-                           ("get_stroke_dash_offset", "set_stroke_dash_offset")]:
-        try:
-            value = getattr(src, getter)()
-            if getter == "get_stroke_dash_pattern" and isinstance(value, tuple):
-                value = value[-1]          # (ok, tirets)
-            getattr(dst, setter)(value)
-        except Exception:
-            pass
-    dst.set_opacity(src.get_opacity())
-    dst.set_mode(src.get_mode())
-
 
 def new_layer_from_path(image, path, style, name=None, position_layer=None):
     """Calque vectoriel du chemin (déjà inséré dans l'image), au style de « style »."""
@@ -367,14 +323,12 @@ EFFECT_BY_KEY = {e[0]: e for e in EFFECTS}
 
 
 def read_lpe(layer):
-    par = layer.get_parasite(LPE_PARASITE)
-    if par is None:
+    text = get_parasite_text(layer, LPE_PARASITE)
+    if text is None:
         return []
     kf = GLib.KeyFile.new()
     try:
-        # get_data() renvoie des octets signés (-128..127)
-        raw = bytes(b & 0xff for b in par.get_data())
-        kf.load_from_data(raw.decode("utf-8"), -1, GLib.KeyFileFlags.NONE)
+        kf.load_from_data(text, -1, GLib.KeyFileFlags.NONE)
     except Exception:
         return []
     out = []
@@ -397,8 +351,7 @@ def write_lpe(layer, effects):
         for i, e in enumerate(effects):
             text += "[%d]\n" % i + "".join("%s=%s\n" % (k, v) for k, v in e.items())
         # 1 = persistant (dans le XCF), 2 = annulable
-        raw = [b - 256 if b > 127 else b for b in text.encode("utf-8")]   # octets signés
-        layer.attach_parasite(Gimp.Parasite.new(LPE_PARASITE, 3, raw))
+        set_parasite_text(layer, LPE_PARASITE, text, 3)
     layer.refresh()
     Gimp.displays_flush()
 
@@ -538,13 +491,6 @@ def effects_dialog(image, layer):
         layer.set_enable_stroke(style[2])
     write_lpe(layer, effects if resp == Gtk.ResponseType.OK else original)
     dialog.destroy()
-
-
-def walk_layers(layers):
-    for l in layers:
-        yield l
-        if isinstance(l, Gimp.GroupLayer):
-            yield from walk_layers(l.get_children())
 
 
 # ─── Déclaration des procédures ─────────────────────────────────────────

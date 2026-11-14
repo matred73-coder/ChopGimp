@@ -25,6 +25,8 @@ gi.require_version("GimpUi", "3.0")
 gi.require_version("Gtk", "3.0")
 from gi.repository import Gimp, GimpUi, Gio, GLib, Gtk
 
+from chopgimp_common import ok, fail
+
 MENU = "<Image>/Layer/Objet dynamique"
 MENU_L = "<Layers>/Layers Menu/Objet dynamique"
 
@@ -33,15 +35,6 @@ PROCS = {
     "chopgimp-smart-edit": "Modifier le contenu",
     "chopgimp-smart-replace": "Remplacer le contenu…",
 }
-
-
-def ok(procedure):
-    return procedure.new_return_values(Gimp.PDBStatusType.SUCCESS, GLib.Error())
-
-
-def fail(procedure, msg):
-    return procedure.new_return_values(Gimp.PDBStatusType.EXECUTION_ERROR,
-                                       GLib.Error.new_literal(GLib.quark_from_string("chopgimp"), msg, 0))
 
 
 def store_dir(image):

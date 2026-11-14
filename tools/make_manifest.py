@@ -126,7 +126,14 @@ IA_MODULES = [
     {"name": "python-ia",
      "buildsystem": "simple",
      "build-commands": ["python3 -m pip install --no-index --no-deps --no-build-isolation "
-                        "--prefix=${FLATPAK_DEST} %s %s" % (NUMPY_WHL, ORT_WHL)],
+                        "--prefix=${FLATPAK_DEST} %s %s" % (NUMPY_WHL, ORT_WHL),
+                        # allègement : tests, outils de développement et stubs inutiles à l'exécution
+                        "SP=${FLATPAK_DEST}/lib/python3.14/site-packages; "
+"find $SP/numpy -type d -name tests -prune -exec rm -rf {} + ; "
+                        "rm -rf $SP/numpy/f2py $SP/numpy/_pyinstaller "
+                        "$SP/onnxruntime/tools $SP/onnxruntime/transformers $SP/onnxruntime/quantization "
+                        "$SP/onnxruntime/datasets ; "
+                        "find $SP/numpy $SP/onnxruntime -name '*.pyi' -delete"],
      "sources": [
          {"type": "file", "dest-filename": NUMPY_WHL,
           "url": "https://files.pythonhosted.org/packages/16/d5/928078d2b28f26829b138b4a6c3980045022fb409f570657a224ae60ef4e/" + NUMPY_WHL,
@@ -137,6 +144,8 @@ IA_MODULES = [
 ]
 
 if not vanilla:
+    # en-têtes et fichiers de développement : inutiles à l'exécution
+    m["cleanup"] = sorted(set(m.get("cleanup", []) + ["/include", "/lib/pkgconfig"]))
     gi = m["modules"].index(gimp)
     m["modules"][gi:gi] = GEOM_MODULES + LQR_MODULES + IA_MODULES
     # Correctifs GEGL (plantage multi-thread des tuiles mipmap, cf. patches/gegl-0.4.72)
@@ -170,7 +179,10 @@ if not vanilla:
                                                           "flatpak/repo",
                                                           "flatpak/repo-vanilla",
                                                           "dist"]}],
-        "build-commands": ["sh tools/install_data.sh ${FLATPAK_DEST}"],
+        "build-commands": ["sh tools/install_data.sh ${FLATPAK_DEST}",
+                           # allègement : traductions limitées au français et à l'anglais
+                           "find ${FLATPAK_DEST}/share/locale -mindepth 1 -maxdepth 1 "
+                           "! -name 'fr*' ! -name 'en*' -exec rm -rf {} +"],
     })
 
 out = os.path.join(FP, APP_ID + (".vanilla" if vanilla else "") + ".json")

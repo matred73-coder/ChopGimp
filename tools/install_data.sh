@@ -96,7 +96,7 @@ mkdir -p "$DATA/tool-presets/PhotoGIMP" "$DATA/palettes"
 cp "$SRC/presets/tool-presets/"*.gtp "$DATA/tool-presets/PhotoGIMP/"
 cp "$SRC/presets/palettes/"*.gpl "$DATA/palettes/"
 
-# 7. Plug-ins : photogimp_ps + plug-ins v1 validés par l'audit
+# 7. Plug-ins : ChopGimp (plug-ins/) + plug-ins v1 conservés (scripts/python/)
 install_plugin() {   # $1 = nom, $2 = fichier source
     mkdir -p "$PLUG/$1"
     install -m 755 "$2" "$PLUG/$1/$1.py"
@@ -105,16 +105,16 @@ install_plugin() {   # $1 = nom, $2 = fichier source
     for m in "$(dirname "$2")"/*.py; do
         [ "$m" = "$2" ] || install -m 644 "$m" "$PLUG/$1/"
     done
+    # module commun (plug-ins/_common) copié à côté : « from chopgimp_common import … »
+    install -m 644 "$SRC/plug-ins/_common/chopgimp_common.py" "$PLUG/$1/"
 }
 for d in "$SRC/plug-ins/"*/; do          # plug-ins ChopGimp (photogimp_ps, chopgimp_fx…)
     n="$(basename "$d")"
+    [ "$n" = "_common" ] && continue     # module partagé, pas un plug-in
     install_plugin "$n" "$d$n.py"
 done
-OFF=" $(tr '\n' ' ' < "$SRC/config/plugins-v1-off.txt") "
 for f in "$SRC/scripts/python/"*.py; do
-    n="$(basename "$f" .py)"
-    case "$OFF" in *" $n "*) continue ;; esac
-    install_plugin "$n" "$f"
+    install_plugin "$(basename "$f" .py)" "$f"
 done
 
 # 8. Lanceur : nom et description

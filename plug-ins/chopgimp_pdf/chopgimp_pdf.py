@@ -41,6 +41,7 @@ gi.require_foreign("cairo")
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 import cairoscript  # noqa: E402
+from chopgimp_common import pdb_run, srgb, set_parasite_text  # noqa: E402
 
 PROC = "file-chopgimp-pdf-load"
 PROC_THUMB = "file-chopgimp-pdf-load-thumb"
@@ -52,16 +53,6 @@ MAX_SIDE = 16384          # côté maximal d'un rendu en pixels (la résolution 
 
 
 # ─── outils ─────────────────────────────────────────────────────────────
-
-def pdb_run(name, **kw):
-    proc = Gimp.get_pdb().lookup_procedure(name)
-    if proc is None:
-        return None
-    cfg = proc.create_config()
-    for k, v in kw.items():
-        cfg.set_property(k, v)
-    return proc.run(cfg)
-
 
 def or_error(procedure, res, msg):
     """Résultat d'une procédure déléguée, ou erreur si elle est absente."""
@@ -77,12 +68,6 @@ def fit_scale(pw, ph, dpi):
     if side > MAX_SIDE:
         scale *= MAX_SIDE / side
     return scale
-
-
-def gegl_color(rgba):
-    c = Gegl.Color.new("black")
-    c.set_rgba_with_space(rgba[0], rgba[1], rgba[2], rgba[3] if len(rgba) > 3 else 1.0, None)
-    return c
 
 
 def fonts_resolver():
@@ -230,14 +215,14 @@ def build_path_layer(image, o, parent, n):
     what = []
     if o.fill is not None:
         vl.set_enable_fill(True)
-        vl.set_fill_color(gegl_color(o.fill[:3] + (1.0,)))
+        vl.set_fill_color(srgb(*o.fill[:3]))
         what.append("fond " + color_name(o.fill))
     else:
         vl.set_enable_fill(False)
     st = o.stroke
     if st:
         vl.set_enable_stroke(True)
-        vl.set_stroke_color(gegl_color(st["color"][:3] + (1.0,)))
+        vl.set_stroke_color(srgb(*st["color"][:3]))
         vl.set_stroke_width(max(0.1, st["width"]))
         vl.set_stroke_cap_style(CAPS[st["cap"]])
         vl.set_stroke_join_style(JOINS[st["join"]])
@@ -392,7 +377,7 @@ def add_texts(image, page, scale, parent, fonts, text_mode, report):
         image.insert_layer(tl, parent, 0)
         if at:
             c = at.color
-            tl.set_color(gegl_color((c.red / 65535.0, c.green / 65535.0, c.blue / 65535.0, 1.0)))
+            tl.set_color(srgb(c.red / 65535.0, c.green / 65535.0, c.blue / 65535.0))
         tl.set_offsets(int(round(x)), int(round(y - size * 0.18)))
         if text_mode == "outline":
             path = Gimp.Path.new_from_text_layer(image, tl)
@@ -925,7 +910,7 @@ def import_svg(image, path, opts, report, fonts):
             tl = Gimp.TextLayer.new(image, txt, font, max(1.0, size), Gimp.Unit.pixel())
             tl.set_name(txt[:40])
             image.insert_layer(tl, parent, 0)
-            tl.set_color(gegl_color(color))
+            tl.set_color(srgb(*color))
             if bold or italic:
                 tl.set_markup("<markup>%s%s%s</markup>" % ("<b>" * bold + "<i>" * italic,
                                                            GLib.markup_escape_text(txt, -1),
@@ -972,8 +957,7 @@ def load_svg(procedure, run_mode, file, metadata, flags, config, data):
         Gimp.message(report.text())
         return original()
     image.undo_enable()
-    raw = [b - 256 if b > 127 else b for b in report.text().encode("utf-8")]
-    image.attach_parasite(Gimp.Parasite.new("chopgimp-pdf-report", 0, raw))
+    set_parasite_text(image, "chopgimp-pdf-report", report.text(), 0)
     return Gimp.ValueArray.new_from_values([
         GObject.Value(Gimp.PDBStatusType, Gimp.PDBStatusType.SUCCESS),
         GObject.Value(Gimp.Image, image),
@@ -1039,8 +1023,7 @@ def load(procedure, run_mode, file, metadata, flags, config, data, classic_file=
 
     text = report.text()
     if text:
-        raw = [b - 256 if b > 127 else b for b in text.encode("utf-8")]
-        image.attach_parasite(Gimp.Parasite.new("chopgimp-pdf-report", 0, raw))
+        set_parasite_text(image, "chopgimp-pdf-report", text, 0)
         if run_mode == Gimp.RunMode.INTERACTIVE:
             Gimp.message("Import PDF :\n" + text)
     return Gimp.ValueArray.new_from_values([

@@ -27,6 +27,8 @@ gi.require_version("Gtk", "3.0")
 gi.require_version("Gegl", "0.4")
 from gi.repository import Gimp, GimpUi, Gegl, GLib, GObject, Gtk
 
+from chopgimp_common import ok, fail
+
 MODELS = {
     "u2netp": ("Détourage rapide (U²-Net p)", 320, (0.485, 0.456, 0.406), (0.229, 0.224, 0.225),
                "https://github.com/danielgatis/rembg/releases/download/v0.0.0/u2netp.onnx",
@@ -51,15 +53,6 @@ PROCS = {
     "chopgimp-ia-denoise": ("Réduire le bruit…", "<Image>/Filters/Enhance"),
     "chopgimp-ia-models": ("Modèles d'IA…", "<Image>/File"),
 }
-
-
-def ok(procedure):
-    return procedure.new_return_values(Gimp.PDBStatusType.SUCCESS, GLib.Error())
-
-
-def fail(procedure, msg):
-    return procedure.new_return_values(Gimp.PDBStatusType.EXECUTION_ERROR,
-                                       GLib.Error.new_literal(GLib.quark_from_string("chopgimp"), msg, 0))
 
 
 def models_dir():

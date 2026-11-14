@@ -1,0 +1,404 @@
+From 2874cdd20b9842595123e565ff38eebf636f5ae6 Mon Sep 17 00:00:00 2001
+From: ChopGimp <mathieu.redon@proton.me>
+Date: Sat, 14 Nov 2026 09:33:17 +0100
+Subject: [PATCH] ChopGimp: no idle polling (text panels signal-driven, crash
+ images tick on change)
+
+---
+ app/dialogs/chopgimp-textpanels.c | 247 ++++++++++++++++++++++++++++--
+ app/gui/gui.c                     |  39 ++++-
+ 2 files changed, 267 insertions(+), 19 deletions(-)
+
+diff --git a/app/dialogs/chopgimp-textpanels.c b/app/dialogs/chopgimp-textpanels.c
+index eb11bd0..562444a 100644
+--- a/app/dialogs/chopgimp-textpanels.c
++++ b/app/dialogs/chopgimp-textpanels.c
+@@ -66,13 +66,15 @@
+ #include "gimp-intl.h"
+ 
+ 
++typedef struct _Watch Watch;
++
+ typedef struct
+ {
+   Gimp          *gimp;
+-  GtkWidget     *widget;         /* the dockable, for the refresh timer */
++  GtkWidget     *widget;         /* the dockable                       */
+   gboolean       paragraph;
+   gboolean       updating;
+-  guint          refresh_id;
++  Watch         *watch;          /* refreshes it when something changed */
+   GimpTextLayer *shown_layer;
+   gchar         *shown_stamp;
+ 
+@@ -99,6 +101,222 @@ typedef struct
+ } Panel;
+ 
+ 
++/* ─── refreshing on events, not on a timer ─────────────────────────── *
++ *
++ *  A panel follows the user context (image, tool), the image (undo
++ *  steps, selected layers, resolution, the layer tree) and every text
++ *  layer of it (its GimpText, its name).  Bursts of changes end in a
++ *  single refresh; nothing is watched while the panel is hidden, and it
++ *  is refreshed when shown again.
++ */
++
++struct _Watch
++{
++  GtkWidget   *widget;
++  GSourceFunc  refresh;
++  gpointer     data;
++  guint        delay;     /* ms; 0: idle */
++  GimpContext *context;
++  GPtrArray   *objects;   /* watched objects, weakly referenced */
++  guint        source_id;
++};
++
++static gboolean watch_run (Watch *w);
++
++static void
++watch_object_gone (gpointer  data,
++                   GObject  *where_the_object_was)
++{
++  Watch *w = data;
++
++  g_ptr_array_remove_fast (w->objects, where_the_object_was);
++}
++
++static void
++watch_release (Watch *w)
++{
++  while (w->objects->len)
++    {
++      GObject *object = g_ptr_array_index (w->objects, w->objects->len - 1);
++
++      g_ptr_array_remove_index_fast (w->objects, w->objects->len - 1);
++      g_object_weak_unref (object, watch_object_gone, w);
++      g_signal_handlers_disconnect_by_data (object, w);
++    }
++}
++
++static void
++watch_queue (Watch *w)
++{
++  if (w->source_id || ! gtk_widget_get_mapped (w->widget))
++    return;
++
++  if (w->delay)
++    w->source_id = g_timeout_add (w->delay, (GSourceFunc) watch_run, w);
++  else
++    w->source_id = g_idle_add ((GSourceFunc) watch_run, w);
++}
++
++static gboolean
++watch_add (Watch    *w,
++           gpointer  object)
++{
++  if (g_ptr_array_find (w->objects, object, NULL))
++    return FALSE;
++
++  g_ptr_array_add (w->objects, object);
++  g_object_weak_ref (G_OBJECT (object), watch_object_gone, w);
++
++  return TRUE;
++}
++
++static void
++watch_signal (Watch       *w,
++              gpointer     object,
++              const gchar *signal)
++{
++  g_signal_connect_swapped (object, signal, G_CALLBACK (watch_queue), w);
++}
++
++static void
++watch_container (Watch         *w,
++                 GimpContainer *container)
++{
++  if (watch_add (w, container))
++    {
++      watch_signal (w, container, "add");
++      watch_signal (w, container, "remove");
++      watch_signal (w, container, "reorder");
++    }
++}
++
++static void
++watch_layers (Watch *w,
++              GList *layers)
++{
++  for (; layers; layers = layers->next)
++    {
++      GimpContainer *children = gimp_viewable_get_children (layers->data);
++
++      if (children)
++        {
++          watch_container (w, children);
++          watch_layers (w, GIMP_LIST (children)->queue->head);
++        }
++      else if (gimp_item_is_text_layer (layers->data))
++        {
++          GimpText *text = gimp_text_layer_get_text (layers->data);
++
++          if (watch_add (w, layers->data))
++            {
++              watch_signal (w, layers->data, "notify::text");
++              watch_signal (w, layers->data, "name-changed");
++            }
++
++          if (text && watch_add (w, text))
++            watch_signal (w, text, "changed");
++        }
++    }
++}
++
++/*  (re)connect to the current image and its text layers  */
++static void
++watch_sync (Watch *w)
++{
++  GimpImage *image = gimp_context_get_image (w->context);
++
++  watch_release (w);
++
++  if (! image)
++    return;
++
++  watch_add (w, image);
++  watch_signal (w, image, "undo-event");
++  watch_signal (w, image, "selected-layers-changed");
++  watch_signal (w, image, "resolution-changed");
++
++  watch_container (w, gimp_image_get_layers (image));
++  watch_layers (w, gimp_image_get_layer_iter (image));
++}
++
++static gboolean
++watch_run (Watch *w)
++{
++  w->source_id = 0;
++
++  watch_sync (w);
++  w->refresh (w->data);
++
++  return G_SOURCE_REMOVE;
++}
++
++static void
++watch_image_changed (Watch *w)
++{
++  /*  never keep the previous image  */
++  watch_release (w);
++  watch_queue (w);
++}
++
++static void
++watch_unmap (Watch *w)
++{
++  if (w->source_id)
++    g_source_remove (w->source_id);
++  w->source_id = 0;
++
++  watch_release (w);
++}
++
++static Watch *
++watch_new (GtkWidget   *widget,
++           Gimp        *gimp,
++           GSourceFunc  refresh,
++           gpointer     data,
++           guint        delay)
++{
++  Watch *w = g_new0 (Watch, 1);
++
++  w->widget  = widget;
++  w->refresh = refresh;
++  w->data    = data;
++  w->delay   = delay;
++  w->context = gimp_get_user_context (gimp);
++  w->objects = g_ptr_array_new ();
++
++  g_signal_connect_swapped (w->context, "image-changed",
++                            G_CALLBACK (watch_image_changed), w);
++  g_signal_connect_swapped (w->context, "tool-changed",
++                            G_CALLBACK (watch_queue), w);
++
++  g_signal_connect_data (widget, "map",
++                         G_CALLBACK (watch_queue), w, NULL,
++                         G_CONNECT_SWAPPED | G_CONNECT_AFTER);
++  g_signal_connect_swapped (widget, "unmap",
++                            G_CALLBACK (watch_unmap), w);
++
++  watch_queue (w);
++
++  return w;
++}
++
++/*  from the widget's data destroy notify: its own handlers are gone  */
++static void
++watch_free (Watch *w)
++{
++  if (! w)
++    return;
++
++  if (w->source_id)
++    g_source_remove (w->source_id);
++
++  watch_release (w);
++  g_signal_handlers_disconnect_by_data (w->context, w);
++  g_ptr_array_free (w->objects, TRUE);
++  g_free (w);
++}
++
++
+ /* ─── the target: text being edited, or the selected text layer ──── */
+ 
+ typedef struct
+@@ -1369,8 +1587,7 @@ font_completion_add (GimpObject *font, GtkListStore *store)
+ static void
+ panel_free (Panel *panel)
+ {
+-  if (panel->refresh_id)
+-    g_source_remove (panel->refresh_id);
++  watch_free (panel->watch);
+   /*  a font shown in preview goes back to its layer  */
+   font_preview_restore (panel);
+   g_free (panel->shown_stamp);
+@@ -1552,8 +1769,8 @@ panel_new (Gimp *gimp, gboolean paragraph)
+   gtk_widget_show_all (box);
+ 
+   /*  follow the layer being edited / selected  */
+-  panel->widget     = editor;
+-  panel->refresh_id = g_timeout_add (400, (GSourceFunc) panel_refresh, panel);
++  panel->widget = editor;
++  panel->watch  = watch_new (editor, gimp, (GSourceFunc) panel_refresh, panel, 50);
+   g_object_set_data_full (G_OBJECT (editor), "chopgimp-panel", panel,
+                           (GDestroyNotify) panel_free);
+ 
+@@ -1587,7 +1804,7 @@ typedef struct
+   GtkWidget  *combo;
+   GtkWidget  *flow;
+   gchar      *font;        /* lookup name of the font shown */
+-  guint       refresh_id;
++  Watch      *watch;
+   GtkWidget  *widget;
+ } Glyphs;
+ 
+@@ -1744,8 +1961,7 @@ glyphs_refresh (Glyphs *g)
+ static void
+ glyphs_free (Glyphs *g)
+ {
+-  if (g->refresh_id)
+-    g_source_remove (g->refresh_id);
++  watch_free (g->watch);
+   g_free (g->font);
+   g_free (g);
+ }
+@@ -1785,8 +2001,8 @@ chopgimp_glyphs_panel_new (GimpDialogFactory *factory,
+ 
+   glyphs_fill (g);
+ 
+-  g->widget     = editor;
+-  g->refresh_id = g_timeout_add (600, (GSourceFunc) glyphs_refresh, g);
++  g->widget = editor;
++  g->watch  = watch_new (editor, g->gimp, (GSourceFunc) glyphs_refresh, g, 50);
+   g_object_set_data_full (G_OBJECT (editor), "chopgimp-glyphs", g,
+                           (GDestroyNotify) glyphs_free);
+ 
+@@ -2251,7 +2467,7 @@ typedef struct
+   Gimp      *gimp;
+   GtkWidget *list;
+   gchar     *stamp;
+-  guint      refresh_id;
++  Watch     *watch;
+   GtkWidget *widget;
+ } DocTexts;
+ 
+@@ -2409,8 +2625,7 @@ doc_texts_refresh (DocTexts *dt)
+ static void
+ doc_texts_free (DocTexts *dt)
+ {
+-  if (dt->refresh_id)
+-    g_source_remove (dt->refresh_id);
++  watch_free (dt->watch);
+   g_free (dt->stamp);
+   g_free (dt);
+ }
+@@ -2437,8 +2652,8 @@ chopgimp_document_texts_panel_new (GimpDialogFactory *factory,
+   gtk_widget_show_all (scroll);
+ 
+   doc_texts_refresh (dt);
+-  dt->widget     = editor;
+-  dt->refresh_id = g_timeout_add (700, (GSourceFunc) doc_texts_refresh, dt);
++  dt->widget = editor;
++  dt->watch  = watch_new (editor, dt->gimp, (GSourceFunc) doc_texts_refresh, dt, 150);
+   g_object_set_data_full (G_OBJECT (editor), "chopgimp-doc-texts", dt,
+                           (GDestroyNotify) doc_texts_free);
+ 
+diff --git a/app/gui/gui.c b/app/gui/gui.c
+index 228f43d..eedf03b 100644
+--- a/app/gui/gui.c
++++ b/app/gui/gui.c
+@@ -706,7 +706,28 @@ chopgimp_crash_images_tick (gpointer data)
+     }
+   g_string_free (str, TRUE);
+ 
+-  return G_SOURCE_CONTINUE;
++  chopgimp_images_tick_id = 0;
++
++  return G_SOURCE_REMOVE;
++}
++
++/*  the list is written again shortly after an image is opened, closed or
++ *  changed (undo step, save…): no timer while nothing happens
++ */
++static void
++chopgimp_crash_images_queue (Gimp *gimp)
++{
++  if (! chopgimp_images_tick_id)
++    chopgimp_images_tick_id =
++      g_timeout_add_seconds (2, chopgimp_crash_images_tick, gimp);
++}
++
++static void
++chopgimp_crash_images_dirty (GimpImage     *image,
++                             GimpDirtyMask  dirty_mask,
++                             Gimp          *gimp)
++{
++  chopgimp_crash_images_queue (gimp);
+ }
+ 
+ static void
+@@ -907,8 +928,15 @@ gui_restore_after_callback (Gimp               *gimp,
+   gdk_notify_startup_complete ();
+ 
+   /*  ChopGimp: traceur de plantage, enregistrement automatique  */
+-  chopgimp_images_tick_id =
+-    g_timeout_add_seconds (5, chopgimp_crash_images_tick, gimp);
++  chopgimp_crash_images_queue (gimp);
++  g_signal_connect_swapped (gimp->images, "add",
++                            G_CALLBACK (chopgimp_crash_images_queue), gimp);
++  g_signal_connect_swapped (gimp->images, "remove",
++                            G_CALLBACK (chopgimp_crash_images_queue), gimp);
++  gimp_container_add_handler (gimp->images, "dirty",
++                              G_CALLBACK (chopgimp_crash_images_dirty), gimp);
++  gimp_container_add_handler (gimp->images, "clean",
++                              G_CALLBACK (chopgimp_crash_images_dirty), gimp);
+   chopgimp_autosave_init (gimp);
+   chopgimp_crash_previous_id =
+     g_timeout_add_seconds (3, chopgimp_crash_previous, gimp);
+@@ -962,6 +990,11 @@ gui_exit_callback (Gimp     *gimp,
+ 
+   /*  ChopGimp: normal exit, the autosaved copies are no longer needed  */
+   chopgimp_autosave_exit ();
++  g_signal_handlers_disconnect_by_func (gimp->images,
++                                        chopgimp_crash_images_queue, gimp);
++  gimp_container_remove_handlers_by_func (gimp->images,
++                                          G_CALLBACK (chopgimp_crash_images_dirty),
++                                          gimp);
+   if (chopgimp_images_tick_id)
+     g_source_remove (chopgimp_images_tick_id);
+   chopgimp_images_tick_id = 0;
+-- 
+2.53.0
+

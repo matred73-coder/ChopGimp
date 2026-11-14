@@ -31,11 +31,12 @@ gi.require_version("Gimp", "3.0")
 gi.require_version("GimpUi", "3.0")
 gi.require_version("Gtk", "3.0")
 gi.require_version("Gegl", "0.4")
-from gi.repository import Gimp, GimpUi, Gegl, Gio, GLib, GObject, Gtk
+from gi.repository import Gimp, GimpUi, Gio, GLib, GObject, Gtk
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 import psdparse  # noqa: E402
+from chopgimp_common import pdb_run, srgb, walk_layers, set_parasite_text  # noqa: E402
 
 PROC = "file-chopgimp-psd-load"
 PROC_THUMB = "file-chopgimp-psd-load-thumb"
@@ -84,11 +85,8 @@ def fx_module():
 
 
 def gegl_color(rgb, a=1.0):
-    """Couleur Photoshop (sRGB, 0..1) → Gegl.Color. set_rgba() attend du
-    RGB linéaire : on précise l'espace (None = sRGB, valeurs non linéaires)."""
-    c = Gegl.Color.new("black")
-    c.set_rgba_with_space(rgb[0], rgb[1], rgb[2], a, None)
-    return c
+    """Couleur Photoshop (r, g, b[, a ignoré]) 0..1, sRGB → Gegl.Color."""
+    return srgb(rgb[0], rgb[1], rgb[2], a)
 
 
 # ─── polices ────────────────────────────────────────────────────────────
@@ -734,23 +732,6 @@ def build_smart(image, L, so, files, cache_dir, report):
 
 # ─── assemblage ─────────────────────────────────────────────────────────
 
-def pdb_run(name, **kw):
-    proc = Gimp.get_pdb().lookup_procedure(name)
-    if proc is None:
-        return None
-    cfg = proc.create_config()
-    for k, v in kw.items():
-        cfg.set_property(k, v)
-    return proc.run(cfg)
-
-
-def walk(layers):
-    for l in layers:
-        yield l
-        if isinstance(l, Gimp.GroupLayer):
-            yield from walk(l.get_children())
-
-
 def copy_props(src, dst):
     dst.set_opacity(src.get_opacity())
     dst.set_mode(src.get_mode())
@@ -808,7 +789,7 @@ def convert(image, path, run_mode, report):
     # le même identifiant au groupe d'écrêtage qu'il crée : le vrai calque
     # l'emporte sur le groupe
     by_id = {}
-    for lay in walk(image.get_layers()):
+    for lay in walk_layers(image.get_layers()):
         t = lay.get_tattoo()
         if t not in by_id or (isinstance(by_id[t], Gimp.GroupLayer) and
                               not isinstance(lay, Gimp.GroupLayer)):
@@ -982,8 +963,7 @@ def load(procedure, run_mode, file, metadata, flags, config, data):
     # rapport : parasite de l'image (tests, scripts) + fenêtre
     text = report.text()
     if text:
-        data = [b - 256 if b > 127 else b for b in text.encode("utf-8")]   # octets signés
-        image.attach_parasite(Gimp.Parasite.new("chopgimp-psd-report", 0, data))
+        set_parasite_text(image, "chopgimp-psd-report", text, 0)
     if run_mode == Gimp.RunMode.INTERACTIVE and (report.approx or report.ignored or report.missing):
         settings = settings_load()
         if not settings.get("quiet") or report.missing:

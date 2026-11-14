@@ -28,6 +28,8 @@ gi.require_version("Gtk", "3.0")
 gi.require_version("Gegl", "0.4")
 from gi.repository import Gimp, GimpUi, Gegl, GLib, GObject, Gtk
 
+from chopgimp_common import ok, fail
+
 try:                        # accélère la lecture/écriture des pixels (facultatif)
     import numpy as np
 except Exception:
@@ -40,15 +42,6 @@ PROCS = {
     "chopgimp-straighten": "Redresser…",
     "chopgimp-liquid-rescale": "Mise à l'échelle selon le contenu…",
 }
-
-
-def ok(procedure):
-    return procedure.new_return_values(Gimp.PDBStatusType.SUCCESS, GLib.Error())
-
-
-def fail(procedure, msg):
-    return procedure.new_return_values(Gimp.PDBStatusType.EXECUTION_ERROR,
-                                       GLib.Error.new_literal(GLib.quark_from_string("chopgimp"), msg, 0))
 
 
 def path_anchors(image):

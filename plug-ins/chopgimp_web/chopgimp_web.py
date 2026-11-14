@@ -19,7 +19,6 @@ Fenêtres > Compositions de calques…
     Mémorise visibilité, position et opacité des calques sous un nom,
     les rappelle, et exporte chaque composition.
 """
-import json
 import os
 import re
 import shutil
@@ -32,6 +31,8 @@ gi.require_version("GimpUi", "3.0")
 gi.require_version("Gtk", "3.0")
 gi.require_version("GdkPixbuf", "2.0")
 from gi.repository import Gimp, GimpUi, Gio, GLib, GdkPixbuf, Gtk
+
+from chopgimp_common import ok, fail, walk_layers, get_parasite_json, set_parasite_json
 
 PROCS = {
     "chopgimp-export-web": ("Exporter pour le web…", "<Image>/File/Export"),
@@ -49,30 +50,6 @@ FORMATS = {
     "avif": ("file-heif-av1-export", {"quality": lambda q: int(q)}),
     "png": ("file-png-export", {"compression": lambda q: 9}),
 }
-
-
-def ok(procedure):
-    return procedure.new_return_values(Gimp.PDBStatusType.SUCCESS, GLib.Error())
-
-
-def fail(procedure, msg):
-    return procedure.new_return_values(Gimp.PDBStatusType.EXECUTION_ERROR,
-                                       GLib.Error.new_literal(GLib.quark_from_string("chopgimp"), msg, 0))
-
-
-def parasite_json(item, name, default):
-    par = item.get_parasite(name)
-    if not par:
-        return default
-    try:
-        return json.loads(bytes(b & 255 for b in par.get_data()).decode("utf-8"))
-    except ValueError:
-        return default
-
-
-def set_parasite_json(item, name, data):
-    raw = [b - 256 if b > 127 else b for b in json.dumps(data).encode("utf-8")]
-    item.attach_parasite(Gimp.Parasite.new(name, Gimp.PARASITE_PERSISTENT, raw))
 
 
 def export_image(image, path, fmt, quality):
@@ -238,13 +215,6 @@ def export_web(image):
 ASSET = re.compile(r"^\s*(?:(\d+)%\s+)?([^,]+?\.(png|jpe?g|webp|gif))(?:\s+(\d+)%)?\s*$", re.I)
 
 
-def walk(layers):
-    for l in layers:
-        yield l
-        if isinstance(l, Gimp.GroupLayer):
-            yield from walk(l.get_children())
-
-
 def generate_assets(image, quiet=False):
     f = image.get_file()
     if f is None:
@@ -252,7 +222,7 @@ def generate_assets(image, quiet=False):
     folder = os.path.join(os.path.dirname(f.get_path()),
                           os.path.splitext(os.path.basename(f.get_path()))[0] + "-ressources")
     made = []
-    for layer in walk(image.get_layers()):
+    for layer in walk_layers(image.get_layers()):
         for part in layer.get_name().split(","):
             m = ASSET.match(part)
             if not m:
@@ -403,14 +373,14 @@ def batch_run(opts):
 def comp_capture(image):
     return {str(l.get_tattoo()): {"visible": l.get_visible(), "x": l.get_offsets()[1],
                                   "y": l.get_offsets()[2], "opacity": l.get_opacity()}
-            for l in walk(image.get_layers())}
+            for l in walk_layers(image.get_layers())}
 
 
 def comp_apply(image, state, target=None):
     """Applique une composition. target : copie de image (image.duplicate(),
     même arborescence, tatouages différents) à modifier à la place de image."""
-    src = list(walk(image.get_layers()))
-    dst = list(walk(target.get_layers())) if target is not None else src
+    src = list(walk_layers(image.get_layers()))
+    dst = list(walk_layers(target.get_layers())) if target is not None else src
     for l, d in zip(src, dst):
         s = state.get(str(l.get_tattoo()))
         if not s:
@@ -423,7 +393,7 @@ def comp_apply(image, state, target=None):
 
 
 def layer_comps(image):
-    comps = parasite_json(image, COMPS_PARASITE, {})
+    comps = get_parasite_json(image, COMPS_PARASITE, {})
     GimpUi.init("chopgimp_web")
     dlg = GimpUi.Dialog(title="Compositions de calques", role="chopgimp-layer-comps", modal=True)
     dlg.add_button("_Fermer", Gtk.ResponseType.CLOSE)
@@ -538,7 +508,7 @@ class ChopGimpWeb(Gimp.PlugIn):
         elif name == "chopgimp-generate-assets":
             msg = generate_assets(image, quiet=not interactive)
         elif name == "chopgimp-generator-toggle":
-            on = not parasite_json(image, GEN_PARASITE, False)
+            on = not get_parasite_json(image, GEN_PARASITE, False)
             set_parasite_json(image, GEN_PARASITE, on)
             Gimp.message("Génération des ressources à chaque enregistrement : %s" %
                          ("activée" if on else "désactivée"))

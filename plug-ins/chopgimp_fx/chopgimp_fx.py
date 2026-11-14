@@ -17,7 +17,6 @@ l'effet et ses réglages sont mémorisés dans le calque résultat (parasite
 « chopgimp-fx ») ; « Modifier l'effet… » régénère le résultat avec de nouveaux
 réglages, « Supprimer l'effet » rend la forme d'origine.
 """
-import json
 import math
 import random
 import sys
@@ -27,29 +26,15 @@ gi.require_version("Gimp", "3.0")
 gi.require_version("GimpUi", "3.0")
 gi.require_version("Gegl", "0.4")
 gi.require_version("Gtk", "3.0")
-from gi.repository import Gimp, GimpUi, Gegl, GLib, GObject, Gtk
+from gi.repository import Gimp, GimpUi, GLib, GObject, Gtk
+
+from chopgimp_common import (ok, fail, srgb as gegl_color, copy_vector_style,
+                             get_parasite_json as parasite_get, set_parasite_json,
+                             remove_layer_and_paths)
 
 AUTHOR = "ChopGimp"
 YEAR = "2026"
 STYLE_PREFIX = "Style : "
-
-
-def ok(procedure):
-    return procedure.new_return_values(Gimp.PDBStatusType.SUCCESS, GLib.Error())
-
-
-def fail(procedure, msg):
-    return procedure.new_return_values(
-        Gimp.PDBStatusType.EXECUTION_ERROR,
-        GLib.Error.new_literal(GLib.quark_from_string("chopgimp"), msg, 0))
-
-
-def gegl_color(r, g, b, a=1.0):
-    """Couleur sRGB (0..1, comme Gdk.RGBA) → Gegl.Color ; set_rgba() seul
-    attendrait du RGB linéaire et éclaircirait la couleur."""
-    c = Gegl.Color.new("black")
-    c.set_rgba_with_space(r, g, b, a, None)
-    return c
 
 
 # ─── Mémoire des effets (parasites) ──────────────────────────────────────
@@ -57,22 +42,9 @@ FX_PARASITE = "chopgimp-fx"
 STYLE_PARASITE = "chopgimp-style"
 
 
-def parasite_get(item, name):
-    try:
-        par = item.get_parasite(name)
-    except Exception:
-        par = None
-    if par is None:
-        return None
-    try:
-        return json.loads(bytes(par.get_data()).decode("utf-8"))
-    except Exception:
-        return None
-
-
 def parasite_set(item, name, data):
     # 1 = persistant (enregistré dans le XCF), 2 = annulable
-    item.attach_parasite(Gimp.Parasite.new(name, 3, list(json.dumps(data).encode("utf-8"))))
+    set_parasite_json(item, name, data, 3)
 
 
 def rgba(c):
@@ -223,57 +195,6 @@ def bezier_points(pts, closed, smooth):
 
 def selected_vector_layers(layers):
     return [l for l in layers if isinstance(l, Gimp.VectorLayer)]
-
-
-def copy_vector_style(src, dst):
-    for getter, setter in [("get_enable_fill", "set_enable_fill"), ("get_fill_color", "set_fill_color"),
-                           ("get_enable_stroke", "set_enable_stroke"), ("get_stroke_color", "set_stroke_color"),
-                           ("get_stroke_width", "set_stroke_width"),
-                           ("get_stroke_width_unit", "set_stroke_width_unit"),
-                           ("get_stroke_cap_style", "set_stroke_cap_style"),
-                           ("get_stroke_join_style", "set_stroke_join_style"),
-                           ("get_stroke_miter_limit", "set_stroke_miter_limit"),
-                           ("get_stroke_dash_pattern", "set_stroke_dash_pattern"),
-                           ("get_stroke_dash_offset", "set_stroke_dash_offset")]:
-        try:
-            getattr(dst, setter)(getattr(src, getter)())
-        except Exception:
-            pass
-    dst.set_opacity(src.get_opacity())
-    dst.set_mode(src.get_mode())
-
-
-def _vector_paths(layer):
-    """Chemins des calques vectoriels de layer (et de ses enfants)."""
-    out = []
-    if isinstance(layer, Gimp.VectorLayer):
-        p = layer.get_path()
-        if p is not None:
-            out.append(p)
-    if isinstance(layer, Gimp.GroupLayer):
-        for c in layer.get_children():
-            out += _vector_paths(c)
-    return out
-
-
-def remove_layer_and_paths(image, layer):
-    """Retire le calque et les chemins de ses calques vectoriels : GIMP les
-    laisse dans l'image (chemins orphelins), sauf s'ils servent encore à un
-    autre calque vectoriel."""
-    paths = _vector_paths(layer)
-    image.remove_layer(layer)
-    if not paths:
-        return
-    used = set()
-    for l in image.get_layers():
-        used.update(p.get_id() for p in _vector_paths(l))
-    for p in paths:
-        try:
-            if p.is_valid() and p.get_id() not in used:
-                image.remove_path(p)
-                used.add(p.get_id())
-        except Exception:
-            pass
 
 
 def new_vector_layer_like(image, src, path, name, position_layer=None):
@@ -687,10 +608,6 @@ def apply_styles(layer, chosen, keep=None):
 
 def style_to_json(chosen):
     return {k: [v, rgba(c), o] for k, (v, c, o) in chosen.items()}
-
-
-def style_from_json(data):
-    return {k: (v, from_rgba(c), o) for k, (v, c, o) in (data or {}).items()}
 
 
 def layer_style_dialog(image, layer, focus=None):

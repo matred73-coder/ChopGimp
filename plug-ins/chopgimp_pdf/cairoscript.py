@@ -21,7 +21,6 @@ notées mais pas appliquées ; ce qui n'est pas reconnu est compté.
 import base64
 import math
 import re
-import struct
 import zlib
 
 TOKEN = re.compile(rb"""

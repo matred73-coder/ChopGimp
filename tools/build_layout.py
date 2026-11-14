@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-PhotoGIMP Pro v2 — génère config/toolrc (boîte à outils façon Photoshop) et
+ChopGimp — génère config/toolrc (boîte à outils façon Photoshop) et
 config/sessionrc (espace de travail « Essentiel »).
 
 Usage : build_layout.py   → écrit config/toolrc et config/sessionrc
@@ -51,7 +51,7 @@ def info(tool, visible=True, indent=""):
 
 
 def toolrc():
-    out = ["# GIMP toolrc — PhotoGIMP Pro v2 (ordre de la barre d'outils Photoshop)",
+    out = ["# GIMP toolrc — ChopGimp (ordre de la barre d'outils Photoshop)",
            "# Généré par tools/build_layout.py", "", "(file-version 1)", ""]
     for g in TOOLBOX:
         if len(g) == 1:
@@ -172,15 +172,8 @@ def sessionrc(workspace="essentiel"):
 
 
 if __name__ == "__main__":
-    import sys
     open(os.path.join(ROOT, "config", "toolrc"), "w").write(toolrc())
     sess = sessionrc()
-    if "--v2" in sys.argv:   # GIMP non recompilé (Snap) : pas de barre d'options
-        sess = sess.replace('            (dockable "gimp-undo-history"',
-                            '            (dockable "gimp-tool-options"\n                (locked)\n'
-                            '                (tab-style automatic)\n                (aux-info\n'
-                            '                    (show-button-bar "true")))\n'
-                            '            (dockable "gimp-undo-history"', 1)
     open(os.path.join(ROOT, "config", "sessionrc"), "w").write(sess)
     # espaces de travail d'usine (Fenêtres > Espace de travail)
     os.makedirs(os.path.join(ROOT, "config", "workspaces"), exist_ok=True)

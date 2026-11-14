@@ -34,6 +34,9 @@ gi.require_version("Gegl", "0.4")
 gi.require_version("GdkPixbuf", "2.0")
 from gi.repository import Gimp, GimpUi, Gegl, GLib, GdkPixbuf, Gtk
 
+from chopgimp_common import (ok, fail, srgb as color, walk_layers, pdb_call,
+                             copy_vector_style, remove_layer_and_paths)
+
 BD = "<Image>/Filters/BD"
 PROCS = {
     "chopgimp-sketch-layer": ("Nouveau calque de croquis", "<Image>/Layer"),
@@ -51,28 +54,6 @@ PROCS = {
     "chopgimp-timelapse-export": ("Exporter le timelapse…", "<Image>/File/Export"),
 }
 SKETCH = "chopgimp-sketch"
-
-
-def ok(procedure):
-    return procedure.new_return_values(Gimp.PDBStatusType.SUCCESS, GLib.Error())
-
-
-def fail(procedure, msg):
-    return procedure.new_return_values(Gimp.PDBStatusType.EXECUTION_ERROR,
-                                       GLib.Error.new_literal(GLib.quark_from_string("chopgimp"), msg, 0))
-
-
-def color(r, g, b, a=1.0):
-    c = Gegl.Color.new("black")
-    c.set_rgba_with_space(r, g, b, a, None)
-    return c
-
-
-def walk(layers):
-    for l in layers:
-        yield l
-        if isinstance(l, Gimp.GroupLayer):
-            yield from walk(l.get_children())
 
 
 def insert_top(image, layer):
@@ -114,14 +95,8 @@ def vector_from_points(image, name, strokes, fill=None, stroke=None, width=2.0, 
 def path_boolean(image, paths, op):
     """Pathfinder de ChopGimp : 0 union, 1 le premier moins les autres. → chemin
     inséré dans l'image, ou None."""
-    proc = Gimp.get_pdb().lookup_procedure("chopgimp-path-boolean")
-    if proc is None:
-        return None
-    cfg = proc.create_config()
-    cfg.set_core_object_array("paths", paths)
-    cfg.set_property("operation", op)
-    res = proc.run(cfg)
-    if res.index(0) != Gimp.PDBStatusType.SUCCESS:
+    res = pdb_call("chopgimp-path-boolean", paths=paths, operation=op)
+    if res is None:
         return None
     path = res.index(1)
     if path is None:
@@ -131,35 +106,6 @@ def path_boolean(image, paths, op):
     except Exception:
         pass
     return path
-
-
-def remove_layer_and_paths(image, layer):
-    """Retire un calque vectoriel et son chemin (GIMP le laisse dans l'image),
-    sauf si ce chemin sert encore à un autre calque vectoriel."""
-    path = layer.get_path() if isinstance(layer, Gimp.VectorLayer) else None
-    image.remove_layer(layer)
-    if path is None:
-        return
-    for l in walk(image.get_layers()):
-        if isinstance(l, Gimp.VectorLayer):
-            p = l.get_path()
-            if p is not None and p.get_id() == path.get_id():
-                return
-    try:
-        if path.is_valid():
-            image.remove_path(path)
-    except Exception:
-        pass
-
-
-def copy_vector_style(src, dst):
-    dst.set_enable_fill(src.get_enable_fill())
-    dst.set_fill_color(src.get_fill_color())
-    dst.set_enable_stroke(src.get_enable_stroke())
-    dst.set_stroke_color(src.get_stroke_color())
-    dst.set_stroke_width(src.get_stroke_width())
-    dst.set_opacity(src.get_opacity())
-    dst.set_mode(src.get_mode())
 
 
 def spin_dialog(title, rows):
@@ -212,7 +158,7 @@ def sketch_layer(image):
 
 
 def sketch_toggle(image):
-    sketches = [l for l in walk(image.get_layers()) if is_sketch(l)]
+    sketches = [l for l in walk_layers(image.get_layers()) if is_sketch(l)]
     if not sketches:
         return "Aucun calque de croquis (Calque > Nouveau calque de croquis)."
     show = not any(l.get_visible() for l in sketches)

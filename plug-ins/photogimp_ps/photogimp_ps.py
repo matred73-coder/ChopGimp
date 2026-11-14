@@ -16,7 +16,9 @@ import sys
 import gi
 gi.require_version("Gimp", "3.0")
 gi.require_version("Gegl", "0.4")
-from gi.repository import Gimp, Gegl, GLib
+from gi.repository import Gimp, GLib
+
+from chopgimp_common import ok, fail, srgb, copy_vector_style, remove_layer_and_paths
 
 AUTHOR = "PhotoGIMP Pro"
 YEAR = "2026"
@@ -66,43 +68,6 @@ CLIP_GROUP_PREFIX = "⧉ "     # préfixe des groupes d'écrêtage créés par P
 ADJ_PREFIX = "◐ "            # préfixe des groupes « calque de réglage »
 
 
-def ok(procedure):
-    return procedure.new_return_values(Gimp.PDBStatusType.SUCCESS, GLib.Error())
-
-
-def fail(procedure, msg):
-    return procedure.new_return_values(Gimp.PDBStatusType.EXECUTION_ERROR, GLib.Error.new_literal(
-        GLib.quark_from_string("photogimp"), msg, 0))
-
-
-def gegl_color(rgb):
-    c = Gegl.Color.new("black")
-    # valeurs sRGB (set_rgba les interpréterait en linéaire)
-    c.set_rgba_with_space(rgb[0], rgb[1], rgb[2], 1.0, None)
-    return c
-
-
-def remove_orphan_path(image, path):
-    """Supprime le chemin d'un calque vectoriel retiré (GIMP le laisse dans
-    l'image), sauf s'il sert encore à un autre calque vectoriel."""
-    if path is None or not path.is_valid():
-        return
-    def walk(ls):
-        for l in ls:
-            if isinstance(l, Gimp.VectorLayer):
-                p = l.get_path()
-                if p is not None and p.get_id() == path.get_id():
-                    return True
-            if isinstance(l, Gimp.GroupLayer) and walk(l.get_children()):
-                return True
-        return False
-    try:
-        if not walk(image.get_layers()):
-            image.remove_path(path)
-    except Exception:
-        pass
-
-
 def siblings(layer):
     parent = layer.get_parent()
     return list(parent.get_children()) if parent else list(layer.get_image().get_layers())
@@ -120,7 +85,7 @@ def add_filter(drawable, op, name, props, color=None):
         # gegl:dropshadow → « color », gegl:inner-glow → « value »
         for prop in ("color", "value"):
             try:
-                cfg.set_property(prop, gegl_color(color))
+                cfg.set_property(prop, srgb(*color))
                 break
             except Exception:
                 pass
@@ -317,31 +282,13 @@ class PhotoGimpPS(Gimp.PlugIn):
                 new_path.stroke_new_from_points(ptype, points, closed)
                 nl = Gimp.VectorLayer.new(image, new_path)
                 nl.set_name("%s — forme %d" % (layer.get_name(), n))
-                self.copy_vector_style(layer, nl)
+                copy_vector_style(layer, nl)
                 image.insert_layer(nl, parent, pos)
                 nl.refresh()
                 new_layers.append(nl)
-            image.remove_layer(layer)
-            remove_orphan_path(image, path)
+            remove_layer_and_paths(image, layer)
             image.set_selected_layers(new_layers)
         return None
-
-    @staticmethod
-    def copy_vector_style(src, dst):
-        dst.set_enable_fill(src.get_enable_fill())
-        dst.set_fill_color(src.get_fill_color())
-        dst.set_enable_stroke(src.get_enable_stroke())
-        dst.set_stroke_color(src.get_stroke_color())
-        dst.set_stroke_width(src.get_stroke_width())
-        dst.set_stroke_width_unit(src.get_stroke_width_unit())
-        dst.set_stroke_cap_style(src.get_stroke_cap_style())
-        dst.set_stroke_join_style(src.get_stroke_join_style())
-        dst.set_stroke_miter_limit(src.get_stroke_miter_limit())
-        try:
-            dst.set_stroke_dash_pattern(src.get_stroke_dash_pattern())
-            dst.set_stroke_dash_offset(src.get_stroke_dash_offset())
-        except Exception:
-            pass
 
     # Ctrl+Maj+Alt+E : copie fusionnée du visible dans un nouveau calque en haut
     def stamp_visible(self, image):

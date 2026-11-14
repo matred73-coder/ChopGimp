@@ -29,6 +29,8 @@ gi.require_version("Gtk", "3.0")
 gi.require_version("Gegl", "0.4")
 from gi.repository import Gimp, GimpUi, Gegl, Gio, GLib, Gtk
 
+from chopgimp_common import ok, fail, srgb, get_parasite_text, set_parasite_text
+
 try:                        # accélère les options de fusion « Si » (facultatif)
     import numpy as np
 except Exception:
@@ -48,15 +50,6 @@ PROCS = {
 BLEND_PARASITE = "chopgimp-blend-if"
 CR_PREFIX = "Camera Raw : "
 SNAP_PARASITE = "chopgimp-snapshot-of"
-
-
-def ok(procedure):
-    return procedure.new_return_values(Gimp.PDBStatusType.SUCCESS, GLib.Error())
-
-
-def fail(procedure, msg):
-    return procedure.new_return_values(Gimp.PDBStatusType.EXECUTION_ERROR,
-                                       GLib.Error.new_literal(GLib.quark_from_string("chopgimp"), msg, 0))
 
 
 def insert_target(image):
@@ -81,8 +74,7 @@ def fill_color(image, interactive):
         dlg.destroy()
         if resp != Gtk.ResponseType.OK:
             return "cancel"
-        color = Gegl.Color.new("black")
-        color.set_rgba_with_space(rgba.red, rgba.green, rgba.blue, 1.0, None)
+        color = srgb(rgba.red, rgba.green, rgba.blue)
     w, h = image.get_width(), image.get_height()
     path = Gimp.Path.new(image, "Remplissage")
     path.stroke_new_from_points(Gimp.PathStrokeType.BEZIER,
@@ -143,8 +135,7 @@ def snapshot_new(image):
     name = "Instantané %s — %s" % (stamp, os.path.splitext(base)[0])
     copy.set_file(Gio.File.new_for_path(os.path.join(GLib.get_tmp_dir(), name + ".xcf")))
     copy.clean_all()
-    raw = [b - 256 if b > 127 else b for b in str(image.get_id()).encode()]
-    copy.attach_parasite(Gimp.Parasite.new(SNAP_PARASITE, 0, raw))
+    set_parasite_text(copy, SNAP_PARASITE, str(image.get_id()), 0)
     Gimp.message("%s créé (panneau Images). Image > Instantané > Revenir à un instantané… "
                  "pour l'ouvrir." % name)
     return None
@@ -153,8 +144,7 @@ def snapshot_new(image):
 def snapshots_of(image):
     out = []
     for im in Gimp.get_images():
-        par = im.get_parasite(SNAP_PARASITE)
-        if par and bytes(b & 255 for b in par.get_data()).decode() == str(image.get_id()):
+        if get_parasite_text(im, SNAP_PARASITE) == str(image.get_id()):
             out.append(im)
     return out
 
@@ -356,20 +346,19 @@ def blend_if_apply(image, layer, this, below):
             mask.curves_explicit(Gimp.HistogramChannel.VALUE, ramp_lut(*this))
         if tuple(below) != neutral:
             blend_if_below(image, layer, mask, below)
-    raw = [b - 256 if b > 127 else b
-           for b in ("%d %d %d %d %d %d %d %d" % (tuple(this) + tuple(below))).encode()]
-    layer.attach_parasite(Gimp.Parasite.new(BLEND_PARASITE, 0, raw))
+    set_parasite_text(layer, BLEND_PARASITE,
+                      "%d %d %d %d %d %d %d %d" % (tuple(this) + tuple(below)), 0)
     return None
 
 
 def blend_if_values(layer):
     """Valeurs « Si » mémorisées sur le calque (8 entiers), ou None."""
-    par = layer.get_parasite(BLEND_PARASITE)
-    if not par:
+    text = get_parasite_text(layer, BLEND_PARASITE)
+    if text is None:
         return None
     try:
-        vals = [int(v) for v in bytes(b & 255 for b in par.get_data()).decode().split()]
-    except (ValueError, UnicodeDecodeError):
+        vals = [int(v) for v in text.split()]
+    except ValueError:
         return None
     return vals if len(vals) == 8 else None
 

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-PhotoGIMP Pro v2 — générateur de config/shortcutsrc (raccourcis Photoshop).
+ChopGimp — générateur de config/shortcutsrc (raccourcis Photoshop).
 
 - PS_MAP : correspondance Photoshop (Windows/Linux) → actions GIMP 3.2.
 - Chaque action est vérifiée contre data/gimp-3.2.8-default-shortcuts.json
@@ -201,12 +201,6 @@ def norm(k):
 
 
 def main():
-    global PS_MAP
-    if "--v2" in sys.argv:   # GIMP non recompilé : actions ajoutées par les patchs absentes
-        PS_MAP = [e for e in PS_MAP if not e[1].startswith(("tools-opacity-ps-", "tools-hand",
-                                                             "tools-rotate-view", "tools-shape",
-                                                             "tools-spot-heal", "windows-hide-right-docks",
-                                                             "tools-shape-builder", "tools-direct-select"))]
     defaults = json.load(open(DEFAULTS))
     errors = []
 
@@ -239,7 +233,7 @@ def main():
         if len(keep) != len(keys):
             freed[act] = (keys, keep)
 
-    lines = ["# GIMP shortcutsrc — PhotoGIMP Pro v2 (raccourcis Photoshop)",
+    lines = ["# GIMP shortcutsrc — ChopGimp (raccourcis Photoshop)",
              "# Généré par tools/build_shortcuts.py — ne pas éditer à la main.",
              "# Les actions absentes gardent leur raccourci GIMP par défaut.",
              "", "(file-version 1)", ""]

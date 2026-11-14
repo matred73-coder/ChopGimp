@@ -40,7 +40,11 @@
         "photogimp"
     ],
     "cleanup": [
+        "*.a",
+        "*.la",
+        "/include",
         "/lib/cmake",
+        "/lib/pkgconfig",
         "/man",
         "/share/aclocal",
         "/share/doc",
@@ -48,9 +52,7 @@
         "/share/gtk-doc",
         "/share/man",
         "/share/pkgconfig",
-        "/share/vala",
-        "*.la",
-        "*.a"
+        "/share/vala"
     ],
     "modules": [
         {
@@ -892,7 +894,8 @@
             "name": "python-ia",
             "buildsystem": "simple",
             "build-commands": [
-                "python3 -m pip install --no-index --no-deps --no-build-isolation --prefix=${FLATPAK_DEST} numpy-2.5.4-cp314-cp314-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl onnxruntime-1.32.0-cp314-cp314-manylinux_2_28_x86_64.whl"
+                "python3 -m pip install --no-index --no-deps --no-build-isolation --prefix=${FLATPAK_DEST} numpy-2.5.4-cp314-cp314-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl onnxruntime-1.32.0-cp314-cp314-manylinux_2_28_x86_64.whl",
+                "SP=${FLATPAK_DEST}/lib/python3.14/site-packages; find $SP/numpy -type d -name tests -prune -exec rm -rf {} + ; rm -rf $SP/numpy/f2py $SP/numpy/_pyinstaller $SP/onnxruntime/tools $SP/onnxruntime/transformers $SP/onnxruntime/quantization $SP/onnxruntime/datasets ; find $SP/numpy $SP/onnxruntime -name '*.pyi' -delete"
             ],
             "sources": [
                 {
@@ -1030,7 +1033,8 @@
                         "../patches/gimp-3.2.8/0086-ChopGimp-string-stabilizer-with-catch-up-pressure-cu.patch",
                         "../patches/gimp-3.2.8/0087-ChopGimp-paper-texture-pattern-grain-in-canvas-space.patch",
                         "../patches/gimp-3.2.8/0088-ChopGimp-sketch-layers-hidden-on-export-timelapse-re.patch",
-                        "../patches/gimp-3.2.8/0089-ChopGimp-final-review-fixes-autosave-timelapse-seria.patch"
+                        "../patches/gimp-3.2.8/0089-ChopGimp-final-review-fixes-autosave-timelapse-seria.patch",
+                        "../patches/gimp-3.2.8/0090-ChopGimp-no-idle-polling-text-panels-signal-driven-c.patch"
                     ]
                 }
             ],
@@ -1080,7 +1084,8 @@
                 }
             ],
             "build-commands": [
-                "sh tools/install_data.sh ${FLATPAK_DEST}"
+                "sh tools/install_data.sh ${FLATPAK_DEST}",
+                "find ${FLATPAK_DEST}/share/locale -mindepth 1 -maxdepth 1 ! -name 'fr*' ! -name 'en*' -exec rm -rf {} +"
             ]
         }
     ]

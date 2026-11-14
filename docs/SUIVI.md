@@ -23,7 +23,7 @@ Plan complet : lots 0 à 6, idées en plus, calendrier de 17 étapes (voir l'his
 | 15 | 3.23.1 | Dessin II « Peintre » | ✅ livrée |
 | 16 | 3.23.2 | Dessin III « Atelier / BD » | ✅ livrée |
 | 17 | 3.24.0 | Revue finale | ✅ livrée |
-| 18 | 3.24.1 | Optimisation « légèreté » et nettoyage en profondeur | à faire (validation des suppressions avant) |
+| 18 | 3.24.1 | Optimisation « légèreté » et nettoyage en profondeur | ✅ livrée |
 
 ## 3.16.2 — fin de la revue de code
 
@@ -400,3 +400,39 @@ Relecture complète du code ajouté, en 4 lots parallèles : cœur C (peinture, 
   - un calque SVG masqué est importé vide ;
   - le panneau texte se rafraîchit encore par minuteur (mais plus quand il est caché) ;
   - nettoyage en profondeur (scripts v1 en doublon, anciens scripts, module commun aux greffons) : à valider à l'étape 18.
+
+## 3.24.1 — Légèreté et nettoyage en profondeur
+
+Sauvegarde préalable : tag `backup-avant-nettoyage-3.24.1` (dépôt et sources GIMP, poussé) et archive `.backups/avant-nettoyage-3.24.1.tar.gz`.
+
+**Mesures avant / après**
+
+| Mesure | 3.24.0 | 3.24.1 |
+|---|---|---|
+| Paquet à télécharger | 96 Mo | 83 Mo |
+| Taille installée | 402 Mo | 328 Mo |
+| Réveils au repos (fil principal) | ≈ 5,6 /s | ≈ 1 /s |
+| Processeur au repos (30 s) | < 0,1 % | < 0,1 % |
+| Mémoire au repos (interface, une image) | 186 Mo | 184 Mo |
+| Démarrage console (à chaud / premier lancement) | 2,3 s / 17 s | inchangé |
+
+- **Paquet allégé** :
+  - traductions limitées au français et à l'anglais (84 autres langues retirées, ≈ 55 Mo) ;
+  - numpy sans ses tests ni f2py, onnxruntime sans ses outils de développement (≈ 28 Mo) ;
+  - en-têtes et fichiers pkg-config retirés.
+- **Plus d'interrogation périodique** :
+  - les panneaux Caractère, Paragraphe, Glyphes et Textes du document se mettent à jour sur signaux (changement d'image, de calque, de texte, annulation) au lieu de minuteurs à 0,4–0,7 s. Un panneau caché ne suit plus rien ; il se met à jour quand il réapparaît ;
+  - le suivi des images ouvertes du traceur de plantage ne tourne plus qu'après un changement.
+  - Il ne reste au repos que l'enregistrement automatique (toutes les 5 min).
+- **Nettoyage** :
+  - module commun `plug-ins/_common/chopgimp_common.py` (couleurs sRGB, parasites, copie du style vectoriel, suppression d'un calque et de ses chemins, appels PDB, parcours des calques), copié dans chaque greffon à l'installation et utilisé par les 12 greffons. Les copies divergentes (source de plusieurs bugs) disparaissent ;
+  - scripts v1 en doublon retirés, chacun remplacé par l'équivalent ChopGimp : compositions de calques, mise à l'échelle selon le contenu, texte déformé et effets de texte, lorem ipsum, développement RAW (Camera Raw), export des calques, export par lots, processeur d'images. Les effets « néon », « chrome » et « 3D » en un clic n'existent plus ; on les obtient par les styles de calque ;
+  - 27 scripts v1 désactivés depuis longtemps retirés du dépôt, avec leur liste ;
+  - ancien installeur Snap, lanceur et outils d'audit v1 retirés ; branches « v2 » des générateurs supprimées ;
+  - recherche de commandes : entrées pointant vers les commandes ChopGimp, et seules les commandes réellement présentes sont proposées ;
+  - code mort et imports inutiles.
+- **Non fait, volontairement** :
+  - fusion des 90 patchs : sans gain à l'exécution, et risque de casser l'historique des corrections ;
+  - plafonds mémoire de GIMP (cache de tuiles, historique) laissés tels quels : ce sont des maxima, utilisés seulement si besoin ; les réduire ralentirait les grosses images ;
+  - un pic de mémoire très bref (≈ 0,1 s, ≈ 350 Mo) au démarrage du cœur, dont l'origine n'est pas identifiée. Il n'a pas d'effet ensuite (55 Mo en console).
+- 100 tests verts ; vérifié au banc : panneau Caractère à jour après création d'un texte, réveils au repos mesurés.

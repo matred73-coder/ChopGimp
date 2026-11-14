@@ -25,6 +25,8 @@ gi.require_version("GimpUi", "3.0")
 gi.require_version("Gtk", "3.0")
 from gi.repository import Gimp, GimpUi, GLib, GObject, Gtk
 
+from chopgimp_common import ok, fail, pdb_call as call, walk_layers
+
 AUTHOR, YEAR = "ChopGimp", "2026"
 TXT = "<Image>/Layer/Texte"
 TXT_L = "<Layers>/Layers Menu/Texte"
@@ -33,16 +35,6 @@ LOREM = ("Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmo
          "incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud "
          "exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat. Duis aute irure "
          "dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur.")
-
-
-def ok(procedure):
-    return procedure.new_return_values(Gimp.PDBStatusType.SUCCESS, GLib.Error())
-
-
-def fail(procedure, msg):
-    return procedure.new_return_values(
-        Gimp.PDBStatusType.EXECUTION_ERROR,
-        GLib.Error.new_literal(GLib.quark_from_string("chopgimp"), msg, 0))
 
 
 def is_live_text(d):
@@ -57,13 +49,6 @@ def is_live_text(d):
 
 def text_layers(drawables):
     return [d for d in drawables if is_live_text(d)]
-
-
-def walk(layers):
-    for l in layers:
-        yield l
-        if isinstance(l, Gimp.GroupLayer):
-            yield from walk(l.get_children())
 
 
 def text_path(image, layer):
@@ -154,17 +139,6 @@ WARP_STYLES = [
     ("fisheye", "Œil de poisson"), ("inflate", "Gonflement"), ("squeeze", "Compression"),
     ("twist", "Torsion"),
 ]
-
-
-def call(name, **kw):
-    p = Gimp.get_pdb().lookup_procedure(name)
-    cfg = p.create_config()
-    for k, v in kw.items():
-        cfg.set_property(k, v)
-    res = p.run(cfg)
-    if res.index(0) != Gimp.PDBStatusType.SUCCESS:
-        return None
-    return res
 
 
 def fx_get(layer):
@@ -362,7 +336,7 @@ def find_replace_dialog(image):
         count = layers = 0
         image.undo_group_start()
         try:
-            for layer in walk(image.get_layers()):
+            for layer in walk_layers(image.get_layers()):
                 if not is_live_text(layer):
                     continue
                 text = layer.get_text() or ""
