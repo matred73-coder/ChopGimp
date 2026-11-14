@@ -1,0 +1,38 @@
+From 5aa341af6743d0417f1fba39ff40858b45f3641c Mon Sep 17 00:00:00 2001
+From: ChopGimp <mathieu.redon@proton.me>
+Date: Sat, 14 Nov 2026 02:15:48 +0100
+Subject: [PATCH] ChopGimp: smart guides labels (snap to bounding boxes /
+ equidistance)
+
+---
+ app/actions/view-actions.c | 9 +++++----
+ 1 file changed, 5 insertions(+), 4 deletions(-)
+
+diff --git a/app/actions/view-actions.c b/app/actions/view-actions.c
+index 0886b67..460f2a7 100644
+--- a/app/actions/view-actions.c
++++ b/app/actions/view-actions.c
+@@ -278,15 +278,16 @@ static const GimpToggleActionEntry view_toggle_actions[] =
+     GIMP_HELP_VIEW_SNAP_TO_PATH },
+ 
+   { "view-snap-to-bbox", NULL,
+-    NC_("view-action", "Snap to _Bounding Boxes"), NULL, { NULL },
+-    NC_("view-action", "Tool operations snap to the bounding boxes"),
++    NC_("view-action", "Repères intelligents : _bords et centres des calques"), NULL, { NULL },
++    NC_("view-action", "En déplaçant, s'aimanter aux bords et aux centres des autres calques "
++                       "(repères intelligents de Photoshop)"),
+     view_snap_to_bbox_cmd_callback,
+     FALSE,
+     GIMP_HELP_VIEW_SNAP_TO_BBOX },
+ 
+   { "view-snap-to-equidistance", NULL,
+-    NC_("view-action", "Snap to _Equidistance"), NULL, { NULL },
+-    NC_("view-action", "Tool operations snap to the equidistance between three bounding boxes"),
++    NC_("view-action", "Repères intelligents : _espacements égaux"), NULL, { NULL },
++    NC_("view-action", "En déplaçant, s'aimanter à un espacement égal entre trois calques"),
+     view_snap_to_equidistance_cmd_callback,
+     FALSE,
+     GIMP_HELP_VIEW_SNAP_TO_EQUIDISTANCE },
+-- 
+2.53.0
+

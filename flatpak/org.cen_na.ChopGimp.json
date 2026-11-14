@@ -870,6 +870,25 @@
             ]
         },
         {
+            "name": "liblqr",
+            "config-opts": [
+                "--disable-static",
+                "CFLAGS=-O2 -g -std=gnu17"
+            ],
+            "cleanup": [
+                "/include",
+                "/lib/pkgconfig",
+                "*.la"
+            ],
+            "sources": [
+                {
+                    "type": "archive",
+                    "url": "https://github.com/carlobaldassi/liblqr/archive/refs/tags/v0.4.3.tar.gz",
+                    "sha256": "64b0c4ac76d39cca79501b3f53544af3fc5f72b536ac0f28d2928319bfab6def"
+                }
+            ]
+        },
+        {
             "name": "gimp",
             "sources": [
                 {
@@ -982,7 +1001,9 @@
                         "../patches/gimp-3.2.8/0078-ChopGimp-plug-in-dialogs-stay-above-the-image-window.patch",
                         "../patches/gimp-3.2.8/0079-ChopGimp-PSD-export-writes-vector-layers-as-shape-la.patch",
                         "../patches/gimp-3.2.8/0080-ChopGimp-File-Place-linked-Place-embedded-labels.patch",
-                        "../patches/gimp-3.2.8/0081-ChopGimp-SVG-export-numbers-with-a-dot-whatever-the-.patch"
+                        "../patches/gimp-3.2.8/0081-ChopGimp-SVG-export-numbers-with-a-dot-whatever-the-.patch",
+                        "../patches/gimp-3.2.8/0082-ChopGimp-align-distribute-in-the-move-tool-options-b.patch",
+                        "../patches/gimp-3.2.8/0083-ChopGimp-smart-guides-labels-snap-to-bounding-boxes-.patch"
                     ]
                 }
             ],

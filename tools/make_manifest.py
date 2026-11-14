@@ -105,9 +105,21 @@ GEOM_MODULES = [
      "cleanup": ["/lib/cmake"]},
 ]
 
+# ── liblqr (Liquid Rescale) : Image > Mise à l'échelle selon le contenu
+#    (plug-in chopgimp_base, appel par ctypes)
+LQR_MODULES = [
+    {"name": "liblqr",
+     # code ancien : prototypes « () » refusés par la norme C23 de GCC 16
+     "config-opts": ["--disable-static", "CFLAGS=-O2 -g -std=gnu17"],
+     "cleanup": ["/include", "/lib/pkgconfig", "*.la"],
+     "sources": [{"type": "archive",
+                  "url": "https://github.com/carlobaldassi/liblqr/archive/refs/tags/v0.4.3.tar.gz",
+                  "sha256": "64b0c4ac76d39cca79501b3f53544af3fc5f72b536ac0f28d2928319bfab6def"}]},
+]
+
 if not vanilla:
     gi = m["modules"].index(gimp)
-    m["modules"][gi:gi] = GEOM_MODULES
+    m["modules"][gi:gi] = GEOM_MODULES + LQR_MODULES
     # Correctifs GEGL (plantage multi-thread des tuiles mipmap, cf. patches/gegl-0.4.72)
     gegl = next(x for x in m["modules"] if isinstance(x, dict) and x["name"] == "gegl")
     for p in sorted(glob.glob(os.path.join(ROOT, "patches", "gegl-0.4.72", "*.patch"))):

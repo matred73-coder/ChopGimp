@@ -15,7 +15,7 @@ Plan complet : lots 0 à 6, idées en plus, calendrier de 17 étapes (voir l'his
 | 7 | 3.20.0 | Vectoriel I (PDF/AI, + EPS et SVG en avance) | ✅ livrée |
 | 8 | 3.20.1 | Vectoriel II (Placer, objets dynamiques, aperçus) | ✅ livrée |
 | 9 | 3.20.2 | Vectoriel III (SVG natif, export SVG) | ✅ livrée |
-| 10 | 3.21.0 | Base I | à faire |
+| 10 | 3.21.0 | Base I | ✅ livrée |
 | 11 | 3.21.1 | Base II | à faire |
 | 12 | 3.21.2 | Base III | à faire |
 | 13 | 3.22.0 | IA locale | à faire |
@@ -242,3 +242,21 @@ Signalés le 2026-11-13 en utilisant ChopGimp sur une affiche (scan 2480×3510) 
 - **Import SVG** : les formes sont rendues depuis une copie sans `<text>`, car librsvg dessine le texte en tracés, qui faisaient doublon avec les calques de texte modifiables.
 - **Aller-retour SVG** testé : import, export, réimport (groupes, visibilité, texte).
 - **3 nouveaux tests** : 82 tests.
+
+## 3.21.0 — Base I
+
+- **Enregistrement automatique et récupération** (`app/gui/chopgimp-autosave.c`) :
+  - toutes les 5 minutes (`chopgimprc [autosave] minutes`, 0 pour désactiver), copie XCF de chaque image modifiée dans `<dossier GIMP>/autosave/` ;
+  - la copie est écrite par `xcf_save_stream`, donc sans changer l'état de l'image ni les documents récents, et jamais pendant un coup de pinceau ;
+  - la copie est effacée quand l'image est enregistrée ou fermée, et toutes à la fermeture normale ;
+  - après un plantage, une fenêtre « Récupération » propose de rouvrir les copies (sous leur nom d'origine, marquées modifiées), de les supprimer, ou de décider plus tard.
+- **Aligner / répartir** dans la barre d'options de l'outil Déplacement : 6 alignements et 2 répartitions.
+  - Un seul calque s'aligne sur la sélection ou la zone de travail ; plusieurs calques, sur leur ensemble.
+  - Le calcul porte sur le contenu visible (transparence), pas sur le cadre du calque.
+  - Une seule étape d'annulation.
+- **Recherche universelle** : Ctrl+F ou `/` ouvre la recherche de commandes, filtres et menus de GIMP.
+- **Repères intelligents** : l'aimantation de GIMP aux bords et centres des calques et aux espacements égaux (déjà active par défaut dans ChopGimp) est renommée ainsi dans le menu Affichage.
+- **Image > Recadrage en perspective…** : un chemin de 4 points sur les coins est redressé en rectangle par une homographie, sur tous les calques, puis l'image est recadrée.
+- **Image > Redresser…** : avec un chemin de 2 points, l'image tourne vers l'horizontale ou la verticale la plus proche, puis est recadrée sur le plus grand rectangle sans bord vide. Le bouton « Redresser » de l'outil Mesure existe aussi.
+- **Image > Mise à l'échelle selon le contenu…** : Liquid Rescale (liblqr ajoutée au paquet, compilée en C17), avec option pour protéger la sélection.
+- **3 nouveaux tests** : 85 tests. Récupération testée au banc, en tuant ChopGimp.

@@ -610,6 +610,43 @@ try:
     except Exception as e:
         report(False, "Objet dynamique", repr(e)[:200])
 
+    # 3 quinquies. Base I : recadrage en perspective, redresser, Liquid Rescale
+    try:
+        def path_img(points):
+            im = Gimp.Image.new(400, 300, Gimp.ImageBaseType.RGB)
+            l = Gimp.Layer.new(im, "Fond", 400, 300, Gimp.ImageType.RGB_IMAGE, 100, Gimp.LayerMode.NORMAL)
+            im.insert_layer(l, None, 0)
+            l.fill(Gimp.FillType.WHITE)
+            p = Gimp.Path.new(im, "Repères")
+            flat = []
+            for x, y in points:
+                flat += [x, y, x, y, x, y]
+            p.stroke_new_from_points(Gimp.PathStrokeType.BEZIER, flat, False)
+            im.insert_path(p, None, 0)
+            im.set_selected_paths([p])
+            return im, l
+
+        im, l = path_img([(50, 40), (350, 60), (330, 260), (70, 240)])
+        r = run("chopgimp-perspective-crop", **{"run-mode": Gimp.RunMode.NONINTERACTIVE, "image": im,
+                                                "drawables": [l]})
+        # côtés moyens : (300,7 + 260,8) / 2 ≈ 281 et (200,9 + 200,6) / 2 ≈ 201
+        report(r.index(0) == Gimp.PDBStatusType.SUCCESS and abs(im.get_width() - 281) <= 2 and
+               abs(im.get_height() - 201) <= 2, "Recadrage en perspective (4 points)",
+               "%dx%d" % (im.get_width(), im.get_height()))
+        im, l = path_img([(20, 100), (380, 130)])
+        r = run("chopgimp-straighten", **{"run-mode": Gimp.RunMode.NONINTERACTIVE, "image": im,
+                                          "drawables": [l]})
+        report(r.index(0) == Gimp.PDBStatusType.SUCCESS and 300 < im.get_width() < 400 and
+               im.get_height() < 300, "Redresser (2 points)", "%dx%d" % (im.get_width(), im.get_height()))
+        im, l = path_img([(0, 0), (1, 1)])
+        r = run("chopgimp-liquid-rescale", **{"run-mode": Gimp.RunMode.NONINTERACTIVE, "image": im,
+                                              "drawables": [l], "width-factor": 0.5, "height-factor": 1.0,
+                                              "protect-selection": False})
+        report(r.index(0) == Gimp.PDBStatusType.SUCCESS and im.get_width() == 200 and l.get_width() == 200,
+               "Mise à l'échelle selon le contenu (liblqr)", "%dx%d" % (im.get_width(), im.get_height()))
+    except Exception as e:
+        report(False, "Base I", repr(e)[:200])
+
     # 4. Réglages d'usine présents (thème, icônes, menus, raccourcis)
     data = Gimp.data_directory()
     sysconf = Gimp.sysconf_directory()

@@ -1,0 +1,766 @@
+From e47fac86fd5fa51ac5531ccf8b9676a0a78f76e2 Mon Sep 17 00:00:00 2001
+From: ChopGimp <mathieu.redon@proton.me>
+Date: Sat, 14 Nov 2026 01:49:57 +0100
+Subject: [PATCH] ChopGimp: align/distribute in the move tool options bar,
+ autosave and recovery
+
+---
+ app/display/gimpoptionsbar.c | 208 +++++++++++++++-
+ app/gui/chopgimp-autosave.c  | 443 +++++++++++++++++++++++++++++++++++
+ app/gui/chopgimp-autosave.h  |   7 +
+ app/gui/gui.c                |   7 +-
+ app/gui/meson.build          |   1 +
+ 5 files changed, 664 insertions(+), 2 deletions(-)
+ create mode 100644 app/gui/chopgimp-autosave.c
+ create mode 100644 app/gui/chopgimp-autosave.h
+
+diff --git a/app/display/gimpoptionsbar.c b/app/display/gimpoptionsbar.c
+index b04fb8e..c4bc157 100644
+--- a/app/display/gimpoptionsbar.c
++++ b/app/display/gimpoptionsbar.c
+@@ -49,6 +49,13 @@
+ #include "core/gimpstrokeoptions.h"
+ #include "core/gimptoolinfo.h"
+ #include "core/gimpviewable.h"
++#include "core/gimpchannel.h"
++#include "core/gimpdrawable.h"
++#include "core/gimpimage.h"
++#include "core/gimpimage-undo.h"
++#include "core/gimpitem.h"
++#include "core/gimppickable-auto-shrink.h"
++#include "core/chopgimp-alpha-bounds.h"
+ 
+ #include "tools/tools-types.h"
+ #include "tools/gimppathoptions.h"
+@@ -131,7 +138,7 @@ static const BarSpec bar_specs[] =
+   { "gimp-paint-select-tool",      { "operation", "stroke-width", "show-scribbles", NULL } },
+ 
+   /* Déplacement, alignement, recadrage */
+-  { "gimp-move-tool",              { "move-current", "move-type", NULL } },
++  { "gimp-move-tool",              { "move-current", "move-type", "@align", NULL } },
+   { "gimp-align-tool",             { "align-reference", "align-contents", "align-layers",
+                                      "align-paths", NULL } },
+   { "gimp-crop-tool",              { "fixed-rule-active", "fixed-rule", "delete-pixels",
+@@ -328,6 +335,202 @@ gimp_options_bar_text_style_row (Gimp *gimp)
+   return row;
+ }
+ 
++/*  ChopGimp: Align / distribute (Photoshop move tool options).
++ *  One layer: on the selection, or the canvas. Several: on their union.
++ *  Bounds are the visible content (alpha), not the layer frame.
++ */
++enum { AL_LEFT, AL_HCENTER, AL_RIGHT, AL_TOP, AL_VCENTER, AL_BOTTOM, AL_DIST_H, AL_DIST_V };
++
++typedef struct { GimpItem *item; gint x, y, w, h; } AlignBox;
++
++static void
++chopgimp_content_box (GimpItem *item,
++                      AlignBox *b)
++{
++  gint ox, oy;
++
++  b->item = item;
++  gimp_item_get_offset (item, &ox, &oy);
++
++  if (GIMP_IS_DRAWABLE (item) && ! gimp_viewable_get_children (GIMP_VIEWABLE (item)) &&
++      chopgimp_alpha_bounds (GIMP_DRAWABLE (item), &b->x, &b->y, &b->w, &b->h) ==
++      GIMP_AUTO_SHRINK_SHRINK)
++    {
++      b->x += ox;
++      b->y += oy;
++      return;
++    }
++  b->x = ox;
++  b->y = oy;
++  b->w = gimp_item_get_width  (item);
++  b->h = gimp_item_get_height (item);
++}
++
++static gint
++chopgimp_box_cmp_x (gconstpointer a, gconstpointer b)
++{
++  return ((const AlignBox *) a)->x - ((const AlignBox *) b)->x;
++}
++
++static gint
++chopgimp_box_cmp_y (gconstpointer a, gconstpointer b)
++{
++  return ((const AlignBox *) a)->y - ((const AlignBox *) b)->y;
++}
++
++static void
++gimp_options_bar_align_clicked (GtkButton *button,
++                                Gimp      *gimp)
++{
++  GimpImage *image = gimp_context_get_image (gimp_get_user_context (gimp));
++  gint       mode  = GPOINTER_TO_INT (g_object_get_data (G_OBJECT (button), "chopgimp-align"));
++  GList     *layers, *iter;
++  GArray    *boxes;
++  gint       rx, ry, rw, rh;
++  guint      i;
++
++  if (! image)
++    return;
++
++  layers = gimp_image_get_selected_layers (image);
++  if (! layers)
++    return;
++
++  boxes = g_array_new (FALSE, FALSE, sizeof (AlignBox));
++  for (iter = layers; iter; iter = iter->next)
++    {
++      AlignBox b;
++
++      if (gimp_item_is_position_locked (iter->data, NULL))
++        continue;
++      chopgimp_content_box (iter->data, &b);
++      if (b.w > 0 && b.h > 0)
++        g_array_append_val (boxes, b);
++    }
++
++  if (boxes->len == 0 || (mode >= AL_DIST_H && boxes->len < 3))
++    {
++      g_array_free (boxes, TRUE);
++      return;
++    }
++
++  /*  reference rectangle  */
++  if (boxes->len == 1)
++    {
++      if (! gimp_channel_is_empty (gimp_image_get_mask (image)))
++        gimp_item_bounds (GIMP_ITEM (gimp_image_get_mask (image)), &rx, &ry, &rw, &rh);
++      else
++        {
++          rx = ry = 0;
++          rw = gimp_image_get_width  (image);
++          rh = gimp_image_get_height (image);
++        }
++    }
++  else
++    {
++      gint x2 = G_MININT, y2 = G_MININT;
++
++      rx = ry = G_MAXINT;
++      for (i = 0; i < boxes->len; i++)
++        {
++          AlignBox *b = &g_array_index (boxes, AlignBox, i);
++
++          rx = MIN (rx, b->x);
++          ry = MIN (ry, b->y);
++          x2 = MAX (x2, b->x + b->w);
++          y2 = MAX (y2, b->y + b->h);
++        }
++      rw = x2 - rx;
++      rh = y2 - ry;
++    }
++
++  gimp_image_undo_group_start (image, GIMP_UNDO_GROUP_ITEM_DISPLACE,
++                               mode >= AL_DIST_H ? _("Répartir") : _("Aligner"));
++
++  if (mode >= AL_DIST_H)
++    {
++      gboolean h     = mode == AL_DIST_H;
++      gint     total = 0, gap, pos;
++
++      g_array_sort (boxes, h ? chopgimp_box_cmp_x : chopgimp_box_cmp_y);
++      for (i = 0; i < boxes->len; i++)
++        total += h ? g_array_index (boxes, AlignBox, i).w : g_array_index (boxes, AlignBox, i).h;
++      gap = ((h ? rw : rh) - total) / (gint) (boxes->len - 1);
++      pos = h ? rx : ry;
++
++      for (i = 0; i < boxes->len; i++)
++        {
++          AlignBox *b = &g_array_index (boxes, AlignBox, i);
++
++          if (h)
++            gimp_item_translate (b->item, pos - b->x, 0, TRUE);
++          else
++            gimp_item_translate (b->item, 0, pos - b->y, TRUE);
++          pos += (h ? b->w : b->h) + gap;
++        }
++    }
++  else
++    {
++      for (i = 0; i < boxes->len; i++)
++        {
++          AlignBox *b  = &g_array_index (boxes, AlignBox, i);
++          gint      dx = 0, dy = 0;
++
++          switch (mode)
++            {
++            case AL_LEFT:    dx = rx - b->x;                         break;
++            case AL_HCENTER: dx = rx + (rw - b->w) / 2 - b->x;       break;
++            case AL_RIGHT:   dx = rx + rw - b->w - b->x;             break;
++            case AL_TOP:     dy = ry - b->y;                         break;
++            case AL_VCENTER: dy = ry + (rh - b->h) / 2 - b->y;       break;
++            case AL_BOTTOM:  dy = ry + rh - b->h - b->y;             break;
++            }
++          if (dx || dy)
++            gimp_item_translate (b->item, dx, dy, TRUE);
++        }
++    }
++
++  gimp_image_undo_group_end (image);
++  gimp_image_flush (image);
++  g_array_free (boxes, TRUE);
++}
++
++static GtkWidget *
++gimp_options_bar_align_row (Gimp *gimp)
++{
++  static const struct { gint mode; const gchar *icon, *tip; } aligns[] =
++  {
++    { AL_LEFT,    GIMP_ICON_GRAVITY_WEST,          N_("Aligner les bords gauches") },
++    { AL_HCENTER, GIMP_ICON_CENTER_HORIZONTAL,     N_("Centrer horizontalement") },
++    { AL_RIGHT,   GIMP_ICON_GRAVITY_EAST,          N_("Aligner les bords droits") },
++    { AL_TOP,     GIMP_ICON_GRAVITY_NORTH,         N_("Aligner les bords supérieurs") },
++    { AL_VCENTER, GIMP_ICON_CENTER_VERTICAL,       N_("Centrer verticalement") },
++    { AL_BOTTOM,  GIMP_ICON_GRAVITY_SOUTH,         N_("Aligner les bords inférieurs") },
++    { AL_DIST_H,  GIMP_ICON_EVEN_HORIZONTAL_GAP,   N_("Répartir horizontalement (3 calques ou plus)") },
++    { AL_DIST_V,  GIMP_ICON_EVEN_VERTICAL_GAP,     N_("Répartir verticalement (3 calques ou plus)") },
++  };
++  GtkWidget *row = gtk_box_new (GTK_ORIENTATION_HORIZONTAL, 0);
++  guint      i;
++
++  for (i = 0; i < G_N_ELEMENTS (aligns); i++)
++    {
++      GtkWidget *button = gtk_button_new_from_icon_name (aligns[i].icon, GTK_ICON_SIZE_SMALL_TOOLBAR);
++
++      gtk_button_set_relief (GTK_BUTTON (button), GTK_RELIEF_NONE);
++      gtk_widget_set_can_focus (button, FALSE);
++      gimp_help_set_help_data (button, _(aligns[i].tip), NULL);
++      g_object_set_data (G_OBJECT (button), "chopgimp-align", GINT_TO_POINTER (aligns[i].mode));
++      g_signal_connect (button, "clicked", G_CALLBACK (gimp_options_bar_align_clicked), gimp);
++      gtk_box_pack_start (GTK_BOX (row), button, FALSE, FALSE, 0);
++      if (aligns[i].mode == AL_BOTTOM)
++        gtk_box_pack_start (GTK_BOX (row), gtk_separator_new (GTK_ORIENTATION_VERTICAL),
++                            FALSE, FALSE, 4);
++    }
++
++  gtk_widget_show_all (row);
++  return row;
++}
++
+ static void   gimp_options_bar_tool_changed (GimpContext  *context,
+                                              GimpToolInfo *tool_info,
+                                              GtkWidget    *bar);
+@@ -777,6 +980,9 @@ gimp_options_bar_widget (GObject     *options,
+   if (! strcmp (prop, "@text-style"))
+     return gimp_options_bar_text_style_row (GIMP_CONTEXT (options)->gimp);
+ 
++  if (! strcmp (prop, "@align"))
++    return gimp_options_bar_align_row (GIMP_CONTEXT (options)->gimp);
++
+   if (! strcmp (prop, "@nodes"))
+     return gimp_options_bar_action_row (chopgimp_nodes_buttons);
+ 
+diff --git a/app/gui/chopgimp-autosave.c b/app/gui/chopgimp-autosave.c
+new file mode 100644
+index 0000000..6e702ac
+--- /dev/null
++++ b/app/gui/chopgimp-autosave.c
+@@ -0,0 +1,443 @@
++/* ChopGimp — enregistrement automatique et récupération
++ *
++ * This program is free software: you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation; either version 3 of the License, or
++ * (at your option) any later version.
++ *
++ * Toutes les N minutes (chopgimprc [autosave] minutes, 5 par défaut,
++ * 0 = désactivé), chaque image modifiée depuis sa dernière copie est
++ * enregistrée en XCF dans <gimpdir>/autosave/<id>.xcf, avec une fiche
++ * <id>.txt (nom affiché, fichier d'origine). L'écriture passe par
++ * xcf_save_stream : l'image ne change pas d'état (ni « enregistrée », ni
++ * dans les documents récents). Jamais pendant un trait ou une
++ * transformation (outil actif).
++ *
++ * Une copie disparaît quand l'image est enregistrée (plus modifiée) ou
++ * fermée ; toutes disparaissent quand ChopGimp se ferme normalement.
++ * Au démarrage, des copies restantes viennent d'une session interrompue :
++ * elles sont mises de côté (autosave/recuperation/) et une fenêtre
++ * propose de les rouvrir, sous leur nom d'origine et marquées modifiées.
++ */
++
++#include "config.h"
++
++#include <stdlib.h>
++#include <string.h>
++
++#include <glib/gstdio.h>
++#include <gegl.h>
++#include <gtk/gtk.h>
++
++#include "libgimpbase/gimpbase.h"
++#include "libgimpwidgets/gimpwidgets.h"
++
++#include "gui-types.h"
++
++#include "core/gimp.h"
++#include "core/gimpcontainer.h"
++#include "core/gimpcontext.h"
++#include "core/gimpimage.h"
++#include "core/gimptoolinfo.h"
++
++#include "file/file-open.h"
++
++#include "tools/gimptool.h"
++#include "tools/gimptoolcontrol.h"
++#include "tools/tool_manager.h"
++
++#include "widgets/chopgimp-rc.h"
++
++#include "xcf/xcf.h"
++
++#include "chopgimp-autosave.h"
++
++
++static gchar      *autosave_dir = NULL;
++static GHashTable *saved_times  = NULL;   /*  image id → dirty time saved  */
++static guint       timer_id     = 0;
++
++
++static gchar *
++autosave_path (gint id, const gchar *ext)
++{
++  gchar *name = g_strdup_printf ("%d.%s", id, ext);
++  gchar *path = g_build_filename (autosave_dir, name, NULL);
++
++  g_free (name);
++  return path;
++}
++
++/*  « …/12.xcf » → « …/12.txt »  */
++static gchar *
++sidecar (const gchar *xcf)
++{
++  gsize n = strlen (xcf);
++
++  return g_strdup_printf ("%.*stxt", (gint) (n > 3 ? n - 3 : n), xcf);
++}
++
++static void
++autosave_forget (gint id)
++{
++  gchar *xcf = autosave_path (id, "xcf");
++  gchar *txt = autosave_path (id, "txt");
++
++  g_unlink (xcf);
++  g_unlink (txt);
++  g_free (xcf);
++  g_free (txt);
++  g_hash_table_remove (saved_times, GINT_TO_POINTER (id));
++}
++
++static gboolean
++autosave_image (Gimp      *gimp,
++                GimpImage *image)
++{
++  gint           id   = gimp_image_get_id (image);
++  gchar         *xcf  = autosave_path (id, "xcf");
++  gchar         *tmp  = g_strconcat (xcf, ".part", NULL);
++  GFile         *file = g_file_new_for_path (tmp);
++  GError        *error = NULL;
++  GOutputStream *out;
++  gboolean       ok   = FALSE;
++
++  out = G_OUTPUT_STREAM (g_file_replace (file, NULL, FALSE, G_FILE_CREATE_PRIVATE, NULL, &error));
++  if (out)
++    {
++      ok = xcf_save_stream (gimp, image, out, file, NULL, &error);
++      g_output_stream_close (out, NULL, NULL);
++      g_object_unref (out);
++    }
++
++  if (ok && g_rename (tmp, xcf) == 0)
++    {
++      GFile *orig = gimp_image_get_file (image);
++      gchar *txt  = autosave_path (id, "txt");
++      gchar *info;
++
++      if (! orig)
++        orig = gimp_image_get_imported_file (image);
++      info = g_strdup_printf ("%s\n%s\n", gimp_image_get_display_name (image),
++                              orig ? g_file_get_uri (orig) : "");
++      g_file_set_contents (txt, info, -1, NULL);
++      g_free (info);
++      g_free (txt);
++    }
++  else
++    {
++      g_unlink (tmp);
++      if (error)
++        g_printerr ("ChopGimp : enregistrement automatique impossible (%s)\n", error->message);
++      ok = FALSE;
++    }
++
++  g_clear_error (&error);
++  g_object_unref (file);
++  g_free (tmp);
++  g_free (xcf);
++  return ok;
++}
++
++static gboolean
++autosave_tick (gpointer data)
++{
++  Gimp       *gimp = data;
++  GimpTool   *tool = tool_manager_get_active (gimp);
++  GList      *list;
++  GHashTable *alive;
++  GList      *ids, *iter;
++
++  /*  never in the middle of a stroke or a transform  */
++  if (tool && tool->control && gimp_tool_control_is_active (tool->control))
++    return G_SOURCE_CONTINUE;
++
++  alive = g_hash_table_new (NULL, NULL);
++
++  for (list = gimp_get_image_iter (gimp); list; list = g_list_next (list))
++    {
++      GimpImage *image = list->data;
++      gint       id    = gimp_image_get_id (image);
++      gint64     dt    = gimp_image_get_dirty_time (image);
++      gpointer   prev;
++
++      g_hash_table_add (alive, GINT_TO_POINTER (id));
++
++      if (! gimp_image_is_dirty (image))
++        {
++          if (g_hash_table_contains (saved_times, GINT_TO_POINTER (id)))
++            autosave_forget (id);
++          continue;
++        }
++
++      prev = g_hash_table_lookup (saved_times, GINT_TO_POINTER (id));
++      if (prev && *(gint64 *) prev == dt)
++        continue;
++
++      if (autosave_image (gimp, image))
++        {
++          gint64 *copy = g_new (gint64, 1);
++
++          *copy = dt;
++          g_hash_table_insert (saved_times, GINT_TO_POINTER (id), copy);
++        }
++    }
++
++  /*  closed images  */
++  ids = g_hash_table_get_keys (saved_times);
++  for (iter = ids; iter; iter = iter->next)
++    if (! g_hash_table_contains (alive, iter->data))
++      autosave_forget (GPOINTER_TO_INT (iter->data));
++  g_list_free (ids);
++  g_hash_table_destroy (alive);
++
++  return G_SOURCE_CONTINUE;
++}
++
++
++/*  recovery  */
++
++typedef struct
++{
++  Gimp   *gimp;
++  GSList *files;      /*  xcf paths in recuperation/  */
++} Recovery;
++
++static void
++recovery_free (Recovery *r)
++{
++  g_slist_free_full (r->files, g_free);
++  g_free (r);
++}
++
++static void
++recovery_open (Recovery *r)
++{
++  GimpContext *context = gimp_get_user_context (r->gimp);
++  GSList      *iter;
++
++  for (iter = r->files; iter; iter = iter->next)
++    {
++      const gchar       *xcf  = iter->data;
++      gchar             *txt  = sidecar (xcf);
++      gchar             *info = NULL;
++      GFile             *file = g_file_new_for_path (xcf);
++      GimpPDBStatusType  status;
++      GimpImage         *image;
++
++      image = file_open_with_display (r->gimp, context, NULL, file, TRUE, NULL, &status, NULL);
++
++      if (image && g_file_get_contents (txt, &info, NULL, NULL))
++        {
++          gchar **lines = g_strsplit (info, "\n", 3);
++
++          if (lines[0] && lines[1] && *lines[1])
++            {
++              GFile *orig = g_file_new_for_uri (lines[1]);
++              gchar *base = g_file_get_basename (orig);
++
++              if (g_str_has_suffix (base, ".xcf") || g_str_has_suffix (base, ".xcf.gz") ||
++                  g_str_has_suffix (base, ".xcf.bz2") || g_str_has_suffix (base, ".xcf.xz"))
++                gimp_image_set_file (image, orig);
++              else
++                gimp_image_set_imported_file (image, orig);
++              g_free (base);
++              g_object_unref (orig);
++            }
++          g_strfreev (lines);
++        }
++      if (image)
++        gimp_image_dirty (image, GIMP_DIRTY_IMAGE);
++
++      g_free (info);
++      g_free (txt);
++      g_object_unref (file);
++    }
++}
++
++static void
++recovery_delete (Recovery *r)
++{
++  GSList *iter;
++
++  for (iter = r->files; iter; iter = iter->next)
++    {
++      const gchar *xcf = iter->data;
++      gchar       *txt = sidecar (xcf);
++
++      g_unlink (xcf);
++      g_unlink (txt);
++      g_free (txt);
++    }
++}
++
++static void
++recovery_response (GtkDialog *dialog,
++                   gint       response,
++                   Recovery  *r)
++{
++  if (response == GTK_RESPONSE_ACCEPT)
++    {
++      recovery_open (r);
++      recovery_delete (r);
++    }
++  else if (response == GTK_RESPONSE_REJECT)
++    {
++      recovery_delete (r);
++    }
++  /*  « Plus tard » : les copies restent dans autosave/recuperation/  */
++
++  gtk_widget_destroy (GTK_WIDGET (dialog));
++}
++
++static gboolean
++recovery_dialog (gpointer data)
++{
++  Recovery  *r = data;
++  GtkWidget *dialog;
++  GString   *names = g_string_new (NULL);
++  GSList    *iter;
++
++  for (iter = r->files; iter; iter = iter->next)
++    {
++      const gchar *xcf  = iter->data;
++      gchar       *txt  = sidecar (xcf);
++      gchar       *info = NULL;
++
++      if (g_file_get_contents (txt, &info, NULL, NULL))
++        {
++          gchar *nl = strchr (info, '\n');
++
++          if (nl)
++            *nl = '\0';
++          g_string_append_printf (names, "  • %s\n", info);
++        }
++      else
++        {
++          g_string_append_printf (names, "  • %s\n", xcf);
++        }
++      g_free (info);
++      g_free (txt);
++    }
++
++  dialog = gtk_message_dialog_new (NULL, 0, GTK_MESSAGE_QUESTION, GTK_BUTTONS_NONE,
++                                   "Documents non enregistrés de la session précédente");
++  gtk_message_dialog_format_secondary_text (GTK_MESSAGE_DIALOG (dialog),
++                                            "ChopGimp ne s'est pas fermé normalement. "
++                                            "Copies enregistrées automatiquement :\n\n%s\n"
++                                            "Les rouvrir ? (marquées modifiées, à enregistrer)",
++                                            names->str);
++  gtk_window_set_title (GTK_WINDOW (dialog), "Récupération");
++  gtk_dialog_add_buttons (GTK_DIALOG (dialog),
++                          "_Supprimer",  GTK_RESPONSE_REJECT,
++                          "_Plus tard",  GTK_RESPONSE_CANCEL,
++                          "_Rouvrir",    GTK_RESPONSE_ACCEPT,
++                          NULL);
++  gtk_dialog_set_default_response (GTK_DIALOG (dialog), GTK_RESPONSE_ACCEPT);
++  g_signal_connect_data (dialog, "response", G_CALLBACK (recovery_response),
++                         r, (GClosureNotify) recovery_free, 0);
++  gtk_widget_show (dialog);
++  g_string_free (names, TRUE);
++
++  return G_SOURCE_REMOVE;
++}
++
++
++void
++chopgimp_autosave_init (Gimp *gimp)
++{
++  gchar       *recup;
++  GDir        *dir;
++  const gchar *name;
++  Recovery    *r;
++  gchar       *minutes;
++  gint         m;
++
++  autosave_dir = g_build_filename (gimp_directory (), "autosave", NULL);
++  recup        = g_build_filename (autosave_dir, "recuperation", NULL);
++  g_mkdir_with_parents (recup, 0700);
++  saved_times  = g_hash_table_new_full (NULL, NULL, NULL, g_free);
++
++  /*  leftovers of an interrupted session: aside, for the recovery dialog
++   *  (image ids start again at 1 in this session)
++   */
++  if ((dir = g_dir_open (autosave_dir, 0, NULL)))
++    {
++      while ((name = g_dir_read_name (dir)))
++        {
++          if (g_str_has_suffix (name, ".xcf") || g_str_has_suffix (name, ".txt"))
++            {
++              gchar *src   = g_build_filename (autosave_dir, name, NULL);
++              gchar *stamp = g_strdup_printf ("%" G_GINT64_FORMAT "-%s",
++                                              g_get_real_time () / 1000000, name);
++              gchar *dst   = g_build_filename (recup, stamp, NULL);
++
++              g_rename (src, dst);
++              g_free (src);
++              g_free (stamp);
++              g_free (dst);
++            }
++          else if (g_str_has_suffix (name, ".part"))
++            {
++              gchar *src = g_build_filename (autosave_dir, name, NULL);
++
++              g_unlink (src);
++              g_free (src);
++            }
++        }
++      g_dir_close (dir);
++    }
++
++  r = g_new0 (Recovery, 1);
++  r->gimp = gimp;
++  if ((dir = g_dir_open (recup, 0, NULL)))
++    {
++      while ((name = g_dir_read_name (dir)))
++        if (g_str_has_suffix (name, ".xcf"))
++          r->files = g_slist_prepend (r->files, g_build_filename (recup, name, NULL));
++      g_dir_close (dir);
++    }
++  if (r->files)
++    g_timeout_add_seconds (4, recovery_dialog, r);
++  else
++    recovery_free (r);
++  g_free (recup);
++
++  minutes = chopgimp_rc_get_string ("autosave", "minutes", "5");
++  m = atoi (minutes);
++  g_free (minutes);
++  if (m > 0)
++    timer_id = g_timeout_add_seconds (m * 60, autosave_tick, gimp);
++}
++
++void
++chopgimp_autosave_exit (void)
++{
++  GDir        *dir;
++  const gchar *name;
++
++  if (timer_id)
++    g_source_remove (timer_id);
++  timer_id = 0;
++
++  if (! autosave_dir || ! (dir = g_dir_open (autosave_dir, 0, NULL)))
++    return;
++
++  /*  normal exit: this session's copies are no longer needed  */
++  while ((name = g_dir_read_name (dir)))
++    if (g_str_has_suffix (name, ".xcf") || g_str_has_suffix (name, ".txt") ||
++        g_str_has_suffix (name, ".part"))
++      {
++        gchar *path = g_build_filename (autosave_dir, name, NULL);
++
++        g_unlink (path);
++        g_free (path);
++      }
++  g_dir_close (dir);
++}
++
++void
++chopgimp_autosave_now (Gimp *gimp)
++{
++  autosave_tick (gimp);
++}
+diff --git a/app/gui/chopgimp-autosave.h b/app/gui/chopgimp-autosave.h
+new file mode 100644
+index 0000000..47bac33
+--- /dev/null
++++ b/app/gui/chopgimp-autosave.h
+@@ -0,0 +1,7 @@
++/* ChopGimp — enregistrement automatique et récupération (voir le .c) */
++
++#pragma once
++
++void   chopgimp_autosave_init (Gimp *gimp);
++void   chopgimp_autosave_exit (void);
++void   chopgimp_autosave_now  (Gimp *gimp);
+diff --git a/app/gui/gui.c b/app/gui/gui.c
+index 3bef0b7..a080c6a 100644
+--- a/app/gui/gui.c
++++ b/app/gui/gui.c
+@@ -117,6 +117,7 @@
+ 
+ #include "gimp-intl.h"
+ #include "chopgimp-crash.h"
++#include "chopgimp-autosave.h"
+ 
+ 
+ /*  local function prototypes  */
+@@ -897,8 +898,9 @@ gui_restore_after_callback (Gimp               *gimp,
+   /*  indicate that the application has finished loading  */
+   gdk_notify_startup_complete ();
+ 
+-  /*  ChopGimp: traceur de plantage  */
++  /*  ChopGimp: traceur de plantage, enregistrement automatique  */
+   g_timeout_add_seconds (5, chopgimp_crash_images_tick, gimp);
++  chopgimp_autosave_init (gimp);
+   g_timeout_add_seconds (3, chopgimp_crash_previous, gimp);
+   if (g_getenv ("CHOPGIMP_CRASH_TEST"))
+     {
+@@ -945,6 +947,9 @@ gui_exit_callback (Gimp     *gimp,
+ 
+   gimp->message_handler = GIMP_CONSOLE;
+ 
++  /*  ChopGimp: normal exit, the autosaved copies are no longer needed  */
++  chopgimp_autosave_exit ();
++
+   gui_unique_exit ();
+ 
+   /* If any modifier is set when quitting (typically when exiting with
+diff --git a/app/gui/meson.build b/app/gui/meson.build
+index dc87159..d3377de 100644
+--- a/app/gui/meson.build
++++ b/app/gui/meson.build
+@@ -7,6 +7,7 @@ gimpdbusservice_gen = gnome.gdbus_codegen(
+ )
+ 
+ libappgui_sources = [
++  'chopgimp-autosave.c',
+   'gimpapp.c',
+   'gimpdbusservice.c',
+   'gimpuiconfigurer.c',
+-- 
+2.53.0
+

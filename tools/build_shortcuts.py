@@ -179,6 +179,7 @@ PS_MAP = [
     ("Affichage", "view-rotate-reset",     [S + "Escape"],   "Réinitialiser la rotation"),
 
     # ── Fenêtre ────────────────────────────────────────────────────────
+    ("Fenêtre", "dialogs-action-search",   [P + "f", "slash"], "Rechercher (commandes, filtres, menus)"),
     ("Fenêtre", "dialogs-brushes",         ["F5"],           "Pinceaux"),
     ("Fenêtre", "dialogs-colors",          ["F6"],           "Couleur"),
     ("Fenêtre", "dialogs-layers",          ["F7"],           "Calques"),

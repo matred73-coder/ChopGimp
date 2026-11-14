@@ -26,7 +26,7 @@
 (action "tools-by-color-select" "<Shift><Alt>w")
 # Recadrage
 (action "tools-crop" "c")
-# Recadrage perspective
+# Perspective (transformation)
 (action "tools-perspective" "<Shift>c")
 # Pipette
 (action "tools-color-picker" "i")
@@ -306,6 +306,8 @@
 (action "view-rotate-reset" "<Shift>Escape")
 
 # ── Fenêtre ─────────────────────────────────────────────────────
+# Rechercher (commandes, filtres, menus)
+(action "dialogs-action-search" "<Primary>f" "slash")
 # Pinceaux
 (action "dialogs-brushes" "F5")
 # Couleur
