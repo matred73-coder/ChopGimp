@@ -571,6 +571,22 @@ try:
         report(isinstance(by.get("Bonjour EPS"), Gimp.TextLayer) and
                len([l for l in ls if isinstance(l, Gimp.VectorLayer)]) >= 2,
                "EPS : formes vectorielles et texte (Ghostscript)")
+        # aller-retour SVG : export (calques Inkscape, noms, masqués) puis réimport
+        im, ls = load_v("test.svg")
+        report(not any(isinstance(l, Gimp.VectorLayer) and "aa0000" in l.get_name() for l in ls),
+               "SVG : texte sans doublon en tracés")
+        out_svg = os.path.join(vdir, "aller-retour.svg")
+        Gimp.file_save(Gimp.RunMode.NONINTERACTIVE, im, Gio.File.new_for_path(out_svg), None)
+        txt = open(out_svg, encoding="utf-8").read()
+        import re as _re
+        report(not _re.search(r'="-?\d+,\d', txt) and 'inkscape:groupmode="layer"' in txt and
+               'inkscape:label="Caché"' in txt and "<text" in txt,
+               "SVG : export valide (nombres, calques Inkscape, calque masqué, texte)")
+        im2 = Gimp.file_load(Gimp.RunMode.NONINTERACTIVE, Gio.File.new_for_path(out_svg))
+        by2 = {l.get_name(): l for l in flat(im2.get_layers())}
+        report("Fond" in by2 and "Caché" in by2 and not by2["Caché"].get_visible() and
+               any(isinstance(l, Gimp.TextLayer) for l in by2.values()),
+               "SVG : aller-retour (groupes, visibilité, texte)")
         res = run("file-chopgimp-svg-load-thumb", file=Gio.File.new_for_path(os.path.join(vdir, "test.svg")),
                   **{"thumb-size": 128})
         report(res is not None and res.index(0) == Gimp.PDBStatusType.SUCCESS and res.index(2) == 400,

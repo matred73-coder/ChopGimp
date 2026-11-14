@@ -1,0 +1,103 @@
+From c411a90d493e1fc9572eeda8a04057f291a0327f Mon Sep 17 00:00:00 2001
+From: ChopGimp <mathieu.redon@proton.me>
+Date: Sat, 14 Nov 2026 01:39:54 +0100
+Subject: [PATCH] =?UTF-8?q?ChopGimp:=20SVG=20export=20=E2=80=94=20numbers?=
+ =?UTF-8?q?=20with=20a=20dot=20whatever=20the=20locale,=20hidden=20layers?=
+ =?UTF-8?q?=20kept=20hidden,=20groups=20as=20Inkscape=20layers,=20layer=20?=
+ =?UTF-8?q?names?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+---
+ plug-ins/common/file-svg.c | 46 +++++++++++++++++++++++++++++++++++++-
+ 1 file changed, 45 insertions(+), 1 deletion(-)
+
+diff --git a/plug-ins/common/file-svg.c b/plug-ins/common/file-svg.c
+index 66b3789..aa79965 100644
+--- a/plug-ins/common/file-svg.c
++++ b/plug-ins/common/file-svg.c
+@@ -23,6 +23,7 @@
+ 
+ #include "config.h"
+ 
++#include <locale.h>
+ #include <stdlib.h>
+ #include <string.h>
+ 
+@@ -796,6 +797,11 @@ export_image (GFile                *file,
+   GOutputStream *output;
+   GString       *string;
+ 
++  /*  ChopGimp: SVG numbers always use a dot. The writers use printf
++   *  ("%f"): in French they wrote « opacity="1,000000" », an invalid SVG.
++   */
++  setlocale (LC_NUMERIC, "C");
++
+   gimp_progress_init_printf (_("Exporting '%s'"),
+                              gimp_file_get_utf8_name (file));
+ 
+@@ -1246,6 +1252,7 @@ svg_export_file (GimpImage            *image,
+                           "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"no\"?>\n"
+                           "<svg xmlns=\"http://www.w3.org/2000/svg\"\n"
+                           "     xmlns:svg=\"http://www.w3.org/2000/svg\"\n"
++                          "     xmlns:inkscape=\"http://www.inkscape.org/namespaces/inkscape\"\n"
+                           "     version=\"1.1\"\n");
+ 
+   g_string_append (str, "     ");
+@@ -1521,7 +1528,17 @@ svg_export_layers (GimpItem             **layers,
+ 
+   for (gint i = n_layers - 1; i >= 0; i--)
+     {
+-      if (gimp_item_get_visible (items[i]))
++      /*  ChopGimp: hidden layers are exported hidden (not dropped), groups
++       *  are Inkscape layers, and every element keeps its layer name
++       *  (inkscape:label), for a round trip with Inkscape and ChopGimp.
++       */
++      gsize    item_start;
++      gboolean hidden = ! gimp_item_get_visible (items[i]);
++
++      if (hidden && ! gimp_item_is_group (items[i]))
++        g_string_append_printf (str, "%s<g style=\"display:none\">\n", extra_spacing);
++      item_start = str->len;
++
+         {
+           if (gimp_item_is_group (items[i]))
+             {
+@@ -1563,6 +1580,33 @@ svg_export_layers (GimpItem             **layers,
+                                  format_id, extra_spacing, error);
+             }
+         }
++
++      /*  name (and, for a group, Inkscape layer + visibility) on the first
++       *  element written for this item
++       */
++      if (str->len > item_start)
++        {
++          gchar *lt = strchr (str->str + item_start, '<');
++
++          if (lt)
++            {
++              gchar   *sp   = lt + strcspn (lt, " \n/>");
++              gchar   *name = g_markup_escape_text (gimp_item_get_name (items[i]), -1);
++              GString *attr = g_string_new (NULL);
++
++              g_string_append_printf (attr, " inkscape:label=\"%s\"", name);
++              if (gimp_item_is_group (items[i]))
++                g_string_append_printf (attr, " inkscape:groupmode=\"layer\"%s",
++                                        hidden ? " style=\"display:none\"" : "");
++              g_string_insert (str, sp - str->str, attr->str);
++              g_string_free (attr, TRUE);
++              g_free (name);
++            }
++        }
++
++      if (hidden && ! gimp_item_is_group (items[i]))
++        g_string_append_printf (str, "%s</g>\n", extra_spacing);
++
+       gimp_progress_update ((gdouble) (n_layers - i) / n_layers);
+     }
+   g_free (extra_spacing);
+-- 
+2.53.0
+

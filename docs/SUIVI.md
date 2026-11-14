@@ -14,7 +14,7 @@ Plan complet : lots 0 à 6, idées en plus, calendrier de 17 étapes (voir l'his
 | 6 | 3.19.3 | PSD II | ✅ livrée |
 | 7 | 3.20.0 | Vectoriel I (PDF/AI, + EPS et SVG en avance) | ✅ livrée |
 | 8 | 3.20.1 | Vectoriel II (Placer, objets dynamiques, aperçus) | ✅ livrée |
-| 9 | 3.20.2 | Vectoriel III (SVG natif, export SVG) | à faire |
+| 9 | 3.20.2 | Vectoriel III (SVG natif, export SVG) | ✅ livrée |
 | 10 | 3.21.0 | Base I | à faire |
 | 11 | 3.21.1 | Base II | à faire |
 | 12 | 3.21.2 | Base III | à faire |
@@ -231,3 +231,14 @@ Signalés le 2026-11-13 en utilisant ChopGimp sur une affiche (scan 2480×3510) 
   - **Remplacer le contenu…** : lie le calque à un autre fichier.
 - **Vignettes** dans la fenêtre d'ouverture : SVG (rendu par librsvg ; l'import SVG de GIMP n'en avait pas), EPS/PS/AI et PDF (vignettes d'origine).
 - **2 nouveaux tests** : 79 tests.
+
+## 3.20.2 — Vectoriel III : export SVG et aller-retour
+
+- **Export SVG** (`plug-ins/common/file-svg.c`, celui de GIMP, enrichi) :
+  - **nombres avec un point quelle que soit la langue** : en français, l'export d'origine écrivait `opacity="1,000000"`, un SVG invalide ;
+  - les **calques masqués** sont exportés masqués (`display:none`), au lieu d'être perdus ;
+  - les groupes deviennent des **calques Inkscape** (`inkscape:groupmode="layer"`) ;
+  - chaque élément garde le **nom de son calque** (`inkscape:label`).
+- **Import SVG** : les formes sont rendues depuis une copie sans `<text>`, car librsvg dessine le texte en tracés, qui faisaient doublon avec les calques de texte modifiables.
+- **Aller-retour SVG** testé : import, export, réimport (groupes, visibilité, texte).
+- **3 nouveaux tests** : 82 tests.

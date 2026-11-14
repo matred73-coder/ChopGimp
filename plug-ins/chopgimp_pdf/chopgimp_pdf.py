@@ -720,6 +720,24 @@ def import_svg(image, path, opts, report, fonts):
     vp.x, vp.y, vp.width, vp.height = 0, 0, w, h
     root = ET.parse(path).getroot()
 
+    # les formes sont rendues depuis une copie sans <text> : librsvg dessine
+    # le texte en tracés, qui feraient doublon avec les calques de texte
+    shapes = handle
+    if opts["text"] != "none":
+        stripped = ET.parse(path)
+        for parent in stripped.getroot().iter():
+            for child in list(parent):
+                if child.tag in (SVG_NS + "text", "text"):
+                    parent.remove(child)
+        fd, tmp_svg = tempfile.mkstemp(suffix=".svg", prefix="chopgimp-svg-")
+        os.close(fd)
+        stripped.write(tmp_svg, encoding="utf-8", xml_declaration=True)
+        try:
+            shapes = Rsvg.Handle.new_from_file(tmp_svg)
+            shapes.set_dpi(opts["dpi"])
+        finally:
+            os.unlink(tmp_svg)
+
     def script(layer_id=None):
         fd, tmp = tempfile.mkstemp(suffix=".cs", prefix="chopgimp-svg-")
         os.close(fd)
@@ -728,9 +746,9 @@ def import_svg(image, path, opts, report, fonts):
             surf = cairo.ScriptSurface(dev, cairo.Content.COLOR_ALPHA, w, h)
             cr = cairo.Context(surf)
             if layer_id:
-                handle.render_layer(cr, "#" + layer_id, vp)
+                shapes.render_layer(cr, "#" + layer_id, vp)
             else:
-                handle.render_document(cr, vp)
+                shapes.render_document(cr, vp)
             surf.finish()
             dev.finish()
             with open(tmp, "rb") as f:
