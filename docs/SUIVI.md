@@ -19,7 +19,7 @@ Plan complet : lots 0 à 6, idées en plus, calendrier de 17 étapes (voir l'his
 | 11 | 3.21.1 | Base II | ✅ livrée |
 | 12 | 3.21.2 | Base III | ✅ livrée |
 | 13 | 3.22.0 | IA locale | ✅ livrée |
-| 14 | 3.23.0 | Dessin I « Confort » | à faire |
+| 14 | 3.23.0 | Dessin I « Confort » | ✅ livrée |
 | 15 | 3.23.1 | Dessin II « Peintre » | à faire |
 | 16 | 3.23.2 | Dessin III « Atelier / BD » | à faire |
 | 17 | 3.24.0 | Revue finale | à faire |
@@ -308,3 +308,15 @@ Signalés le 2026-11-13 en utilisant ChopGimp sur une affiche (scan 2480×3510) 
   - Équilibré : Silueta, 44 Mo (par défaut).
   - Précis : IS-Net, 178 Mo.
 - **3 nouveaux tests** : 91 tests. Essai sur `face.psd` : le bâtiment est bien isolé.
+
+## 3.23.0 — Dessin I « Confort »
+
+- **Stabilisateur « corde »** (pinceau paresseux de Krita / StreamLine de Procreate), dans la barre d'options du pinceau et du crayon :
+  - la pointe ne suit le curseur qu'au-delà de la longueur de corde (30 px par défaut, réglable), ce qui supprime les tremblements ;
+  - « Rattrapage » : en fin de trait, la pointe rejoint le curseur ;
+  - code dans `gimp_paint_core_smooth_coords`.
+- **Courbe de pression rapide** dans la barre d'options : linéaire, douce, ferme ou légère, appliquée au stylet actif. Le réglage fin reste dans Édition > Périphériques d'entrée.
+- **Réglage du pinceau à la volée** (Alt + clic droit glissé), comme dans Photoshop : à l'horizontale la taille, à la verticale la dureté, avec les valeurs dans la barre d'état.
+- **Palette contextuelle** (Maj + clic droit, modificateur personnalisable) : une bulle sous le curseur avec les 10 derniers pinceaux, la taille, les couleurs récentes et un sélecteur de couleur.
+- **Gestes** : pincer pour zoomer et faire pivoter à deux doigts existent déjà dans GIMP 3.2. Les tapes à deux ou trois doigts (annuler, rétablir) ne sont pas faites : sans écran tactile pour les tester, je n'ai pas voulu toucher à la gestion des événements du stylet.
+- Vérifié au banc graphique : traits avec et sans stabilisateur, rattrapage, palette contextuelle. 88 tests automatiques.

@@ -1,0 +1,685 @@
+From 82ae5942132ba48c98f954dbd7864a0c3368de46 Mon Sep 17 00:00:00 2001
+From: ChopGimp <mathieu.redon@proton.me>
+Date: Sat, 14 Nov 2026 03:06:39 +0100
+Subject: [PATCH] ChopGimp: string stabilizer with catch-up, pressure curve
+ presets, Photoshop brush HUD (Alt+right drag), popup palette (Shift+right
+ click)
+
+---
+ app/actions/view-actions.c                 |   6 +
+ app/actions/view-commands.c                |  12 ++
+ app/actions/view-commands.h                |   3 +
+ app/display/chopgimp-popup-palette.c       | 208 +++++++++++++++++++++
+ app/display/chopgimp-popup-palette.h       |   6 +
+ app/display/gimpdisplayshell-tool-events.c |  31 +++
+ app/display/gimpmodifiersmanager.c         |   7 +
+ app/display/gimpoptionsbar.c               |  62 +++++-
+ app/display/meson.build                    |   1 +
+ app/paint/gimppaintcore.c                  |  37 ++++
+ app/paint/gimppaintcore.h                  |   6 +
+ app/paint/gimppaintoptions.c               |  42 +++++
+ app/paint/gimppaintoptions.h               |   5 +
+ app/tools/gimppainttool-paint.c            |   9 +
+ 14 files changed, 433 insertions(+), 2 deletions(-)
+ create mode 100644 app/display/chopgimp-popup-palette.c
+ create mode 100644 app/display/chopgimp-popup-palette.h
+
+diff --git a/app/actions/view-actions.c b/app/actions/view-actions.c
+index 460f2a7..256959a 100644
+--- a/app/actions/view-actions.c
++++ b/app/actions/view-actions.c
+@@ -67,6 +67,12 @@ static void   view_actions_check_type_notify (GimpDisplayConfig *config,
+ 
+ static const GimpActionEntry view_actions[] =
+ {
++  { "view-popup-palette", GIMP_ICON_PALETTE,
++    "_Palette contextuelle", NULL, { NULL },
++    "Pinceaux récents, couleurs récentes, couleur et taille, sous le curseur (Maj + clic droit)",
++    view_popup_palette_cmd_callback,
++    NULL },
++
+   { "view-new", GIMP_ICON_WINDOW_NEW,
+     NC_("view-action", "_New View"), NULL, { NULL },
+     NC_("view-action", "Create another view on this image"),
+diff --git a/app/actions/view-commands.c b/app/actions/view-commands.c
+index e317340..8d5bba9 100644
+--- a/app/actions/view-commands.c
++++ b/app/actions/view-commands.c
+@@ -46,6 +46,7 @@
+ #include "display/gimpdisplay.h"
+ #include "display/gimpdisplay-foreach.h"
+ #include "display/gimpdisplayshell.h"
++#include "display/chopgimp-popup-palette.h"
+ #include "display/gimpdisplayshell-appearance.h"
+ #include "display/gimpdisplayshell-filter-dialog.h"
+ #include "display/gimpdisplayshell-rotate.h"
+@@ -636,6 +637,17 @@ view_color_management_enable_cmd_callback (GimpAction *action,
+     }
+ }
+ 
++void
++view_popup_palette_cmd_callback (GimpAction *action,
++                                 GVariant   *value,
++                                 gpointer    data)
++{
++  GimpDisplayShell *shell;
++  return_if_no_shell (shell, data);
++
++  chopgimp_popup_palette_show (shell);
++}
++
+ void
+ view_color_management_softproof_cmd_callback (GimpAction *action,
+                                               GVariant   *value,
+diff --git a/app/actions/view-commands.h b/app/actions/view-commands.h
+index 3b835f3..c97b575 100644
+--- a/app/actions/view-commands.h
++++ b/app/actions/view-commands.h
+@@ -100,6 +100,9 @@ void   view_color_management_reset_cmd_callback     (GimpAction *action,
+ void   view_color_management_enable_cmd_callback    (GimpAction *action,
+                                                      GVariant   *value,
+                                                      gpointer    data);
++void   view_popup_palette_cmd_callback            (GimpAction *action,
++                                                   GVariant   *value,
++                                                   gpointer    data);
+ void   view_color_management_softproof_cmd_callback (GimpAction *action,
+                                                      GVariant   *value,
+                                                      gpointer    data);
+diff --git a/app/display/chopgimp-popup-palette.c b/app/display/chopgimp-popup-palette.c
+new file mode 100644
+index 0000000..7d8f807
+--- /dev/null
++++ b/app/display/chopgimp-popup-palette.c
+@@ -0,0 +1,208 @@
++/* ChopGimp — palette contextuelle (façon Krita)
++ *
++ * This program is free software: you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation; either version 3 of the License, or
++ * (at your option) any later version.
++ *
++ * Maj + clic droit sur le canevas (modificateur personnalisable) : une
++ * bulle sous le curseur avec les 10 derniers pinceaux, les couleurs
++ * récentes, un sélecteur de couleur et la taille du pinceau.
++ */
++
++#include "config.h"
++
++#include <gegl.h>
++#include <gtk/gtk.h>
++
++#include "libgimpcolor/gimpcolor.h"
++#include "libgimpwidgets/gimpwidgets.h"
++
++#include "display-types.h"
++
++#include "core/gimp.h"
++#include "core/gimp-palettes.h"
++#include "core/gimpbrush.h"
++#include "core/gimpcontext.h"
++#include "core/gimppalette.h"
++#include "core/gimptoolinfo.h"
++
++#include "paint/gimppaintoptions.h"
++
++#include "widgets/gimpview.h"
++#include "widgets/gimppropwidgets.h"
++
++#include "gimpdisplay.h"
++#include "gimpdisplayshell.h"
++
++#include "chopgimp-popup-palette.h"
++
++#include "gimp-intl.h"
++
++
++#define N_BRUSHES 10
++#define N_COLORS  12
++
++static GList *recent_brushes = NULL;      /*  GimpBrush, most recent first  */
++
++static void
++brush_changed (GimpContext *context,
++               GimpBrush   *brush,
++               gpointer     data)
++{
++  if (! brush)
++    return;
++  recent_brushes = g_list_remove (recent_brushes, brush);
++  recent_brushes = g_list_prepend (recent_brushes, brush);
++  if (g_list_length (recent_brushes) > N_BRUSHES)
++    recent_brushes = g_list_delete_link (recent_brushes, g_list_last (recent_brushes));
++}
++
++void
++chopgimp_popup_palette_track (Gimp *gimp)
++{
++  static gboolean connected = FALSE;
++  GimpContext    *context   = gimp_get_user_context (gimp);
++
++  if (connected)
++    return;
++  connected = TRUE;
++  g_signal_connect (context, "brush-changed", G_CALLBACK (brush_changed), NULL);
++  brush_changed (context, gimp_context_get_brush (context), NULL);
++}
++
++static void
++brush_clicked (GtkButton *button,
++               GimpBrush *brush)
++{
++  GimpContext *context = g_object_get_data (G_OBJECT (button), "context");
++
++  gimp_context_set_brush (context, brush);
++  gtk_widget_hide (gtk_widget_get_ancestor (GTK_WIDGET (button), GTK_TYPE_POPOVER));
++}
++
++static void
++color_clicked (GtkButton *button,
++               GeglColor *color)
++{
++  GimpContext *context = g_object_get_data (G_OBJECT (button), "context");
++
++  gimp_context_set_foreground (context, color);
++}
++
++static void
++chooser_changed (GtkColorChooser *chooser,
++                 GParamSpec      *pspec,
++                 GimpContext     *context)
++{
++  GdkRGBA    rgba;
++  GeglColor *color = gegl_color_new (NULL);
++
++  gtk_color_chooser_get_rgba (chooser, &rgba);
++  gegl_color_set_pixel (color, babl_format ("R'G'B'A double"), (gdouble[]) { rgba.red, rgba.green, rgba.blue, 1.0 });
++  gimp_context_set_foreground (context, color);
++  g_object_unref (color);
++}
++
++static void
++popover_closed (GtkPopover *popover)
++{
++  gtk_widget_destroy (GTK_WIDGET (popover));
++}
++
++void
++chopgimp_popup_palette_show (GimpDisplayShell *shell)
++{
++  Gimp        *gimp    = gimp_display_get_gimp (shell->display);
++  GimpContext *context = gimp_get_user_context (gimp);
++  GimpToolInfo *tool_info = gimp_context_get_tool (context);
++  GtkWidget   *popover, *box, *grid, *chooser, *label;
++  GimpPalette *history;
++  GdkRectangle rect = { 0, 0, 1, 1 };
++  GdkWindow   *window = gtk_widget_get_window (shell->canvas);
++  GdkSeat     *seat;
++  GList       *list;
++  gint         i;
++  gdouble      rgb[4];
++  GdkRGBA      rgba;
++
++  chopgimp_popup_palette_track (gimp);
++
++  if (window && (seat = gdk_display_get_default_seat (gdk_window_get_display (window))))
++    gdk_window_get_device_position (window, gdk_seat_get_pointer (seat), &rect.x, &rect.y, NULL);
++
++  popover = gtk_popover_new (shell->canvas);
++  gtk_popover_set_pointing_to (GTK_POPOVER (popover), &rect);
++  g_signal_connect (popover, "closed", G_CALLBACK (popover_closed), NULL);
++
++  box = gtk_box_new (GTK_ORIENTATION_VERTICAL, 6);
++  gtk_container_set_border_width (GTK_CONTAINER (box), 8);
++  gtk_container_add (GTK_CONTAINER (popover), box);
++
++  /*  recent brushes  */
++  label = gtk_label_new (_("Pinceaux récents"));
++  gtk_label_set_xalign (GTK_LABEL (label), 0.0);
++  gtk_box_pack_start (GTK_BOX (box), label, FALSE, FALSE, 0);
++  grid = gtk_grid_new ();
++  gtk_grid_set_column_spacing (GTK_GRID (grid), 2);
++  gtk_grid_set_row_spacing (GTK_GRID (grid), 2);
++  gtk_box_pack_start (GTK_BOX (box), grid, FALSE, FALSE, 0);
++  for (list = recent_brushes, i = 0; list; list = list->next, i++)
++    {
++      GtkWidget *button = gtk_button_new ();
++      GtkWidget *view   = gimp_view_new (context, GIMP_VIEWABLE (list->data), 36, 0, FALSE);
++
++      gtk_container_add (GTK_CONTAINER (button), view);
++      gtk_button_set_relief (GTK_BUTTON (button), GTK_RELIEF_NONE);
++      gimp_help_set_help_data (button, gimp_object_get_name (list->data), NULL);
++      g_object_set_data (G_OBJECT (button), "context", context);
++      g_signal_connect (button, "clicked", G_CALLBACK (brush_clicked), list->data);
++      gtk_grid_attach (GTK_GRID (grid), button, i % 5, i / 5, 1, 1);
++    }
++
++  /*  brush size of the current paint tool  */
++  if (tool_info && GIMP_IS_PAINT_OPTIONS (tool_info->tool_options))
++    {
++      GtkWidget *scale = gimp_prop_spin_scale_new (G_OBJECT (tool_info->tool_options),
++                                                   "brush-size", 1.0, 10.0, 0);
++
++      gimp_spin_scale_set_scale_limits (GIMP_SPIN_SCALE (scale), 1.0, 1000.0);
++      gimp_spin_scale_set_gamma (GIMP_SPIN_SCALE (scale), 1.7);
++      gtk_box_pack_start (GTK_BOX (box), scale, FALSE, FALSE, 0);
++    }
++
++  /*  recent colors  */
++  label = gtk_label_new (_("Couleurs récentes"));
++  gtk_label_set_xalign (GTK_LABEL (label), 0.0);
++  gtk_box_pack_start (GTK_BOX (box), label, FALSE, FALSE, 0);
++  grid = gtk_grid_new ();
++  gtk_grid_set_column_spacing (GTK_GRID (grid), 2);
++  gtk_box_pack_start (GTK_BOX (box), grid, FALSE, FALSE, 0);
++  history = gimp_palettes_get_color_history (gimp);
++  for (i = 0; history && i < MIN (N_COLORS, gimp_palette_get_n_colors (history)); i++)
++    {
++      GimpPaletteEntry *entry  = gimp_palette_get_entry (history, i);
++      GtkWidget        *button = gtk_button_new ();
++      GtkWidget        *area   = gimp_color_area_new (entry->color, GIMP_COLOR_AREA_FLAT, 0);
++
++      gtk_widget_set_size_request (area, 22, 22);
++      gtk_container_add (GTK_CONTAINER (button), area);
++      gtk_button_set_relief (GTK_BUTTON (button), GTK_RELIEF_NONE);
++      g_object_set_data (G_OBJECT (button), "context", context);
++      g_signal_connect (button, "clicked", G_CALLBACK (color_clicked), entry->color);
++      gtk_grid_attach (GTK_GRID (grid), button, i, 0, 1, 1);
++    }
++
++  /*  color picker (hue / saturation / value)  */
++  chooser = gtk_color_chooser_widget_new ();
++  g_object_set (chooser, "show-editor", TRUE, NULL);
++  gtk_color_chooser_set_use_alpha (GTK_COLOR_CHOOSER (chooser), FALSE);
++  gegl_color_get_pixel (gimp_context_get_foreground (context), babl_format ("R'G'B'A double"), rgb);
++  rgba.red = rgb[0]; rgba.green = rgb[1]; rgba.blue = rgb[2]; rgba.alpha = 1.0;
++  gtk_color_chooser_set_rgba (GTK_COLOR_CHOOSER (chooser), &rgba);
++  g_signal_connect (chooser, "notify::rgba", G_CALLBACK (chooser_changed), context);
++  gtk_box_pack_start (GTK_BOX (box), chooser, FALSE, FALSE, 0);
++
++  gtk_widget_show_all (box);
++  gtk_popover_popup (GTK_POPOVER (popover));
++}
+diff --git a/app/display/chopgimp-popup-palette.h b/app/display/chopgimp-popup-palette.h
+new file mode 100644
+index 0000000..1c995d2
+--- /dev/null
++++ b/app/display/chopgimp-popup-palette.h
+@@ -0,0 +1,6 @@
++/* ChopGimp — palette contextuelle (voir le .c) */
++
++#pragma once
++
++void   chopgimp_popup_palette_track (Gimp             *gimp);
++void   chopgimp_popup_palette_show  (GimpDisplayShell *shell);
+diff --git a/app/display/gimpdisplayshell-tool-events.c b/app/display/gimpdisplayshell-tool-events.c
+index 54867cc..1a16695 100644
+--- a/app/display/gimpdisplayshell-tool-events.c
++++ b/app/display/gimpdisplayshell-tool-events.c
+@@ -37,6 +37,9 @@
+ #include "core/gimpimage.h"
+ #include "core/gimpimage-pick-item.h"
+ #include "core/gimpitem.h"
++#include "core/gimptoolinfo.h"
++
++#include "paint/gimppaintoptions.h"
+ 
+ #include "menus/menus.h"
+ 
+@@ -789,6 +792,8 @@ gimp_display_shell_canvas_tool_events (GtkWidget        *canvas,
+                   gimp_display_shell_stop_scrolling (shell, event);
+                 break;
+               case GIMP_MODIFIER_ACTION_BRUSH_PIXEL_SIZE:
++                gimp_statusbar_pop (gimp_display_shell_get_statusbar (shell), "chopgimp-hud");
++                /* fall through */
+               case GIMP_MODIFIER_ACTION_BRUSH_RADIUS_PIXEL_SIZE:
+               case GIMP_MODIFIER_ACTION_TOOL_OPACITY:
+                 gimp_display_shell_stop_scrolling (shell, event);
+@@ -1947,6 +1952,32 @@ gimp_display_shell_handle_scrolling (GimpDisplayShell *shell,
+           size = (gint) (sqrt (pow ((x - shell->scroll_start_x) / shell->scale_x, 2) +
+                                pow ((y - shell->scroll_start_y) / shell->scale_y, 2)));
+ 
++          /*  ChopGimp (Photoshop HUD): horizontal = size, vertical = hardness  */
++          if (shell->mod_action == GIMP_MODIFIER_ACTION_BRUSH_PIXEL_SIZE &&
++              active_tool && GIMP_IS_PAINT_OPTIONS (active_tool->tool_info->tool_options))
++            {
++              static gdouble start_hardness = -1.0;
++              static gdouble last_sx = G_MAXDOUBLE, last_sy = G_MAXDOUBLE;
++              GObject       *po = G_OBJECT (active_tool->tool_info->tool_options);
++              gdouble        hardness;
++
++              if (last_sx != shell->scroll_start_x || last_sy != shell->scroll_start_y)
++                {
++                  g_object_get (po, "brush-hardness", &start_hardness, NULL);
++                  last_sx = shell->scroll_start_x;
++                  last_sy = shell->scroll_start_y;
++                }
++
++              size     = MAX (1, (gint) (2.0 * fabs (x - shell->scroll_start_x) / shell->scale_x));
++              hardness = CLAMP (start_hardness + (shell->scroll_start_y - y) / 200.0, 0.0, 1.0);
++              g_object_set (po, "brush-hardness", hardness, NULL);
++
++              gimp_statusbar_replace (gimp_display_shell_get_statusbar (shell), "chopgimp-hud",
++                                      NULL, _("Taille %d px — Dureté %d %%  (horizontal : "
++                                              "taille, vertical : dureté)"),
++                                      size, (gint) (hardness * 100.0 + 0.5));
++            }
++
+           /* TODO: different logics with "lock brush to view". */
+           /* TODO 2: scale aware? */
+           action = gimp_tool_control_get_action_pixel_size (active_tool->control);
+diff --git a/app/display/gimpmodifiersmanager.c b/app/display/gimpmodifiersmanager.c
+index e048f7b..0338e10 100644
+--- a/app/display/gimpmodifiersmanager.c
++++ b/app/display/gimpmodifiersmanager.c
+@@ -390,6 +390,13 @@ gimp_modifiers_manager_get_action (GimpModifiersManager *manager,
+     {
+       if (mod_state == GDK_MOD1_MASK)
+         retval = GIMP_MODIFIER_ACTION_BRUSH_PIXEL_SIZE;
++      else if (mod_state == gimp_get_extend_selection_mask ())
++        {
++          /*  ChopGimp: Shift + right click, popup palette (Krita)  */
++          retval = GIMP_MODIFIER_ACTION_ACTION;
++          if (action_desc)
++            *action_desc = "view-popup-palette";
++        }
+       else if (mod_state == 0)
+         retval = GIMP_MODIFIER_ACTION_MENU;
+     }
+diff --git a/app/display/gimpoptionsbar.c b/app/display/gimpoptionsbar.c
+index c4bc157..05bf05b 100644
+--- a/app/display/gimpoptionsbar.c
++++ b/app/display/gimpoptionsbar.c
+@@ -56,6 +56,7 @@
+ #include "core/gimpitem.h"
+ #include "core/gimppickable-auto-shrink.h"
+ #include "core/chopgimp-alpha-bounds.h"
++#include "core/gimpcurve.h"
+ 
+ #include "tools/tools-types.h"
+ #include "tools/gimppathoptions.h"
+@@ -69,6 +70,9 @@
+ #include "widgets/gimppropwidgets.h"
+ #include "widgets/gimpuimanager.h"
+ #include "widgets/gimpviewablebox.h"
++#include "widgets/gimpdeviceinfo.h"
++#include "widgets/gimpdevicemanager.h"
++#include "widgets/gimpdevices.h"
+ #include "widgets/gimpwidgets-utils.h"
+ 
+ #include "menus/menus.h"
+@@ -102,8 +106,10 @@ typedef struct
+ static const BarSpec bar_specs[] =
+ {
+   /* Peinture */
+-  { "gimp-paintbrush-tool",        { PAINT_COMMON, "use-smoothing", NULL } },
+-  { "gimp-pencil-tool",            { PAINT_COMMON, "use-smoothing", NULL } },
++  { "gimp-paintbrush-tool",        { PAINT_COMMON, "use-smoothing", "stabilizer",
++                                     "stabilizer-length", "@pressure", NULL } },
++  { "gimp-pencil-tool",            { PAINT_COMMON, "use-smoothing", "stabilizer",
++                                     "stabilizer-length", "@pressure", NULL } },
+   { "gimp-airbrush-tool",          { PAINT_COMMON, "flow", "rate", "motion-only", NULL } },
+   { "gimp-eraser-tool",            { "brush", "brush-size", "brush-hardness", "opacity",
+                                      "hard", "anti-erase", "use-smoothing", NULL } },
+@@ -531,6 +537,55 @@ gimp_options_bar_align_row (Gimp *gimp)
+   return row;
+ }
+ 
++/*  ChopGimp: quick pressure curve of the current input device  */
++static void
++gimp_options_bar_pressure_changed (GtkComboBox *combo,
++                                   Gimp        *gimp)
++{
++  static const gdouble presets[][3][2] =
++  {
++    { { 0.0, 0.0 }, { 0.50, 0.50 }, { 1.0, 1.0 } },   /*  linéaire  */
++    { { 0.0, 0.0 }, { 0.25, 0.50 }, { 1.0, 1.0 } },   /*  douce     */
++    { { 0.0, 0.0 }, { 0.60, 0.30 }, { 1.0, 1.0 } },   /*  ferme     */
++    { { 0.0, 0.15 }, { 0.40, 0.70 }, { 1.0, 1.0 } },  /*  légère    */
++  };
++  GimpDeviceInfo *info;
++  GimpCurve      *curve;
++  gint            i = gtk_combo_box_get_active (combo);
++  gint            k;
++
++  if (i < 0 || i >= (gint) G_N_ELEMENTS (presets))
++    return;
++
++  info = gimp_device_manager_get_current_device (gimp_devices_get_manager (gimp));
++  if (! info || ! (curve = gimp_device_info_get_curve (info, GDK_AXIS_PRESSURE)))
++    return;
++
++  gimp_data_freeze (GIMP_DATA (curve));
++  gimp_curve_set_curve_type (curve, GIMP_CURVE_SMOOTH);
++  gimp_curve_clear_points (curve);
++  for (k = 0; k < 3; k++)
++    gimp_curve_add_point (curve, presets[i][k][0], presets[i][k][1]);
++  gimp_data_thaw (GIMP_DATA (curve));
++}
++
++static GtkWidget *
++gimp_options_bar_pressure_combo (Gimp *gimp)
++{
++  GtkWidget *combo = gtk_combo_box_text_new ();
++
++  gtk_combo_box_text_append_text (GTK_COMBO_BOX_TEXT (combo), _("Pression : linéaire"));
++  gtk_combo_box_text_append_text (GTK_COMBO_BOX_TEXT (combo), _("Pression : douce"));
++  gtk_combo_box_text_append_text (GTK_COMBO_BOX_TEXT (combo), _("Pression : ferme"));
++  gtk_combo_box_text_append_text (GTK_COMBO_BOX_TEXT (combo), _("Pression : légère"));
++  gtk_combo_box_set_active (GTK_COMBO_BOX (combo), 0);
++  gimp_help_set_help_data (combo, _("Courbe de pression du stylet actif (réglage fin : "
++                                    "Édition > Périphériques d'entrée)"), NULL);
++  g_signal_connect (combo, "changed", G_CALLBACK (gimp_options_bar_pressure_changed), gimp);
++  gtk_widget_show (combo);
++  return combo;
++}
++
+ static void   gimp_options_bar_tool_changed (GimpContext  *context,
+                                              GimpToolInfo *tool_info,
+                                              GtkWidget    *bar);
+@@ -983,6 +1038,9 @@ gimp_options_bar_widget (GObject     *options,
+   if (! strcmp (prop, "@align"))
+     return gimp_options_bar_align_row (GIMP_CONTEXT (options)->gimp);
+ 
++  if (! strcmp (prop, "@pressure"))
++    return gimp_options_bar_pressure_combo (GIMP_CONTEXT (options)->gimp);
++
+   if (! strcmp (prop, "@nodes"))
+     return gimp_options_bar_action_row (chopgimp_nodes_buttons);
+ 
+diff --git a/app/display/meson.build b/app/display/meson.build
+index e7a0349..5ad6169 100644
+--- a/app/display/meson.build
++++ b/app/display/meson.build
+@@ -43,6 +43,7 @@ libappdisplay_sources = [
+   'gimpcanvasproxygroup.c',
+   'gimpcanvasrectangle.c',
+   'chopgimp-canvashighlight.c',
++  'chopgimp-popup-palette.c',
+   'gimpcanvasrectangleguides.c',
+   'gimpcanvassamplepoint.c',
+   'gimpcanvastextcursor.c',
+diff --git a/app/paint/gimppaintcore.c b/app/paint/gimppaintcore.c
+index 408b9f3..c049e55 100644
+--- a/app/paint/gimppaintcore.c
++++ b/app/paint/gimppaintcore.c
+@@ -388,6 +388,9 @@ gimp_paint_core_start (GimpPaintCore     *core,
+                                            sizeof (GimpCoords),
+                                            STROKE_BUFFER_INIT_SIZE);
+ 
++  core->stab_valid   = FALSE;
++  core->stab_release = FALSE;
++
+   /* remember the last stroke's endpoint for later undo */
+   core->start_coords = core->last_coords;
+   core->cur_coords   = *coords;
+@@ -1667,6 +1670,40 @@ gimp_paint_core_smooth_coords (GimpPaintCore    *core,
+   if (core->stroke_buffer == NULL)
+     return; /* Paint core has not initialized yet */
+ 
++  /*  ChopGimp: string stabilizer. The tip stays still while the cursor
++   *  moves within the string length, then is pulled along it.
++   */
++  if (smoothing_options->stabilizer)
++    {
++      gdouble dx, dy, d, len = smoothing_options->stabilizer_length;
++
++      core->stab_raw = *coords;
++
++      if (core->stab_release)          /*  catch-up at the end of the stroke  */
++        return;
++
++      if (! core->stab_valid)
++        {
++          core->stab       = *coords;
++          core->stab_valid = TRUE;
++          return;
++        }
++
++      dx = coords->x - core->stab.x;
++      dy = coords->y - core->stab.y;
++      d  = sqrt (dx * dx + dy * dy);
++
++      if (d > len)
++        {
++          core->stab.x += dx * (d - len) / d;
++          core->stab.y += dy * (d - len) / d;
++        }
++
++      coords->x = core->stab.x;
++      coords->y = core->stab.y;
++      return;
++    }
++
+   if (smoothing_options->use_smoothing &&
+       smoothing_options->smoothing_quality > 0)
+     {
+diff --git a/app/paint/gimppaintcore.h b/app/paint/gimppaintcore.h
+index af90f91..30425bc 100644
+--- a/app/paint/gimppaintcore.h
++++ b/app/paint/gimppaintcore.h
+@@ -71,6 +71,12 @@ struct _GimpPaintCore
+ 
+   GArray         *stroke_buffer;
+ 
++  /*  ChopGimp: string stabilizer state  */
++  gboolean        stab_valid;
++  gboolean        stab_release;
++  GimpCoords      stab;
++  GimpCoords      stab_raw;
++
+   GimpSymmetry   *sym;
+   GimpPaintLockBlinkState
+                   lock_blink_state;
+diff --git a/app/paint/gimppaintoptions.c b/app/paint/gimppaintoptions.c
+index b9bbbd5..a1a41f4 100644
+--- a/app/paint/gimppaintoptions.c
++++ b/app/paint/gimppaintoptions.c
+@@ -136,6 +136,9 @@ enum
+   PROP_USE_SMOOTHING,
+   PROP_SMOOTHING_QUALITY,
+   PROP_SMOOTHING_FACTOR,
++  PROP_STABILIZER,
++  PROP_STABILIZER_LENGTH,
++  PROP_STABILIZER_CATCH_UP,
+ 
+   PROP_EXPAND_USE,
+   PROP_EXPAND_AMOUNT,
+@@ -481,6 +484,27 @@ gimp_paint_options_class_init (GimpPaintOptionsClass *klass)
+                             */
+                            3.0, 1000.0, DEFAULT_SMOOTHING_FACTOR,
+                            GIMP_PARAM_STATIC_STRINGS);
++
++  /*  ChopGimp: string stabilizer  */
++  GIMP_CONFIG_PROP_BOOLEAN (object_class, PROP_STABILIZER,
++                            "stabilizer",
++                            "Stabilisateur",
++                            "La pointe ne suit le curseur qu'au-delà d'une longueur de corde "
++                            "(pinceau paresseux) : traits sans tremblement",
++                            FALSE,
++                            GIMP_PARAM_STATIC_STRINGS);
++  GIMP_CONFIG_PROP_DOUBLE (object_class, PROP_STABILIZER_LENGTH,
++                           "stabilizer-length",
++                           "Corde",
++                           "Longueur de la corde du stabilisateur (pixels de l'image)",
++                           1.0, 500.0, 30.0,
++                           GIMP_PARAM_STATIC_STRINGS);
++  GIMP_CONFIG_PROP_BOOLEAN (object_class, PROP_STABILIZER_CATCH_UP,
++                            "stabilizer-catch-up",
++                            "Rattrapage",
++                            "En fin de trait, la pointe rejoint le curseur",
++                            TRUE,
++                            GIMP_PARAM_STATIC_STRINGS);
+ }
+ 
+ static void
+@@ -677,6 +701,15 @@ gimp_paint_options_set_property (GObject      *object,
+     case PROP_SMOOTHING_FACTOR:
+       smoothing_options->smoothing_factor = g_value_get_double (value);
+       break;
++    case PROP_STABILIZER:
++      smoothing_options->stabilizer = g_value_get_boolean (value);
++      break;
++    case PROP_STABILIZER_LENGTH:
++      smoothing_options->stabilizer_length = g_value_get_double (value);
++      break;
++    case PROP_STABILIZER_CATCH_UP:
++      smoothing_options->stabilizer_catch_up = g_value_get_boolean (value);
++      break;
+ 
+     case PROP_EXPAND_USE:
+       options->expand_use = g_value_get_boolean (value);
+@@ -836,6 +869,15 @@ gimp_paint_options_get_property (GObject    *object,
+     case PROP_SMOOTHING_FACTOR:
+       g_value_set_double (value, smoothing_options->smoothing_factor);
+       break;
++    case PROP_STABILIZER:
++      g_value_set_boolean (value, smoothing_options->stabilizer);
++      break;
++    case PROP_STABILIZER_LENGTH:
++      g_value_set_double (value, smoothing_options->stabilizer_length);
++      break;
++    case PROP_STABILIZER_CATCH_UP:
++      g_value_set_boolean (value, smoothing_options->stabilizer_catch_up);
++      break;
+ 
+     case PROP_EXPAND_USE:
+       g_value_set_boolean (value, options->expand_use);
+diff --git a/app/paint/gimppaintoptions.h b/app/paint/gimppaintoptions.h
+index 3b13c03..18d1769 100644
+--- a/app/paint/gimppaintoptions.h
++++ b/app/paint/gimppaintoptions.h
+@@ -60,6 +60,11 @@ struct _GimpSmoothingOptions
+   gboolean use_smoothing;
+   gint     smoothing_quality;
+   gdouble  smoothing_factor;
++
++  /*  ChopGimp: string stabilizer (« lazy brush »)  */
++  gboolean stabilizer;
++  gdouble  stabilizer_length;
++  gboolean stabilizer_catch_up;
+ };
+ 
+ 
+diff --git a/app/tools/gimppainttool-paint.c b/app/tools/gimppainttool-paint.c
+index 35c7ee0..467dc84 100644
+--- a/app/tools/gimppainttool-paint.c
++++ b/app/tools/gimppainttool-paint.c
+@@ -397,6 +397,15 @@ gimp_paint_tool_paint_end (GimpPaintTool *paint_tool,
+   core          = paint_tool->core;
+   drawables     = paint_tool->drawables;
+ 
++  /*  ChopGimp: stabilizer catch-up, the tip joins the cursor  */
++  if (! cancel && core->stab_valid &&
++      paint_options->smoothing_options->stabilizer &&
++      paint_options->smoothing_options->stabilizer_catch_up)
++    {
++      core->stab_release = TRUE;
++      gimp_paint_tool_paint_motion (paint_tool, &core->stab_raw, time);
++    }
++
+   /*  Process remaining paint items  */
+   if (gimp_paint_tool_paint_use_thread (paint_tool))
+     {
+-- 
+2.53.0
+
