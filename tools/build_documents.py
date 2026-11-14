@@ -156,8 +156,12 @@ def slug(s):
 if __name__ == "__main__":
     open(os.path.join(ROOT, "config", "templaterc"), "w").write(templaterc())
     d = os.path.join(ROOT, "presets", "tool-presets")
-    shutil.rmtree(d, ignore_errors=True)
-    os.makedirs(d)
+    os.makedirs(d, exist_ok=True)
+    # seulement les préréglages générés ici (« PS-… ») : les autres
+    # (Peinture-…, Melangeur-…) sont écrits à la main
+    for f in os.listdir(d):
+        if f.startswith("PS-") and f.endswith(".gtp"):
+            os.unlink(os.path.join(d, f))
     for p in PRESETS:
         open(os.path.join(d, "PS-" + slug(p[0]) + ".gtp"), "w").write(preset(*p))
     print("%d modèles, %d préréglages d'outils" % (len(T), len(PRESETS)))

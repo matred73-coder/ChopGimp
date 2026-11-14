@@ -336,3 +336,4 @@ Signalés le 2026-11-13 en utilisant ChopGimp sur une affiche (scan 2480×3510) 
 - **Pinceau mélangeur** : c'est l'outil Barbouiller de GIMP avec ses options « débit » (mélange de la couleur de premier plan) et « sans effacement ». Pas de nouveau moteur.
 - **Aperçu de trait des préréglages** : non fait. Le panneau montre l'icône de l'outil.
 - Vérifié au banc graphique : un cercle tremblé devient une ellipse nette. 93 tests.
+- **Correctif après le tag** : `tools/build_documents.py` vidait tout le dossier des préréglages en régénérant les « PS-… », ce qui effaçait les nouveaux préréglages de peinture. Il ne supprime plus que ses propres fichiers. Le paquet 3.23.1 a été reconstruit avec la correction.
