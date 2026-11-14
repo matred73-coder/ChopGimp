@@ -73,6 +73,14 @@ case "${1:-}" in
     nooverview) no_overview ;;
     stop)  stop_gimp
            pkill -f "[g]nome-shell --headless --virtual-monitor 1600x900 --wayland-display wl-chop"
+           sleep 1
+           # services lancés dans la session privée (bus D-Bus, gvfs, portails,
+           # accessibilité…) : sans cela ils s'accumulent à chaque essai et
+           # finissent par saturer les connexions D-Bus de l'utilisateur.
+           for pid in $(ls /proc | grep -E '^[0-9]+$'); do
+               [ "$pid" = "$$" ] && continue
+               grep -qa "XDG_RUNTIME_DIR=$D/run" /proc/$pid/environ 2>/dev/null && kill "$pid" 2>/dev/null
+           done
            sleep 1; rm -rf "$D" ;;
     *)     sed -n '2,22p' "$0"; exit 1 ;;
 esac

@@ -1034,7 +1034,9 @@
                         "../patches/gimp-3.2.8/0087-ChopGimp-paper-texture-pattern-grain-in-canvas-space.patch",
                         "../patches/gimp-3.2.8/0088-ChopGimp-sketch-layers-hidden-on-export-timelapse-re.patch",
                         "../patches/gimp-3.2.8/0089-ChopGimp-final-review-fixes-autosave-timelapse-seria.patch",
-                        "../patches/gimp-3.2.8/0090-ChopGimp-no-idle-polling-text-panels-signal-driven-c.patch"
+                        "../patches/gimp-3.2.8/0090-ChopGimp-no-idle-polling-text-panels-signal-driven-c.patch",
+                        "../patches/gimp-3.2.8/0091-ChopGimp-Ctrl-click-on-thumbnail-keeps-the-active-la.patch",
+                        "../patches/gimp-3.2.8/0092-ChopGimp-clone-source-no-cross-at-the-old-source-whi.patch"
                     ]
                 }
             ],

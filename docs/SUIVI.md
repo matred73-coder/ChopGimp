@@ -436,3 +436,11 @@ Sauvegarde préalable : tag `backup-avant-nettoyage-3.24.1` (dépôt et sources 
   - plafonds mémoire de GIMP (cache de tuiles, historique) laissés tels quels : ce sont des maxima, utilisés seulement si besoin ; les réduire ralentirait les grosses images ;
   - un pic de mémoire très bref (≈ 0,1 s, ≈ 350 Mo) au démarrage du cœur, dont l'origine n'est pas identifiée. Il n'a pas d'effet ensuite (55 Mo en console).
 - 100 tests verts ; vérifié au banc : panneau Caractère à jour après création d'un texte, réveils au repos mesurés.
+
+## 3.24.2 — Retours d'utilisation
+
+- **Ctrl + clic sur la vignette d'un calque** (contour des pixels, comme Photoshop) : le calque cliqué n'est plus retiré de la sélection des calques. Avant, il fallait le resélectionner, et le pinceau n'affichait plus son cercle, faute de calque où peindre.
+- **Tampon de duplication** : pendant le choix d'une nouvelle source, plus de croix à l'ancienne source.
+- **Style de calque (Contour…)** : la fenêtre se fermait aussitôt ouverte chez l'utilisateur, sans erreur (non reproduit au banc). Une fermeture reçue moins d'une seconde après l'ouverture est maintenant ignorée, et chaque réponse est notée dans le journal de session (« [style de calque] réponse … »).
+- **Banc graphique** : l'arrêt tue aussi les services de sa session privée. Ils s'accumulaient à chaque essai (environ 800 processus) et ont saturé les connexions D-Bus de l'utilisateur, ce qui empêchait d'installer le paquet.
+- Restent à traiter : lenteur du Ctrl + clic sur un calque très détaillé.
