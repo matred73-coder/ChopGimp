@@ -32,7 +32,7 @@ gi.require_version("GimpUi", "3.0")
 gi.require_version("Gtk", "3.0")
 gi.require_version("Gegl", "0.4")
 gi.require_version("GdkPixbuf", "2.0")
-from gi.repository import Gimp, GimpUi, Gegl, Gio, GLib, GdkPixbuf, GObject, Gtk
+from gi.repository import Gimp, GimpUi, Gegl, GLib, GdkPixbuf, Gtk
 
 BD = "<Image>/Filters/BD"
 PROCS = {
@@ -133,6 +133,25 @@ def path_boolean(image, paths, op):
     return path
 
 
+def remove_layer_and_paths(image, layer):
+    """Retire un calque vectoriel et son chemin (GIMP le laisse dans l'image),
+    sauf si ce chemin sert encore à un autre calque vectoriel."""
+    path = layer.get_path() if isinstance(layer, Gimp.VectorLayer) else None
+    image.remove_layer(layer)
+    if path is None:
+        return
+    for l in walk(image.get_layers()):
+        if isinstance(l, Gimp.VectorLayer):
+            p = l.get_path()
+            if p is not None and p.get_id() == path.get_id():
+                return
+    try:
+        if path.is_valid():
+            image.remove_path(path)
+    except Exception:
+        pass
+
+
 def copy_vector_style(src, dst):
     dst.set_enable_fill(src.get_enable_fill())
     dst.set_fill_color(src.get_fill_color())
@@ -211,48 +230,80 @@ def flats(image, ink, gap, interactive):
     layer = Gimp.Layer.new(image, "Aplats", w, h, Gimp.ImageType.RGBA_IMAGE, 100, Gimp.LayerMode.NORMAL)
     image.insert_layer(layer, ink.get_parent(), image.get_item_position(ink) + 1)
     layer.fill(Gimp.FillType.TRANSPARENT)
-    ink_buf = ink.get_buffer()
     _, ox, oy = ink.get_offsets()
+    iw, ih = ink.get_width(), ink.get_height()
+    # encrage lu une seule fois (au lieu d'un pixel à la fois)
+    ink_px = ink.get_buffer().get(Gegl.Rectangle.new(0, 0, iw, ih), 1.0, "Y'A u8",
+                                  Gegl.AbyssPolicy.NONE)
     step = max(8, int(min(w, h) / 60))
+    xs = list(range(step // 2, w, step))
+    ys = list(range(step // 2, h, step))
+    # points d'échantillonnage déjà couverts : par un aplat (sélection
+    # agrandie remplie) ou par le fond déjà reconnu
+    visited = set()
+    sel_chan = image.get_selection()
+
+    def mark_selection():
+        _ok, _non_empty, x1, y1, x2, y2 = Gimp.Selection.bounds(image)
+        if x2 <= x1 or y2 <= y1:
+            return
+        data = sel_chan.get_buffer().get(Gegl.Rectangle.new(x1, y1, x2 - x1, y2 - y1), 1.0, "Y u8",
+                                         Gegl.AbyssPolicy.NONE)
+        bw = x2 - x1
+        for yy in ys:
+            if yy < y1 or yy >= y2:
+                continue
+            row = (yy - y1) * bw
+            for xx in xs:
+                if x1 <= xx < x2 and data[row + xx - x1] > 0:
+                    visited.add((xx, yy))
+
     rnd = random.Random(7)
+    saved = None
+    if not Gimp.Selection.is_empty(image):        # sélection de l'utilisateur rendue à la fin
+        saved = Gimp.Selection.save(image)
     Gimp.context_push()
-    Gimp.context_set_sample_threshold(0.35)
-    Gimp.context_set_sample_merged(False)
-    Gimp.context_set_sample_transparent(True)
-    Gimp.context_set_antialias(False)
-    Gimp.context_set_feather(False)
-    filled = 0
     Gimp.progress_init("Aplats…")
-    flat_buf = layer.get_buffer()
-    for y in range(step // 2, h, step):
-        Gimp.progress_update(y / float(h))
-        for x in range(step // 2, w, step):
-            if not (0 <= x - ox < ink.get_width() and 0 <= y - oy < ink.get_height()):
-                continue
-            px = ink_buf.get(Gegl.Rectangle.new(x - ox, y - oy, 1, 1), 1.0, "Y'A u8", Gegl.AbyssPolicy.NONE)
-            if px[1] > 128 and px[0] < 128:      # pixel d'encre : pas une zone
-                continue
-            done = flat_buf.get(Gegl.Rectangle.new(x, y, 1, 1), 1.0, "R'G'B'A u8", Gegl.AbyssPolicy.NONE)
-            if done[3] > 0:
-                continue
-            image.select_contiguous_color(Gimp.ChannelOps.REPLACE, ink, x - ox + ox, y - oy + oy)
-            if Gimp.Selection.is_empty(image):
-                continue
-            ok_, sel_empty, x1, y1, x2, y2 = Gimp.Selection.bounds(image)
-            if (x2 - x1) * (y2 - y1) > 0.9 * w * h:   # le fond autour du dessin
-                flat_buf = layer.get_buffer()
-                continue
-            if gap > 0:
-                Gimp.Selection.grow(image, int(gap))
-            hue = rnd.random()
-            r, g, b = colorsys.hsv_to_rgb(hue, 0.45, 0.95)
-            Gimp.context_set_foreground(color(r, g, b))
-            layer.edit_fill(Gimp.FillType.FOREGROUND)
-            flat_buf = layer.get_buffer()
-            filled += 1
-    Gimp.Selection.none(image)
-    Gimp.context_pop()
-    Gimp.progress_end()
+    filled = 0
+    try:
+        Gimp.context_set_sample_threshold(0.35)
+        Gimp.context_set_sample_merged(False)
+        Gimp.context_set_sample_transparent(True)
+        Gimp.context_set_antialias(False)
+        Gimp.context_set_feather(False)
+        for y in ys:
+            Gimp.progress_update(y / float(h))
+            for x in xs:
+                if not (0 <= x - ox < iw and 0 <= y - oy < ih):
+                    continue
+                i = ((y - oy) * iw + (x - ox)) * 2
+                if ink_px[i + 1] > 128 and ink_px[i] < 128:      # pixel d'encre : pas une zone
+                    continue
+                if (x, y) in visited:
+                    continue
+                image.select_contiguous_color(Gimp.ChannelOps.REPLACE, ink, x, y)
+                if Gimp.Selection.is_empty(image):
+                    continue
+                ok_, _non_empty, x1, y1, x2, y2 = Gimp.Selection.bounds(image)
+                if (x2 - x1) * (y2 - y1) > 0.9 * w * h:   # le fond autour du dessin
+                    mark_selection()
+                    continue
+                if gap > 0:
+                    Gimp.Selection.grow(image, int(gap))
+                hue = rnd.random()
+                r, g, b = colorsys.hsv_to_rgb(hue, 0.45, 0.95)
+                Gimp.context_set_foreground(color(r, g, b))
+                layer.edit_fill(Gimp.FillType.FOREGROUND)
+                mark_selection()
+                filled += 1
+    finally:
+        Gimp.context_pop()
+        Gimp.progress_end()
+        if saved is not None:
+            image.select_item(Gimp.ChannelOps.REPLACE, saved)
+            image.remove_channel(saved)
+        else:
+            Gimp.Selection.none(image)
     if not filled:
         image.remove_layer(layer)
         return "Aucune zone fermée trouvée sur le calque d'encrage."
@@ -294,13 +345,12 @@ def comic_panels(image, o):
 
 def comic_balloon(image):
     w, h = image.get_width(), image.get_height()
-    ok_, empty, x1, y1, x2, y2 = Gimp.Selection.bounds(image)
-    if empty or not ok_:
+    ok_, non_empty, x1, y1, x2, y2 = Gimp.Selection.bounds(image)
+    if not (ok_ and non_empty):
         bw, bh = w * 0.35, h * 0.18
         x1, y1 = (w - bw) / 2, h * 0.15
         x2, y2 = x1 + bw, y1 + bh
     cx, cy, rx, ry = (x1 + x2) / 2, (y1 + y2) / 2, (x2 - x1) / 2, (y2 - y1) / 2
-    k = 0.5523
     # ellipse de Bézier et queue (triangle) en bas à gauche, réunies (union)
     ell_path = Gimp.Path.new(image, "Bulle (ellipse)")
     ell_path.bezier_stroke_new_ellipse(cx, cy, rx, ry, 0.0)
@@ -318,6 +368,8 @@ def comic_balloon(image):
         image.remove_path(ell_path)
         image.remove_path(tail_path)
         path.set_name("Bulle")
+    else:                               # union indisponible : ellipse seule
+        image.remove_path(tail_path)
     vl = Gimp.VectorLayer.new(image, path)
     vl.set_name("Bulle")
     vl.set_enable_fill(True)
@@ -355,8 +407,8 @@ def screentone(image, drawables, o):
 
 def speed_lines(image, o, focus):
     w, h = image.get_width(), image.get_height()
-    ok_, empty, x1, y1, x2, y2 = Gimp.Selection.bounds(image)
-    cx, cy = ((x1 + x2) / 2, (y1 + y2) / 2) if (ok_ and not empty) else (w / 2, h / 2)
+    ok_, non_empty, x1, y1, x2, y2 = Gimp.Selection.bounds(image)
+    cx, cy = ((x1 + x2) / 2, (y1 + y2) / 2) if (ok_ and non_empty) else (w / 2, h / 2)
     rnd = random.Random(3)
     n, thick = int(o["count"]), o["thickness"]
     strokes = []
@@ -421,7 +473,7 @@ def vector_eraser(image, layers):
         image.insert_layer(nv, vl.get_parent(), image.get_item_position(vl))
         copy_vector_style(vl, nv)
         nv.refresh()
-        image.remove_layer(vl)
+        remove_layer_and_paths(image, vl)
         nv.set_name(name)
     image.remove_path(sel_path)
     Gimp.Selection.none(image)
@@ -567,12 +619,27 @@ def timelapse_export(image):
     d.destroy()
     if resp != Gtk.ResponseType.OK or not target:
         return "cancel"
-    # images numérotées 000000.png… → WebM (VP8), 12 images/s
-    pipe = Gst.parse_launch(
-        'multifilesrc location="%s" index=0 caps="image/png,framerate=12/1" ! pngdec ! '
-        'videoconvert ! videoscale ! video/x-raw,width=1280,pixel-aspect-ratio=1/1 ! '
-        'vp8enc deadline=1 ! webmmux ! filesink location="%s"'
-        % (os.path.join(folder, "%06d.png"), target))
+    # images numérotées 000000.png… → WebM (VP8), 12 images/s ; pipeline
+    # construit élément par élément (chemins passés en propriétés, jamais
+    # interprétés par gst-launch : guillemets, « ! »… sans danger)
+    pipe = Gst.Pipeline.new("timelapse")
+    chain = [("multifilesrc", {"location": os.path.join(folder, "%06d.png"), "index": 0,
+                               "caps": Gst.Caps.from_string("image/png,framerate=12/1")}),
+             ("pngdec", {}), ("videoconvert", {}), ("videoscale", {}),
+             ("capsfilter", {"caps": Gst.Caps.from_string(
+                 "video/x-raw,width=1280,pixel-aspect-ratio=1/1")}),
+             ("vp8enc", {"deadline": 1}), ("webmmux", {}), ("filesink", {"location": target})]
+    elements = []
+    for kind, props in chain:
+        e = Gst.ElementFactory.make(kind, None)
+        if e is None:
+            return "Encodage impossible : élément GStreamer « %s » absent." % kind
+        for k, v in props.items():
+            e.set_property(k, v)
+        pipe.add(e)
+        if elements and not elements[-1].link(e):
+            return "Encodage impossible : %s → %s." % (elements[-1].get_factory().get_name(), kind)
+        elements.append(e)
     pipe.set_state(Gst.State.PLAYING)
     bus = pipe.get_bus()
     msg = bus.timed_pop_filtered(Gst.CLOCK_TIME_NONE, Gst.MessageType.EOS | Gst.MessageType.ERROR)
@@ -611,10 +678,12 @@ class ChopGimpAtelier(Gimp.PlugIn):
             return spin_dialog(title, rows) if inter else defaults(rows)
 
         if name == "chopgimp-references":
-            msg = references() if inter else None
+            if inter:
+                references()
             return ok(procedure)
         if name == "chopgimp-harmonies":
-            msg = harmonies() if inter else None
+            if inter:
+                harmonies()
             return ok(procedure)
         if name == "chopgimp-timelapse-export":
             msg = timelapse_export(image) if inter else "Fenêtre interactive."

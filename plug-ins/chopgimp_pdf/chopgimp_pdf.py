@@ -21,6 +21,7 @@ Prioritaire sur l'import PDF de GIMP (qui donne une image par page) :
 
 Le mode « image (comme avant) » appelle l'import PDF de GIMP.
 """
+import io
 import math
 import os
 import re
@@ -47,6 +48,7 @@ PROC_PS = "file-chopgimp-eps-load"
 PROC_SVG = "file-chopgimp-svg-load"
 PROC_PS_THUMB = "file-chopgimp-eps-load-thumb"
 PROC_SVG_THUMB = "file-chopgimp-svg-load-thumb"
+MAX_SIDE = 16384          # côté maximal d'un rendu en pixels (la résolution est réduite)
 
 
 # ─── outils ─────────────────────────────────────────────────────────────
@@ -59,6 +61,22 @@ def pdb_run(name, **kw):
     for k, v in kw.items():
         cfg.set_property(k, v)
     return proc.run(cfg)
+
+
+def or_error(procedure, res, msg):
+    """Résultat d'une procédure déléguée, ou erreur si elle est absente."""
+    if res is None:
+        return procedure.new_return_values(Gimp.PDBStatusType.EXECUTION_ERROR, GLib.Error(msg))
+    return res
+
+
+def fit_scale(pw, ph, dpi):
+    """Échelle points → pixels, réduite pour que le rendu tienne dans MAX_SIDE."""
+    scale = dpi / 72.0
+    side = max(pw, ph) * scale
+    if side > MAX_SIDE:
+        scale *= MAX_SIDE / side
+    return scale
 
 
 def gegl_color(rgba):
@@ -321,7 +339,7 @@ def standard_font(psname):
 def add_texts(image, page, scale, parent, fonts, text_mode, report):
     text = page.get_text() or ""
     ok_, rects = page.get_text_layout()
-    attrs = page.get_text_attributes() or []
+    attrs = sorted(page.get_text_attributes() or [], key=lambda a: a.start_index)
     if not text or not ok_ or not rects:
         return 0
     if len(rects) != len(text):
@@ -329,10 +347,16 @@ def add_texts(image, page, scale, parent, fonts, text_mode, report):
                    % (len(rects), len(text)))
     n_chars = min(len(rects), len(text))
 
+    # les lignes sont parcourues dans l'ordre : index courant dans attrs
+    cursor = [0]
+
     def attr_at(i):
-        for a in attrs:
-            if a.start_index <= i <= a.end_index:
-                return a
+        k = cursor[0]
+        while k < len(attrs) and attrs[k].end_index < i:
+            k += 1
+        cursor[0] = k
+        if k < len(attrs) and attrs[k].start_index <= i:
+            return attrs[k]
         return attrs[-1] if attrs else None
 
     # lignes : coupures sur « \n » ou saut de position
@@ -390,8 +414,11 @@ def add_texts(image, page, scale, parent, fonts, text_mode, report):
 def import_page(image, doc, page_no, opts, report, fonts):
     page = doc.get_page(page_no)
     pw, ph = page.get_size()
-    scale = opts["dpi"] / 72.0
+    scale = fit_scale(pw, ph, opts["dpi"])
     w, h = int(math.ceil(pw * scale)), int(math.ceil(ph * scale))
+    if scale < opts["dpi"] / 72.0:
+        report.add("Page %d : résolution réduite à %d ppp (rendu limité à %d px de côté)."
+                   % (page_no + 1, int(scale * 72), MAX_SIDE))
 
     layers = ocg_layers(doc)
     passes = []
@@ -407,9 +434,8 @@ def import_page(image, doc, page_no, opts, report, fonts):
         passes.append(("", True, base_objs))
         for title, L in layers:
             L.show()
-            objs, st = cairoscript.parse(render_script(page, scale, w, h))
+            objs, _ = cairoscript.parse(render_script(page, scale, w, h))
             L.hide()
-            stats["glyphs"] += st["glyphs"]
             passes.append((title, dict(states)[L], subtract(objs, base_sigs)))
         for L, vis in states:
             (L.show if vis else L.hide)()
@@ -428,10 +454,47 @@ def import_page(image, doc, page_no, opts, report, fonts):
     if image.get_width() < w or image.get_height() < h:
         image.resize(max(w, image.get_width()), max(h, image.get_height()), 0, 0)
 
+    # en cas d'échec, la page à moitié construite est retirée
+    paths_before = {pth.get_id() for pth in image.get_paths()}
+    created = []
+    try:
+        counts, n_text = build_page(image, page, page_no, scale, w, h, merged, opts, report,
+                                    fonts, created)
+    except Exception:
+        for item in reversed(created):
+            try:
+                image.remove_layer(item)
+            except Exception:
+                pass
+        for pth in image.get_paths():
+            if pth.get_id() not in paths_before:
+                try:
+                    image.remove_path(pth)
+                except Exception:
+                    pass
+        raise
+
+    report.add("Page %d : %d formes vectorielles (%d objets réunis), %d images, %d lignes de texte, "
+               "%d calques PDF." % (page_no + 1, counts["path"], total, counts["image"], n_text, len(layers)))
+    if stats["gradients"]:
+        report.add("  %d dégradé(s) repris en pixels (rendu exact, masqué par la forme)."
+                   % stats["gradients"])
+    if stats["clips"]:
+        report.add("  %d découpe(s) non appliquée(s) aux vecteurs : voir le rendu de référence."
+                   % stats["clips"])
+    unknown = stats["unknown"]
+    if unknown:
+        report.add("  Opérations non reconnues : " + ", ".join("%s×%d" % kv for kv in sorted(unknown.items())))
+    return True
+
+
+def build_page(image, page, page_no, scale, w, h, merged, opts, report, fonts, created):
+    """Calques d'une page ; chaque calque de premier niveau est noté dans created."""
     # rendu de référence, masqué, tout en bas
     ref = Gimp.Layer.new(image, "Page %d — rendu de référence" % (page_no + 1), w, h,
                          Gimp.ImageType.RGBA_IMAGE, 100, Gimp.LayerMode.NORMAL)
     image.insert_layer(ref, None, len(image.get_layers()))
+    created.append(ref)
     surf = render_pixels(page, scale, w, h)
     data = bytes(surf.get_data())
     buf = ref.get_buffer()
@@ -441,6 +504,7 @@ def import_page(image, doc, page_no, opts, report, fonts):
 
     page_group = Gimp.GroupLayer.new(image, "Page %d" % (page_no + 1))
     image.insert_layer(page_group, None, 0)
+    created.append(page_group)
     counts = {"path": 0, "image": 0}
     for title, visible, objs in merged:
         parent = page_group
@@ -470,19 +534,25 @@ def import_page(image, doc, page_no, opts, report, fonts):
         n_text = add_texts(image, page, scale, tg, fonts, opts["text"], report)
         if not n_text:
             image.remove_layer(tg)
+    return counts, n_text
 
-    report.add("Page %d : %d formes vectorielles (%d objets réunis), %d images, %d lignes de texte, "
-               "%d calques PDF." % (page_no + 1, counts["path"], total, counts["image"], n_text, len(layers)))
-    if stats["gradients"]:
-        report.add("  %d dégradé(s) repris en pixels (rendu exact, masqué par la forme)."
-                   % stats["gradients"])
-    if stats["clips"]:
-        report.add("  %d découpe(s) non appliquée(s) aux vecteurs : voir le rendu de référence."
-                   % stats["clips"])
-    unknown = stats["unknown"]
-    if unknown:
-        report.add("  Opérations non reconnues : " + ", ".join("%s×%d" % kv for kv in sorted(unknown.items())))
-    return True
+
+def import_page_image(image, doc, page_no, opts):
+    """Page entière en un calque de pixels (rendu poppler)."""
+    page = doc.get_page(page_no)
+    pw, ph = page.get_size()
+    scale = fit_scale(pw, ph, opts["dpi"])
+    w, h = max(1, int(math.ceil(pw * scale))), max(1, int(math.ceil(ph * scale)))
+    if image.get_width() < w or image.get_height() < h:
+        image.resize(max(w, image.get_width()), max(h, image.get_height()), 0, 0)
+    layer = Gimp.Layer.new(image, "Page %d (image)" % (page_no + 1), w, h,
+                           Gimp.ImageType.RGBA_IMAGE, 100, Gimp.LayerMode.NORMAL)
+    image.insert_layer(layer, None, 0)
+    surf = render_pixels(page, scale, w, h)
+    buf = layer.get_buffer()
+    buf.set(Gegl.Rectangle.new(0, 0, w, h), "cairo-ARGB32", bytes(surf.get_data()))
+    buf.flush()
+    return layer
 
 
 # ─── fenêtre d'options ──────────────────────────────────────────────────
@@ -507,7 +577,7 @@ def options_dialog(n_pages, n_layers):
     grid.attach(mode, 1, row, 1, 1)
     row += 1
     label("Pages (ex. 1, 3-5)")
-    pages = Gtk.Entry(text="1" if n_pages > 1 else "1")
+    pages = Gtk.Entry(text="1")
     pages.set_tooltip_text("%d page(s) dans le document" % n_pages)
     grid.attach(pages, 1, row, 1, 1)
     row += 1
@@ -599,7 +669,7 @@ def load_ps(procedure, run_mode, file, metadata, flags, config, data):
         err = ps_to_pdf(path, pdf) if path else "fichier distant"
         if err:
             res = pdb_run("file-ps-load", **{"run-mode": run_mode, "file": file})
-            return res, flags
+            return or_error(procedure, res, err), flags
         res, flags = load(procedure, run_mode, Gio.File.new_for_path(pdf), metadata, flags,
                           config, data, classic_file=file)
         return res, flags
@@ -617,17 +687,26 @@ INK_NS = "{http://www.inkscape.org/namespaces/inkscape}"
 
 
 def svg_matrix(transform):
-    """Attribut transform → cairoscript.Matrix (translate, scale, rotate, matrix)."""
+    """Attribut transform → cairoscript.Matrix (translate, scale, rotate, skewX/Y, matrix)."""
     m = cairoscript.Matrix()
     for op, args in re.findall(r"(\w+)\s*\(([^)]*)\)", transform or ""):
         v = [float(x) for x in re.split(r"[\s,]+", args.strip()) if x]
-        if op == "translate":
+        if op == "translate" and v:
             t = cairoscript.Matrix(1, 0, 0, 1, v[0], v[1] if len(v) > 1 else 0)
-        elif op == "scale":
+        elif op == "scale" and v:
             t = cairoscript.Matrix(v[0], 0, 0, v[1] if len(v) > 1 else v[0], 0, 0)
-        elif op == "rotate":
+        elif op == "rotate" and v:
             a = math.radians(v[0])
             t = cairoscript.Matrix(math.cos(a), math.sin(a), -math.sin(a), math.cos(a), 0, 0)
+            if len(v) >= 3:
+                # rotate(a, cx, cy) : rotation autour de (cx, cy)
+                cx, cy = v[1], v[2]
+                t = cairoscript.Matrix(1, 0, 0, 1, -cx, -cy).mul(t).mul(
+                    cairoscript.Matrix(1, 0, 0, 1, cx, cy))
+        elif op == "skewX" and v:
+            t = cairoscript.Matrix(1, 0, math.tan(math.radians(v[0])), 1, 0, 0)
+        elif op == "skewY" and v:
+            t = cairoscript.Matrix(1, math.tan(math.radians(v[0])), 0, 1, 0, 0)
         elif op == "matrix" and len(v) == 6:
             t = cairoscript.Matrix(*v)
         else:
@@ -715,13 +794,20 @@ def import_svg(image, path, opts, report, fonts):
     if not ok_ or w <= 0 or h <= 0:
         dim = handle.get_dimensions()
         w, h = dim.width, dim.height
-    w, h = int(math.ceil(w)), int(math.ceil(h))
+    w0, h0 = int(math.ceil(w)), int(math.ceil(h))
+    # rendu limité à MAX_SIDE px de côté : le document est réduit d'un facteur zoom
+    zoom = min(1.0, MAX_SIDE / float(max(w0, h0, 1)))
+    w, h = max(1, int(math.ceil(w0 * zoom))), max(1, int(math.ceil(h0 * zoom)))
+    if zoom < 1.0:
+        report.add("SVG réduit à %d × %d px (rendu limité à %d px de côté)." % (w, h, MAX_SIDE))
     vp = Rsvg.Rectangle()
-    vp.x, vp.y, vp.width, vp.height = 0, 0, w, h
+    vp.x, vp.y, vp.width, vp.height = 0, 0, w0, h0
     root = ET.parse(path).getroot()
 
     # les formes sont rendues depuis une copie sans <text> : librsvg dessine
-    # le texte en tracés, qui feraient doublon avec les calques de texte
+    # le texte en tracés, qui feraient doublon avec les calques de texte.
+    # La copie est lue en mémoire avec le fichier d'origine comme base, pour
+    # que les liens relatifs (images, feuilles de style) restent valides.
     shapes = handle
     if opts["text"] != "none":
         stripped = ET.parse(path)
@@ -729,14 +815,12 @@ def import_svg(image, path, opts, report, fonts):
             for child in list(parent):
                 if child.tag in (SVG_NS + "text", "text"):
                     parent.remove(child)
-        fd, tmp_svg = tempfile.mkstemp(suffix=".svg", prefix="chopgimp-svg-")
-        os.close(fd)
-        stripped.write(tmp_svg, encoding="utf-8", xml_declaration=True)
-        try:
-            shapes = Rsvg.Handle.new_from_file(tmp_svg)
-            shapes.set_dpi(opts["dpi"])
-        finally:
-            os.unlink(tmp_svg)
+        out = io.BytesIO()
+        stripped.write(out, encoding="utf-8", xml_declaration=True)
+        stream = Gio.MemoryInputStream.new_from_bytes(GLib.Bytes.new(out.getvalue()))
+        shapes = Rsvg.Handle.new_from_stream_sync(stream, Gio.File.new_for_path(path),
+                                                  Rsvg.HandleFlags.FLAGS_NONE, None)
+        shapes.set_dpi(opts["dpi"])
 
     def script(layer_id=None):
         fd, tmp = tempfile.mkstemp(suffix=".cs", prefix="chopgimp-svg-")
@@ -745,6 +829,7 @@ def import_svg(image, path, opts, report, fonts):
             dev = cairo.ScriptDevice(tmp)
             surf = cairo.ScriptSurface(dev, cairo.Content.COLOR_ALPHA, w, h)
             cr = cairo.Context(surf)
+            cr.scale(zoom, zoom)
             if layer_id:
                 shapes.render_layer(cr, "#" + layer_id, vp)
             else:
@@ -763,31 +848,40 @@ def import_svg(image, path, opts, report, fonts):
             layers.append((el.get("id"), el.get(INK_NS + "label") or el.get("id"),
                            st.get("display") != "none"))
 
-    image.resize(max(w, image.get_width()), max(h, image.get_height()), 0, 0)
     all_objs, stats = cairoscript.parse(script())
     passes = []
     sigs_layers = {}
     for lid, label, visible in layers:
-        objs, st = cairoscript.parse(script(lid))
+        objs, _ = cairoscript.parse(script(lid))
         passes.append((label, visible, objs))
         for o in objs:
             k = signature(o)
             sigs_layers[k] = sigs_layers.get(k, 0) + 1
     base = subtract(all_objs, sigs_layers)
     passes.insert(0, ("", True, base))
+    merged = [(t, v, merge_runs(o, 400)) for t, v, o in passes]
+    n_objs = sum(len(m[2]) for m in merged)
+    if n_objs > opts["max_objects"]:
+        report.add("SVG : %d objets (plafond %d) : importé en image." % (n_objs, opts["max_objects"]))
+        return False
+    image.resize(max(w, image.get_width()), max(h, image.get_height()), 0, 0)
 
     # viewBox → pixels pour les textes
     vb = [float(v) for v in re.split(r"[\s,]+", (root.get("viewBox") or "").strip()) if v]
     base_m = cairoscript.Matrix()
     if len(vb) == 4 and vb[2] > 0 and vb[3] > 0:
-        base_m = cairoscript.Matrix(w / vb[2], 0, 0, h / vb[3], -vb[0] * w / vb[2], -vb[1] * h / vb[3])
+        base_m = cairoscript.Matrix(w0 / vb[2], 0, 0, h0 / vb[3], -vb[0] * w0 / vb[2], -vb[1] * h0 / vb[3])
+    if zoom < 1.0:
+        base_m = base_m.mul(cairoscript.Matrix(zoom, 0, 0, zoom, 0, 0))
 
     # rendu de référence (masqué) : comparaison et pixels des dégradés
     ref = Gimp.Layer.new(image, os.path.basename(path) + " — rendu de référence", w, h,
                          Gimp.ImageType.RGBA_IMAGE, 100, Gimp.LayerMode.NORMAL)
     image.insert_layer(ref, None, len(image.get_layers()))
     surf = cairo.ImageSurface(cairo.FORMAT_ARGB32, w, h)
-    handle.render_document(cairo.Context(surf), vp)
+    cr = cairo.Context(surf)
+    cr.scale(zoom, zoom)
+    handle.render_document(cr, vp)
     surf.flush()
     rbuf = ref.get_buffer()
     rbuf.set(Gegl.Rectangle.new(0, 0, w, h), "cairo-ARGB32", bytes(surf.get_data()))
@@ -798,7 +892,7 @@ def import_svg(image, path, opts, report, fonts):
     image.insert_layer(doc_group, None, 0)
     groups = {}
     counts = {"path": 0, "image": 0}
-    for title, visible, objs in [(t, v, merge_runs(o, 400)) for t, v, o in passes]:
+    for title, visible, objs in merged:
         parent = doc_group
         if title:
             parent = Gimp.GroupLayer.new(image, title)
@@ -857,18 +951,26 @@ def load_svg(procedure, run_mode, file, metadata, flags, config, data):
         if chosen is None:
             return procedure.new_return_values(Gimp.PDBStatusType.CANCEL, GLib.Error()), flags
         opts.update(chosen)
+    def original():
+        res = pdb_run("file-svg-load", **{"run-mode": run_mode, "file": file})
+        return or_error(procedure, res, "Import SVG d'origine absent"), flags
+
     if opts["mode"] == "image" or not path:
-        return pdb_run("file-svg-load", **{"run-mode": run_mode, "file": file}), flags
+        return original()
     image = Gimp.Image.new(1, 1, Gimp.ImageBaseType.RGB)
     image.undo_disable()
     image.set_resolution(opts["dpi"], opts["dpi"])
     report = Report()
     try:
-        import_svg(image, path, opts, report, fonts_resolver() if opts["text"] != "none" else None)
+        done = import_svg(image, path, opts, report, fonts_resolver() if opts["text"] != "none" else None)
     except Exception as e:
         image.delete()
         Gimp.message("Import SVG modifiable impossible (%s) : import d'origine." % e)
-        return pdb_run("file-svg-load", **{"run-mode": run_mode, "file": file}), flags
+        return original()
+    if not done:                      # trop d'objets : import d'origine (image)
+        image.delete()
+        Gimp.message(report.text())
+        return original()
     image.undo_enable()
     raw = [b - 256 if b > 127 else b for b in report.text().encode("utf-8")]
     image.attach_parasite(Gimp.Parasite.new("chopgimp-pdf-report", 0, raw))
@@ -895,8 +997,7 @@ def load(procedure, run_mode, file, metadata, flags, config, data, classic_file=
     except GLib.Error:
         doc = None
     if doc is None or not path:
-        res = classic(classic_file, run_mode)
-        return res, flags
+        return or_error(procedure, classic(classic_file, run_mode), "Import d'origine absent"), flags
 
     opts = {"mode": "layers", "pages": "1", "text": "editable", "dpi": 150.0, "max_objects": 1500,
             "hidden_layers": True}
@@ -908,31 +1009,33 @@ def load(procedure, run_mode, file, metadata, flags, config, data, classic_file=
             return procedure.new_return_values(Gimp.PDBStatusType.CANCEL, GLib.Error()), flags
         opts = chosen
     if opts["mode"] == "image":
-        return classic(classic_file, run_mode), flags
+        return or_error(procedure, classic(classic_file, run_mode), "Import d'origine absent"), flags
 
     pw, ph = doc.get_page(0).get_size()
-    scale = opts["dpi"] / 72.0
+    scale = fit_scale(pw, ph, opts["dpi"])
     image = Gimp.Image.new(max(1, int(math.ceil(pw * scale))), max(1, int(math.ceil(ph * scale))),
                            Gimp.ImageBaseType.RGB)
     image.undo_disable()
     image.set_resolution(opts["dpi"], opts["dpi"])
     report = Report()
     fonts = fonts_resolver() if opts["text"] != "none" else None
-    plain = []
     for p in parse_pages(opts["pages"], doc.get_n_pages()):
         try:
-            if not import_page(image, doc, p, opts, report, fonts):
-                plain.append(p)
+            vector = import_page(image, doc, p, opts, report, fonts)
         except Exception as e:
-            import traceback
-            traceback.print_exc()          # dans le journal de session
-            report.add("Page %d : import vectoriel impossible (%s)" % (p + 1, e))
-            plain.append(p)
+            report.add("Page %d : import vectoriel impossible (%s) : importée en image." % (p + 1, e))
+            vector = False
+        if not vector:
+            # trop d'objets ou échec : la page entière en calque de pixels
+            try:
+                import_page_image(image, doc, p, opts)
+            except Exception as e:
+                report.add("Page %d : import en image impossible (%s)" % (p + 1, e))
     image.undo_enable()
 
     if not image.get_layers():                # rien d'importé : import classique
         image.delete()
-        return classic(classic_file, run_mode), flags
+        return or_error(procedure, classic(classic_file, run_mode), "Import d'origine absent"), flags
 
     text = report.text()
     if text:
@@ -970,6 +1073,9 @@ def thumbnail_svg(procedure, file, size, config, data):
     except Exception:
         return procedure.new_return_values(Gimp.PDBStatusType.EXECUTION_ERROR,
                                            GLib.Error("SVG illisible"))
+    if w <= 0 or h <= 0:
+        return procedure.new_return_values(Gimp.PDBStatusType.EXECUTION_ERROR,
+                                           GLib.Error("SVG sans dimensions"))
     k = min(1.0, float(size) / max(w, h))
     tw, th = max(1, int(w * k)), max(1, int(h * k))
     surf = cairo.ImageSurface(cairo.FORMAT_ARGB32, tw, th)

@@ -10,7 +10,6 @@ PhotoGIMP Pro — génère :
 Usage : build_documents.py
 """
 import os
-import shutil
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 

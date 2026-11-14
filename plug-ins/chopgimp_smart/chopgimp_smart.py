@@ -64,25 +64,38 @@ def convert(image, layers):
         x2, y2 = max(x2, x + l.get_width()), max(y2, y + l.get_height())
     w, h = max(1, x2 - x1), max(1, y2 - y1)
 
-    sub = Gimp.Image.new(w, h, image.get_base_type())
-    sub.undo_disable()
-    # du bas vers le haut, pour garder l'ordre
-    order = sorted(layers, key=lambda l: image.get_item_position(l), reverse=True)
-    for l in order:
-        copy = Gimp.Layer.new_from_drawable(l, sub)
-        sub.insert_layer(copy, None, 0)
-        _, x, y = l.get_offsets()
-        copy.set_offsets(x - x1, y - y1)
+    # même précision que l'image source (16/32 bits conservés)
+    sub = Gimp.Image.new_with_precision(w, h, image.get_base_type(), image.get_precision())
     name = layers[0].get_name() if len(layers) == 1 else "Objet dynamique"
     path = os.path.join(store_dir(image), "%s-%d.xcf" % (re.sub(r"[^\w.\- ]", "_", name)[:40],
                                                          int(time.time() * 1000) % 10 ** 9))
-    Gimp.file_save(Gimp.RunMode.NONINTERACTIVE, sub, Gio.File.new_for_path(path), None)
-    sub.delete()
+    try:
+        sub.undo_disable()
+        # du bas vers le haut, pour garder l'ordre
+        order = sorted(layers, key=lambda l: image.get_item_position(l), reverse=True)
+        for l in order:
+            copy = Gimp.Layer.new_from_drawable(l, sub)
+            sub.insert_layer(copy, None, 0)
+            _, x, y = l.get_offsets()
+            copy.set_offsets(x - x1, y - y1)
+        saved = Gimp.file_save(Gimp.RunMode.NONINTERACTIVE, sub, Gio.File.new_for_path(path), None)
+    finally:
+        sub.delete()
+    if not saved or not os.path.exists(path):
+        return "L'objet dynamique n'a pas pu être enregistré (%s)." % path
 
     top = min(layers, key=lambda l: image.get_item_position(l))
     parent, pos = top.get_parent(), image.get_item_position(top)
-    link = Gimp.LinkLayer.new(image, Gio.File.new_for_path(path))
+    try:
+        link = Gimp.LinkLayer.new(image, Gio.File.new_for_path(path))
+    except Exception:
+        link = None
     if link is None:
+        # pas de calque lié : le fichier enregistré ne sert à rien
+        try:
+            os.remove(path)
+        except OSError:
+            pass
         return "Le calque lié n'a pas pu être créé."
     link.set_name(name)
     image.insert_layer(link, parent, pos)

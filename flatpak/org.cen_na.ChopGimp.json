@@ -1029,7 +1029,8 @@
                         "../patches/gimp-3.2.8/0085-ChopGimp-action-recorder-Edit-Actions-asset-generati.patch",
                         "../patches/gimp-3.2.8/0086-ChopGimp-string-stabilizer-with-catch-up-pressure-cu.patch",
                         "../patches/gimp-3.2.8/0087-ChopGimp-paper-texture-pattern-grain-in-canvas-space.patch",
-                        "../patches/gimp-3.2.8/0088-ChopGimp-sketch-layers-hidden-on-export-timelapse-re.patch"
+                        "../patches/gimp-3.2.8/0088-ChopGimp-sketch-layers-hidden-on-export-timelapse-re.patch",
+                        "../patches/gimp-3.2.8/0089-ChopGimp-final-review-fixes-autosave-timelapse-seria.patch"
                     ]
                 }
             ],
@@ -1070,6 +1071,10 @@
                         ".backups",
                         "flatpak/.flatpak-builder",
                         "flatpak/build-dir",
+                        "flatpak/build-dir-vanilla",
+                        "flatpak/build-deps-test",
+                        "flatpak/repo",
+                        "flatpak/repo-vanilla",
                         "dist"
                     ]
                 }

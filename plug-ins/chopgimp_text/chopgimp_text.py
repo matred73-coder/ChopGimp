@@ -361,16 +361,18 @@ def find_replace_dialog(image):
         rx = re.compile(pattern, 0 if case.get_active() else re.IGNORECASE)
         count = layers = 0
         image.undo_group_start()
-        for layer in walk(image.get_layers()):
-            if not is_live_text(layer):
-                continue
-            text = layer.get_text() or ""
-            new, n = rx.subn(repl.get_text().replace("\\", "\\\\"), text)
-            if n:
-                layer.set_text(new)      # (le style par caractère est réinitialisé)
-                count += n
-                layers += 1
-        image.undo_group_end()
+        try:
+            for layer in walk(image.get_layers()):
+                if not is_live_text(layer):
+                    continue
+                text = layer.get_text() or ""
+                new, n = rx.subn(repl.get_text().replace("\\", "\\\\"), text)
+                if n:
+                    layer.set_text(new)      # (le style par caractère est réinitialisé)
+                    count += n
+                    layers += 1
+        finally:
+            image.undo_group_end()
         Gimp.displays_flush()
         status.set_text("%d remplacement(s) dans %d calque(s) de texte." % (count, layers))
     dialog.destroy()
@@ -482,4 +484,5 @@ class ChopGimpText(Gimp.PlugIn):
         return ok(procedure)
 
 
-Gimp.main(ChopGimpText.__gtype__, sys.argv)
+if __name__ == "__main__":
+    Gimp.main(ChopGimpText.__gtype__, sys.argv)

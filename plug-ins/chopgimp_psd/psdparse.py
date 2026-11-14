@@ -19,6 +19,8 @@ structure documentée par psd-tools (MIT).
         layer.shape()     -> ShapeInfo ou None  (vmsk/vsms + vscg/SoCo + vstk)
         layer.effects()   -> dict ou None       (lfx2)
 """
+import mmap
+import os
 import struct
 
 # ─── lecture binaire ────────────────────────────────────────────────────
@@ -26,9 +28,11 @@ import struct
 
 class Reader:
     def __init__(self, data, pos=0, end=None):
+        # data : bytes ou mmap (le découpage d'un mmap renvoie des bytes)
         self.data = data
         self.pos = pos
-        self.end = len(data) if end is None else end
+        self.origin = pos            # référence pour l'alignement des blocs
+        self.end = len(data) if end is None else min(end, len(data))
 
     def read(self, n):
         if self.pos + n > self.end:
@@ -68,6 +72,14 @@ class Reader:
     def left(self):
         return self.end - self.pos
 
+    def sub(self, n):
+        """Sous-lecteur de n octets (sans copie) ; avance la position."""
+        if n < 0 or self.pos + n > self.end:
+            raise ValueError("PSD tronqué (bloc de %d octets en %d)" % (n, self.pos))
+        r = Reader(self.data, self.pos, self.pos + n)
+        self.pos += n
+        return r
+
     def pascal(self, pad):
         n = self.u8()
         s = self.read(n)
@@ -106,21 +118,26 @@ def _key(r):
     return r.read(n if n else 4).decode("latin-1")
 
 
-def read_descriptor(r):
+MAX_DEPTH = 64
+
+
+def read_descriptor(r, depth=0):
+    if depth > MAX_DEPTH:
+        raise ValueError("descripteur trop imbriqué")
     d = Descriptor()
     d.name = r.unicode()
     d.classID = _key(r)
     for _ in range(r.u32()):
         key = _key(r)
-        d[key] = _value(r, r.read(4).decode("latin-1"))
+        d[key] = _value(r, r.read(4).decode("latin-1"), depth + 1)
     return d
 
 
-def _value(r, t):
+def _value(r, t, depth=0):
     if t in ("Objc", "GlbO"):
-        return read_descriptor(r)
+        return read_descriptor(r, depth)
     if t == "VlLs":
-        return [_value(r, r.read(4).decode("latin-1")) for _ in range(r.u32())]
+        return [_value(r, r.read(4).decode("latin-1"), depth + 1) for _ in range(r.u32())]
     if t == "doub":
         return r.f64()
     if t == "UntF":
@@ -129,7 +146,7 @@ def _value(r, t):
         v.unit = u
         return v
     if t == "UnFl":
-        u = r.read(4).decode("latin-1")
+        r.skip(4)
         return [r.f64() for _ in range(r.u32())]
     if t == "TEXT":
         return r.unicode()
@@ -179,7 +196,7 @@ def _value(r, t):
                 r.read(4)
                 out[k] = [r.f64() for _ in range(r.u32())]
             else:
-                out[k] = _value(r, typ)
+                out[k] = _value(r, typ, depth + 1)
         return out
     raise ValueError("type de descripteur inconnu %r" % t)
 
@@ -205,15 +222,19 @@ def parse_engine_data(data):
         while i < n and data[i] in ws:
             i += 1
 
-    def value():
+    def value(depth=0):
         nonlocal i
         skip()
+        if i >= n or depth > MAX_DEPTH:
+            raise ValueError("EngineData tronqué ou trop imbriqué")
         c = data[i:i + 2]
         if c == b"<<":
             i += 2
             d = {}
             while True:
                 skip()
+                if i >= n:
+                    raise ValueError("EngineData tronqué")
                 if data[i:i + 2] == b">>":
                     i += 2
                     return d
@@ -225,16 +246,18 @@ def parse_engine_data(data):
                 while i < n and data[i] not in delim:
                     i += 1
                 k = data[j:i].decode("latin-1")
-                d[k] = value()
+                d[k] = value(depth + 1)
         if c[:1] == b"[":
             i += 1
             arr = []
             while True:
                 skip()
+                if i >= n:
+                    raise ValueError("EngineData tronqué")
                 if data[i:i + 1] == b"]":
                     i += 1
                     return arr
-                arr.append(value())
+                arr.append(value(depth + 1))
         if c[:1] == b"(":
             i += 1
             out = bytearray()
@@ -260,6 +283,9 @@ def parse_engine_data(data):
         j = i
         while i < n and data[i] not in delim:
             i += 1
+        if i == j:                 # délimiteur isolé (« > », « ) »…) : on l'avale
+            i += 1
+            return None
         tok = data[j:i].decode("latin-1")
         if tok == "true":
             return True
@@ -313,6 +339,10 @@ def parse_path(data, width, height):
 
 # ─── modèle de données ──────────────────────────────────────────────────
 
+# erreurs possibles sur des données malformées (types inattendus, récursion…)
+PARSE_ERRORS = (ValueError, struct.error, KeyError, TypeError, AttributeError,
+                IndexError, RecursionError)
+
 LENGTH8_KEYS = {"LMsk", "Lr16", "Lr32", "Layr", "Mt16", "Mt32", "Mtrn", "Alph", "FMsk",
                 "lnk2", "FEid", "FXid", "PxSD", "lnkE", "lnk3", "cinf"}
 
@@ -350,7 +380,6 @@ def _color(d):
     c = d.get("Clr ", d)
     if not isinstance(c, dict):
         return None
-    cls = getattr(c, "classID", "")
     if "Rd  " in c:
         return tuple(min(1.0, max(0.0, c[k] / 255.0)) for k in ("Rd  ", "Grn ", "Bl  "))
     if "redFloat" in c:
@@ -364,7 +393,6 @@ def _color(d):
     if "H   " in c:
         import colorsys
         return colorsys.hsv_to_rgb((c["H   "] % 360) / 360.0, c["Strt"] / 100.0, c["Brgh"] / 100.0)
-    del cls
     return None
 
 
@@ -394,8 +422,6 @@ def _style(ssd, fonts):
         c = _engine_color(ssd["FillColor"])
         if c:
             st["color"] = c
-    if "StrokeColor" in ssd and ssd.get("OutlineWidth"):
-        pass
     return st
 
 
@@ -533,7 +559,7 @@ class Layer:
             return None
         try:
             return parse_tysh(self.blocks["TySh"])
-        except (ValueError, struct.error, KeyError):
+        except PARSE_ERRORS:
             return None
 
     def shape(self):
@@ -543,7 +569,7 @@ class Layer:
         s = ShapeInfo()
         try:
             s.paths, s.inverted = parse_path(self.blocks[key], self.psd.width, self.psd.height)
-        except (ValueError, struct.error):
+        except PARSE_ERRORS:
             return None
         if "vscg" in self.blocks:
             kind = self.blocks["vscg"][:4].decode("latin-1")
@@ -552,14 +578,14 @@ class Layer:
             if kind == "SoCo":
                 try:
                     s.fill = _color(descriptor_block(self.blocks["vscg"][4:], 0))
-                except (ValueError, struct.error):
+                except PARSE_ERRORS:
                     pass
         elif "SoCo" in self.blocks:
             s.is_shape = True
             s.fill_kind = "solid"
             try:
                 s.fill = _color(descriptor_block(self.blocks["SoCo"], 0))
-            except (ValueError, struct.error):
+            except PARSE_ERRORS:
                 pass
         elif "GdFl" in self.blocks or "PtFl" in self.blocks:
             s.is_shape = True
@@ -568,21 +594,17 @@ class Layer:
             try:
                 s.stroke = parse_stroke(descriptor_block(self.blocks["vstk"]))
                 s.fill_enabled = s.stroke["fill_enabled"]
-            except (ValueError, struct.error):
+            except PARSE_ERRORS:
                 pass
         return s
 
     def effects(self):
-        if "lfx2" in self.blocks:
-            try:
-                return descriptor_block(self.blocks["lfx2"])
-            except (ValueError, struct.error):
-                return None
-        if "lmfx" in self.blocks:
-            try:
-                return descriptor_block(self.blocks["lmfx"])
-            except (ValueError, struct.error):
-                return None
+        for key in ("lfx2", "lmfx"):
+            if key in self.blocks:
+                try:
+                    return descriptor_block(self.blocks[key])
+                except PARSE_ERRORS:
+                    return None
         return None
 
 
@@ -660,60 +682,65 @@ def _read_blocks(r, end, psb, out):
         n = r.u64() if (psb and key in LENGTH8_KEYS) else r.u32()
         out[key] = r.read(n) if r.pos + n <= end else r.read(end - r.pos)
         # les blocs sont alignés sur 2 (souvent sur 4) octets
-        while r.pos < end and r.pos % 2:
+        while r.pos < end and (r.pos - r.origin) % 2:
             r.pos += 1
 
 
 def parse(path):
+    # Le fichier est projeté en mémoire (mmap) : seules les pages réellement
+    # lues sont chargées, les pixels des calques ne sont jamais copiés.
     with open(path, "rb") as f:
-        head = f.read(26)
-        if head[:4] != b"8BPS":
+        if os.fstat(f.fileno()).st_size < 34:
             raise ValueError("pas un fichier PSD")
-        psd = PSD()
-        psd.path = path
-        (psd.version, ) = struct.unpack(">H", head[4:6])
-        psd.height, psd.width = struct.unpack(">II", head[14:22])
-        psd.depth, psd.mode = struct.unpack(">HH", head[22:26])
-        psb = psd.version == 2
+        with mmap.mmap(f.fileno(), 0, access=mmap.ACCESS_READ) as m:
+            return _parse_map(m, path)
 
-        (n, ) = struct.unpack(">I", f.read(4))   # données du mode couleur
-        f.seek(n, 1)
-        (n, ) = struct.unpack(">I", f.read(4))   # ressources de l'image
-        _read_resources(Reader(f.read(n)), psd)
 
-        n = struct.unpack(">Q" if psb else ">I", f.read(8 if psb else 4))[0]
-        base = f.tell()
-        # on lit l'info des calques (petite) puis on saute les pixels
-        ln = struct.unpack(">Q" if psb else ">I", f.read(8 if psb else 4))[0]
-        info = f.read(ln)
-        if ln:
-            psd.layers = _read_layer_info(Reader(info), psd, ln)
-        # masque global puis blocs de document (Lr16/Lr32 pour 16/32 bits)
-        f.seek(base + (8 if psb else 4) + ln)
-        (gm, ) = struct.unpack(">I", f.read(4))
-        f.seek(gm, 1)
-        rest = base + n - f.tell()
-        if rest > 0:
-            # ne lire que les en-têtes de blocs : Lr16/Lr32 peuvent être énormes
-            doc = {}
-            while rest >= 12:
-                hdr = f.read(8)
-                if hdr[:4] not in (b"8BIM", b"8B64"):
-                    break
-                key = hdr[4:8].decode("latin-1")
-                ln8 = psb and key in LENGTH8_KEYS
-                bl = struct.unpack(">Q" if ln8 else ">I", f.read(8 if ln8 else 4))[0]
-                start = f.tell()
-                if key in ("lnk2", "lnkD", "lnk3", "lnkE"):
-                    psd.linked_blocks.append((start, bl))
-                elif key in ("Lr16", "Lr32", "Layr") and not psd.layers:
-                    sub = f.read(min(bl, 64 << 20))
-                    psd.layers = _read_layer_info(Reader(sub), psd, len(sub))
-                elif bl < (4 << 20):
-                    doc[key] = f.read(bl)
-                f.seek(start + bl + (bl & 1))
-                rest = base + n - f.tell()
-            psd.doc_blocks = doc
+def _parse_map(m, path):
+    r = Reader(m)
+    head = r.read(26)
+    if head[:4] != b"8BPS":
+        raise ValueError("pas un fichier PSD")
+    psd = PSD()
+    psd.path = path
+    (psd.version, ) = struct.unpack(">H", head[4:6])
+    psd.height, psd.width = struct.unpack(">II", head[14:22])
+    psd.depth, psd.mode = struct.unpack(">HH", head[22:26])
+    psb = psd.version == 2
+
+    r.sub(r.u32())                              # données du mode couleur
+    _read_resources(r.sub(r.u32()), psd)        # ressources de l'image
+
+    n = r.u64() if psb else r.u32()
+    section = r.sub(min(n, r.left()))           # calques et masques
+    # info des calques (inclut les pixels des canaux, non copiés grâce au mmap)
+    ln = section.u64() if psb else section.u32()
+    info = section.sub(ln)
+    if ln:
+        psd.layers = _read_layer_info(info, psd, ln)
+    # masque global puis blocs de document (Lr16/Lr32 pour 16/32 bits)
+    if section.left() >= 4:
+        section.sub(min(section.u32(), section.left()))
+    doc = {}
+    while section.left() >= 12:
+        hdr = section.read(8)
+        if hdr[:4] not in (b"8BIM", b"8B64"):
+            break
+        key = hdr[4:8].decode("latin-1")
+        ln8 = psb and key in LENGTH8_KEYS
+        bl = section.u64() if ln8 else section.u32()
+        start = section.pos
+        if bl > section.left():
+            bl = section.left()                 # bloc tronqué : on s'arrête à la fin
+        if key in ("lnk2", "lnkD", "lnk3", "lnkE"):
+            psd.linked_blocks.append((start, bl))
+        elif key in ("Lr16", "Lr32", "Layr") and not psd.layers:
+            sub = Reader(m, start, start + bl)
+            psd.layers = _read_layer_info(sub, psd, bl)
+        elif bl < (4 << 20):
+            doc[key] = m[start:start + bl]
+        section.pos = min(start + bl + (bl & 1), section.end)
+    psd.doc_blocks = doc
     return psd
 
 
@@ -780,7 +807,7 @@ def parse_adjustment(key, data):
             return {"kind": "brightness", "brightness": _i16(data, 0), "contrast": _i16(data, 2),
                     "legacy": True}
         if key == "CgEd":
-            d = descriptor_block(data, 4) if data[:4] == b"\x00\x00\x00\x10" else descriptor_block(data)
+            d = descriptor_block(data)
             return {"kind": "brightness", "brightness": float(d.get("Brgh", 0)),
                     "contrast": float(d.get("Cntr", 0)), "legacy": bool(d.get("useLegacy", False))}
         if key in ("hue2", "hue "):
@@ -821,7 +848,7 @@ def parse_adjustment(key, data):
             d = descriptor_block(data)
             return {"kind": "vibrance", "vibrance": float(d.get("vibrance", 0)),
                     "saturation": float(d.get("Strt", 0))}
-    except (ValueError, struct.error, IndexError):
+    except PARSE_ERRORS:
         return None
     return {"kind": "unsupported", "key": key}
 
@@ -858,7 +885,7 @@ def smart_object(layer):
             r.u32(); r.u32(); r.u32(); r.u32()
             corners = list(r.fmt("8d"))
             return {"uid": uid, "corners": corners, "width": 0.0, "height": 0.0}
-    except (ValueError, struct.error, KeyError):
+    except PARSE_ERRORS:
         return None
     return None
 
@@ -872,12 +899,16 @@ def linked_files(psd):
     if not psd.path:
         return out
     with open(psd.path, "rb") as f:
+        size = os.fstat(f.fileno()).st_size
         for pos, length in psd.linked_blocks:
-            end = pos + length
+            end = min(pos + length, size)
             f.seek(pos)
             while f.tell() + 8 < end:
                 start = f.tell()
-                (n, ) = struct.unpack(">Q", f.read(8))
+                try:
+                    (n, ) = struct.unpack(">Q", f.read(8))
+                except struct.error:
+                    break
                 if n <= 0 or start + 8 + n > end:
                     break
                 head = f.read(min(n, 4096))
@@ -893,10 +924,11 @@ def linked_files(psd):
                     if has_desc:
                         r.u32()
                         read_descriptor(r)
-                    if kind == b"liFD" and dlen > 0:
+                    # les données doivent tenir dans l'enregistrement
+                    if kind == b"liFD" and 0 < dlen <= n - r.pos:
                         f.seek(start + 8 + r.pos)
                         out[uid] = (name, f.read(dlen))
-                except (ValueError, struct.error):
+                except PARSE_ERRORS:
                     pass
                 nxt = start + 8 + n
                 nxt += (4 - nxt % 4) % 4

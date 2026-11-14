@@ -51,13 +51,6 @@ tail = lines[blocks[-1][2] + 1:]
 get = {b[0]: lines[b[1]:b[2] + 1] for b in blocks}
 
 
-def as_submenu(block, label, indent="  "):
-    """Transforme un menu de 1er niveau en sous-menu imbriqué avec un nouveau libellé."""
-    out = [indent + l for l in block]
-    out[1] = indent + '      <attribute name="label" translatable="no">%s</attribute>' % label
-    return out
-
-
 def insert_before_close(block, extra):
     """Ajoute des lignes juste avant le </submenu> final d'un bloc."""
     return block[:-1] + extra + block[-1:]

@@ -14,7 +14,6 @@ Page A5 paysage (595 × 420 pt) :
   dégradé        bande jaune → cyan (shading axial sous découpe)
 """
 import sys
-import zlib
 
 W, H = 595, 420
 

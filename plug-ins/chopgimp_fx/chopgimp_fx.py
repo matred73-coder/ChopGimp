@@ -243,6 +243,39 @@ def copy_vector_style(src, dst):
     dst.set_mode(src.get_mode())
 
 
+def _vector_paths(layer):
+    """Chemins des calques vectoriels de layer (et de ses enfants)."""
+    out = []
+    if isinstance(layer, Gimp.VectorLayer):
+        p = layer.get_path()
+        if p is not None:
+            out.append(p)
+    if isinstance(layer, Gimp.GroupLayer):
+        for c in layer.get_children():
+            out += _vector_paths(c)
+    return out
+
+
+def remove_layer_and_paths(image, layer):
+    """Retire le calque et les chemins de ses calques vectoriels : GIMP les
+    laisse dans l'image (chemins orphelins), sauf s'ils servent encore à un
+    autre calque vectoriel."""
+    paths = _vector_paths(layer)
+    image.remove_layer(layer)
+    if not paths:
+        return
+    used = set()
+    for l in image.get_layers():
+        used.update(p.get_id() for p in _vector_paths(l))
+    for p in paths:
+        try:
+            if p.is_valid() and p.get_id() not in used:
+                image.remove_path(p)
+                used.add(p.get_id())
+        except Exception:
+            pass
+
+
 def new_vector_layer_like(image, src, path, name, position_layer=None):
     image.insert_path(path, None, 0)
     nl = Gimp.VectorLayer.new(image, path)
@@ -253,7 +286,7 @@ def new_vector_layer_like(image, src, path, name, position_layer=None):
     return nl
 
 
-def replace_shape(image, layer, transform, suffix):
+def replace_shape(image, layer, transform):
     """Applique transform(points, closed) -> (points, closed, smooth) à chaque
     sous-chemin et remplace le calque par un calque vectoriel équivalent."""
     path = layer.get_path()
@@ -275,7 +308,7 @@ def replace_shape(image, layer, transform, suffix):
     if not built:
         return None
     nl = new_vector_layer_like(image, layer, new_path, layer.get_name())
-    image.remove_layer(layer)
+    remove_layer_and_paths(image, layer)
     nl.refresh()
     return nl
 
@@ -284,7 +317,6 @@ def replace_shape(image, layer, transform, suffix):
 
 def fx_zigzag(size, ridges, smooth):
     def t(pts, closed):
-        _, total = resample(pts, closed, 2)
         n = max(4, int(ridges) * 2)
         rp, _ = resample(pts, closed, n + (0 if closed else 1))
         nr = normals(rp, closed)
@@ -402,7 +434,7 @@ def variable_width(image, layer, width, profile):
     nl.set_enable_fill(True)
     nl.set_fill_color(layer.get_stroke_color() if layer.get_enable_stroke() else layer.get_fill_color())
     nl.set_enable_stroke(False)
-    image.remove_layer(layer)
+    remove_layer_and_paths(image, layer)
     nl.refresh()
     return nl
 
@@ -492,7 +524,7 @@ def stroke_position(image, layer, outside):
         image.insert_layer(f, group, 0 if outside else 1)
         f.refresh()
 
-    image.remove_layer(layer)
+    remove_layer_and_paths(image, layer)
     image.set_selected_layers([group])
     return group
 
@@ -638,12 +670,17 @@ def apply_styles(layer, chosen, keep=None):
         values, color, opacity = chosen[key]
         f = Gimp.DrawableFilter.new(layer, op, STYLE_PREFIX + label)
         cfg = f.get_config()
-        for k, val in style_props(key, values, color, opacity).items():
+        props = style_props(key, values, color, opacity)
+        for k, val in props.items():
             try:
                 cfg.set_property(k, val)
             except Exception:
                 pass
         f.set_blend_mode(Gimp.LayerMode.NORMAL)
+        if "opacity" not in props:
+            # incrustation couleur, biseau : pas de propriété « opacity »
+            # dans l'opération GEGL → opacité du filtre lui-même
+            f.set_opacity(opacity)
         f.update()
         layer.append_filter(f)
 
@@ -744,6 +781,7 @@ def layer_style_dialog(image, layer, focus=None):
 
     snapshot()
     image.undo_freeze()
+    frozen = [True]
     pending = [0]
 
     def refresh():
@@ -769,18 +807,21 @@ def layer_style_dialog(image, layer, focus=None):
             sp.connect("value-changed", changed)
     preview.connect("toggled", changed)
 
-    dialog.show_all()
-    if focus in widgets:
-        widgets[focus][0].grab_focus()
-        changed()                      # aperçu immédiat de l'effet coché
     try:
+        dialog.show_all()
+        if focus in widgets:
+            widgets[focus][0].grab_focus()
+            changed()                      # aperçu immédiat de l'effet coché
         while True:
             resp = dialog.run()
             if pending[0]:
                 GLib.source_remove(pending[0])
                 pending[0] = 0
-            back_to_original()
-            image.undo_thaw()
+            try:
+                back_to_original()
+            finally:
+                image.undo_thaw()
+                frozen[0] = False
             if resp in (Gtk.ResponseType.APPLY, Gtk.ResponseType.OK):
                 final = collect()
                 image.undo_group_start()
@@ -794,7 +835,18 @@ def layer_style_dialog(image, layer, focus=None):
                 break
             snapshot()
             image.undo_freeze()
+            frozen[0] = True
     finally:
+        # historique toujours dégelé, même après une erreur pendant l'aperçu
+        if pending[0]:
+            GLib.source_remove(pending[0])
+            pending[0] = 0
+        if frozen[0]:
+            try:
+                back_to_original()
+            except Exception:
+                pass
+            image.undo_thaw()
         dialog.destroy()
 
 
@@ -878,15 +930,15 @@ def apply_vector_fx(image, layer, name, A):
     src = capture_source(layer)
     res = None
     if name == "chopgimp-fx-zigzag":
-        res = replace_shape(image, layer, fx_zigzag(A("size"), A("ridges"), A("smooth")), "zigzag")
+        res = replace_shape(image, layer, fx_zigzag(A("size"), A("ridges"), A("smooth")))
     elif name == "chopgimp-fx-roughen":
-        res = replace_shape(image, layer, fx_roughen(A("size"), A("detail"), A("seed")), "rugosité")
+        res = replace_shape(image, layer, fx_roughen(A("size"), A("detail"), A("seed")))
     elif name == "chopgimp-fx-wave":
-        res = replace_shape(image, layer, fx_wave(A("amplitude"), A("wavelength")), "ondulation")
+        res = replace_shape(image, layer, fx_wave(A("amplitude"), A("wavelength")))
     elif name == "chopgimp-fx-pucker":
-        res = replace_shape(image, layer, fx_pucker_bloat(A("amount")), "contracter")
+        res = replace_shape(image, layer, fx_pucker_bloat(A("amount")))
     elif name == "chopgimp-fx-twist":
-        res = replace_shape(image, layer, fx_twist(A("angle")), "torsion")
+        res = replace_shape(image, layer, fx_twist(A("angle")))
     elif name == "chopgimp-fx-width":
         res = variable_width(image, layer, A("width"), int(A("profile")))
     elif name == "chopgimp-fx-arrows":
@@ -1061,8 +1113,14 @@ class ChopGimpFx(Gimp.PlugIn):
         image.undo_group_start()
         try:
             if name == "chopgimp-layer-style":
-                chosen = {"drop-shadow": ({"dist": 8, "radius": 10, "angle": 120},
-                                          gegl_color(0, 0, 0), 0.75)}
+                # effet demandé (argument « effect »), ombre portée par défaut
+                key = config.get_property("effect") or "drop-shadow"
+                spec = next((s for s in STYLES if s[0] == key), None)
+                if spec is None:
+                    return fail(procedure, "Effet de style inconnu : %s" % key)
+                chosen = {key: ({pkey: default for _l, pkey, _lo, _hi, default in spec[3]},
+                                gegl_color(*DEFAULT_COLORS[key]),
+                                1.0 if key in ("stroke", "overlay") else 0.75)}
                 apply_styles(layers[0], chosen)
                 parasite_set(layers[0], STYLE_PARASITE, style_to_json(chosen))
                 return ok(procedure)
@@ -1140,9 +1198,9 @@ class ChopGimpFx(Gimp.PlugIn):
             src = rebuild_source(image, layer, info["src"])
             res = apply_vector_fx(image, src, target, A)
             if isinstance(res, str):
-                image.remove_layer(src)
+                remove_layer_and_paths(image, src)
                 return res
-            image.remove_layer(layer)
+            remove_layer_and_paths(image, layer)
             image.set_selected_layers([res])
             return None
 
@@ -1175,7 +1233,7 @@ class ChopGimpFx(Gimp.PlugIn):
         if info:
             if info["proc"] in VECTOR_FX:
                 src = rebuild_source(image, layer, info["src"])
-                image.remove_layer(layer)
+                remove_layer_and_paths(image, layer)
                 image.set_selected_layers([src])
             else:
                 source = find_layer(image, info.get("src-tattoo"))

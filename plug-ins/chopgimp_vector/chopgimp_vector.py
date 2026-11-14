@@ -47,6 +47,8 @@ def fail(procedure, msg):
 def call(name, **kw):
     # (Gimp.get_pdb() n'est valable qu'une fois le plug-in lancé)
     p = Gimp.get_pdb().lookup_procedure(name)
+    if p is None:               # procédure absente (GIMP non recompilé ?)
+        return None
     cfg = p.create_config()
     for k, v in kw.items():
         if k in ("paths",):
@@ -138,7 +140,6 @@ def target_path(image, drawables):
 PF_OPS = {"chopgimp-pathfinder-union": 0, "chopgimp-pathfinder-minus": 1,
           "chopgimp-pathfinder-intersect": 2, "chopgimp-pathfinder-exclude": 3,
           "chopgimp-pathfinder-divide": 4}
-PF_NAMES = {0: "Union", 1: "Soustraction", 2: "Intersection", 3: "Exclusion", 4: "Division"}
 
 
 def pathfinder(image, drawables, op):
@@ -198,16 +199,19 @@ def pathfinder(image, drawables, op):
 
 def owner_layer(image, piece, layers):
     """Le calque le plus haut qui couvre l'essentiel du morceau (son style)."""
-    area = max(1.0, call("chopgimp-path-info", path=piece).index(2))
+    info = call("chopgimp-path-info", path=piece)
+    if info is None:
+        return layers[0]
+    area = max(1.0, info.index(2))
     for l in layers:
         res = call("chopgimp-path-boolean", paths=[piece, l.get_path()], operation=2)
         inter = res.index(1) if res else None
         if inter is None:
             continue
         image.insert_path(inter, None, 0)
-        a = call("chopgimp-path-info", path=inter).index(2)
+        info = call("chopgimp-path-info", path=inter)
         image.remove_path(inter)
-        if a > 0.5 * area:
+        if info is not None and info.index(2) > 0.5 * area:
             return l
     return layers[0]
 
@@ -244,9 +248,10 @@ def contour(image, drawables, name, A):
             res = call("chopgimp-path-outline", path=path, width=width, join=int(A("join")),
                        cap=int(A("cap")))
         elif name == "chopgimp-contour-simplify":
-            before = call("chopgimp-path-info", path=path).index(1)
+            info = call("chopgimp-path-info", path=path)
+            before = info.index(1) if info else 0
             res = call("chopgimp-path-simplify", path=path, tolerance=A("tolerance"))
-            if res and res.index(1):
+            if res and res.index(1) and info:
                 # (le chemin résultat n'est inséré qu'une fois, plus bas)
                 info = call("chopgimp-path-info", path=res.index(1))
                 if info:
@@ -272,11 +277,13 @@ def contour(image, drawables, name, A):
             return "Le résultat est vide."
         newp = res.index(1)
         if layer:
+            # lu avant de remplacer : l'ancien calque est retiré de l'image
+            stroke_color = layer.get_stroke_color() if layer.get_enable_stroke() else None
             nl = replace_layer_path(image, layer, newp)
-            if name == "chopgimp-contour-outline" and layer.get_enable_stroke():
+            if name == "chopgimp-contour-outline" and stroke_color is not None:
                 # le contour devient une forme pleine de la couleur du contour
                 nl.set_enable_fill(True)
-                nl.set_fill_color(layer.get_stroke_color())
+                nl.set_fill_color(stroke_color)
                 nl.set_enable_stroke(False)
                 nl.refresh()
             results.append(nl)
@@ -365,7 +372,9 @@ def read_lpe(layer):
         return []
     kf = GLib.KeyFile.new()
     try:
-        kf.load_from_data(bytes(par.get_data()).decode("utf-8"), -1, GLib.KeyFileFlags.NONE)
+        # get_data() renvoie des octets signés (-128..127)
+        raw = bytes(b & 0xff for b in par.get_data())
+        kf.load_from_data(raw.decode("utf-8"), -1, GLib.KeyFileFlags.NONE)
     except Exception:
         return []
     out = []
@@ -388,7 +397,8 @@ def write_lpe(layer, effects):
         for i, e in enumerate(effects):
             text += "[%d]\n" % i + "".join("%s=%s\n" % (k, v) for k, v in e.items())
         # 1 = persistant (dans le XCF), 2 = annulable
-        layer.attach_parasite(Gimp.Parasite.new(LPE_PARASITE, 3, list(text.encode("utf-8"))))
+        raw = [b - 256 if b > 127 else b for b in text.encode("utf-8")]   # octets signés
+        layer.attach_parasite(Gimp.Parasite.new(LPE_PARASITE, 3, raw))
     layer.refresh()
     Gimp.displays_flush()
 
@@ -397,6 +407,8 @@ def effects_dialog(image, layer):
     GimpUi.init("chopgimp_vector")
     original = read_lpe(layer)
     effects = [dict(e) for e in original]
+    # réglages de fond / contour que « Ajouter l'effet » peut modifier
+    style = (layer.get_enable_fill(), layer.get_fill_color(), layer.get_enable_stroke())
     others = [l for l in walk_layers(image.get_layers())
               if isinstance(l, Gimp.VectorLayer) and l != layer]
 
@@ -520,6 +532,10 @@ def effects_dialog(image, layer):
     resp = dialog.run()
     if pending[0]:
         GLib.source_remove(pending[0])
+    if resp != Gtk.ResponseType.OK:
+        layer.set_enable_fill(style[0])
+        layer.set_fill_color(style[1])
+        layer.set_enable_stroke(style[2])
     write_lpe(layer, effects if resp == Gtk.ResponseType.OK else original)
     dialog.destroy()
 
@@ -631,4 +647,5 @@ class ChopGimpVector(Gimp.PlugIn):
         return fail(procedure, msg) if msg else ok(procedure)
 
 
-Gimp.main(ChopGimpVector.__gtype__, sys.argv)
+if __name__ == "__main__":
+    Gimp.main(ChopGimpVector.__gtype__, sys.argv)

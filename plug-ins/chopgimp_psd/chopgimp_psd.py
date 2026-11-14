@@ -18,11 +18,11 @@ Remplace l'ouverture des .psd / .psb (priorité plus forte que file-psd-load) :
 5. un rapport liste ce qui est repris, approximé ou ignoré ; les polices
    absentes peuvent être remplacées (correspondance mémorisée).
 """
+import hashlib
 import json
 import math
 import os
 import re
-import struct
 import subprocess
 import sys
 
@@ -384,14 +384,18 @@ def apply_vector_mask(image, L, sh, report):
         mask = layer.create_mask(Gimp.AddMaskType.WHITE)
         layer.add_mask(mask)
     image.select_item(Gimp.ChannelOps.REPLACE, path)
-    if not sh.inverted:
-        Gimp.Selection.invert(image)
-    if not Gimp.Selection.is_empty(image):
-        Gimp.context_push()
-        Gimp.context_set_foreground(gegl_color((0, 0, 0)))
-        mask.edit_fill(Gimp.FillType.FOREGROUND)
-        Gimp.context_pop()
-    Gimp.Selection.none(image)
+    try:
+        if not sh.inverted:
+            Gimp.Selection.invert(image)
+        if not Gimp.Selection.is_empty(image):
+            Gimp.context_push()
+            try:
+                Gimp.context_set_foreground(gegl_color((0, 0, 0)))
+                mask.edit_fill(Gimp.FillType.FOREGROUND)
+            finally:
+                Gimp.context_pop()
+    finally:
+        Gimp.Selection.none(image)
     report.ok(L.name, "masque vectoriel (masque de calque + chemin)")
 
 
@@ -618,7 +622,7 @@ def adjustment_filters(target, adj, name):
     return n, approx
 
 
-def build_adjustment(image, L, adj, layers_below, report):
+def build_adjustment(image, L, adj, report):
     """Un calque de réglage Photoshop agit sur ce qui est dessous :
     écrêté → filtre sur le calque de base ; sinon groupe « ◐ » qui contient
     les calques du dessous (comme Calque > Nouveau calque de réglage)."""
@@ -672,7 +676,7 @@ def build_fill(image, L, report):
         return None
     try:
         rgb = psdparse._color(psdparse.descriptor_block(data, 0))
-    except (ValueError, struct.error):
+    except psdparse.PARSE_ERRORS:
         rgb = None
     if rgb is None:
         return None
@@ -708,11 +712,16 @@ def build_smart(image, L, so, files, cache_dir, report):
         f.write(data)
     try:
         ll = Gimp.LinkLayer.new(image, Gio.File.new_for_path(path))
+        err = None
     except Exception as e:
-        report.ignore(L.name, "objet dynamique illisible (%s)" % e)
-        return None
+        ll, err = None, e
     if ll is None:
-        report.ignore(L.name, "objet dynamique illisible")
+        # pas de calque lié : le fichier extrait ne sert à rien
+        try:
+            os.remove(path)
+        except OSError:
+            pass
+        report.ignore(L.name, "objet dynamique illisible%s" % (" (%s)" % err if err else ""))
         return None
     ll.set_name(L.name)
     image.insert_layer(ll, L.gimp.get_parent(), image.get_item_position(L.gimp))
@@ -770,13 +779,17 @@ class Originals:
             nm = new.create_mask(Gimp.AddMaskType.WHITE)
             new.add_mask(nm)
             self.image.select_item(Gimp.ChannelOps.REPLACE, mask)
-            Gimp.Selection.invert(self.image)
-            if not Gimp.Selection.is_empty(self.image):
-                Gimp.context_push()
-                Gimp.context_set_foreground(gegl_color((0, 0, 0)))
-                nm.edit_fill(Gimp.FillType.FOREGROUND)
-                Gimp.context_pop()
-            Gimp.Selection.none(self.image)
+            try:
+                Gimp.Selection.invert(self.image)
+                if not Gimp.Selection.is_empty(self.image):
+                    Gimp.context_push()
+                    try:
+                        Gimp.context_set_foreground(gegl_color((0, 0, 0)))
+                        nm.edit_fill(Gimp.FillType.FOREGROUND)
+                    finally:
+                        Gimp.context_pop()
+            finally:
+                Gimp.Selection.none(self.image)
         self.stash(layer)
 
     def stash(self, layer):
@@ -807,15 +820,19 @@ def convert(image, path, run_mode, report):
         if L.section in (1, 2, 3) or L.id not in by_id:
             continue
         L.gimp = by_id[L.id]
-        adj = L.adjustment()
-        if adj is not None:
-            adjustments.append((L, adj))
+        try:                        # un calque malformé ne bloque pas les autres
+            adj = L.adjustment()
+            if adj is not None:
+                adjustments.append((L, adj))
+                continue
+            t = L.text() if "TySh" in L.blocks else None
+            sh = L.shape() if ("vmsk" in L.blocks or "vsms" in L.blocks) else None
+            so = L.smart_object()
+            fill = any(k in L.blocks for k in ("SoCo", "GdFl", "PtFl")) and not (sh and sh.is_shape)
+            fx = L.effects()
+        except Exception as e:
+            report.ignore(L.name, "informations illisibles (%s)" % e)
             continue
-        t = L.text() if "TySh" in L.blocks else None
-        sh = L.shape() if ("vmsk" in L.blocks or "vsms" in L.blocks) else None
-        so = L.smart_object()
-        fill = any(k in L.blocks for k in ("SoCo", "GdFl", "PtFl")) and not (sh and sh.is_shape)
-        fx = L.effects()
         if t or sh or fx or so or fill:
             todo.append((L, t, sh, fx, so, fill))
     if not todo and not adjustments:
@@ -843,8 +860,10 @@ def convert(image, path, run_mode, report):
 
     keep = Originals(image)
     files = None
+    # dossier propre au fichier : deux PSD de même nom ne se mélangent pas
+    digest = hashlib.sha1(os.path.abspath(path).encode("utf-8", "surrogateescape")).hexdigest()[:8]
     cache_dir = os.path.join(Gimp.directory(), "psd-objets",
-                             re.sub(r"[^\w.\- ]", "_", os.path.basename(path)))
+                             "%s_%s" % (re.sub(r"[^\w.\- ]", "_", os.path.basename(path)), digest))
     for L, t, sh, fx, so, fill in todo:
         new = None
         try:
@@ -878,7 +897,7 @@ def convert(image, path, run_mode, report):
     # en dessous de lui (y compris les réglages déjà convertis)
     for L, adj in adjustments:
         try:
-            build_adjustment(image, L, adj, None, report)
+            build_adjustment(image, L, adj, report)
             keep.stash(L.gimp)
         except Exception as e:
             report.ignore(L.name, "réglage (%s)" % e)

@@ -16,7 +16,7 @@ import sys
 import gi
 gi.require_version("Gimp", "3.0")
 gi.require_version("Gegl", "0.4")
-from gi.repository import Gimp, Gegl, GLib, GObject
+from gi.repository import Gimp, Gegl, GLib
 
 AUTHOR = "PhotoGIMP Pro"
 YEAR = "2026"
@@ -77,8 +77,30 @@ def fail(procedure, msg):
 
 def gegl_color(rgb):
     c = Gegl.Color.new("black")
-    c.set_rgba(rgb[0], rgb[1], rgb[2], 1.0)
+    # valeurs sRGB (set_rgba les interpréterait en linéaire)
+    c.set_rgba_with_space(rgb[0], rgb[1], rgb[2], 1.0, None)
     return c
+
+
+def remove_orphan_path(image, path):
+    """Supprime le chemin d'un calque vectoriel retiré (GIMP le laisse dans
+    l'image), sauf s'il sert encore à un autre calque vectoriel."""
+    if path is None or not path.is_valid():
+        return
+    def walk(ls):
+        for l in ls:
+            if isinstance(l, Gimp.VectorLayer):
+                p = l.get_path()
+                if p is not None and p.get_id() == path.get_id():
+                    return True
+            if isinstance(l, Gimp.GroupLayer) and walk(l.get_children()):
+                return True
+        return False
+    try:
+        if not walk(image.get_layers()):
+            image.remove_path(path)
+    except Exception:
+        pass
 
 
 def siblings(layer):
@@ -300,6 +322,7 @@ class PhotoGimpPS(Gimp.PlugIn):
                 nl.refresh()
                 new_layers.append(nl)
             image.remove_layer(layer)
+            remove_orphan_path(image, path)
             image.set_selected_layers(new_layers)
         return None
 
@@ -327,4 +350,5 @@ class PhotoGimpPS(Gimp.PlugIn):
         image.set_selected_layers([layer])
 
 
-Gimp.main(PhotoGimpPS.__gtype__, sys.argv)
+if __name__ == "__main__":
+    Gimp.main(PhotoGimpPS.__gtype__, sys.argv)

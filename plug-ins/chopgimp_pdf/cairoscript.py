@@ -78,6 +78,7 @@ class Obj:
         self.stroke = None
         self.image = None
         self.clipped = False
+        self.emitted = False        # ajouté à la liste des objets
 
 
 def decode_data(tok):
@@ -94,25 +95,27 @@ def image_rgba(d):
     w, h = int(d.get("width", 0)), int(d.get("height", 0))
     fmt = d.get("format", "RGB24").lstrip("/")
     data = d.get("source", b"")
-    if not w or not h or not data:
+    if w <= 0 or h <= 0 or not data:
         return None
-    out = bytearray(w * h * 4)
-    if fmt == "RGB24" and len(data) >= w * h * 3:
-        for i in range(w * h):
-            out[i * 4:i * 4 + 3] = data[i * 3:i * 3 + 3]
-            out[i * 4 + 3] = 255
-    elif fmt == "ARGB32" and len(data) >= w * h * 4:
+    n = w * h
+    # taille vérifiée avant d'allouer : une largeur aberrante ne coûte rien
+    per_px = {"RGB24": 3, "ARGB32": 4, "A8": 1}.get(fmt)
+    if per_px is None or len(data) < n * per_px:
+        return None
+    out = bytearray(n * 4)
+    if fmt == "RGB24":
+        for c in range(3):
+            out[c::4] = data[c:n * 3:3]
+        out[3::4] = b"\xff" * n
+    elif fmt == "ARGB32":
         # pixels natifs (B, V, R, A sur x86), prémultipliés
-        for i in range(w * h):
-            b, g, r, a = data[i * 4:i * 4 + 4]
-            if a:
-                r, g, b = (min(255, c * 255 // a) for c in (r, g, b))
-            out[i * 4:i * 4 + 4] = bytes((r, g, b, a))
-    elif fmt == "A8" and len(data) >= w * h:
-        for i in range(w * h):
-            out[i * 4 + 3] = data[i]
+        b, g, r, a = (bytes(data[c:n * 4:4]) for c in range(4))
+        if a.count(255) != n:
+            r, g, b = (bytes(min(255, v * 255 // al) if al else v for v, al in zip(ch, a))
+                       for ch in (r, g, b))
+        out[0::4], out[1::4], out[2::4], out[3::4] = r, g, b, a
     else:
-        return None
+        out[3::4] = data[:n]
     return w, h, bytes(out)
 
 
@@ -201,6 +204,7 @@ def parse(text):
             stats["gradients"] += 1
         if o.path and o.fill is not None:
             objs.append(o)
+            o.emitted = True
         return o
 
     def emit_stroke(prev_fill):
@@ -211,7 +215,7 @@ def parse(text):
                   "cap": state["cap"], "join": state["join"], "dash": list(state["dash"])}
         p = finished_path()
         # remplissage + contour du même tracé : un seul objet
-        if prev_fill is not None and prev_fill.path == p and prev_fill.stroke is None and prev_fill in objs:
+        if prev_fill is not None and prev_fill.path == p and prev_fill.stroke is None and prev_fill.emitted:
             prev_fill.stroke = stroke
             return
         o = Obj("path")

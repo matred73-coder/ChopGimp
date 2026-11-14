@@ -29,6 +29,11 @@ gi.require_version("Gtk", "3.0")
 gi.require_version("Gegl", "0.4")
 from gi.repository import Gimp, GimpUi, Gegl, Gio, GLib, Gtk
 
+try:                        # accélère les options de fusion « Si » (facultatif)
+    import numpy as np
+except Exception:
+    np = None
+
 FILL = "<Image>/Layer/Nouveau calque de remplissage"
 SNAP = "<Image>/Image/Instantané"
 PROCS = {
@@ -202,11 +207,12 @@ CR = [
 ]
 
 
-def cr_apply(layer, values):
+def cr_apply(layer, values, keep=None):
     """Remplace les filtres « Camera Raw : » du calque par ceux des valeurs
-    non neutres."""
+    non neutres. keep : identifiants de filtres à ne pas supprimer (aperçu)."""
+    keep = keep or ()
     for f in list(layer.get_filters() or []):
-        if f.get_name().startswith(CR_PREFIX):
+        if f.get_name().startswith(CR_PREFIX) and f.get_id() not in keep:
             f.delete()
     for key, label, lo, hi, default, op, props in CR:
         v = values.get(key, default)
@@ -259,28 +265,10 @@ def camera_raw(image, layer):
 
     def refresh():
         pending[0] = 0
-        for f in list(layer.get_filters() or []):
-            if f.get_name().startswith(CR_PREFIX) and f.get_id() not in vis:
-                f.delete()
         for f in originals:
             f.set_visible(False)
-        tmp = values()
-        for key, label, lo, hi, default, op, props in CR:
-            v = tmp[key]
-            if abs(v - default) < 1e-6:
-                continue
-            try:
-                f = Gimp.DrawableFilter.new(layer, op, CR_PREFIX + label)
-            except Exception:
-                continue
-            cfg = f.get_config()
-            for k, val in props(v).items():
-                try:
-                    cfg.set_property(k, val)
-                except (TypeError, ValueError):
-                    pass
-            f.update()
-            layer.append_filter(f)
+        # même rendu que le résultat final (opacité du vignettage comprise)
+        cr_apply(layer, values(), keep=vis)
         Gimp.displays_flush()
         return False
 
@@ -291,8 +279,9 @@ def camera_raw(image, layer):
 
     for s in scales.values():
         s.connect("value-changed", changed)
-    dlg.show_all()
+    resp = Gtk.ResponseType.CANCEL
     try:
+        dlg.show_all()
         while True:
             resp = dlg.run()
             if resp == 1:
@@ -305,13 +294,15 @@ def camera_raw(image, layer):
             GLib.source_remove(pending[0])
         final = values()
         # retour à l'état d'origine, puis une seule étape d'annulation
-        for f in list(layer.get_filters() or []):
-            if f.get_name().startswith(CR_PREFIX) and f.get_id() not in vis:
-                f.delete()
-        for f in originals:
-            f.set_visible(vis[f.get_id()])
-        image.undo_thaw()
-        dlg.destroy()
+        try:
+            for f in list(layer.get_filters() or []):
+                if f.get_name().startswith(CR_PREFIX) and f.get_id() not in vis:
+                    f.delete()
+            for f in originals:
+                f.set_visible(vis[f.get_id()])
+        finally:
+            image.undo_thaw()
+            dlg.destroy()
     if resp != Gtk.ResponseType.OK:
         return "cancel"
     image.undo_group_start()
@@ -343,11 +334,21 @@ def ramp_lut(b0, b1, w0, w1):
 
 def blend_if_apply(image, layer, this, below):
     """this / below : (noir début, noir fin, blanc début, blanc fin) en 0..255.
-    Résultat : masque de calque = plage de « ce calque » × plage du dessous."""
+    Résultat : masque de calque = plage de « ce calque » × plage du dessous.
+    Renvoie un message d'erreur, ou None."""
     neutral = (0, 0, 255, 255)
+    active = tuple(this) != neutral or tuple(below) != neutral
     if layer.get_mask() is not None:
+        # seul un masque créé par « Si » (valeurs non neutres mémorisées)
+        # est remplacé : jamais le masque de l'utilisateur
+        prev = blend_if_values(layer)
+        if prev is None or prev == [0, 0, 255, 255, 0, 0, 255, 255]:
+            if not active:
+                return None
+            return ("Ce calque a déjà un masque de calque : appliquez-le ou supprimez-le "
+                    "avant les options de fusion « Si ».")
         layer.remove_mask(Gimp.MaskApplyMode.DISCARD)
-    if tuple(this) != neutral or tuple(below) != neutral:
+    if active:
         mask = layer.create_mask(Gimp.AddMaskType.COPY if tuple(this) != neutral
                                  else Gimp.AddMaskType.WHITE)
         layer.add_mask(mask)
@@ -358,6 +359,19 @@ def blend_if_apply(image, layer, this, below):
     raw = [b - 256 if b > 127 else b
            for b in ("%d %d %d %d %d %d %d %d" % (tuple(this) + tuple(below))).encode()]
     layer.attach_parasite(Gimp.Parasite.new(BLEND_PARASITE, 0, raw))
+    return None
+
+
+def blend_if_values(layer):
+    """Valeurs « Si » mémorisées sur le calque (8 entiers), ou None."""
+    par = layer.get_parasite(BLEND_PARASITE)
+    if not par:
+        return None
+    try:
+        vals = [int(v) for v in bytes(b & 255 for b in par.get_data()).decode().split()]
+    except (ValueError, UnicodeDecodeError):
+        return None
+    return vals if len(vals) == 8 else None
 
 
 def blend_if_below(image, layer, mask, below):
@@ -376,18 +390,25 @@ def blend_if_below(image, layer, mask, below):
     for l in hidden:
         l.set_visible(True)
     image.insert_layer(under, None, 0)
-    under.desaturate(Gimp.DesaturateMode.LUMINANCE)
-    under.curves_explicit(Gimp.HistogramChannel.VALUE, ramp_lut(*below))
+    try:
+        under.desaturate(Gimp.DesaturateMode.LUMINANCE)
+        under.curves_explicit(Gimp.HistogramChannel.VALUE, ramp_lut(*below))
 
-    # produit des deux, lu dans le cadre du calque
-    _, ox, oy = layer.get_offsets()
-    w, h = layer.get_width(), layer.get_height()
-    _, ux, uy = under.get_offsets()
-    m = mask.get_buffer().get(Gegl.Rectangle.new(0, 0, w, h), 1.0, "Y u8", Gegl.AbyssPolicy.NONE)
-    u = under.get_buffer().get(Gegl.Rectangle.new(ox - ux, oy - uy, w, h), 1.0, "Y u8",
-                               Gegl.AbyssPolicy.NONE)
-    out = bytes((a * b + 127) // 255 for a, b in zip(m, u))
-    image.remove_layer(under)
+        # produit des deux, lu dans le cadre du calque
+        _, ox, oy = layer.get_offsets()
+        w, h = layer.get_width(), layer.get_height()
+        _, ux, uy = under.get_offsets()
+        m = mask.get_buffer().get(Gegl.Rectangle.new(0, 0, w, h), 1.0, "Y u8", Gegl.AbyssPolicy.NONE)
+        u = under.get_buffer().get(Gegl.Rectangle.new(ox - ux, oy - uy, w, h), 1.0, "Y u8",
+                                   Gegl.AbyssPolicy.NONE)
+    finally:
+        image.remove_layer(under)
+    if np is not None:
+        a = np.frombuffer(m, dtype=np.uint8).astype(np.uint32)
+        b = np.frombuffer(u, dtype=np.uint8).astype(np.uint32)
+        out = ((a * b + 127) // 255).astype(np.uint8).tobytes()
+    else:
+        out = bytes((a * b + 127) // 255 for a, b in zip(m, u))
     buf = mask.get_buffer()
     buf.set(Gegl.Rectangle.new(0, 0, w, h), "Y u8", out)
     buf.flush()
@@ -395,13 +416,7 @@ def blend_if_below(image, layer, mask, below):
 
 
 def blend_if_dialog(layer):
-    par = layer.get_parasite(BLEND_PARASITE)
-    vals = [0, 0, 255, 255, 0, 0, 255, 255]
-    if par:
-        try:
-            vals = [int(v) for v in bytes(b & 255 for b in par.get_data()).decode().split()]
-        except ValueError:
-            pass
+    vals = blend_if_values(layer) or [0, 0, 255, 255, 0, 0, 255, 255]
     GimpUi.init("chopgimp_studio")
     dlg = GimpUi.Dialog(title="Options de fusion « Si » — " + layer.get_name(), role="chopgimp-blend-if",
                         modal=True)
@@ -463,11 +478,11 @@ class ChopGimpStudio(Gimp.PlugIn):
                 return procedure.new_return_values(Gimp.PDBStatusType.CANCEL, GLib.Error())
             image.undo_group_start()
             try:
-                blend_if_apply(image, layers[0], *chosen)
+                msg = blend_if_apply(image, layers[0], *chosen)
             finally:
                 image.undo_group_end()
             Gimp.displays_flush()
-            return ok(procedure)
+            return fail(procedure, msg) if msg else ok(procedure)
         if name == "chopgimp-camera-raw":
             layers = [d for d in drawables if isinstance(d, Gimp.Layer)]
             if len(layers) != 1:

@@ -161,9 +161,15 @@ if not vanilla:
     m["modules"].append({
         "name": "photogimp-data",
         "buildsystem": "simple",
+        # artefacts de construction exclus (plusieurs Go : dépôts, build-dirs)
         "sources": [{"type": "dir", "path": "..", "skip": [".git", "build", ".backups",
                                                           "flatpak/.flatpak-builder",
-                                                          "flatpak/build-dir", "dist"]}],
+                                                          "flatpak/build-dir",
+                                                          "flatpak/build-dir-vanilla",
+                                                          "flatpak/build-deps-test",
+                                                          "flatpak/repo",
+                                                          "flatpak/repo-vanilla",
+                                                          "dist"]}],
         "build-commands": ["sh tools/install_data.sh ${FLATPAK_DEST}"],
     })
 

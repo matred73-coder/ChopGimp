@@ -22,6 +22,7 @@ Fenêtres > Compositions de calques…
 import json
 import os
 import re
+import shutil
 import sys
 import tempfile
 
@@ -30,7 +31,7 @@ gi.require_version("Gimp", "3.0")
 gi.require_version("GimpUi", "3.0")
 gi.require_version("Gtk", "3.0")
 gi.require_version("GdkPixbuf", "2.0")
-from gi.repository import Gimp, GimpUi, Gio, GLib, GdkPixbuf, GObject, Gtk
+from gi.repository import Gimp, GimpUi, Gio, GLib, GdkPixbuf, Gtk
 
 PROCS = {
     "chopgimp-export-web": ("Exporter pour le web…", "<Image>/File/Export"),
@@ -81,21 +82,23 @@ def export_image(image, path, fmt, quality):
     if proc is None:
         return None
     flat = image.duplicate()
-    if fmt == "jpg":
-        flat.flatten()
-    else:
-        flat.merge_visible_layers(Gimp.MergeType.CLIP_TO_IMAGE)
-    cfg = proc.create_config()
-    cfg.set_property("run-mode", Gimp.RunMode.NONINTERACTIVE)
-    cfg.set_property("image", flat)
-    cfg.set_property("file", Gio.File.new_for_path(path))
-    for k, f in props.items():
-        try:
-            cfg.set_property(k, f(quality))
-        except (TypeError, ValueError):
-            pass
-    res = proc.run(cfg)
-    flat.delete()
+    try:
+        if fmt == "jpg":
+            flat.flatten()
+        else:
+            flat.merge_visible_layers(Gimp.MergeType.CLIP_TO_IMAGE)
+        cfg = proc.create_config()
+        cfg.set_property("run-mode", Gimp.RunMode.NONINTERACTIVE)
+        cfg.set_property("image", flat)
+        cfg.set_property("file", Gio.File.new_for_path(path))
+        for k, f in props.items():
+            try:
+                cfg.set_property(k, f(quality))
+            except (TypeError, ValueError):
+                pass
+        res = proc.run(cfg)
+    finally:
+        flat.delete()
     if res.index(0) != Gimp.PDBStatusType.SUCCESS or not os.path.exists(path):
         return None
     return os.path.getsize(path)
@@ -160,24 +163,27 @@ def export_web(image):
         pending[0] = 0
         f = fmt.get_active_id()
         work = image.duplicate()
-        pct = size.get_value() / 100.0
-        if pct < 1.0:
-            work.scale(max(1, int(image.get_width() * pct)), max(1, int(image.get_height() * pct)))
-        orig = os.path.join(tmpdir, "original.png")
-        out = os.path.join(tmpdir, "export." + f)
-        export_image(work, orig, "png", 100)
-        n = export_image(work, out, f, qual.get_value())
-        state.update(fmt=f, quality=qual.get_value(), pct=pct)
         try:
-            pics[0].set_from_pixbuf(preview_of(orig))
-            if n and f != "avif":
-                pics[1].set_from_pixbuf(preview_of(out))
-        except GLib.Error:
-            pass
-        caps[0].set_text("Original — %s (PNG)" % human(os.path.getsize(orig)))
-        caps[1].set_text("Exporté — %s" % (human(n) if n else "format indisponible"))
-        info.set_text("%d × %d px" % (work.get_width(), work.get_height()))
-        work.delete()
+            pct = size.get_value() / 100.0
+            if pct < 1.0:
+                work.scale(max(1, int(image.get_width() * pct)), max(1, int(image.get_height() * pct)))
+            orig = os.path.join(tmpdir, "original.png")
+            out = os.path.join(tmpdir, "export." + f)
+            export_image(work, orig, "png", 100)
+            n = export_image(work, out, f, qual.get_value())
+            state.update(fmt=f, quality=qual.get_value(), pct=pct)
+            try:
+                pics[0].set_from_pixbuf(preview_of(orig))
+                if n and f != "avif":
+                    pics[1].set_from_pixbuf(preview_of(out))
+            except GLib.Error:
+                pass
+            caps[0].set_text("Original — %s (PNG)" % (human(os.path.getsize(orig))
+                                                      if os.path.exists(orig) else "?"))
+            caps[1].set_text("Exporté — %s" % (human(n) if n else "format indisponible"))
+            info.set_text("%d × %d px" % (work.get_width(), work.get_height()))
+        finally:
+            work.delete()
         return False
 
     def changed(*_):
@@ -187,10 +193,16 @@ def export_web(image):
 
     for w, sig in ((fmt, "changed"), (qual, "value-changed"), (size, "value-changed")):
         w.connect(sig, changed)
-    dlg.show_all()
-    refresh()
-    resp = dlg.run()
-    dlg.destroy()
+    try:
+        dlg.show_all()
+        refresh()
+        resp = dlg.run()
+    finally:
+        if pending[0]:
+            GLib.source_remove(pending[0])
+            pending[0] = 0
+        dlg.destroy()
+        shutil.rmtree(tmpdir, ignore_errors=True)    # fichiers d'aperçu
     if resp != Gtk.ResponseType.OK:
         return "cancel"
     chooser = Gtk.FileChooserDialog(title="Enregistrer pour le web", action=Gtk.FileChooserAction.SAVE)
@@ -208,11 +220,13 @@ def export_web(image):
     if r != Gtk.ResponseType.OK or not target:
         return "cancel"
     work = image.duplicate()
-    if state["pct"] < 1.0:
-        work.scale(max(1, int(image.get_width() * state["pct"])),
-                   max(1, int(image.get_height() * state["pct"])))
-    n = export_image(work, target, state["fmt"], state["quality"])
-    work.delete()
+    try:
+        if state["pct"] < 1.0:
+            work.scale(max(1, int(image.get_width() * state["pct"])),
+                       max(1, int(image.get_height() * state["pct"])))
+        n = export_image(work, target, state["fmt"], state["quality"])
+    finally:
+        work.delete()
     if not n:
         return "Export impossible dans ce format."
     Gimp.message("Exporté : %s (%s)" % (target, human(n)))
@@ -255,16 +269,27 @@ def generate_assets(image, quiet=False):
                 else:
                     scale = int(num) / 100.0
             os.makedirs(folder, exist_ok=True)
-            tmp = Gimp.Image.new(image.get_width(), image.get_height(), Gimp.ImageBaseType.RGB)
-            copy = Gimp.Layer.new_from_drawable(layer, tmp)
-            tmp.insert_layer(copy, None, 0)
-            copy.set_visible(True)
-            tmp.crop(layer.get_width(), layer.get_height(), *layer.get_offsets()[1:])
-            if scale != 1.0:
-                tmp.scale(max(1, int(tmp.get_width() * scale)), max(1, int(tmp.get_height() * scale)))
-            if export_image(tmp, os.path.join(folder, name), ext, quality):
-                made.append(name)
-            tmp.delete()
+            # image à la taille du calque, calque en 0,0 : le calque entier est
+            # exporté même s'il déborde du canevas
+            tmp = Gimp.Image.new(layer.get_width(), layer.get_height(), Gimp.ImageBaseType.RGB)
+            try:
+                if image.get_base_type() == Gimp.ImageBaseType.RGB:
+                    try:
+                        profile = image.get_color_profile()
+                        if profile is not None:
+                            tmp.set_color_profile(profile)
+                    except Exception:
+                        pass
+                copy = Gimp.Layer.new_from_drawable(layer, tmp)
+                tmp.insert_layer(copy, None, 0)
+                copy.set_visible(True)
+                copy.set_offsets(0, 0)
+                if scale != 1.0:
+                    tmp.scale(max(1, int(tmp.get_width() * scale)), max(1, int(tmp.get_height() * scale)))
+                if export_image(tmp, os.path.join(folder, name), ext, quality):
+                    made.append(name)
+            finally:
+                tmp.delete()
     if not quiet:
         Gimp.message("Ressources générées dans %s : %s" % (folder, ", ".join(made) if made else
                      "aucune (nommez des calques « logo.png », « photo.jpg 80% »…)"))
@@ -308,52 +333,67 @@ def batch_dialog():
     return opts
 
 
+def batch_one(im, name, opts):
+    """Traite une image chargée et l'exporte → True si exportée."""
+    w, h = im.get_width(), im.get_height()
+    if opts["max"] and max(w, h) > opts["max"]:
+        k = opts["max"] / float(max(w, h))
+        im.scale(max(1, int(w * k)), max(1, int(h * k)))
+    if opts["srgb"]:
+        try:
+            im.convert_color_profile(Gimp.ColorProfile.new_rgb_srgb(),
+                                     Gimp.ColorRenderingIntent.PERCEPTUAL, True)
+        except Exception:
+            pass
+    im.flatten() if opts["fmt"] == "jpg" else im.merge_visible_layers(Gimp.MergeType.CLIP_TO_IMAGE)
+    if opts["sharpen"]:
+        d = im.get_layers()[0]
+        f = Gimp.DrawableFilter.new(d, "gegl:unsharp-mask", "Accentuation")
+        cfg = f.get_config()
+        cfg.set_property("std-dev", 1.0)
+        cfg.set_property("scale", 0.5)
+        f.update()
+        d.merge_filter(f)
+    if opts["mark"]:
+        size = max(12.0, im.get_width() / 40.0)
+        tl = Gimp.TextLayer.new(im, opts["mark"], Gimp.Font.get_by_name("Sans-serif"), size,
+                                Gimp.Unit.pixel())
+        im.insert_layer(tl, None, 0)
+        tl.set_opacity(60)
+        tl.set_offsets(int(im.get_width() - tl.get_width() - size), int(im.get_height() - tl.get_height() - size / 2))
+    out = os.path.join(opts["dst"], os.path.splitext(name)[0] + "." + opts["fmt"])
+    return bool(export_image(im, out, opts["fmt"], opts["quality"]))
+
+
 def batch_run(opts):
     exts = (".jpg", ".jpeg", ".png", ".tif", ".tiff", ".webp", ".psd", ".xcf", ".heic", ".avif")
     files = sorted(f for f in os.listdir(opts["src"]) if f.lower().endswith(exts))
     done, errors = 0, []
     Gimp.progress_init("Traitement par lots…")
-    for i, name in enumerate(files):
-        Gimp.progress_update(i / max(1, len(files)))
-        try:
-            im = Gimp.file_load(Gimp.RunMode.NONINTERACTIVE,
-                                Gio.File.new_for_path(os.path.join(opts["src"], name)))
-        except GLib.Error as e:
-            errors.append("%s (%s)" % (name, e.message))
-            continue
-        w, h = im.get_width(), im.get_height()
-        if opts["max"] and max(w, h) > opts["max"]:
-            k = opts["max"] / float(max(w, h))
-            im.scale(max(1, int(w * k)), max(1, int(h * k)))
-        if opts["srgb"]:
+    try:
+        for i, name in enumerate(files):
+            Gimp.progress_update(i / max(1, len(files)))
             try:
-                im.convert_color_profile(Gimp.ColorProfile.new_rgb_srgb(),
-                                         Gimp.ColorRenderingIntent.PERCEPTUAL, True)
-            except Exception:
-                pass
-        im.flatten() if opts["fmt"] == "jpg" else im.merge_visible_layers(Gimp.MergeType.CLIP_TO_IMAGE)
-        if opts["sharpen"]:
-            d = im.get_layers()[0]
-            f = Gimp.DrawableFilter.new(d, "gegl:unsharp-mask", "Accentuation")
-            cfg = f.get_config()
-            cfg.set_property("std-dev", 1.0)
-            cfg.set_property("scale", 0.5)
-            f.update()
-            d.merge_filter(f)
-        if opts["mark"]:
-            size = max(12.0, im.get_width() / 40.0)
-            tl = Gimp.TextLayer.new(im, opts["mark"], Gimp.Font.get_by_name("Sans-serif"), size,
-                                    Gimp.Unit.pixel())
-            im.insert_layer(tl, None, 0)
-            tl.set_opacity(60)
-            tl.set_offsets(int(im.get_width() - tl.get_width() - size), int(im.get_height() - tl.get_height() - size / 2))
-        out = os.path.join(opts["dst"], os.path.splitext(name)[0] + "." + opts["fmt"])
-        if export_image(im, out, opts["fmt"], opts["quality"]):
-            done += 1
-        else:
-            errors.append(name)
-        im.delete()
-    Gimp.progress_end()
+                im = Gimp.file_load(Gimp.RunMode.NONINTERACTIVE,
+                                    Gio.File.new_for_path(os.path.join(opts["src"], name)))
+            except GLib.Error as e:
+                errors.append("%s (%s)" % (name, e.message))
+                continue
+            if im is None:
+                errors.append(name)
+                continue
+            # une erreur sur un fichier n'arrête pas le lot
+            try:
+                if batch_one(im, name, opts):
+                    done += 1
+                else:
+                    errors.append(name)
+            except Exception as e:
+                errors.append("%s (%s)" % (name, getattr(e, "message", None) or e))
+            finally:
+                im.delete()
+    finally:
+        Gimp.progress_end()
     Gimp.message("Traitement par lots : %d fichier(s) dans %s%s" %
                  (done, opts["dst"], ("\nErreurs : " + ", ".join(errors)) if errors else ""))
 
@@ -366,16 +406,20 @@ def comp_capture(image):
             for l in walk(image.get_layers())}
 
 
-def comp_apply(image, state):
-    for l in walk(image.get_layers()):
+def comp_apply(image, state, target=None):
+    """Applique une composition. target : copie de image (image.duplicate(),
+    même arborescence, tatouages différents) à modifier à la place de image."""
+    src = list(walk(image.get_layers()))
+    dst = list(walk(target.get_layers())) if target is not None else src
+    for l, d in zip(src, dst):
         s = state.get(str(l.get_tattoo()))
         if not s:
             continue
-        l.set_visible(s["visible"])
-        l.set_opacity(s["opacity"])
-        _, x, y = l.get_offsets()
-        if (x, y) != (s["x"], s["y"]):
-            l.set_offsets(s["x"], s["y"])
+        d.set_visible(s["visible"])
+        d.set_opacity(s["opacity"])
+        _, x, y = d.get_offsets()
+        if (x, y) != (s["x"], s["y"]) and not d.get_lock_position():
+            d.set_offsets(s["x"], s["y"])
 
 
 def layer_comps(image):
@@ -422,8 +466,10 @@ def layer_comps(image):
         n = selected()
         if n:
             image.undo_group_start()
-            comp_apply(image, comps[n])
-            image.undo_group_end()
+            try:
+                comp_apply(image, comps[n])
+            finally:
+                image.undo_group_end()
             Gimp.displays_flush()
 
     def on_delete(_):
@@ -440,12 +486,16 @@ def layer_comps(image):
             return
         folder = os.path.splitext(f.get_path())[0] + "-compositions"
         os.makedirs(folder, exist_ok=True)
-        current = comp_capture(image)
+        # chaque composition sur une copie : l'image ouverte et son historique
+        # ne sont pas touchés
         for n, st in comps.items():
-            comp_apply(image, st)
-            export_image(image, os.path.join(folder, re.sub(r"[^\w.\- ]", "_", n) + ".png"), "png", 100)
-        comp_apply(image, current)
-        Gimp.displays_flush()
+            copy = image.duplicate()
+            try:
+                comp_apply(image, st, target=copy)
+                export_image(copy, os.path.join(folder, re.sub(r"[^\w.\- ]", "_", n) + ".png"),
+                             "png", 100)
+            finally:
+                copy.delete()
         Gimp.message("Compositions exportées dans " + folder)
 
     for lab, cb in (("Nouvelle", on_new), ("Mettre à jour", on_update), ("Appliquer", on_apply),

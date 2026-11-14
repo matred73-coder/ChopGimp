@@ -1,0 +1,3081 @@
+From 49532dd3a427ee16874226f626f6985608c8e015 Mon Sep 17 00:00:00 2001
+From: ChopGimp <mathieu.redon@proton.me>
+Date: Sat, 14 Nov 2026 08:20:25 +0100
+Subject: [PATCH] ChopGimp: final review fixes (autosave/timelapse serial,
+ quickshape timer, paper grain, undo grouping, text scale/handles, leaks)
+
+---
+ app/actions/edit-commands.c                |  38 +++-
+ app/actions/layers-actions.c               |  22 +-
+ app/app.c                                  |   6 +
+ app/chopgimp-crash.c                       |  55 ++++-
+ app/chopgimp-crash.h                       |   6 +
+ app/dialogs/chopgimp-textpanels.c          | 225 ++++++++++++++++-----
+ app/display/chopgimp-popup-palette.c       |  26 ++-
+ app/display/gimpdisplayshell-tool-events.c |  28 +--
+ app/display/gimpoptionsbar.c               |   5 +-
+ app/gui/chopgimp-autosave.c                | 121 +++++++++--
+ app/gui/chopgimp-autosave.h                |   7 +-
+ app/gui/chopgimp-timelapse.c               |  46 +++--
+ app/gui/gui.c                              |  29 ++-
+ app/paint/gimpbrushcore.c                  |  99 ++++++---
+ app/paint/gimpbrushcore.h                  |   3 +
+ app/path/chopgimp-geom.cc                  | 134 +++++++-----
+ app/pdb/chopgimp-cmds.c                    |  27 ++-
+ app/text/chopgimp-textfx.c                 |  59 ++++--
+ app/text/chopgimp-textfx.h                 |   5 +-
+ app/text/gimptextlayer.c                   | 114 +++++++++--
+ app/text/gimptextlayout.c                  |   4 +-
+ app/tools/chopgimp-shapebuildertool.c      |  60 ++++--
+ app/tools/chopgimp-shapetool.c             |  10 +-
+ app/tools/chopgimp-spothealtool.c          |  53 ++---
+ app/tools/chopgimp-tools.c                 |  20 ++
+ app/tools/chopgimp-tools.h                 |   2 +
+ app/tools/gimpbucketfilltool.c             |  41 +++-
+ app/tools/gimppainttool.c                  |  16 ++
+ app/tools/gimptexttool.c                   |  60 +++++-
+ app/tools/gimptransformgridtool.c          |  53 ++++-
+ app/tools/gimptransformgridtool.h          |   6 +
+ app/widgets/chopgimp-spell.c               |  96 +++++++++
+ app/widgets/chopgimp-spell.h               |   1 +
+ app/widgets/gimpaction-history.c           |  20 +-
+ app/widgets/gimpaction-history.h           |   2 +
+ app/widgets/gimpaction.c                   |   4 +
+ libgimp/gimpui.c                           |  35 ++--
+ plug-ins/common/file-svg.c                 |  48 +++--
+ plug-ins/file-psd/psd-chopgimp.c           |  21 +-
+ 39 files changed, 1250 insertions(+), 357 deletions(-)
+
+diff --git a/app/actions/edit-commands.c b/app/actions/edit-commands.c
+index 507f461..4d83a3c 100644
+--- a/app/actions/edit-commands.c
++++ b/app/actions/edit-commands.c
+@@ -121,6 +121,7 @@ edit_macro_play_cmd_callback (GimpAction *action,
+                               gpointer    data)
+ {
+   Gimp          *gimp;
++  GimpImage     *image;
+   GimpUIManager *manager;
+   gchar        **names;
+   gint           i, played = 0;
+@@ -132,7 +133,31 @@ edit_macro_play_cmd_callback (GimpAction *action,
+   names   = chopgimp_rc_get_strings ("macro", "actions");
+   manager = menus_get_image_manager_singleton (gimp);
+ 
+-  for (i = 0; names && names[i]; i++)
++  if (! names || ! names[0])
++    {
++      gimp_message_literal (gimp, NULL, GIMP_MESSAGE_INFO,
++                            _("Aucune action enregistrée (Édition > Actions > Enregistrer une action)."));
++      g_strfreev (names);
++      return;
++    }
++
++  /*  the whole replay is one undo step (none when nothing can run)  */
++  for (i = 0; names[i]; i++)
++    {
++      GimpAction *a = gimp_ui_manager_find_action (manager, NULL, names[i]);
++
++      if (a && gimp_action_is_sensitive (a, NULL))
++        break;
++    }
++  image = names[i] ? action_data_get_image (data) : NULL;
++  if (image)
++    {
++      g_object_ref (image);
++      gimp_image_undo_group_start (image, GIMP_UNDO_GROUP_MISC,
++                                   _("Rejouer l'action"));
++    }
++
++  for (i = 0; names[i]; i++)
+     {
+       GimpAction *a = gimp_ui_manager_find_action (manager, NULL, names[i]);
+ 
+@@ -143,9 +168,16 @@ edit_macro_play_cmd_callback (GimpAction *action,
+         }
+     }
+ 
+-  if (! names || ! names[0])
++  if (image)
++    {
++      gimp_image_undo_group_end (image);
++      gimp_image_flush (image);
++      g_object_unref (image);
++    }
++
++  if (played == 0)
+     gimp_message_literal (gimp, NULL, GIMP_MESSAGE_INFO,
+-                          _("Aucune action enregistrée (Édition > Actions > Enregistrer une action)."));
++                          _("Aucune commande de l'action enregistrée n'est disponible ici."));
+   g_strfreev (names);
+ }
+ 
+diff --git a/app/actions/layers-actions.c b/app/actions/layers-actions.c
+index 30930c2..4113c8f 100644
+--- a/app/actions/layers-actions.c
++++ b/app/actions/layers-actions.c
+@@ -1136,21 +1136,13 @@ layers_actions_update (GimpActionGroup *group,
+   SET_SENSITIVE ("layers-new-last-values",  image);
+   SET_SENSITIVE ("layers-new-from-visible", image);
+   SET_SENSITIVE ("layers-new-group",        image && !indexed && !fs);
+-  SET_SENSITIVE ("layers-adjustment-levels", image && !indexed && !fs && layer);
+-  SET_SENSITIVE ("layers-adjustment-curves", image && !indexed && !fs && layer);
+-  SET_SENSITIVE ("layers-adjustment-brightness-contrast", image && !indexed && !fs && layer);
+-  SET_SENSITIVE ("layers-adjustment-exposure", image && !indexed && !fs && layer);
+-  SET_SENSITIVE ("layers-adjustment-vibrance", image && !indexed && !fs && layer);
+-  SET_SENSITIVE ("layers-adjustment-hue-saturation", image && !indexed && !fs && layer);
+-  SET_SENSITIVE ("layers-adjustment-color-balance", image && !indexed && !fs && layer);
+-  SET_SENSITIVE ("layers-adjustment-black-white", image && !indexed && !fs && layer);
+-  SET_SENSITIVE ("layers-adjustment-photo-filter", image && !indexed && !fs && layer);
+-  SET_SENSITIVE ("layers-adjustment-channel-mixer", image && !indexed && !fs && layer);
+-  SET_SENSITIVE ("layers-adjustment-colorize", image && !indexed && !fs && layer);
+-  SET_SENSITIVE ("layers-adjustment-invert", image && !indexed && !fs && layer);
+-  SET_SENSITIVE ("layers-adjustment-posterize", image && !indexed && !fs && layer);
+-  SET_SENSITIVE ("layers-adjustment-threshold", image && !indexed && !fs && layer);
+-  SET_SENSITIVE ("layers-adjustment-shadows-highlights", image && !indexed && !fs && layer);
++  {
++    guint a;
++
++    for (a = 0; a < G_N_ELEMENTS (layers_adjustment_actions); a++)
++      SET_SENSITIVE (layers_adjustment_actions[a].name,
++                     image && !indexed && !fs && layer);
++  }
+   SET_SENSITIVE ("layers-duplicate",        n_selected_layers > 0 && !fs && !ac);
+   SET_SENSITIVE ("layers-delete",           n_selected_layers > 0 && !ac);
+ 
+diff --git a/app/app.c b/app/app.c
+index bd630a2..8ef13ea 100644
+--- a/app/app.c
++++ b/app/app.c
+@@ -67,6 +67,8 @@
+ 
+ #include "gui/gimpapp.h"
+ #include "gui/gui.h"
++
++#include "widgets/chopgimp-spell.h"
+ #endif
+ 
+ #include "app.h"
+@@ -331,6 +333,10 @@ app_run (const gchar         *full_prog_name,
+ 
+   g_clear_object (&app);
+ 
++#ifndef GIMP_CONSOLE_COMPILATION
++  chopgimp_spell_exit ();
++#endif
++
+   gimp_gegl_exit (gimp);
+ 
+   errors_exit ();
+diff --git a/app/chopgimp-crash.c b/app/chopgimp-crash.c
+index cc30824..93e9c7b 100644
+--- a/app/chopgimp-crash.c
++++ b/app/chopgimp-crash.c
+@@ -69,6 +69,7 @@ static gchar   exe_path[512] = "";
+ 
+ static gint    log_fd    = -1;
+ static gint    orig_err  = -1;
++static GMutex  log_mutex;      /*  one line at a time in the session log  */
+ static pid_t   main_tid  = 0;
+ 
+ static gchar   ctx_plugin[256];
+@@ -271,6 +272,11 @@ write_report (gint sig, siginfo_t *info)
+     {
+       Dl_info dl;
+ 
++      /*  dladdr() is not async-signal-safe (it may take the loader
++       *  lock).  Accepted risk: it is preloaded at startup, and a
++       *  deadlock here only loses the symbol names of a report written
++       *  while the process is dying anyway.
++       */
+       w_str (fd, "  #");
+       w_num (fd, i, 10, 2);
+       w_str (fd, " ");
+@@ -374,7 +380,9 @@ tee_thread (gpointer data)
+         {
+           gchar *nl = memchr (p, '\n', end - p);
+           gchar *stop = nl ? nl + 1 : end;
++          gssize r;
+ 
++          g_mutex_lock (&log_mutex);
+           if (bol)
+             {
+               GDateTime *now = g_date_time_new_now_local ();
+@@ -384,7 +392,9 @@ tee_thread (gpointer data)
+               g_free (ts);
+               g_date_time_unref (now);
+             }
+-          if (write (log_fd, p, stop - p) < 0)
++          r = write (log_fd, p, stop - p);
++          g_mutex_unlock (&log_mutex);
++          if (r < 0)
+             break;
+           bol = nl != NULL;
+           p = stop;
+@@ -589,8 +599,8 @@ chopgimp_crash_note_plugin (const gchar *procedure,
+     g_snprintf (buf, sizeof (buf), "aucun en cours (dernier terminé : %s)", last[0] ? last : "aucun");
+   g_strlcpy (ctx_plugin, buf, sizeof (ctx_plugin));
+ 
+-  if (log_fd >= 0)
+-    g_printerr ("[plug-in] %s %s\n", procedure, running ? "lancé" : "terminé");
++  chopgimp_crash_log_line ("[plug-in] %s %s\n",
++                           procedure, running ? "lancé" : "terminé");
+ #endif
+ }
+ 
+@@ -602,8 +612,43 @@ chopgimp_crash_note_action (const gchar *action)
+ 
+   g_strlcpy (ctx_actions[i], action, ACTION_LEN);
+   ctx_action_next = (i + 1) % N_ACTIONS;
+-  if (log_fd >= 0)
+-    g_printerr ("[action] %s\n", action);
++  chopgimp_crash_log_line ("[action] %s\n", action);
++#endif
++}
++
++/*  a line for the session log only (not the terminal); not for signal
++ *  context.  @format includes the trailing newline, like g_printerr().
++ */
++void
++chopgimp_crash_log_line (const gchar *format,
++                         ...)
++{
++#ifndef G_OS_WIN32
++  va_list    args;
++  GDateTime *now;
++  gchar     *ts;
++  gchar     *msg;
++  gchar     *line;
++
++  if (log_fd < 0)
++    return;
++
++  va_start (args, format);
++  msg = g_strdup_vprintf (format, args);
++  va_end (args);
++
++  now  = g_date_time_new_now_local ();
++  ts   = g_date_time_format (now, "%H:%M:%S ");
++  line = g_strconcat (ts, msg, NULL);
++
++  g_mutex_lock (&log_mutex);
++  w_str (log_fd, line);
++  g_mutex_unlock (&log_mutex);
++
++  g_free (line);
++  g_free (ts);
++  g_free (msg);
++  g_date_time_unref (now);
+ #endif
+ }
+ 
+diff --git a/app/chopgimp-crash.h b/app/chopgimp-crash.h
+index 8aee030..60285ba 100644
+--- a/app/chopgimp-crash.h
++++ b/app/chopgimp-crash.h
+@@ -18,6 +18,12 @@ void   chopgimp_crash_note_plugin   (const gchar *procedure,
+ void   chopgimp_crash_note_action   (const gchar *action);
+ void   chopgimp_crash_note_images   (const gchar *summary);
+ 
++/*  une ligne dans le journal de session seulement (pas le terminal) ;
++ *  hors gestionnaire de signal
++ */
++void   chopgimp_crash_log_line      (const gchar *format,
++                                     ...) G_GNUC_PRINTF (1, 2);
++
+ /*  chemin du journal de la session (NULL si désactivé)  */
+ const gchar * chopgimp_crash_log_path      (void);
+ const gchar * chopgimp_crash_dir           (void);
+diff --git a/app/dialogs/chopgimp-textpanels.c b/app/dialogs/chopgimp-textpanels.c
+index 328b4ff..eb11bd0 100644
+--- a/app/dialogs/chopgimp-textpanels.c
++++ b/app/dialogs/chopgimp-textpanels.c
+@@ -69,6 +69,7 @@
+ typedef struct
+ {
+   Gimp          *gimp;
++  GtkWidget     *widget;         /* the dockable, for the refresh timer */
+   gboolean       paragraph;
+   gboolean       updating;
+   guint          refresh_id;
+@@ -88,6 +89,7 @@ typedef struct
+ 
+   GtkWidget     *favorite;
+   GimpFont      *preview_font;   /* font before a hover preview */
++  GimpTextLayer *preview_layer;  /* the layer showing it (weak)  */
+   gboolean       preview_chosen;
+ 
+   /*  Paragraph  */
+@@ -357,35 +359,69 @@ font_preview_possible (Panel *panel)
+ }
+ 
+ static void
+-font_preview_name (Panel *panel, const gchar *name)
++font_preview_set_layer (Panel *panel, GimpTextLayer *layer)
+ {
+-  GimpTextLayer *layer = panel_layer (panel);
+-  GimpFont      *font  = name ? font_by_name (panel->gimp, name) : NULL;
+-
+-  if (! font || ! font_preview_possible (panel))
++  if (panel->preview_layer == layer)
+     return;
+ 
+-  if (! panel->preview_font)
+-    panel->preview_font = g_object_ref (gimp_text_layer_get_text (layer)->font);
++  if (panel->preview_layer)
++    g_object_remove_weak_pointer (G_OBJECT (panel->preview_layer),
++                                  (gpointer *) &panel->preview_layer);
+ 
+-  g_object_set (gimp_text_layer_get_text (layer), "font", font, NULL);
+-  layer_flush (layer);
++  panel->preview_layer = layer;
++
++  if (layer)
++    g_object_add_weak_pointer (G_OBJECT (layer),
++                               (gpointer *) &panel->preview_layer);
+ }
+ 
++/*  gives its font back to the layer that shows a preview, and only to it  */
+ static void
+ font_preview_restore (Panel *panel)
+ {
+-  GimpTextLayer *layer = panel_layer (panel);
++  GimpTextLayer *layer = panel->preview_layer;
+ 
+   if (panel->preview_font)
+     {
+-      if (layer)
++      GimpText *text = layer ? gimp_text_layer_get_text (layer) : NULL;
++
++      if (text)
+         {
+-          g_object_set (gimp_text_layer_get_text (layer), "font", panel->preview_font, NULL);
++          g_object_set (text, "font", panel->preview_font, NULL);
+           layer_flush (layer);
+         }
+       g_clear_object (&panel->preview_font);
+     }
++
++  font_preview_set_layer (panel, NULL);
++}
++
++static void
++font_preview_name (Panel *panel, const gchar *name)
++{
++  GimpTextLayer *layer = panel_layer (panel);
++  GimpFont      *font  = name ? font_by_name (panel->gimp, name) : NULL;
++  GimpText      *text;
++
++  if (! font || ! font_preview_possible (panel))
++    return;
++
++  /*  the target changed meanwhile: the previous one gets its font back  */
++  if (panel->preview_font && panel->preview_layer != layer)
++    font_preview_restore (panel);
++
++  text = gimp_text_layer_get_text (layer);
++  if (! text)
++    return;
++
++  if (! panel->preview_font)
++    {
++      panel->preview_font = g_object_ref (text->font);
++      font_preview_set_layer (panel, layer);
++    }
++
++  g_object_set (text, "font", font, NULL);
++  layer_flush (layer);
+ }
+ 
+ 
+@@ -882,28 +918,77 @@ tracking_changed (GtkSpinButton *spin, Panel *panel)
+     layer_set_double (panel, _("Approche"), "letter-spacing", gtk_spin_button_get_value (spin));
+ }
+ 
+-/*  horizontal / vertical scale and faux italic: the text matrix  */
++/*  the text matrix M as R·U: a rotation R, and U = [[a, b], [0, d]] in
++ *  text space; a: horizontal scale, d: vertical scale, b / d: slant
++ */
++static gboolean
++matrix_decompose (const GimpMatrix2 *m,
++                  gdouble           *a,
++                  gdouble           *b,
++                  gdouble           *d)
++{
++  gdouble ux, uy;
++
++  *a = hypot (m->coeff[0][0], m->coeff[1][0]);
++
++  if (*a < 1e-9)
++    {
++      *b = 0.0;
++      *d = 0.0;
++      return FALSE;
++    }
++
++  ux = m->coeff[0][0] / *a;
++  uy = m->coeff[1][0] / *a;
++
++  *b = ux * m->coeff[0][1] + uy * m->coeff[1][1];
++  *d = ux * m->coeff[1][1] - uy * m->coeff[0][1];
++
++  return TRUE;
++}
++
++/*  horizontal / vertical scale and faux italic: the text matrix, changed
++ *  in text space (M' = M · X) so a rotated text stays rotated
++ */
+ static void
+ matrix_update (Panel *panel, gint which, gdouble value)
+ {
+-  GimpTextLayer *layer = panel_text_tool (panel->gimp) ?
+-                         panel_text_tool (panel->gimp)->layer :
+-                         panel_text_layer (panel->gimp);
++  GimpTextLayer *layer = panel_layer (panel);
+   GimpText      *text;
+   GimpMatrix2    m;
++  gdouble        a, b, d;
++  gint           row;
+ 
+-  if (panel->updating || ! layer)
++  if (panel->updating || ! layer || ! (text = gimp_text_layer_get_text (layer)))
+     return;
+ 
+-  text = gimp_text_layer_get_text (layer);
+-  m    = text->transformation;
++  m = text->transformation;
+ 
+-  if (which == 0)          /* horizontal scale, % */
+-    m.coeff[0][0] = value / 100.0;
+-  else if (which == 1)     /* vertical scale, % */
+-    m.coeff[1][1] = value / 100.0;
+-  else                     /* faux italic: shear */
+-    m.coeff[0][1] = (ABS (m.coeff[0][1]) > 0.01) ? 0.0 : -0.21;
++  if (! matrix_decompose (&m, &a, &b, &d) || fabs (d) < 1e-9)
++    return;
++
++  if (which == 0)          /* horizontal scale, %: M · diag (r, 1) */
++    {
++      gdouble r = (value / 100.0) / a;
++
++      for (row = 0; row < 2; row++)
++        m.coeff[row][0] *= r;
++    }
++  else if (which == 1)     /* vertical scale, %: M · diag (1, r) */
++    {
++      gdouble r = (value / 100.0) / fabs (d);
++
++      for (row = 0; row < 2; row++)
++        m.coeff[row][1] *= r;
++    }
++  else                     /* faux italic: M · [[1, t], [0, 1]] */
++    {
++      gdouble slant = (fabs (b / d) > 0.01) ? 0.0 : -0.21;
++      gdouble t     = (slant * fabs (d) - b) / a;
++
++      for (row = 0; row < 2; row++)
++        m.coeff[row][1] += t * m.coeff[row][0];
++    }
+ 
+   gimp_text_layer_set (layer, _("Transformation du texte"), "transformation", &m, NULL);
+   layer_flush (layer);
+@@ -966,26 +1051,30 @@ toggle_clicked (GtkButton *button, Panel *panel)
+   /*  faux bold: an outline of the text color around the glyphs  */
+   if (tg->tag && ! strcmp (tg->tag, "fauxbold"))
+     {
+-      GimpTextLayer *layer = panel_text_tool (panel->gimp) ?
+-                             panel_text_tool (panel->gimp)->layer :
+-                             panel_text_layer (panel->gimp);
++      GimpTextLayer *layer = panel_layer (panel);
+       GimpText      *text;
+ 
+-      if (! layer)
++      if (! layer || ! (text = gimp_text_layer_get_text (layer)))
+         return;
+ 
+-      text = gimp_text_layer_get_text (layer);
+-
+       if (text->outline == GIMP_TEXT_OUTLINE_STROKE_FILL)
+         {
+           layer_set_int (panel, _("Faux gras"), "outline", GIMP_TEXT_OUTLINE_NONE);
+         }
+       else
+         {
++          /*  the outline width is in pixels, the font size in its unit  */
++          gdouble xres = 72.0, yres = 72.0;
++          gdouble size;
++
++          gimp_image_get_resolution (gimp_item_get_image (GIMP_ITEM (layer)),
++                                     &xres, &yres);
++          size = gimp_units_to_pixels (text->font_size, text->unit, yres);
++
+           gimp_text_layer_set (layer, _("Faux gras"),
+                                "outline",            GIMP_TEXT_OUTLINE_STROKE_FILL,
+                                "outline-direction",  GIMP_TEXT_OUTLINE_DIRECTION_CENTERED,
+-                               "outline-width",      MAX (0.5, text->font_size * 0.035),
++                               "outline-width",      MAX (0.5, size * 0.035),
+                                "outline-foreground", text->color,
+                                NULL);
+           layer_flush (layer);
+@@ -1129,12 +1218,18 @@ spin_set (GtkWidget *spin, gdouble value)
+ static gboolean
+ panel_refresh (Panel *panel)
+ {
+-  GimpTextLayer *layer = panel_text_tool (panel->gimp) ?
+-                         panel_text_tool (panel->gimp)->layer :
+-                         panel_text_layer (panel->gimp);
++  GimpTextLayer *layer;
+   GimpText      *text;
+   gchar         *stamp;
+   gdouble        xres = 72.0, yres = 72.0;
++  gdouble        rgba[4] = { 0.0, 0.0, 0.0, 0.0 };
++  gdouble        a, b, d;
++
++  /*  hidden (another tab of the dock, closed…): nothing to show  */
++  if (panel->widget && ! gtk_widget_get_mapped (panel->widget))
++    return G_SOURCE_CONTINUE;
++
++  layer = panel_layer (panel);
+ 
+   if (! layer || ! (text = gimp_text_layer_get_text (layer)))
+     {
+@@ -1142,16 +1237,23 @@ panel_refresh (Panel *panel)
+       return G_SOURCE_CONTINUE;
+     }
+ 
++  if (text->color)
++    gegl_color_get_rgba (text->color, &rgba[0], &rgba[1], &rgba[2], &rgba[3]);
++
+   /*  refresh when the layer or its settings changed (undo, tool options…)  */
+-  stamp = g_strdup_printf ("%p %p %s %g %d %g %g %g %g %g %g %d %d %d",
++  stamp = g_strdup_printf ("%p %p %s %g %p %g %g %g %g %g %g %g %g %d %d %d "
++                           "%g %g %g %g",
+                            (void *) layer, (void *) text,
+                            text->font ? gimp_object_get_name (text->font) : "",
+-                           text->font_size, text->unit ? 1 : 0,
++                           text->font_size, (void *) text->unit,
+                            text->line_spacing, text->letter_spacing,
+                            text->transformation.coeff[0][0],
++                           text->transformation.coeff[0][1],
++                           text->transformation.coeff[1][0],
+                            text->transformation.coeff[1][1],
+                            text->indent, text->outline_width,
+-                           text->box_mode, text->justify, text->outline);
++                           text->box_mode, text->justify, text->outline,
++                           rgba[0], rgba[1], rgba[2], rgba[3]);
+ 
+   if (layer == panel->shown_layer && ! g_strcmp0 (stamp, panel->shown_stamp))
+     {
+@@ -1176,8 +1278,11 @@ panel_refresh (Panel *panel)
+   spin_set (panel->size,     gimp_units_to_pixels (text->font_size, text->unit, yres));
+   spin_set (panel->leading,  text->line_spacing);
+   spin_set (panel->tracking, text->letter_spacing);
+-  spin_set (panel->hscale,   text->transformation.coeff[0][0] * 100.0);
+-  spin_set (panel->vscale,   text->transformation.coeff[1][1] * 100.0);
++  /*  the scales of the text, whatever its rotation and slant  */
++  if (! matrix_decompose (&text->transformation, &a, &b, &d))
++    a = d = 1.0;
++  spin_set (panel->hscale,   a * 100.0);
++  spin_set (panel->vscale,   fabs (d) * 100.0);
+   spin_set (panel->indent,   text->indent);
+ 
+   if (panel->color && text->color)
+@@ -1266,7 +1371,8 @@ panel_free (Panel *panel)
+ {
+   if (panel->refresh_id)
+     g_source_remove (panel->refresh_id);
+-  g_clear_object (&panel->preview_font);
++  /*  a font shown in preview goes back to its layer  */
++  font_preview_restore (panel);
+   g_free (panel->shown_stamp);
+   g_free (panel);
+ }
+@@ -1335,9 +1441,13 @@ panel_new (Gimp *gimp, gboolean paragraph)
+       panel->hscale   = spin_new (panel, 1, 1000, 1, 0, G_CALLBACK (hscale_changed));
+       panel->baseline = spin_new (panel, -500, 500, 1, 1, G_CALLBACK (baseline_changed));
+ 
+-      panel->color = gimp_color_button_new (_("Couleur du texte"), 40, 20,
+-                                            gegl_color_new ("black"),
+-                                            GIMP_COLOR_AREA_FLAT);
++      {
++        GeglColor *black = gegl_color_new ("black");
++
++        panel->color = gimp_color_button_new (_("Couleur du texte"), 40, 20,
++                                              black, GIMP_COLOR_AREA_FLAT);
++        g_object_unref (black);
++      }
+       g_signal_connect (panel->color, "color-changed", G_CALLBACK (color_changed), panel);
+ 
+       grid_row (grid, 1, 0, "<b>T</b><small>T</small>", _("Taille (px)"), panel->size);
+@@ -1442,6 +1552,7 @@ panel_new (Gimp *gimp, gboolean paragraph)
+   gtk_widget_show_all (box);
+ 
+   /*  follow the layer being edited / selected  */
++  panel->widget     = editor;
+   panel->refresh_id = g_timeout_add (400, (GSourceFunc) panel_refresh, panel);
+   g_object_set_data_full (G_OBJECT (editor), "chopgimp-panel", panel,
+                           (GDestroyNotify) panel_free);
+@@ -1477,6 +1588,7 @@ typedef struct
+   GtkWidget  *flow;
+   gchar      *font;        /* lookup name of the font shown */
+   guint       refresh_id;
++  GtkWidget  *widget;
+ } Glyphs;
+ 
+ static const struct { const gchar *name; gunichar first, last; } glyph_ranges[] =
+@@ -1604,12 +1716,18 @@ glyphs_fill (Glyphs *g)
+ static gboolean
+ glyphs_refresh (Glyphs *g)
+ {
+-  GimpTool      *tool  = tool_manager_get_active (g->gimp);
+-  GimpTextLayer *layer = (GIMP_IS_TEXT_TOOL (tool) && GIMP_TEXT_TOOL (tool)->layer) ?
+-                         GIMP_TEXT_TOOL (tool)->layer : panel_text_layer (g->gimp);
++  GimpTool      *tool;
++  GimpTextLayer *layer;
+   const gchar   *font  = NULL;
+   GimpText      *text;
+ 
++  if (g->widget && ! gtk_widget_get_mapped (g->widget))
++    return G_SOURCE_CONTINUE;
++
++  tool  = tool_manager_get_active (g->gimp);
++  layer = (GIMP_IS_TEXT_TOOL (tool) && GIMP_TEXT_TOOL (tool)->layer) ?
++          GIMP_TEXT_TOOL (tool)->layer : panel_text_layer (g->gimp);
++
+   if (layer && (text = gimp_text_layer_get_text (layer)) && text->font)
+     font = gimp_font_get_lookup_name (text->font);
+ 
+@@ -1667,6 +1785,7 @@ chopgimp_glyphs_panel_new (GimpDialogFactory *factory,
+ 
+   glyphs_fill (g);
+ 
++  g->widget     = editor;
+   g->refresh_id = g_timeout_add (600, (GSourceFunc) glyphs_refresh, g);
+   g_object_set_data_full (G_OBJECT (editor), "chopgimp-glyphs", g,
+                           (GDestroyNotify) glyphs_free);
+@@ -2133,6 +2252,7 @@ typedef struct
+   GtkWidget *list;
+   gchar     *stamp;
+   guint      refresh_id;
++  GtkWidget *widget;
+ } DocTexts;
+ 
+ static void
+@@ -2189,9 +2309,15 @@ doc_texts_activated (GtkListBox *box, GtkListBoxRow *row, DocTexts *dt)
+ static gboolean
+ doc_texts_refresh (DocTexts *dt)
+ {
+-  GimpImage *image = gimp_context_get_image (gimp_get_user_context (dt->gimp));
++  GimpImage *image;
+   GList     *layers = NULL, *iter, *rows;
+-  GString   *stamp  = g_string_new (NULL);
++  GString   *stamp;
++
++  if (dt->widget && ! gtk_widget_get_mapped (dt->widget))
++    return G_SOURCE_CONTINUE;
++
++  image = gimp_context_get_image (gimp_get_user_context (dt->gimp));
++  stamp = g_string_new (NULL);
+ 
+   if (image)
+     doc_texts_collect (gimp_image_get_layer_iter (image), &layers);
+@@ -2311,6 +2437,7 @@ chopgimp_document_texts_panel_new (GimpDialogFactory *factory,
+   gtk_widget_show_all (scroll);
+ 
+   doc_texts_refresh (dt);
++  dt->widget     = editor;
+   dt->refresh_id = g_timeout_add (700, (GSourceFunc) doc_texts_refresh, dt);
+   g_object_set_data_full (G_OBJECT (editor), "chopgimp-doc-texts", dt,
+                           (GDestroyNotify) doc_texts_free);
+diff --git a/app/display/chopgimp-popup-palette.c b/app/display/chopgimp-popup-palette.c
+index 7d8f807..1c21b57 100644
+--- a/app/display/chopgimp-popup-palette.c
++++ b/app/display/chopgimp-popup-palette.c
+@@ -43,19 +43,31 @@
+ #define N_BRUSHES 10
+ #define N_COLORS  12
+ 
+-static GList *recent_brushes = NULL;      /*  GimpBrush, most recent first  */
++static GList *recent_brushes = NULL;      /*  GimpBrush (ref), most recent first  */
+ 
+ static void
+ brush_changed (GimpContext *context,
+                GimpBrush   *brush,
+                gpointer     data)
+ {
++  GList *link;
++
+   if (! brush)
+     return;
+-  recent_brushes = g_list_remove (recent_brushes, brush);
++
++  link = g_list_find (recent_brushes, brush);
++  if (link)
++    recent_brushes = g_list_delete_link (recent_brushes, link);  /*  keeps its ref  */
++  else
++    g_object_ref (brush);
+   recent_brushes = g_list_prepend (recent_brushes, brush);
++
+   if (g_list_length (recent_brushes) > N_BRUSHES)
+-    recent_brushes = g_list_delete_link (recent_brushes, g_list_last (recent_brushes));
++    {
++      link = g_list_last (recent_brushes);
++      g_object_unref (link->data);
++      recent_brushes = g_list_delete_link (recent_brushes, link);
++    }
+ }
+ 
+ void
+@@ -156,7 +168,9 @@ chopgimp_popup_palette_show (GimpDisplayShell *shell)
+       gtk_button_set_relief (GTK_BUTTON (button), GTK_RELIEF_NONE);
+       gimp_help_set_help_data (button, gimp_object_get_name (list->data), NULL);
+       g_object_set_data (G_OBJECT (button), "context", context);
+-      g_signal_connect (button, "clicked", G_CALLBACK (brush_clicked), list->data);
++      g_signal_connect_data (button, "clicked", G_CALLBACK (brush_clicked),
++                             g_object_ref (list->data),
++                             (GClosureNotify) g_object_unref, 0);
+       gtk_grid_attach (GTK_GRID (grid), button, i % 5, i / 5, 1, 1);
+     }
+ 
+@@ -189,7 +203,9 @@ chopgimp_popup_palette_show (GimpDisplayShell *shell)
+       gtk_container_add (GTK_CONTAINER (button), area);
+       gtk_button_set_relief (GTK_BUTTON (button), GTK_RELIEF_NONE);
+       g_object_set_data (G_OBJECT (button), "context", context);
+-      g_signal_connect (button, "clicked", G_CALLBACK (color_clicked), entry->color);
++      g_signal_connect_data (button, "clicked", G_CALLBACK (color_clicked),
++                             gegl_color_duplicate (entry->color),
++                             (GClosureNotify) g_object_unref, 0);
+       gtk_grid_attach (GTK_GRID (grid), button, i, 0, 1, 1);
+     }
+ 
+diff --git a/app/display/gimpdisplayshell-tool-events.c b/app/display/gimpdisplayshell-tool-events.c
+index 1a16695..b4baa1b 100644
+--- a/app/display/gimpdisplayshell-tool-events.c
++++ b/app/display/gimpdisplayshell-tool-events.c
+@@ -18,6 +18,7 @@
+ #include "config.h"
+ 
+ #include <math.h>
++#include <stdlib.h>
+ 
+ #include <gegl.h>
+ #include <gtk/gtk.h>
+@@ -1725,6 +1726,11 @@ gimp_display_shell_check_device_cursor (GimpDisplayShell *shell)
+   shell->draw_cursor = (current_device && ! gimp_device_info_has_cursor (current_device));
+ }
+ 
++/*  ChopGimp (Photoshop HUD): brush hardness when the size drag started,
++ *  read on the first motion, reset at drag start and end (-1: unknown)
++ */
++static gdouble chopgimp_hud_start_hardness = -1.0;
++
+ static void
+ gimp_display_shell_start_scrolling (GimpDisplayShell *shell,
+                                     const GdkEvent   *event,
+@@ -1765,6 +1771,8 @@ gimp_display_shell_start_scrolling (GimpDisplayShell *shell,
+   shell->scroll_last_y     = y;
+   shell->rotate_drag_angle = shell->rotate_angle;
+ 
++  chopgimp_hud_start_hardness = -1.0;
++
+   switch (mod_action)
+     {
+     case GIMP_MODIFIER_ACTION_ROTATING:
+@@ -1870,6 +1878,8 @@ gimp_display_shell_stop_scrolling (GimpDisplayShell *shell,
+   shell->scroll_last_y     = 0;
+   shell->rotate_drag_angle = 0.0;
+ 
++  chopgimp_hud_start_hardness = -1.0;
++
+   /* We may have ungrabbed the pointer when space was released while
+    * mouse was down, to be able to catch a GDK_BUTTON_RELEASE event.
+    */
+@@ -1956,20 +1966,14 @@ gimp_display_shell_handle_scrolling (GimpDisplayShell *shell,
+           if (shell->mod_action == GIMP_MODIFIER_ACTION_BRUSH_PIXEL_SIZE &&
+               active_tool && GIMP_IS_PAINT_OPTIONS (active_tool->tool_info->tool_options))
+             {
+-              static gdouble start_hardness = -1.0;
+-              static gdouble last_sx = G_MAXDOUBLE, last_sy = G_MAXDOUBLE;
+-              GObject       *po = G_OBJECT (active_tool->tool_info->tool_options);
+-              gdouble        hardness;
++              GObject *po = G_OBJECT (active_tool->tool_info->tool_options);
++              gdouble  hardness;
+ 
+-              if (last_sx != shell->scroll_start_x || last_sy != shell->scroll_start_y)
+-                {
+-                  g_object_get (po, "brush-hardness", &start_hardness, NULL);
+-                  last_sx = shell->scroll_start_x;
+-                  last_sy = shell->scroll_start_y;
+-                }
++              if (chopgimp_hud_start_hardness < 0.0)
++                g_object_get (po, "brush-hardness", &chopgimp_hud_start_hardness, NULL);
+ 
+-              size     = MAX (1, (gint) (2.0 * fabs (x - shell->scroll_start_x) / shell->scale_x));
+-              hardness = CLAMP (start_hardness + (shell->scroll_start_y - y) / 200.0, 0.0, 1.0);
++              size     = MAX (1, (gint) (2.0 * abs (x - shell->scroll_start_x) / shell->scale_x));
++              hardness = CLAMP (chopgimp_hud_start_hardness + (shell->scroll_start_y - y) / 200.0, 0.0, 1.0);
+               g_object_set (po, "brush-hardness", hardness, NULL);
+ 
+               gimp_statusbar_replace (gimp_display_shell_get_statusbar (shell), "chopgimp-hud",
+diff --git a/app/display/gimpoptionsbar.c b/app/display/gimpoptionsbar.c
+index 8c93e9a..f17a9ba 100644
+--- a/app/display/gimpoptionsbar.c
++++ b/app/display/gimpoptionsbar.c
+@@ -1337,12 +1337,11 @@ gimp_options_bar_tool_changed (GimpContext  *context,
+ 
+   if (spec && tool_info->tool_options)
+     {
+-      GObject *options = G_OBJECT (tool_info->tool_options);
++      GObject    *options  = G_OBJECT (tool_info->tool_options);
++      PressureUI *pressure = NULL;
+ 
+       gimp_options_bar_pack (box, gtk_separator_new (GTK_ORIENTATION_VERTICAL));
+ 
+-      PressureUI *pressure = NULL;
+-
+       if (g_object_class_find_property (G_OBJECT_GET_CLASS (options), "dynamics-enabled"))
+         {
+           pressure = g_new0 (PressureUI, 1);
+diff --git a/app/gui/chopgimp-autosave.c b/app/gui/chopgimp-autosave.c
+index 6e702ac..d1ce585 100644
+--- a/app/gui/chopgimp-autosave.c
++++ b/app/gui/chopgimp-autosave.c
+@@ -53,9 +53,55 @@
+ #include "chopgimp-autosave.h"
+ 
+ 
+-static gchar      *autosave_dir = NULL;
+-static GHashTable *saved_times  = NULL;   /*  image id → dirty time saved  */
+-static guint       timer_id     = 0;
++typedef struct
++{
++  guint  serial;     /*  change serial of the image when it was saved  */
++  gint64 saved_at;   /*  monotonic time of that save  */
++} SavedCopy;
++
++static gchar      *autosave_dir      = NULL;
++static GHashTable *saved_times       = NULL;   /*  image id → SavedCopy  */
++static guint       timer_id          = 0;
++static guint       recovery_timer_id = 0;
++static gpointer    recovery_pending  = NULL;   /*  Recovery not shown yet  */
++
++
++/*  per-image change counter: gimp_image_get_dirty_time() is only set on
++ *  the first dirtying, so it cannot tell whether an image changed since
++ *  the last autosave / timelapse frame.  Count "dirty" and "clean"
++ *  emissions instead (undo/redo emit them as well).
++ */
++static void
++chopgimp_image_changed (GimpImage     *image,
++                        GimpDirtyMask  dirty_mask,
++                        gpointer       data)
++{
++  guint serial;
++
++  serial = GPOINTER_TO_UINT (g_object_get_data (G_OBJECT (image),
++                                                "chopgimp-serial"));
++  g_object_set_data (G_OBJECT (image), "chopgimp-serial",
++                     GUINT_TO_POINTER (serial + 1));
++}
++
++guint
++chopgimp_image_change_serial (GimpImage *image)
++{
++  g_return_val_if_fail (GIMP_IS_IMAGE (image), 0);
++
++  if (! g_object_get_data (G_OBJECT (image), "chopgimp-serial-hooked"))
++    {
++      g_signal_connect (image, "dirty",
++                        G_CALLBACK (chopgimp_image_changed), NULL);
++      g_signal_connect (image, "clean",
++                        G_CALLBACK (chopgimp_image_changed), NULL);
++      g_object_set_data (G_OBJECT (image), "chopgimp-serial-hooked",
++                         GINT_TO_POINTER (TRUE));
++    }
++
++  return GPOINTER_TO_UINT (g_object_get_data (G_OBJECT (image),
++                                              "chopgimp-serial"));
++}
+ 
+ 
+ static gchar *
+@@ -114,14 +160,17 @@ autosave_image (Gimp      *gimp,
+     {
+       GFile *orig = gimp_image_get_file (image);
+       gchar *txt  = autosave_path (id, "txt");
++      gchar *uri;
+       gchar *info;
+ 
+       if (! orig)
+         orig = gimp_image_get_imported_file (image);
++      uri  = orig ? g_file_get_uri (orig) : NULL;
+       info = g_strdup_printf ("%s\n%s\n", gimp_image_get_display_name (image),
+-                              orig ? g_file_get_uri (orig) : "");
++                              uri ? uri : "");
+       g_file_set_contents (txt, info, -1, NULL);
+       g_free (info);
++      g_free (uri);
+       g_free (txt);
+     }
+   else
+@@ -147,6 +196,9 @@ autosave_tick (gpointer data)
+   GList      *list;
+   GHashTable *alive;
+   GList      *ids, *iter;
++  GimpImage  *oldest        = NULL;
++  gint64      oldest_time   = G_MAXINT64;
++  guint       oldest_serial = 0;
+ 
+   /*  never in the middle of a stroke or a transform  */
+   if (tool && tool->control && gimp_tool_control_is_active (tool->control))
+@@ -156,10 +208,10 @@ autosave_tick (gpointer data)
+ 
+   for (list = gimp_get_image_iter (gimp); list; list = g_list_next (list))
+     {
+-      GimpImage *image = list->data;
+-      gint       id    = gimp_image_get_id (image);
+-      gint64     dt    = gimp_image_get_dirty_time (image);
+-      gpointer   prev;
++      GimpImage *image  = list->data;
++      gint       id     = gimp_image_get_id (image);
++      guint      serial = chopgimp_image_change_serial (image);
++      SavedCopy *prev;
+ 
+       g_hash_table_add (alive, GINT_TO_POINTER (id));
+ 
+@@ -171,16 +223,38 @@ autosave_tick (gpointer data)
+         }
+ 
+       prev = g_hash_table_lookup (saved_times, GINT_TO_POINTER (id));
+-      if (prev && *(gint64 *) prev == dt)
++      if (prev && prev->serial == serial)
+         continue;
+ 
+-      if (autosave_image (gimp, image))
++      /*  round-robin: the save is synchronous, so only one image per
++       *  tick, the one whose copy is the oldest (never saved first)
++       */
++      if (! oldest || (prev ? prev->saved_at : 0) < oldest_time)
+         {
+-          gint64 *copy = g_new (gint64, 1);
++          oldest        = image;
++          oldest_time   = prev ? prev->saved_at : 0;
++          oldest_serial = serial;
++        }
++    }
+ 
+-          *copy = dt;
++  if (oldest)
++    {
++      gint       id   = gimp_image_get_id (oldest);
++      gboolean   ok   = autosave_image (gimp, oldest);
++      SavedCopy *copy = g_hash_table_lookup (saved_times, GINT_TO_POINTER (id));
++
++      if (! copy)
++        {
++          copy = g_new0 (SavedCopy, 1);
++          copy->serial = G_MAXUINT;     /*  no copy yet  */
+           g_hash_table_insert (saved_times, GINT_TO_POINTER (id), copy);
+         }
++
++      if (ok)
++        copy->serial = oldest_serial;
++
++      /*  a failed save is retried, after the other images  */
++      copy->saved_at = g_get_monotonic_time ();
+     }
+ 
+   /*  closed images  */
+@@ -298,6 +372,9 @@ recovery_dialog (gpointer data)
+   GString   *names = g_string_new (NULL);
+   GSList    *iter;
+ 
++  recovery_timer_id = 0;
++  recovery_pending  = NULL;
++
+   for (iter = r->files; iter; iter = iter->next)
+     {
+       const gchar *xcf  = iter->data;
+@@ -398,7 +475,10 @@ chopgimp_autosave_init (Gimp *gimp)
+       g_dir_close (dir);
+     }
+   if (r->files)
+-    g_timeout_add_seconds (4, recovery_dialog, r);
++    {
++      recovery_pending  = r;
++      recovery_timer_id = g_timeout_add_seconds (4, recovery_dialog, r);
++    }
+   else
+     recovery_free (r);
+   g_free (recup);
+@@ -420,6 +500,15 @@ chopgimp_autosave_exit (void)
+     g_source_remove (timer_id);
+   timer_id = 0;
+ 
++  /*  recovery dialog never shown: its copies stay in recuperation/  */
++  if (recovery_timer_id)
++    {
++      g_source_remove (recovery_timer_id);
++      recovery_free (recovery_pending);
++    }
++  recovery_timer_id = 0;
++  recovery_pending  = NULL;
++
+   if (! autosave_dir || ! (dir = g_dir_open (autosave_dir, 0, NULL)))
+     return;
+ 
+@@ -435,9 +524,3 @@ chopgimp_autosave_exit (void)
+       }
+   g_dir_close (dir);
+ }
+-
+-void
+-chopgimp_autosave_now (Gimp *gimp)
+-{
+-  autosave_tick (gimp);
+-}
+diff --git a/app/gui/chopgimp-autosave.h b/app/gui/chopgimp-autosave.h
+index 47bac33..407bc90 100644
+--- a/app/gui/chopgimp-autosave.h
++++ b/app/gui/chopgimp-autosave.h
+@@ -2,6 +2,7 @@
+ 
+ #pragma once
+ 
+-void   chopgimp_autosave_init (Gimp *gimp);
+-void   chopgimp_autosave_exit (void);
+-void   chopgimp_autosave_now  (Gimp *gimp);
++void    chopgimp_autosave_init       (Gimp      *gimp);
++void    chopgimp_autosave_exit       (void);
++
++guint   chopgimp_image_change_serial (GimpImage *image);
+diff --git a/app/gui/chopgimp-timelapse.c b/app/gui/chopgimp-timelapse.c
+index cd755e8..d0fb825 100644
+--- a/app/gui/chopgimp-timelapse.c
++++ b/app/gui/chopgimp-timelapse.c
+@@ -26,11 +26,12 @@
+ #include "core/gimppickable.h"
+ #include "core/gimpprojection.h"
+ 
++#include "chopgimp-autosave.h"
+ #include "chopgimp-timelapse.h"
+ 
+ 
+ static guint       timer   = 0;
+-static GHashTable *last_dt = NULL;   /*  image id → dirty time of the last frame  */
++static GHashTable *last_dt = NULL;   /*  image id → change serial of the last frame  */
+ static GHashTable *n_frame = NULL;   /*  image id → next frame number  */
+ 
+ static void
+@@ -71,28 +72,43 @@ capture (GimpImage *image)
+ static gboolean
+ tick (gpointer data)
+ {
+-  Gimp  *gimp = data;
+-  GList *list;
++  Gimp       *gimp = data;
++  GList      *list;
++  GHashTable *alive;
++  GList      *ids, *iter;
++
++  alive = g_hash_table_new (NULL, NULL);
+ 
+   for (list = gimp_get_image_iter (gimp); list; list = g_list_next (list))
+     {
+-      GimpImage *image = list->data;
+-      gint       id    = gimp_image_get_id (image);
+-      gint64     dt    = gimp_image_get_dirty_time (image);
+-      gint64    *prev  = g_hash_table_lookup (last_dt, GINT_TO_POINTER (id));
++      GimpImage *image  = list->data;
++      gint       id     = gimp_image_get_id (image);
++      guint      serial = chopgimp_image_change_serial (image);
++      gpointer   prev;
++
++      g_hash_table_add (alive, GINT_TO_POINTER (id));
+ 
+-      if (prev && *prev == dt)
++      if (g_hash_table_lookup_extended (last_dt, GINT_TO_POINTER (id),
++                                        NULL, &prev) &&
++          GPOINTER_TO_UINT (prev) == serial)
+         continue;
+ 
+       capture (image);
+-      if (! prev)
+-        {
+-          prev = g_new (gint64, 1);
+-          g_hash_table_insert (last_dt, GINT_TO_POINTER (id), prev);
+-        }
+-      *prev = dt;
++      g_hash_table_insert (last_dt, GINT_TO_POINTER (id),
++                           GUINT_TO_POINTER (serial));
+     }
+ 
++  /*  closed images  */
++  ids = g_hash_table_get_keys (last_dt);
++  for (iter = ids; iter; iter = iter->next)
++    if (! g_hash_table_contains (alive, iter->data))
++      {
++        g_hash_table_remove (last_dt, iter->data);
++        g_hash_table_remove (n_frame, iter->data);
++      }
++  g_list_free (ids);
++  g_hash_table_destroy (alive);
++
+   return G_SOURCE_CONTINUE;
+ }
+ 
+@@ -108,7 +124,7 @@ chopgimp_timelapse_set_recording (Gimp     *gimp,
+ {
+   if (! last_dt)
+     {
+-      last_dt = g_hash_table_new_full (NULL, NULL, NULL, g_free);
++      last_dt = g_hash_table_new (NULL, NULL);
+       n_frame = g_hash_table_new (NULL, NULL);
+     }
+ 
+diff --git a/app/gui/gui.c b/app/gui/gui.c
+index a080c6a..228f43d 100644
+--- a/app/gui/gui.c
++++ b/app/gui/gui.c
+@@ -49,6 +49,7 @@
+ #include "display/gimpdisplay-foreach.h"
+ #include "display/gimpdisplayshell.h"
+ #include "display/gimpstatusbar.h"
++#include "display/chopgimp-popup-palette.h"
+ 
+ #include "tools/gimp-tools.h"
+ #include "tools/gimptool.h"
+@@ -668,6 +669,9 @@ gui_restore_callback (Gimp               *gimp,
+ /*  ChopGimp: traceur de plantage — images ouvertes (repris dans le
+  *  rapport) et rapport de la session précédente au démarrage
+  */
++static guint chopgimp_images_tick_id    = 0;
++static guint chopgimp_crash_previous_id = 0;
++
+ static gboolean
+ chopgimp_crash_images_tick (gpointer data)
+ {
+@@ -696,7 +700,7 @@ chopgimp_crash_images_tick (gpointer data)
+   if (g_strcmp0 (previous, str->str))
+     {
+       chopgimp_crash_note_images (str->str);
+-      g_printerr ("[images]\n%s", str->str);
++      chopgimp_crash_log_line ("[images]\n%s", str->str);
+       g_free (previous);
+       previous = g_strdup (str->str);
+     }
+@@ -743,7 +747,8 @@ static gboolean
+ chopgimp_crash_test (gpointer data)
+ {
+   if (GPOINTER_TO_INT (data))
+-    g_thread_new ("chopgimp-crash-test", chopgimp_crash_test_now, NULL);
++    g_thread_unref (g_thread_new ("chopgimp-crash-test",
++                                  chopgimp_crash_test_now, NULL));
+   else
+     chopgimp_crash_test_now (NULL);
+   return G_SOURCE_REMOVE;
+@@ -752,10 +757,13 @@ chopgimp_crash_test (gpointer data)
+ static gboolean
+ chopgimp_crash_previous (gpointer data)
+ {
+-  gchar     *report = chopgimp_crash_take_previous ();
++  gchar     *report;
+   GtkWidget *dialog;
+   gchar     *path, *nl, *details;
+ 
++  chopgimp_crash_previous_id = 0;
++
++  report = chopgimp_crash_take_previous ();
+   if (! report)
+     return G_SOURCE_REMOVE;
+ 
+@@ -899,9 +907,14 @@ gui_restore_after_callback (Gimp               *gimp,
+   gdk_notify_startup_complete ();
+ 
+   /*  ChopGimp: traceur de plantage, enregistrement automatique  */
+-  g_timeout_add_seconds (5, chopgimp_crash_images_tick, gimp);
++  chopgimp_images_tick_id =
++    g_timeout_add_seconds (5, chopgimp_crash_images_tick, gimp);
+   chopgimp_autosave_init (gimp);
+-  g_timeout_add_seconds (3, chopgimp_crash_previous, gimp);
++  chopgimp_crash_previous_id =
++    g_timeout_add_seconds (3, chopgimp_crash_previous, gimp);
++
++  /*  ChopGimp: recent brushes of the popup palette, from the start  */
++  chopgimp_popup_palette_track (gimp);
+   if (g_getenv ("CHOPGIMP_CRASH_TEST"))
+     {
+       const gchar *v      = g_getenv ("CHOPGIMP_CRASH_TEST");
+@@ -949,6 +962,12 @@ gui_exit_callback (Gimp     *gimp,
+ 
+   /*  ChopGimp: normal exit, the autosaved copies are no longer needed  */
+   chopgimp_autosave_exit ();
++  if (chopgimp_images_tick_id)
++    g_source_remove (chopgimp_images_tick_id);
++  chopgimp_images_tick_id = 0;
++  if (chopgimp_crash_previous_id)
++    g_source_remove (chopgimp_crash_previous_id);
++  chopgimp_crash_previous_id = 0;
+ 
+   gui_unique_exit ();
+ 
+diff --git a/app/paint/gimpbrushcore.c b/app/paint/gimpbrushcore.c
+index 29f56f0..a262f99 100644
+--- a/app/paint/gimpbrushcore.c
++++ b/app/paint/gimpbrushcore.c
+@@ -38,6 +38,7 @@
+ #include "core/gimpdynamicsoutput.h"
+ #include "core/gimperror.h"
+ #include "core/gimpimage.h"
++#include "core/gimpitem.h"
+ #include "core/gimpsymmetry.h"
+ #include "core/gimptempbuf.h"
+ #include "core/gimppattern.h"
+@@ -230,6 +231,9 @@ gimp_brush_core_finalize (GObject *object)
+ 
+   g_clear_pointer (&core->rand, g_rand_free);
+   g_clear_pointer (&core->paper, g_free);
++  g_clear_pointer (&core->paper_scratch, gimp_temp_buf_unref);
++  g_clear_pointer (&core->paper_cols, g_free);
++  core->paper_cols_len = 0;
+ 
+   for (i = 0; i < KERNEL_SUBSAMPLE + 1; i++)
+     for (j = 0; j < KERNEL_SUBSAMPLE + 1; j++)
+@@ -986,49 +990,85 @@ gimp_brush_core_set_dynamics (GimpBrushCore *core,
+ }
+ 
+ /*  ChopGimp: the brush mask modulated by the paper grain, in canvas
+- *  coordinates (the grain stays still on the sheet). Returns a new mask, or
+- *  NULL when there is no texture.
++ *  coordinates (the grain stays still on the sheet; x0, y0 are canvas
++ *  coordinates of the mask's top-left pixel). Returns a scratch mask owned
++ *  by @core (valid until the next dab), or NULL when there is no texture.
+  */
+-static GimpTempBuf *
++static const GimpTempBuf *
+ chopgimp_paper_mask (GimpBrushCore     *core,
+                      const GimpTempBuf *mask,
+                      gint               x0,
+                      gint               y0)
+ {
+-  GimpTempBuf *out;
+-  gfloat      *data;
+-  gint         w, h, i, j;
+-  gdouble      k, s;
++  static const Babl *y_float = NULL;
++  const gfloat      *src;
++  gfloat            *dest;
++  gint              *cols;
++  gint               w, h, i, j;
++  gdouble            k, s;
++
++  if (! y_float)
++    y_float = babl_format ("Y float");
+ 
+-  if (! core->paper || gimp_temp_buf_get_format (mask) != babl_format ("Y float"))
++  if (! core->paper || gimp_temp_buf_get_format (mask) != y_float)
+     return NULL;
+ 
+-  out  = gimp_temp_buf_copy (mask);
+-  data = (gfloat *) gimp_temp_buf_get_data (out);
+-  w    = gimp_temp_buf_get_width  (out);
+-  h    = gimp_temp_buf_get_height (out);
+-  k    = 1.0 / MAX (core->paper_scale, 0.01);
+-  s    = core->paper_strength;
++  w = gimp_temp_buf_get_width  (mask);
++  h = gimp_temp_buf_get_height (mask);
++  k = 1.0 / MAX (core->paper_scale, 0.01);
++  s = core->paper_strength;
++
++  /*  the pasted mask is used synchronously by gimp_paint_core_paste(),
++   *  so one output buffer per core is enough
++   */
++  if (! core->paper_scratch                                ||
++      gimp_temp_buf_get_width  (core->paper_scratch) != w ||
++      gimp_temp_buf_get_height (core->paper_scratch) != h)
++    {
++      g_clear_pointer (&core->paper_scratch, gimp_temp_buf_unref);
++      core->paper_scratch = gimp_temp_buf_new (w, h, y_float);
++    }
++
++  if (core->paper_cols_len < w)
++    {
++      g_free (core->paper_cols);
++      core->paper_cols     = g_new (gint, w);
++      core->paper_cols_len = w;
++    }
++
++  src  = (const gfloat *) gimp_temp_buf_get_data (mask);
++  dest = (gfloat *) gimp_temp_buf_get_data (core->paper_scratch);
++  cols = core->paper_cols;
++
++  for (i = 0; i < w; i++)
++    {
++      gint px = ((gint) floor ((x0 + i) * k)) % core->paper_w;
++
++      if (px < 0)
++        px += core->paper_w;
++
++      cols[i] = px;
++    }
+ 
+   for (j = 0; j < h; j++)
+     {
+-      gint py = ((gint) floor ((y0 + j) * k)) % core->paper_h;
++      gint          py  = ((gint) floor ((y0 + j) * k)) % core->paper_h;
++      const gfloat *row;
++      const gfloat *in;
++      gfloat       *out;
+ 
+       if (py < 0)
+         py += core->paper_h;
+ 
+-      for (i = 0; i < w; i++)
+-        {
+-          gint px = ((gint) floor ((x0 + i) * k)) % core->paper_w;
+-
+-          if (px < 0)
+-            px += core->paper_w;
++      row = core->paper + py * core->paper_w;
++      in  = src  + j * w;
++      out = dest + j * w;
+ 
+-          data[j * w + i] *= (gfloat) (1.0 - s + s * core->paper[py * core->paper_w + px]);
+-        }
++      for (i = 0; i < w; i++)
++        out[i] = in[i] * (gfloat) (1.0 - s + s * row[cols[i]]);
+     }
+ 
+-  return out;
++  return core->paper_scratch;
+ }
+ 
+ void
+@@ -1063,7 +1103,14 @@ gimp_brush_core_paste_canvas (GimpBrushCore            *core,
+       off_y = (y < 0) ? -y : 0;
+ 
+       {
+-        GimpTempBuf *paper = chopgimp_paper_mask (core, brush_mask, x, y);
++        const GimpTempBuf *paper;
++        gint               item_x;
++        gint               item_y;
++
++        /*  grain anchored to the canvas, not to the layer  */
++        gimp_item_get_offset (GIMP_ITEM (drawable), &item_x, &item_y);
++        paper = chopgimp_paper_mask (core, brush_mask,
++                                     x + item_x, y + item_y);
+ 
+         gimp_paint_core_paste (paint_core, paper ? paper : brush_mask,
+                                off_x, off_y,
+@@ -1072,8 +1119,6 @@ gimp_brush_core_paste_canvas (GimpBrushCore            *core,
+                                image_opacity,
+                                paint_mode,
+                                mode);
+-        if (paper)
+-          gimp_temp_buf_unref (paper);
+       }
+     }
+ }
+diff --git a/app/paint/gimpbrushcore.h b/app/paint/gimpbrushcore.h
+index b556ae2..6e3dfde 100644
+--- a/app/paint/gimpbrushcore.h
++++ b/app/paint/gimpbrushcore.h
+@@ -78,6 +78,9 @@ struct _GimpBrushCore
+   gint               paper_h;
+   gdouble            paper_scale;
+   gdouble            paper_strength;
++  GimpTempBuf       *paper_scratch;    /*  reused output mask  */
++  gint              *paper_cols;       /*  per-column grain index  */
++  gint               paper_cols_len;
+ };
+ 
+ struct _GimpBrushCoreClass
+diff --git a/app/path/chopgimp-geom.cc b/app/path/chopgimp-geom.cc
+index ed9eea1..f342615 100644
+--- a/app/path/chopgimp-geom.cc
++++ b/app/path/chopgimp-geom.cc
+@@ -25,6 +25,7 @@
+ #include <algorithm>
+ #include <cmath>
+ #include <functional>
++#include <memory>
+ #include <random>
+ #include <string>
+ #include <vector>
+@@ -65,6 +66,18 @@ extern "C"
+ 
+ using Geom::Point;
+ 
++/*  freezes a path for its scope: thawed again even when lib2geom throws  */
++struct PathFreeze
++{
++  GimpPath *path;
++
++  explicit PathFreeze (GimpPath *p) : path (p) { gimp_path_freeze (path); }
++  ~PathFreeze () { gimp_path_thaw (path); }
++
++  PathFreeze (const PathFreeze &) = delete;
++  PathFreeze &operator= (const PathFreeze &) = delete;
++};
++
+ /* ─── GimpPath ⇄ Geom::PathVector ──────────────────────────────────── */
+ 
+ /*  one cubic segment (a line has its handles on its ends)  */
+@@ -305,20 +318,26 @@ from_pv (GimpPath *like, const Geom::PathVector &pv, const gchar *name = NULL)
+                                     name ? name : gimp_object_get_name (like));
+   gboolean   any   = FALSE;
+ 
+-  gimp_path_freeze (path);
+-
+-  for (const Geom::Path &p : pv)
++  try
+     {
+-      std::vector<Seg> segs = path_to_segs (p);
++      PathFreeze freeze (path);
+ 
+-      if (segs.empty ())
+-        continue;
++      for (const Geom::Path &p : pv)
++        {
++          std::vector<Seg> segs = path_to_segs (p);
+ 
+-      add_stroke (path, segs_to_stroke (segs, p.closed ()));
+-      any = TRUE;
+-    }
++          if (segs.empty ())
++            continue;
+ 
+-  gimp_path_thaw (path);
++          add_stroke (path, segs_to_stroke (segs, p.closed ()));
++          any = TRUE;
++        }
++    }
++  catch (...)
++    {
++      g_object_unref (path);
++      throw;
++    }
+ 
+   if (! any)
+     {
+@@ -1051,28 +1070,34 @@ round_corners (GimpPath *path, double radius, bool selected_only)
+   GimpImage *image  = gimp_item_get_image (GIMP_ITEM (path));
+   GimpPath  *result = gimp_path_new (image, gimp_object_get_name (path));
+ 
+-  gimp_path_freeze (result);
+-
+-  for (const Stroke &st : read_strokes (path))
++  try
+     {
+-      Geom::Path        p    = stroke_to_path (st, false);
+-      std::vector<Seg>  segs = path_to_segs (p);
+-      std::vector<bool> sel;
+-      Stroke            out;
++      PathFreeze freeze (result);
+ 
+-      if (segs.empty ())
+-        continue;
++      for (const Stroke &st : read_strokes (path))
++        {
++          Geom::Path        p    = stroke_to_path (st, false);
++          std::vector<Seg>  segs = path_to_segs (p);
++          std::vector<bool> sel;
++          Stroke            out;
+ 
+-      for (size_t k = 0; k < segs.size (); k++)
+-        sel.push_back (k < st.nodes.size () && st.nodes[k].selected);
++          if (segs.empty ())
++            continue;
+ 
+-      out = segs_to_stroke (round_segs (segs, st.closed, radius,
+-                                        selected_only ? &sel : NULL),
+-                            st.closed);
+-      add_stroke (result, out);
+-    }
++          for (size_t k = 0; k < segs.size (); k++)
++            sel.push_back (k < st.nodes.size () && st.nodes[k].selected);
+ 
+-  gimp_path_thaw (result);
++          out = segs_to_stroke (round_segs (segs, st.closed, radius,
++                                            selected_only ? &sel : NULL),
++                                st.closed);
++          add_stroke (result, out);
++        }
++    }
++  catch (...)
++    {
++      g_object_unref (result);
++      throw;
++    }
+ 
+   return result;
+ }
+@@ -1619,11 +1644,13 @@ chopgimp_geom_nodes (GimpPath        *path,
+         if (! rounded)
+           return FALSE;
+ 
+-        gimp_path_freeze (path);
+-        while ((s = gimp_path_stroke_get_next (path, NULL)))
+-          gimp_path_stroke_remove (path, s);
+-        gimp_path_add_strokes (rounded, path);
+-        gimp_path_thaw (path);
++        {
++          PathFreeze freeze (path);
++
++          while ((s = gimp_path_stroke_get_next (path, NULL)))
++            gimp_path_stroke_remove (path, s);
++          gimp_path_add_strokes (rounded, path);
++        }
+         g_object_unref (rounded);
+ 
+         return TRUE;
+@@ -1634,16 +1661,16 @@ chopgimp_geom_nodes (GimpPath        *path,
+     if (! nodes_on_strokes (strokes, op, value))
+       return FALSE;
+ 
+-    gimp_path_freeze (path);
+-
+-    while ((s = gimp_path_stroke_get_next (path, NULL)))
+-      gimp_path_stroke_remove (path, s);
++    {
++      PathFreeze freeze (path);
+ 
+-    for (const Stroke &st : strokes)
+-      if (! st.nodes.empty ())
+-        add_stroke (path, st);
++      while ((s = gimp_path_stroke_get_next (path, NULL)))
++        gimp_path_stroke_remove (path, s);
+ 
+-    gimp_path_thaw (path);
++      for (const Stroke &st : strokes)
++        if (! st.nodes.empty ())
++          add_stroke (path, st);
++    }
+ 
+     return TRUE;
+     }
+@@ -2145,24 +2172,24 @@ chopgimp_geom_effects (GimpPath    *path,
+ {
+   try
+     {
+-    GKeyFile        *kf = g_key_file_new ();
+-    gchar          **groups;
++    /*  freed on every way out, exceptions included  */
++    std::unique_ptr<GKeyFile, void (*) (GKeyFile *)>
++      kf (g_key_file_new (), g_key_file_free);
++    std::unique_ptr<gchar *, void (*) (gchar **)>
++      groups (NULL, g_strfreev);
+     Geom::PathVector pv;
+     GimpImage       *image = gimp_item_get_image (GIMP_ITEM (path));
+ 
+-    if (! spec || ! g_key_file_load_from_data (kf, spec, -1, G_KEY_FILE_NONE, NULL))
+-      {
+-        g_key_file_free (kf);
+-        return NULL;
+-      }
++    if (! spec || ! g_key_file_load_from_data (kf.get (), spec, -1, G_KEY_FILE_NONE, NULL))
++      return NULL;
+ 
+-    pv     = to_pv (path);
+-    groups = g_key_file_get_groups (kf, NULL);
++    pv = to_pv (path);
++    groups.reset (g_key_file_get_groups (kf.get (), NULL));
+ 
+     /*  the effects apply in the order of their groups ([0], [1]…)  */
+     std::vector<std::string> order;
+ 
+-    for (gchar **g = groups; g && *g; g++)
++    for (gchar **g = groups.get (); g && *g; g++)
+       order.push_back (*g);
+ 
+     std::sort (order.begin (), order.end (),
+@@ -2171,12 +2198,12 @@ chopgimp_geom_effects (GimpPath    *path,
+ 
+     for (const std::string &g : order)
+       {
+-        if (kd (kf, g.c_str (), "enabled", 1) < 0.5)
++        if (kd (kf.get (), g.c_str (), "enabled", 1) < 0.5)
+           continue;
+ 
+         try
+           {
+-            pv = apply_effect (kf, g.c_str (), pv, image);
++            pv = apply_effect (kf.get (), g.c_str (), pv, image);
+           }
+         catch (std::exception &e)
+           {
+@@ -2188,9 +2215,6 @@ chopgimp_geom_effects (GimpPath    *path,
+           }
+       }
+ 
+-    g_strfreev (groups);
+-    g_key_file_free (kf);
+-
+     return from_pv (path, pv);
+     }
+   catch (...)
+diff --git a/app/pdb/chopgimp-cmds.c b/app/pdb/chopgimp-cmds.c
+index 3962826..09d884e 100644
+--- a/app/pdb/chopgimp-cmds.c
++++ b/app/pdb/chopgimp-cmds.c
+@@ -29,6 +29,7 @@
+ #include "pdb-types.h"
+ 
+ #include "core/gimpimage.h"
++#include "core/gimpimage-undo.h"
+ #include "core/gimpimage-undo-push.h"
+ #include "core/gimpparamspecs.h"
+ 
+@@ -104,14 +105,32 @@ divide_invoker (GimpProcedure         *procedure,
+   if (n < 1)
+     return gimp_procedure_get_return_values (procedure, FALSE, NULL);
+ 
+-  image  = gimp_item_get_image (GIMP_ITEM (paths[0]));
++  image = paths[0] ? gimp_item_get_image (GIMP_ITEM (paths[0])) : NULL;
++
++  if (! image || ! gimp_item_is_attached (GIMP_ITEM (paths[0])))
++    {
++      g_set_error_literal (error, GIMP_PDB_ERROR, GIMP_PDB_ERROR_INVALID_ARGUMENT,
++                           _("Les tracés doivent appartenir à une image."));
++      return gimp_procedure_get_return_values (procedure, FALSE,
++                                               error ? *error : NULL);
++    }
++
+   pieces = chopgimp_geom_divide (paths, n, &n_pieces);
+ 
+   /*  the pieces are added on top of the paths of the image, the first
+-   *  one at the top (core object arrays are not readable from Python)
++   *  one at the top (core object arrays are not readable from Python);
++   *  all of them are a single undo step
+    */
+-  for (gint i = n_pieces - 1; i >= 0; i--)
+-    gimp_image_add_path (image, pieces[i], GIMP_IMAGE_ACTIVE_PARENT, 0, TRUE);
++  if (n_pieces > 0)
++    {
++      gimp_image_undo_group_start (image, GIMP_UNDO_GROUP_MISC,
++                                   _("Diviser les tracés"));
++
++      for (gint i = n_pieces - 1; i >= 0; i--)
++        gimp_image_add_path (image, pieces[i], GIMP_IMAGE_ACTIVE_PARENT, 0, TRUE);
++
++      gimp_image_undo_group_end (image);
++    }
+   g_free (pieces);
+ 
+   return_vals = gimp_procedure_get_return_values (procedure, TRUE, NULL);
+diff --git a/app/text/chopgimp-textfx.c b/app/text/chopgimp-textfx.c
+index bcc7086..c68fd14 100644
+--- a/app/text/chopgimp-textfx.c
++++ b/app/text/chopgimp-textfx.c
+@@ -141,12 +141,6 @@ spec_double (const gchar *spec,
+   return d;
+ }
+ 
+-const gchar **
+-chopgimp_text_fx_warp_styles (void)
+-{
+-  return warp_styles;
+-}
+-
+ 
+ /*  outlines  */
+ 
+@@ -849,7 +843,7 @@ fx_on_path (ChopGimpTextFx *fx,
+       for (s = 0; s < piece->subs->len; s++)
+         {
+           Sub *sub = g_ptr_array_index (piece->subs, s);
+-          Pt   P, T, N;
++          Pt   P = { 0.0, 0.0 }, T = { 1.0, 0.0 }, N = { 0.0, -1.0 };
+ 
+           if (! sub->bend)
+             {
+@@ -1069,7 +1063,7 @@ fx_in_shape (ChopGimpTextFx *fx,
+       PangoLayout     *pl = pango_layout_copy (src);
+       PangoLayoutLine *l0;
+       PangoRectangle   ink, log;
+-      gdouble          lh, x1, x2;
++      gdouble          lh, x1 = 0.0, x2 = 0.0;
+       gint             len;
+ 
+       pango_layout_set_text (pl, txt + pos, -1);
+@@ -1432,11 +1426,7 @@ chopgimp_text_fx_build (GimpTextLayer  *layer,
+       return NULL;
+     }
+ 
+-  pad = 2.0;
+-  if (text->outline != GIMP_TEXT_OUTLINE_NONE)
+-    pad += text->outline_width *
+-           (text->outline_join_style == GIMP_JOIN_MITER ?
+-            MAX (1.0, MIN (text->outline_miter_limit, 4.0)) : 1.0);
++  pad = chopgimp_text_fx_padding (text);
+ 
+   fx->ox     = (gint) floor (x1 - pad);
+   fx->oy     = (gint) floor (y1 - pad);
+@@ -1446,6 +1436,20 @@ chopgimp_text_fx_build (GimpTextLayer  *layer,
+   return fx;
+ }
+ 
++/*  the margin around the glyphs of a layer drawn by this renderer  */
++gdouble
++chopgimp_text_fx_padding (GimpText *text)
++{
++  gdouble pad = 2.0;
++
++  if (text->outline != GIMP_TEXT_OUTLINE_NONE)
++    pad += text->outline_width *
++           (text->outline_join_style == GIMP_JOIN_MITER ?
++            MAX (1.0, MIN (text->outline_miter_limit, 4.0)) : 1.0);
++
++  return pad;
++}
++
+ gboolean
+ chopgimp_text_fx_get_size (ChopGimpTextFx *fx,
+                            gint           *width,
+@@ -1606,16 +1610,31 @@ fx_stroke (ChopGimpTextFx *fx,
+            GimpTextLayout *layout,
+            GimpText       *text)
+ {
+-  const Babl *format = gimp_text_layout_get_format (layout, "double");
+-  gdouble     color[3];
++  cairo_save (cr);
+ 
+-  gegl_color_get_pixel (text->outline_foreground, format, color);
+-  if (babl_space_is_gray (babl_format_get_space (format)))
+-    color[1] = color[2] = color[0];
++  /*  the outline source, as the plain renderer: a pattern or a color  */
++  if (text->outline_style == GIMP_CUSTOM_STYLE_PATTERN && text->outline_pattern)
++    {
++      cairo_surface_t *surface =
++        chopgimp_text_layer_pattern_surface (text->outline_pattern);
+ 
+-  cairo_save (cr);
++      cairo_set_source_surface (cr, surface, 0.0, 0.0);
++      cairo_surface_destroy (surface);
++
++      cairo_pattern_set_extend (cairo_get_source (cr), CAIRO_EXTEND_REPEAT);
++    }
++  else
++    {
++      const Babl *format = gimp_text_layout_get_format (layout, "double");
++      gdouble     color[3];
++
++      gegl_color_get_pixel (text->outline_foreground, format, color);
++      if (babl_space_is_gray (babl_format_get_space (format)))
++        color[1] = color[2] = color[0];
++
++      cairo_set_source_rgba (cr, color[0], color[1], color[2], 1.0);
++    }
+ 
+-  cairo_set_source_rgba (cr, color[0], color[1], color[2], 1.0);
+   cairo_set_antialias (cr, text->outline_antialias ?
+                        CAIRO_ANTIALIAS_GRAY : CAIRO_ANTIALIAS_NONE);
+   cairo_set_line_join (cr,
+diff --git a/app/text/chopgimp-textfx.h b/app/text/chopgimp-textfx.h
+index f995590..64b28d4 100644
+--- a/app/text/chopgimp-textfx.h
++++ b/app/text/chopgimp-textfx.h
+@@ -51,8 +51,11 @@ gchar          * chopgimp_text_fx_path_name    (GimpPath      *path);
+ void             chopgimp_text_fx_sync_mask    (GimpTextLayer *layer);
+ void             chopgimp_text_fx_reset_anchor (GimpTextLayer *layer);
+ gboolean         chopgimp_text_fx_moves_glyphs (const gchar   *spec);
++gdouble          chopgimp_text_fx_padding      (GimpText      *text);
+ 
+ /*  helpers for the user interface  */
+ gchar          * chopgimp_text_fx_get_value (const gchar   *spec,
+                                              const gchar   *key);
+-const gchar   ** chopgimp_text_fx_warp_styles (void);
++
++/*  a pattern as a cairo surface (in gimptextlayer.c)  */
++cairo_surface_t * chopgimp_text_layer_pattern_surface (GimpPattern *pattern);
+diff --git a/app/text/gimptextlayer.c b/app/text/gimptextlayer.c
+index 2ff58e3..d344d4f 100644
+--- a/app/text/gimptextlayer.c
++++ b/app/text/gimptextlayer.c
+@@ -1018,6 +1018,14 @@ gimp_temp_buf_create_cairo_surface (GimpTempBuf *temp_buf)
+   return surface;
+ }
+ 
++cairo_surface_t *
++chopgimp_text_layer_pattern_surface (GimpPattern *pattern)
++{
++  g_return_val_if_fail (GIMP_IS_PATTERN (pattern), NULL);
++
++  return gimp_temp_buf_create_cairo_surface (gimp_pattern_get_mask (pattern));
++}
++
+ static void
+ gimp_text_layer_render_layout (GimpTextLayer  *layer,
+                                ChopGimpTextFx *fx,
+@@ -1199,6 +1207,27 @@ gimp_text_layer_chopgimp_refresh (GimpTextLayer *layer)
+ }
+ 
+ 
++/*  ChopGimp: text on a path or in a shape  */
++static gboolean
++chopgimp_text_layer_follows_path (GimpTextLayer *layer)
++{
++  GimpText *text = layer->text;
++  gchar    *mode;
++
++  if (! text || ! text->chopgimp_fx)
++    return FALSE;
++
++  if ((mode = chopgimp_text_fx_get_value (text->chopgimp_fx, "path")) ||
++      (mode = chopgimp_text_fx_get_value (text->chopgimp_fx, "shape")))
++    {
++      g_free (mode);
++      return TRUE;
++    }
++
++  return FALSE;
++}
++
++
+ /*  ChopGimp: an affine transformation becomes part of the text matrix,
+  *  the layer stays an editable text layer (Photoshop behaviour).
+  *  Returns FALSE when the pixels have to be transformed instead.
+@@ -1213,7 +1242,6 @@ chopgimp_text_layer_apply_matrix (GimpTextLayer     *layer,
+   GimpText       *text  = layer->text;
+   GimpTextLayout *layout;
+   GimpMatrix2     lin;
+-  gchar          *mode;
+   gdouble         xres, yres;
+   gdouble         px, py, nx, ny;
+   gint            ex, ey, ax, ay, bx, by;
+@@ -1228,12 +1256,8 @@ chopgimp_text_layer_apply_matrix (GimpTextLayer     *layer,
+    *  path is transformed (image rotate…) and the text follows it; the
+    *  layer must not be rasterized
+    */
+-  if ((mode = chopgimp_text_fx_get_value (text->chopgimp_fx, "path")) ||
+-      (mode = chopgimp_text_fx_get_value (text->chopgimp_fx, "shape")))
+-    {
+-      g_free (mode);
+-      return TRUE;
+-    }
++  if (chopgimp_text_layer_follows_path (layer))
++    return TRUE;
+ 
+   gimp_image_get_resolution (image, &xres, &yres);
+   layout = gimp_text_layout_new (text, image, xres, yres, NULL);
+@@ -1282,12 +1306,24 @@ chopgimp_text_layer_transform (GimpItem               *item,
+                                GimpProgress           *progress,
+                                gboolean                push_undo)
+ {
+-  GimpMatrix3 m = *matrix;
++  GimpTextLayer *layer = GIMP_TEXT_LAYER (item);
++  GimpMatrix3    m     = *matrix;
+ 
+   if (direction == GIMP_TRANSFORM_BACKWARD)
+     gimp_matrix3_invert (&m);
+ 
+-  if (! chopgimp_text_layer_apply_matrix (GIMP_TEXT_LAYER (item), &m, push_undo))
++  /*  text on a path or in a shape follows its path: a transformation of
++   *  the layer alone is ignored, say so instead of doing nothing
++   */
++  if (layer->text && gimp_item_is_attached (item) &&
++      ! gimp_rasterizable_is_rasterized (GIMP_RASTERIZABLE (layer)) &&
++      chopgimp_text_layer_follows_path (layer))
++    gimp_message_literal (gimp_item_get_image (item)->gimp, NULL,
++                          GIMP_MESSAGE_INFO,
++                          _("Ce texte suit un tracé : transformez le tracé "
++                            "pour déplacer ou déformer le texte."));
++
++  if (! chopgimp_text_layer_apply_matrix (layer, &m, push_undo))
+     GIMP_ITEM_CLASS (parent_class)->transform (item, context, matrix, direction,
+                                                interpolation, clip_result,
+                                                progress, push_undo);
+@@ -1339,11 +1375,63 @@ chopgimp_text_layer_scale (GimpItem              *item,
+                            GimpInterpolationType  interpolation,
+                            GimpProgress          *progress)
+ {
+-  GimpMatrix3 m;
+-  gdouble     sx = (gdouble) new_width  / MAX (1, gimp_item_get_width  (item));
+-  gdouble     sy = (gdouble) new_height / MAX (1, gimp_item_get_height (item));
++  GimpTextLayer *layer = GIMP_TEXT_LAYER (item);
++  GimpText      *text  = layer->text;
++  GimpMatrix3    m;
++  gint           w     = MAX (1, gimp_item_get_width  (item));
++  gint           h     = MAX (1, gimp_item_get_height (item));
++  gdouble        sx    = (gdouble) new_width  / w;
++  gdouble        sy    = (gdouble) new_height / h;
++
++  /*  a uniform scale of a plain, untransformed text without effects
++   *  (image scaling): scale the text itself rather than turning it into
++   *  a matrix, so it stays a plain text.  The new size is rounded, take
++   *  the ratio of the larger side, the more precise one.
++   */
++  if (text                                                       &&
++      ! text->markup                                             &&
++      ! chopgimp_text_fx_moves_glyphs (text->chopgimp_fx)        &&
++      fabs (text->transformation.coeff[0][0] - 1.0) <= 1e-6      &&
++      fabs (text->transformation.coeff[0][1])       <= 1e-6      &&
++      fabs (text->transformation.coeff[1][0])       <= 1e-6      &&
++      fabs (text->transformation.coeff[1][1] - 1.0) <= 1e-6      &&
++      fabs (sx - sy) <= 1.0 / w + 1.0 / h                        &&
++      ! gimp_rasterizable_is_rasterized (GIMP_RASTERIZABLE (layer)) &&
++      ! gimp_layer_get_mask (GIMP_LAYER (layer)))
++    {
++      gdouble  s        = (w >= h) ? sx : sy;
++      gboolean attached = gimp_item_is_attached (item);
++      gboolean fixed    = (text->box_mode == GIMP_TEXT_BOX_FIXED);
++
++      if (attached)
++        gimp_text_layer_set (layer, NULL,
++                             "font-size",      MIN (text->font_size * s, 8192.0),
++                             "letter-spacing", text->letter_spacing * s,
++                             "line-spacing",   text->line_spacing   * s,
++                             "indent",         text->indent         * s,
++                             "outline-width",  MIN (text->outline_width * s, 8192.0),
++                             "box-width",      fixed ? text->box_width  * s : text->box_width,
++                             "box-height",     fixed ? text->box_height * s : text->box_height,
++                             NULL);
++      else
++        g_object_set (text,
++                      "font-size",      MIN (text->font_size * s, 8192.0),
++                      "letter-spacing", text->letter_spacing * s,
++                      "line-spacing",   text->line_spacing   * s,
++                      "indent",         text->indent         * s,
++                      "outline-width",  MIN (text->outline_width * s, 8192.0),
++                      "box-width",      fixed ? text->box_width  * s : text->box_width,
++                      "box-height",     fixed ? text->box_height * s : text->box_height,
++                      NULL);
++
++      gimp_item_translate (item,
++                           new_offset_x - gimp_item_get_offset_x (item),
++                           new_offset_y - gimp_item_get_offset_y (item),
++                           attached);
++      return;
++    }
+ 
+-  /*  image scaling: the whole image is resampled, keep the default  */
++  /*  otherwise the scale becomes part of the text matrix  */
+   gimp_matrix3_identity (&m);
+   gimp_matrix3_translate (&m, -gimp_item_get_offset_x (item),
+                               -gimp_item_get_offset_y (item));
+diff --git a/app/text/gimptextlayout.c b/app/text/gimptextlayout.c
+index e1ce2a7..3ecae55 100644
+--- a/app/text/gimptextlayout.c
++++ b/app/text/gimptextlayout.c
+@@ -578,8 +578,8 @@ gimp_text_layout_split_markup (const gchar  *markup,
+                                gchar       **content,
+                                gchar       **close_tag)
+ {
+-  gchar *p_open;
+-  gchar *p_close;
++  const gchar *p_open;
++  const gchar *p_close;
+ 
+   p_open = strstr (markup, "<markup>");
+   if (! p_open)
+diff --git a/app/tools/chopgimp-shapebuildertool.c b/app/tools/chopgimp-shapebuildertool.c
+index a8b1a5c..b2a07c7 100644
+--- a/app/tools/chopgimp-shapebuildertool.c
++++ b/app/tools/chopgimp-shapebuildertool.c
+@@ -62,6 +62,7 @@
+ #include "chopgimp-shapebuildertool.h"
+ #include "gimppathoptions.h"
+ #include "gimppathtool.h"
++#include "chopgimp-tools.h"
+ #include "gimptoolcontrol.h"
+ #include "gimptooloptions-gui.h"
+ 
+@@ -284,6 +285,7 @@ shape_builder_apply (GimpShapeBuilderTool *sb,
+   GimpLayer   *parent  = gimp_layer_get_parent (top);
+   gint         pos     = gimp_item_get_index (GIMP_ITEM (top));
+   GimpLayer   *merged  = NULL;
++  GList       *paths   = NULL;
+   GList       *iter;
+ 
+   if (! sb->picked->len)
+@@ -368,8 +370,41 @@ shape_builder_apply (GimpShapeBuilderTool *sb,
+       g_free (picked);
+     }
+ 
++  /*  the input shapes go, and with them their paths, unless another
++   *  vector layer still draws one
++   */
+   for (iter = sb->layers; iter; iter = iter->next)
+-    gimp_image_remove_layer (image, iter->data, TRUE, NULL);
++    {
++      GimpPath *path = gimp_vector_layer_get_path (iter->data);
++
++      if (path)
++        paths = g_list_prepend (paths, g_object_ref (path));
++
++      gimp_image_remove_layer (image, iter->data, TRUE, NULL);
++    }
++
++  for (iter = paths; iter; iter = iter->next)
++    {
++      GimpPath *path   = iter->data;
++      gboolean  in_use = FALSE;
++      GList    *all;
++      GList    *l;
++
++      if (! gimp_item_is_attached (GIMP_ITEM (path)) ||
++          gimp_item_get_image (GIMP_ITEM (path)) != image)
++        continue;
++
++      all = gimp_image_get_layer_list (image);
++      for (l = all; l && ! in_use; l = l->next)
++        if (gimp_item_is_vector_layer (GIMP_ITEM (l->data)) &&
++            gimp_vector_layer_get_path (l->data) == path)
++          in_use = TRUE;
++      g_list_free (all);
++
++      if (! in_use)
++        gimp_image_remove_path (image, path, TRUE, NULL);
++    }
++  g_list_free_full (paths, g_object_unref);
+ 
+   if (merged)
+     {
+@@ -385,23 +420,6 @@ shape_builder_apply (GimpShapeBuilderTool *sb,
+   shape_builder_clear (sb);
+ }
+ 
+-static void
+-shape_builder_redraw (GimpShapeBuilderTool *sb,
+-                      GimpDisplay          *display)
+-{
+-  GimpDrawTool *draw_tool = GIMP_DRAW_TOOL (sb);
+-
+-  gimp_draw_tool_pause (draw_tool);
+-
+-  if (gimp_draw_tool_is_active (draw_tool) && draw_tool->display != display)
+-    gimp_draw_tool_stop (draw_tool);
+-
+-  if (! gimp_draw_tool_is_active (draw_tool))
+-    gimp_draw_tool_start (draw_tool, display);
+-
+-  gimp_draw_tool_resume (draw_tool);
+-}
+-
+ static void
+ gimp_shape_builder_tool_oper_update (GimpTool         *tool,
+                                      const GimpCoords *coords,
+@@ -430,7 +448,7 @@ gimp_shape_builder_tool_oper_update (GimpTool         *tool,
+   if (hover != sb->hover || ! gimp_draw_tool_is_active (GIMP_DRAW_TOOL (tool)))
+     {
+       sb->hover = hover;
+-      shape_builder_redraw (sb, display);
++      chopgimp_draw_tool_redraw (GIMP_DRAW_TOOL (sb), display);
+     }
+ }
+ 
+@@ -468,7 +486,7 @@ gimp_shape_builder_tool_button_press (GimpTool            *tool,
+     g_array_append_val (sb->picked, r);
+ 
+   gimp_tool_control_activate (tool->control);
+-  shape_builder_redraw (sb, display);
++  chopgimp_draw_tool_redraw (GIMP_DRAW_TOOL (sb), display);
+ }
+ 
+ static void
+@@ -486,7 +504,7 @@ gimp_shape_builder_tool_motion (GimpTool         *tool,
+   if (r >= 0 && ! shape_builder_picked (sb, r))
+     g_array_append_val (sb->picked, r);
+ 
+-  shape_builder_redraw (sb, display);
++  chopgimp_draw_tool_redraw (GIMP_DRAW_TOOL (sb), display);
+ }
+ 
+ static void
+diff --git a/app/tools/chopgimp-shapetool.c b/app/tools/chopgimp-shapetool.c
+index fb27838..4513707 100644
+--- a/app/tools/chopgimp-shapetool.c
++++ b/app/tools/chopgimp-shapetool.c
+@@ -636,13 +636,19 @@ shape_options_notify (GObject       *object,
+       strcmp (pspec->name, "enable-fill") && strcmp (pspec->name, "enable-stroke"))
+     return;
+ 
+-  /*  undoable; a burst of changes (a slider) is one step  */
++  /*  undoable; a burst of changes (a slider) is one step, separate
++   *  edits a moment apart are not
++   */
+   {
+     GimpUndo *undo = gimp_image_undo_can_compress (shape->image,
+                                                    GIMP_TYPE_VECTOR_LAYER_UNDO,
+                                                    GIMP_UNDO_VECTOR_LAYER);
+ 
+-    if (! undo || GIMP_ITEM_UNDO (undo)->item != GIMP_ITEM (layer))
++    if (undo &&
++        GIMP_ITEM_UNDO (undo)->item == GIMP_ITEM (layer) &&
++        gimp_undo_get_age (undo) <= 1)
++      gimp_undo_reset_age (undo);
++    else
+       gimp_image_undo_push_vector_layer (shape->image, _("Style de la forme"),
+                                          layer, NULL);
+   }
+diff --git a/app/tools/chopgimp-spothealtool.c b/app/tools/chopgimp-spothealtool.c
+index 19835d8..53892bd 100644
+--- a/app/tools/chopgimp-spothealtool.c
++++ b/app/tools/chopgimp-spothealtool.c
+@@ -36,6 +36,7 @@
+ #include "core/gimp.h"
+ #include "core/gimpchannel.h"
+ #include "core/gimpchannel-select.h"
++#include "core/gimpcontainer.h"
+ #include "core/gimpimage.h"
+ #include "core/gimpimage-undo.h"
+ #include "core/gimplayer.h"
+@@ -49,6 +50,7 @@
+ #include "display/gimpdisplayshell.h"
+ 
+ #include "chopgimp-spothealtool.h"
++#include "chopgimp-tools.h"
+ #include "gimptoolcontrol.h"
+ #include "gimptooloptions-gui.h"
+ 
+@@ -191,23 +193,6 @@ gimp_spot_heal_tool_register (GimpToolRegisterCallback  callback,
+                 data);
+ }
+ 
+-static void
+-spot_heal_redraw (GimpSpotHealTool *st,
+-                  GimpDisplay      *display)
+-{
+-  GimpDrawTool *draw_tool = GIMP_DRAW_TOOL (st);
+-
+-  gimp_draw_tool_pause (draw_tool);
+-
+-  if (gimp_draw_tool_is_active (draw_tool) && draw_tool->display != display)
+-    gimp_draw_tool_stop (draw_tool);
+-
+-  if (! gimp_draw_tool_is_active (draw_tool))
+-    gimp_draw_tool_start (draw_tool, display);
+-
+-  gimp_draw_tool_resume (draw_tool);
+-}
+-
+ static void
+ spot_heal_add_point (GimpSpotHealTool *st,
+                      gdouble           x,
+@@ -267,7 +252,7 @@ gimp_spot_heal_tool_button_press (GimpTool            *tool,
+   spot_heal_add_point (st, coords->x, coords->y, TRUE);
+ 
+   gimp_tool_control_activate (tool->control);
+-  spot_heal_redraw (st, display);
++  chopgimp_draw_tool_redraw (GIMP_DRAW_TOOL (st), display);
+ }
+ 
+ static void
+@@ -282,7 +267,7 @@ gimp_spot_heal_tool_motion (GimpTool         *tool,
+   st->cx = coords->x;
+   st->cy = coords->y;
+   spot_heal_add_point (st, coords->x, coords->y, FALSE);
+-  spot_heal_redraw (st, display);
++  chopgimp_draw_tool_redraw (GIMP_DRAW_TOOL (st), display);
+ }
+ 
+ static void
+@@ -299,6 +284,8 @@ spot_heal_apply (GimpSpotHealTool *st,
+   GimpValueArray *return_vals;
+   GError         *error   = NULL;
+   gboolean        ok;
++  gboolean        alive;
++  gboolean        shown;
+   gint            r       = MAX (1, (gint) (SPOT_HEAL_OPTIONS (st)->size / 2.0 + 0.5));
+   guint           i;
+ 
+@@ -343,20 +330,17 @@ spot_heal_apply (GimpSpotHealTool *st,
+                                         GIMP_TYPE_CORE_OBJECT_ARRAY, array,
+                                         G_TYPE_NONE);
+ 
+-  if (gimp_display_get_image (display) != image)
+-    {
+-      /*  image closed during the fill  */
+-      g_clear_error (&error);
+-      gimp_value_array_unref (return_vals);
+-      g_clear_object (&saved);
+-      g_object_unref (display);
+-      g_object_unref (image);
+-      return;
+-    }
++  /*  the image (or only its display) may have been closed during the
++   *  fill: the image is still referenced, so always close the undo
++   *  group and give the selection back, but only talk to the display
++   *  if it still shows this image
++   */
++  alive = gimp_container_have (gimp->images, GIMP_OBJECT (image));
++  shown = alive && gimp_display_get_image (display) == image;
+ 
+   ok = g_value_get_enum (gimp_value_array_index (return_vals, 0)) == GIMP_PDB_SUCCESS;
+ 
+-  if (! ok)
++  if (! ok && shown)
+     gimp_tool_message_literal (tool, display,
+                                error ? error->message :
+                                _("La correction a échoué (module Resynthesizer absent ?)."));
+@@ -378,10 +362,11 @@ spot_heal_apply (GimpSpotHealTool *st,
+   gimp_image_undo_group_end (image);
+ 
+   /*  failed: no empty step left in the history  */
+-  if (! ok)
++  if (! ok && alive)
+     gimp_image_undo (image);
+ 
+-  gimp_image_flush (image);
++  if (alive)
++    gimp_image_flush (image);
+ 
+   g_object_unref (display);
+   g_object_unref (image);
+@@ -423,7 +408,7 @@ gimp_spot_heal_tool_key_press (GimpTool    *tool,
+                      (kevent->keyval == GDK_KEY_bracketright ? step : -step);
+ 
+       g_object_set (options, "size", CLAMP (size, 1.0, 1000.0), NULL);
+-      spot_heal_redraw ((GimpSpotHealTool *) tool, display);
++      chopgimp_draw_tool_redraw (GIMP_DRAW_TOOL ((GimpSpotHealTool *) tool), display);
+       return TRUE;
+     }
+ 
+@@ -443,7 +428,7 @@ gimp_spot_heal_tool_oper_update (GimpTool         *tool,
+   st->cy          = coords->y;
+   st->show_cursor = proximity;
+ 
+-  spot_heal_redraw (st, display);
++  chopgimp_draw_tool_redraw (GIMP_DRAW_TOOL (st), display);
+ }
+ 
+ static void
+diff --git a/app/tools/chopgimp-tools.c b/app/tools/chopgimp-tools.c
+index 3f997d3..a37952d 100644
+--- a/app/tools/chopgimp-tools.c
++++ b/app/tools/chopgimp-tools.c
+@@ -42,6 +42,7 @@
+ #include "display/gimpdisplay.h"
+ 
+ #include "chopgimp-tools.h"
++#include "gimpdrawtool.h"
+ #include "tool_manager.h"
+ 
+ #include "gimp-intl.h"
+@@ -243,3 +244,22 @@ chopgimp_switch_tool_later (Gimp             *gimp,
+ 
+   g_idle_add ((GSourceFunc) chopgimp_switch_tool_idle, s);
+ }
++
++
++/*  (re)start a draw tool on @display and redraw it  */
++void
++chopgimp_draw_tool_redraw (GimpDrawTool *draw_tool,
++                           GimpDisplay  *display)
++{
++  g_return_if_fail (GIMP_IS_DRAW_TOOL (draw_tool));
++
++  gimp_draw_tool_pause (draw_tool);
++
++  if (gimp_draw_tool_is_active (draw_tool) && draw_tool->display != display)
++    gimp_draw_tool_stop (draw_tool);
++
++  if (! gimp_draw_tool_is_active (draw_tool))
++    gimp_draw_tool_start (draw_tool, display);
++
++  gimp_draw_tool_resume (draw_tool);
++}
+diff --git a/app/tools/chopgimp-tools.h b/app/tools/chopgimp-tools.h
+index c9cac99..6d98fc9 100644
+--- a/app/tools/chopgimp-tools.h
++++ b/app/tools/chopgimp-tools.h
+@@ -30,3 +30,5 @@ void     chopgimp_switch_tool_later      (Gimp             *gimp,
+                                           const GimpCoords *press_coords,
+                                           guint32           time,
+                                           GdkModifierType   state);
++void     chopgimp_draw_tool_redraw       (GimpDrawTool     *draw_tool,
++                                          GimpDisplay      *display);
+diff --git a/app/tools/gimpbucketfilltool.c b/app/tools/gimpbucketfilltool.c
+index ac302a3..d06e2cb 100644
+--- a/app/tools/gimpbucketfilltool.c
++++ b/app/tools/gimpbucketfilltool.c
+@@ -89,6 +89,10 @@ struct _GimpBucketFillToolPrivate
+   /* Temp property save */
+   GimpBucketFillMode  fill_mode;
+   GimpBucketFillArea  fill_area;
++
++  /* ChopGimp: layer grow + fill as one undo step (group open on it) */
++  GimpImage          *undo_image;
++  gboolean            committed;
+ };
+ 
+ 
+@@ -319,6 +323,12 @@ gimp_bucket_fill_tool_finalize (GObject *object)
+   g_signal_handlers_disconnect_by_data (options, tool);
+   g_signal_handlers_disconnect_by_data (context, tool);
+ 
++  if (tool->priv->undo_image)
++    {
++      gimp_image_undo_group_end (tool->priv->undo_image);
++      tool->priv->undo_image = NULL;
++    }
++
+   G_OBJECT_CLASS (parent_class)->finalize (object);
+ }
+ 
+@@ -505,6 +515,7 @@ gimp_bucket_fill_tool_commit (GimpBucketFillTool *tool)
+     {
+       gimp_drawable_filter_commit (tool->priv->filter, FALSE,
+                                    GIMP_PROGRESS (tool), FALSE);
++      tool->priv->committed = TRUE;
+       gimp_image_flush (gimp_display_get_image (GIMP_TOOL (tool)->display));
+     }
+ }
+@@ -527,6 +538,21 @@ gimp_bucket_fill_tool_halt (GimpBucketFillTool *tool)
+ 
+   g_clear_object (&tool->priv->fill_mask);
+ 
++  /*  ChopGimp: close the grow + fill undo group; a cancelled fill also
++   *  takes back the layer grow (and drops the group)
++   */
++  if (tool->priv->undo_image)
++    {
++      GimpImage *image = tool->priv->undo_image;
++
++      tool->priv->undo_image = NULL;
++      gimp_image_undo_group_end (image);
++      if (! tool->priv->committed)
++        gimp_image_undo (image);
++      gimp_image_flush (image);
++    }
++  tool->priv->committed = FALSE;
++
+   if (gimp_line_art_is_frozen (tool->priv->line_art))
+     gimp_line_art_thaw (tool->priv->line_art);
+ 
+@@ -640,6 +666,7 @@ gimp_bucket_fill_tool_button_press (GimpTool            *tool,
+       GimpContext     *context  = GIMP_CONTEXT (options);
+       GimpFillOptions *fill_options;
+       GError          *error = NULL;
++      gchar           *warning;
+ 
+       fill_options = gimp_fill_options_new (image->gimp, NULL, FALSE);
+ 
+@@ -656,7 +683,7 @@ gimp_bucket_fill_tool_button_press (GimpTool            *tool,
+           gimp_context_set_paint_mode (GIMP_CONTEXT (fill_options),
+                                        gimp_context_get_paint_mode (context));
+ 
+-          gchar *warning = chopgimp_layer_paint_warning (drawable);
++          warning = chopgimp_layer_paint_warning (drawable);
+ 
+           if (warning)
+             {
+@@ -676,7 +703,17 @@ gimp_bucket_fill_tool_button_press (GimpTool            *tool,
+             }
+           else /* GIMP_BUCKET_FILL_SIMILAR_COLORS || GIMP_BUCKET_FILL_LINE_ART */
+             {
+-              /*  ChopGimp: a click outside the layer fills there too  */
++              /*  ChopGimp: a click outside the layer fills there too;
++               *  grow + fill are one undo step, the group is closed in
++               *  gimp_bucket_fill_tool_halt() (button release)
++               */
++              if (! bucket_tool->priv->undo_image)
++                {
++                  gimp_image_undo_group_start (image, GIMP_UNDO_GROUP_PAINT,
++                                               gimp_fill_options_get_undo_desc (fill_options));
++                  bucket_tool->priv->undo_image = image;
++                  bucket_tool->priv->committed  = FALSE;
++                }
+               if (chopgimp_layer_grow_for_fill (drawable, context))
+                 gimp_image_flush (image);
+ 
+diff --git a/app/tools/gimppainttool.c b/app/tools/gimppainttool.c
+index 421855d..a2fb394 100644
+--- a/app/tools/gimppainttool.c
++++ b/app/tools/gimppainttool.c
+@@ -234,11 +234,26 @@ gimp_paint_tool_constructed (GObject *object)
+                            paint_tool, 0);
+ }
+ 
++/*  ChopGimp: drop a pending QuickShape (timer + recorded stroke)  */
++static void
++gimp_paint_tool_quickshape_reset (GimpPaintTool *paint_tool)
++{
++  if (paint_tool->qs_timer)
++    {
++      g_source_remove (paint_tool->qs_timer);
++      paint_tool->qs_timer = 0;
++    }
++  g_clear_pointer (&paint_tool->qs_points, g_array_unref);
++  paint_tool->qs_done = FALSE;
++}
++
+ static void
+ gimp_paint_tool_finalize (GObject *object)
+ {
+   GimpPaintTool *paint_tool = GIMP_PAINT_TOOL (object);
+ 
++  gimp_paint_tool_quickshape_reset (paint_tool);
++
+   if (paint_tool->core)
+     {
+       g_object_unref (paint_tool->core);
+@@ -262,6 +277,7 @@ gimp_paint_tool_control (GimpTool       *tool,
+       break;
+ 
+     case GIMP_TOOL_ACTION_HALT:
++      gimp_paint_tool_quickshape_reset (paint_tool);
+       gimp_paint_core_cleanup (paint_tool->core);
+       break;
+ 
+diff --git a/app/tools/gimptexttool.c b/app/tools/gimptexttool.c
+index c9b8532..0d2b64c 100644
+--- a/app/tools/gimptexttool.c
++++ b/app/tools/gimptexttool.c
+@@ -1611,12 +1611,36 @@ gimp_text_tool_rectangle_change_complete (GimpToolRectangle *rectangle,
+           (y2 - y1) != gimp_item_get_height (item))
+         {
+           GimpUnit *box_unit = text_tool->proxy->box_unit;
++          GimpText *ltext    = text_tool->layer->text;
+           gdouble   xres, yres;
+           gboolean  push_undo = TRUE;
++          gboolean  with_fx;
++          gboolean  on_path  = FALSE;
+           GimpUndo *undo;
+ 
+           gimp_image_get_resolution (text_tool->image, &xres, &yres);
+ 
++          /*  ChopGimp: a layer drawn by the effects renderer (warp, path,
++           *  shape, or a non-identity matrix) has a margin around its
++           *  glyphs, and its position derives from an anchor
++           */
++          with_fx = ltext &&
++                    (chopgimp_text_fx_moves_glyphs (ltext->chopgimp_fx)              ||
++                     fabs (ltext->transformation.coeff[0][0] - 1.0) > 1e-6 ||
++                     fabs (ltext->transformation.coeff[0][1])       > 1e-6 ||
++                     fabs (ltext->transformation.coeff[1][0])       > 1e-6 ||
++                     fabs (ltext->transformation.coeff[1][1] - 1.0) > 1e-6);
++
++          if (ltext && ltext->chopgimp_fx)
++            {
++              gchar *v;
++
++              if ((v = chopgimp_text_fx_get_value (ltext->chopgimp_fx, "path")) ||
++                  (v = chopgimp_text_fx_get_value (ltext->chopgimp_fx, "shape")))
++                on_path = TRUE;
++              g_free (v);
++            }
++
+           /*  ChopGimp (Photoshop): the handles of a point text scale the
+            *  type; those of a paragraph text resize its box, Ctrl scales
+            */
+@@ -1624,8 +1648,11 @@ gimp_text_tool_rectangle_change_complete (GimpToolRectangle *rectangle,
+               g_object_get_data (G_OBJECT (text_tool), "chopgimp-scale-text"))
+             {
+               GimpText *proxy = text_tool->proxy;
+-              gdouble   fx    = (x2 - x1) / MAX (1, gimp_item_get_width  (item));
+-              gdouble   fy    = (y2 - y1) / MAX (1, gimp_item_get_height (item));
++              gdouble   pad   = with_fx ? 2.0 * chopgimp_text_fx_padding (ltext) : 0.0;
++              gdouble   fx    = ((x2 - x1) - pad) /
++                                MAX (1.0, gimp_item_get_width  (item) - pad);
++              gdouble   fy    = ((y2 - y1) - pad) /
++                                MAX (1.0, gimp_item_get_height (item) - pad);
+               gdouble   f     = (fabs (fx - 1.0) > fabs (fy - 1.0)) ? fx : fy;
+ 
+               f = CLAMP (f, 0.05, 20.0);
+@@ -1676,11 +1703,30 @@ gimp_text_tool_rectangle_change_complete (GimpToolRectangle *rectangle,
+ 
+           gimp_text_tool_block_drawing (text_tool);
+ 
+-          gimp_item_translate (item,
+-                               x1 - gimp_item_get_offset_x (item),
+-                               y1 - gimp_item_get_offset_y (item),
+-                               push_undo);
+-          gimp_text_tool_apply (text_tool, push_undo);
++          if (on_path)
++            {
++              /*  the text follows its path: a move would be lost  */
++              gimp_text_tool_apply (text_tool, push_undo);
++            }
++          else if (with_fx)
++            {
++              /*  the new size first (it moves the layer around its
++               *  anchor), then the layer goes where the box is
++               */
++              gimp_text_tool_apply (text_tool, push_undo);
++              gimp_item_translate (item,
++                                   x1 - gimp_item_get_offset_x (item),
++                                   y1 - gimp_item_get_offset_y (item),
++                                   push_undo);
++            }
++          else
++            {
++              gimp_item_translate (item,
++                                   x1 - gimp_item_get_offset_x (item),
++                                   y1 - gimp_item_get_offset_y (item),
++                                   push_undo);
++              gimp_text_tool_apply (text_tool, push_undo);
++            }
+ 
+           gimp_text_tool_unblock_drawing (text_tool);
+ 
+diff --git a/app/tools/gimptransformgridtool.c b/app/tools/gimptransformgridtool.c
+index 6cd9d6d..f52606d 100644
+--- a/app/tools/gimptransformgridtool.c
++++ b/app/tools/gimptransformgridtool.c
+@@ -48,6 +48,7 @@
+ #include "core/gimppickable.h"
+ #include "core/gimpprojection.h"
+ #include "core/gimptoolinfo.h"
++#include "core/gimpundostack.h"
+ #include "core/gimpviewable.h"
+ 
+ #include "path/gimppath.h"
+@@ -336,11 +337,42 @@ chopgimp_transform_grid_release_widget (GimpTransformGridTool *tg_tool)
+   g_clear_object (&tg_tool->widget);
+ }
+ 
++/*  ChopGimp: the crop-to-content done at initialize is kept with the
++ *  transform (commit) ...
++ */
++static void
++chopgimp_transform_grid_forget_crop (GimpTransformGridTool *tg_tool)
++{
++  g_clear_weak_pointer (&tg_tool->chopgimp_crop_image);
++  g_clear_weak_pointer (&tg_tool->chopgimp_crop_undo);
++}
++
++/*  ... and taken back when the transform is cancelled, if it is still
++ *  the last undo step
++ */
++static void
++chopgimp_transform_grid_revert_crop (GimpTransformGridTool *tg_tool)
++{
++  GimpImage *image = tg_tool->chopgimp_crop_image;
++  GimpUndo  *undo  = tg_tool->chopgimp_crop_undo;
++
++  chopgimp_transform_grid_forget_crop (tg_tool);
++
++  if (image && undo                                   &&
++      gimp_image_get_undo_group_count (image) == 0    &&
++      gimp_undo_stack_peek (gimp_image_get_undo_stack (image)) == undo)
++    {
++      gimp_image_undo (image);
++      gimp_image_flush (image);
++    }
++}
++
+ static void
+ gimp_transform_grid_tool_finalize (GObject *object)
+ {
+   GimpTransformGridTool *tg_tool = GIMP_TRANSFORM_GRID_TOOL (object);
+ 
++  chopgimp_transform_grid_forget_crop (tg_tool);
+   chopgimp_transform_grid_release_widget (tg_tool);
+ 
+   g_clear_object (&tg_tool->gui);
+@@ -370,13 +402,21 @@ gimp_transform_grid_tool_initialize (GimpTool     *tool,
+     {
+       if (chopgimp_crop_selected_layers (image,
+                                          gimp_get_user_context (image->gimp)))
+-        gimp_image_flush (image);
++        {
++          g_set_weak_pointer (&tg_tool->chopgimp_crop_image, image);
++          g_set_weak_pointer (&tg_tool->chopgimp_crop_undo,
++                              gimp_undo_stack_peek (gimp_image_get_undo_stack (image)));
++          gimp_image_flush (image);
++        }
+     }
+ 
+   objects = gimp_transform_tool_check_selected_objects (tr_tool, display, error);
+ 
+   if (! objects)
+-    return FALSE;
++    {
++      chopgimp_transform_grid_revert_crop (tg_tool);
++      return FALSE;
++    }
+ 
+   drawables = gimp_image_get_selected_drawables (image);
+   if (g_list_length (drawables) < 1)
+@@ -384,6 +424,7 @@ gimp_transform_grid_tool_initialize (GimpTool     *tool,
+       gimp_tool_message_literal (tool, display, _("No selected drawables."));
+       g_list_free (drawables);
+       g_list_free (objects);
++      chopgimp_transform_grid_revert_crop (tg_tool);
+       return FALSE;
+     }
+ 
+@@ -1261,6 +1302,11 @@ gimp_transform_grid_tool_halt (GimpTransformGridTool *tg_tool)
+       g_list_free (tr_tool->objects);
+       tr_tool->objects = NULL;
+     }
++
++  /*  ChopGimp: cancelled transform, no leftover crop step (after a
++   *  commit, the crop was forgotten)
++   */
++  chopgimp_transform_grid_revert_crop (tg_tool);
+ }
+ 
+ static void
+@@ -1270,6 +1316,9 @@ gimp_transform_grid_tool_commit (GimpTransformGridTool *tg_tool)
+   GimpTransformTool *tr_tool = GIMP_TRANSFORM_TOOL (tg_tool);
+   GimpDisplay       *display = tool->display;
+ 
++  /*  ChopGimp: the crop-to-content goes with the transform  */
++  chopgimp_transform_grid_forget_crop (tg_tool);
++
+   /* undraw the tool before we muck around with the transform matrix */
+   gimp_draw_tool_stop (GIMP_DRAW_TOOL (tg_tool));
+ 
+diff --git a/app/tools/gimptransformgridtool.h b/app/tools/gimptransformgridtool.h
+index 7682225..847705a 100644
+--- a/app/tools/gimptransformgridtool.h
++++ b/app/tools/gimptransformgridtool.h
+@@ -68,6 +68,12 @@ struct _GimpTransformGridTool
+   GList              *preview_drawables;
+ 
+   GimpToolGui        *gui;
++
++  /*  ChopGimp: crop-to-content step pushed by initialize, taken back
++   *  when the transform is cancelled (weak pointers)
++   */
++  GimpImage          *chopgimp_crop_image;
++  GimpUndo           *chopgimp_crop_undo;
+ };
+ 
+ struct _GimpTransformGridToolClass
+diff --git a/app/widgets/chopgimp-spell.c b/app/widgets/chopgimp-spell.c
+index 1c4a915..6017944 100644
+--- a/app/widgets/chopgimp-spell.c
++++ b/app/widgets/chopgimp-spell.c
+@@ -30,6 +30,7 @@ typedef gint     (* SuggestFunc)  (gpointer h, gchar ***list, const gchar *word)
+ typedef void     (* FreeListFunc) (gpointer h, gchar ***list, gint n);
+ typedef gint     (* AddFunc)      (gpointer h, const gchar *word);
+ typedef gchar  * (* EncodingFunc) (gpointer h);
++typedef void     (* DestroyFunc)  (gpointer h);
+ 
+ static struct
+ {
+@@ -41,6 +42,7 @@ static struct
+   FreeListFunc free_list;
+   AddFunc      add;
+   EncodingFunc encoding;
++  DestroyFunc  destroy;   /* optional */
+ } hun;
+ 
+ typedef struct
+@@ -53,6 +55,29 @@ typedef struct
+ 
+ static GHashTable *dicts = NULL;   /* key → Dict (or NULL: unavailable) */
+ 
++/*  the cache of a dictionary is dropped when it grows past this  */
++#define CACHE_MAX 5000
++
++/*  the last result of chopgimp_spell_misspelled(): the text tool asks
++ *  again on every redraw, for the same text most of the time
++ */
++static struct
++{
++  guint   hash;
++  gchar  *text;
++  gchar  *lang;
++  GArray *bad;
++} last;
++
++static void
++last_clear (void)
++{
++  g_clear_pointer (&last.text, g_free);
++  g_clear_pointer (&last.lang, g_free);
++  g_clear_pointer (&last.bad,  g_array_unref);
++  last.hash = 0;
++}
++
+ 
+ static gboolean
+ hun_load (void)
+@@ -77,6 +102,11 @@ hun_load (void)
+       g_module_close (hun.module);
+       hun.module = NULL;
+     }
++  else if (! g_module_symbol (hun.module, "Hunspell_destroy",
++                              (gpointer *) &hun.destroy))
++    {
++      hun.destroy = NULL;
++    }
+ 
+   return hun.module != NULL;
+ }
+@@ -259,6 +289,10 @@ word_ok (Dict        *dict,
+ 
+   g_free (w);
+ 
++  /*  keep the cache bounded (the learned words are in Hunspell too)  */
++  if (g_hash_table_size (dict->cache) >= CACHE_MAX)
++    g_hash_table_remove_all (dict->cache);
++
+   g_hash_table_insert (dict->cache, g_strdup (word), GINT_TO_POINTER (ok ? 1 : 2));
+ 
+   return ok;
+@@ -352,9 +386,17 @@ chopgimp_spell_misspelled (const gchar *text,
+   GArray *bad;
+   gint    pos = 0, start, end;
+ 
++  guint   hash;
++
+   if (! text || ! chopgimp_spell_enabled () || ! (dict = dict_get (lang)))
+     return NULL;
+ 
++  hash = g_str_hash (text);
++
++  if (last.bad && last.hash == hash &&
++      ! g_strcmp0 (last.lang, lang) && ! strcmp (last.text, text))
++    return g_array_ref (last.bad);
++
+   bad = g_array_new (FALSE, FALSE, sizeof (gint));
+ 
+   while (next_word (text, pos, &start, &end))
+@@ -371,6 +413,12 @@ chopgimp_spell_misspelled (const gchar *text,
+       pos = end;
+     }
+ 
++  last_clear ();
++  last.hash = hash;
++  last.text = g_strdup (text);
++  last.lang = g_strdup (lang);
++  last.bad  = g_array_ref (bad);
++
+   return bad;
+ }
+ 
+@@ -453,6 +501,9 @@ chopgimp_spell_learn (const gchar *lang,
+ 
+   g_hash_table_insert (dict->cache, g_strdup (word), GINT_TO_POINTER (1));
+ 
++  /*  a learned word is no longer wrong in the last result  */
++  last_clear ();
++
+   if (permanent)
+     {
+       gchar         *path = personal_path (dict->key);
+@@ -474,3 +525,48 @@ chopgimp_spell_learn (const gchar *lang,
+       g_free (path);
+     }
+ }
++
++static void
++dict_free (gpointer data)
++{
++  Dict *dict = data;
++
++  if (! dict)
++    return;
++
++  if (hun.destroy && dict->handle)
++    hun.destroy (dict->handle);
++
++  g_hash_table_destroy (dict->cache);
++  g_free (dict->encoding);
++  g_free (dict->key);
++  g_free (dict);
++}
++
++/*  frees the dictionaries, at exit  */
++void
++chopgimp_spell_exit (void)
++{
++  last_clear ();
++
++  if (dicts)
++    {
++      GHashTableIter iter;
++      gpointer       key, value;
++
++      g_hash_table_iter_init (&iter, dicts);
++      while (g_hash_table_iter_next (&iter, &key, &value))
++        {
++          dict_free (value);
++          g_free (key);
++        }
++
++      g_hash_table_destroy (dicts);
++      dicts = NULL;
++    }
++
++  if (hun.module)
++    g_module_close (hun.module);
++
++  memset (&hun, 0, sizeof (hun));
++}
+diff --git a/app/widgets/chopgimp-spell.h b/app/widgets/chopgimp-spell.h
+index c24ddff..dbacafb 100644
+--- a/app/widgets/chopgimp-spell.h
++++ b/app/widgets/chopgimp-spell.h
+@@ -20,6 +20,7 @@ gboolean   chopgimp_spell_is_wrong   (const gchar *lang,
+                                       const gchar *word);
+ gchar   ** chopgimp_spell_suggest    (const gchar *lang,
+                                       const gchar *word);
++void       chopgimp_spell_exit       (void);
+ void       chopgimp_spell_learn      (const gchar *lang,
+                                       const gchar *word,
+                                       gboolean     permanent);
+diff --git a/app/widgets/gimpaction-history.c b/app/widgets/gimpaction-history.c
+index 57b1215..09d3eac 100644
+--- a/app/widgets/gimpaction-history.c
++++ b/app/widgets/gimpaction-history.c
+@@ -364,6 +364,24 @@ gimp_action_history_is_excluded_action (const gchar *action_name)
+  */
+ static gboolean   macro_recording = FALSE;
+ static GPtrArray *macro_actions   = NULL;
++static gint       macro_depth     = 0;    /*  nested action activations  */
++
++/*  around every action activation (gimp_action_emit_activate()): an action
++ *  activating another one (layers-adjustment-* → filters-*) records only
++ *  the outer action, so replaying it does not run the inner one twice
++ */
++void
++chopgimp_macro_activation_enter (void)
++{
++  macro_depth++;
++}
++
++void
++chopgimp_macro_activation_leave (void)
++{
++  if (macro_depth > 0)
++    macro_depth--;
++}
+ 
+ gboolean
+ chopgimp_macro_is_recording (void)
+@@ -415,7 +433,7 @@ gimp_action_history_action_activated (GimpAction *action)
+ 
+   chopgimp_crash_note_action (gimp_action_get_name (action));
+ 
+-  if (macro_recording && macro_actions &&
++  if (macro_recording && macro_actions && macro_depth == 0 &&
+       chopgimp_macro_records (gimp_action_get_name (action)))
+     g_ptr_array_add (macro_actions, g_strdup (gimp_action_get_name (action)));
+ 
+diff --git a/app/widgets/gimpaction-history.h b/app/widgets/gimpaction-history.h
+index 5304045..85020db 100644
+--- a/app/widgets/gimpaction-history.h
++++ b/app/widgets/gimpaction-history.h
+@@ -41,5 +41,7 @@ gboolean   gimp_action_history_is_excluded_action    (const gchar         *actio
+ 
+ gboolean   chopgimp_macro_is_recording     (void);
+ void       chopgimp_macro_set_recording    (gboolean    recording);
++void       chopgimp_macro_activation_enter (void);
++void       chopgimp_macro_activation_leave (void);
+ 
+ void       gimp_action_history_action_activated      (GimpAction          *action);
+diff --git a/app/widgets/gimpaction.c b/app/widgets/gimpaction.c
+index 1effd39..0f165bd 100644
+--- a/app/widgets/gimpaction.c
++++ b/app/widgets/gimpaction.c
+@@ -36,6 +36,7 @@
+ #include "core/gimpimagefile.h"  /* eek */
+ 
+ #include "gimpaction.h"
++#include "gimpaction-history.h"
+ #include "gimpprocedureaction.h"
+ #include "gimpview.h"
+ #include "gimpviewrenderer.h"
+@@ -249,7 +250,10 @@ gimp_action_emit_activate (GimpAction *action,
+   if (value)
+     g_variant_ref_sink (value);
+ 
++  /*  ChopGimp: action recorder, nesting depth  */
++  chopgimp_macro_activation_enter ();
+   g_signal_emit (action, action_signals[ACTIVATE], 0, value);
++  chopgimp_macro_activation_leave ();
+ 
+   if (value)
+     g_variant_unref (value);
+diff --git a/libgimp/gimpui.c b/libgimp/gimpui.c
+index dbbd6cc..8adc1c6 100644
+--- a/libgimp/gimpui.c
++++ b/libgimp/gimpui.c
+@@ -259,23 +259,7 @@ static gboolean gimp_ui_initialized = FALSE;
+ 
+ /*  public functions  */
+ 
+-/**
+- * gimp_ui_init:
+- * @prog_name: The name of the plug-in which will be passed as argv[0] to
+- *             `gtk_init()`. It's a convention to use the name of the
+- *             executable and _not_ the PDB procedure name.
+- *
+- * This function initializes GTK with [func@Gtk.init], as well as GEGL and
+- * babl (non-interactive plug-ins should use only [func@Gegl.init] instead).
+- *
+- * It also sets up various other things so that the plug-in user looks
+- * and behaves like the GIMP core. This includes selecting the GTK theme
+- * and setting up the help system as chosen in GIMP preferences. Any
+- * plug-in that provides a user interface should call this function.
+- *
+- * It can safely be called more than once. Calls after the first return
+- * quickly with no effect.
+- **/
++/*  ChopGimp: see gimp_ui_init()  */
+ static gboolean
+ chopgimp_dialog_realize_hook (GSignalInvocationHint *ihint,
+                               guint                  n_values,
+@@ -302,6 +286,23 @@ chopgimp_dialog_realize_hook (GSignalInvocationHint *ihint,
+   return TRUE;   /*  stay connected  */
+ }
+ 
++/**
++ * gimp_ui_init:
++ * @prog_name: The name of the plug-in which will be passed as argv[0] to
++ *             `gtk_init()`. It's a convention to use the name of the
++ *             executable and _not_ the PDB procedure name.
++ *
++ * This function initializes GTK with [func@Gtk.init], as well as GEGL and
++ * babl (non-interactive plug-ins should use only [func@Gegl.init] instead).
++ *
++ * It also sets up various other things so that the plug-in user looks
++ * and behaves like the GIMP core. This includes selecting the GTK theme
++ * and setting up the help system as chosen in GIMP preferences. Any
++ * plug-in that provides a user interface should call this function.
++ *
++ * It can safely be called more than once. Calls after the first return
++ * quickly with no effect.
++ **/
+ void
+ gimp_ui_init (const gchar *prog_name)
+ {
+diff --git a/plug-ins/common/file-svg.c b/plug-ins/common/file-svg.c
+index aa79965..b38b08d 100644
+--- a/plug-ins/common/file-svg.c
++++ b/plug-ins/common/file-svg.c
+@@ -789,19 +789,14 @@ load_image (GFile            *file,
+ }
+ 
+ static gboolean
+-export_image (GFile                *file,
+-              GimpProcedureConfig  *config,
+-              GimpImage            *image,
+-              GError              **error)
++export_image_real (GFile                *file,
++                   GimpProcedureConfig  *config,
++                   GimpImage            *image,
++                   GError              **error)
+ {
+   GOutputStream *output;
+   GString       *string;
+ 
+-  /*  ChopGimp: SVG numbers always use a dot. The writers use printf
+-   *  ("%f"): in French they wrote « opacity="1,000000" », an invalid SVG.
+-   */
+-  setlocale (LC_NUMERIC, "C");
+-
+   gimp_progress_init_printf (_("Exporting '%s'"),
+                              gimp_file_get_utf8_name (file));
+ 
+@@ -846,6 +841,31 @@ export_image (GFile                *file,
+   return TRUE;
+ }
+ 
++static gboolean
++export_image (GFile                *file,
++              GimpProcedureConfig  *config,
++              GimpImage            *image,
++              GError              **error)
++{
++  gchar    *old_locale;
++  gboolean  success;
++
++  /*  ChopGimp: SVG numbers always use a dot. The writers use printf
++   *  ("%f"): in French they wrote « opacity="1,000000" », an invalid SVG.
++   *  The locale is restored afterwards (dialogs, messages).
++   */
++  old_locale = g_strdup (setlocale (LC_NUMERIC, NULL));
++  setlocale (LC_NUMERIC, "C");
++
++  success = export_image_real (file, config, image, error);
++
++  if (old_locale)
++    setlocale (LC_NUMERIC, old_locale);
++  g_free (old_locale);
++
++  return success;
++}
++
+ #if ! LIBRSVG_CHECK_VERSION(2, 46, 0)
+ /* XXX Why we keep old deprecated implementation next to newer librsvg API is
+  * because librsvg uses Rust since version 2.41.0. There are 2 raised problems:
+@@ -1472,9 +1492,10 @@ svg_get_def_string (GimpVectorLayer      *layer,
+           gchar  *encoded;
+ 
+           buf = g_malloc0 (temp_size);
+-          fread (buf, 1, temp_size, temp_fp);
++          if (fread (buf, 1, temp_size, temp_fp) != (gsize) temp_size)
++            memset (buf, 0, temp_size);
+ 
+-          encoded = g_base64_encode ((const guchar *) buf, temp_size + 1);
++          encoded = g_base64_encode ((const guchar *) buf, temp_size);
+ 
+           def_string = g_strdup_printf ("    <pattern id=\"Pattern%d\"\n"
+                                         "             patternUnits=\"userSpaceOnUse\"\n"
+@@ -2181,9 +2202,10 @@ svg_export_raster (GimpDrawable  *layer,
+       gint    y;
+ 
+       buf = g_malloc0 (temp_size);
+-      fread (buf, 1, temp_size, temp_fp);
++      if (fread (buf, 1, temp_size, temp_fp) != (gsize) temp_size)
++        memset (buf, 0, temp_size);
+ 
+-      encoded = g_base64_encode ((const guchar *) buf, temp_size + 1);
++      encoded = g_base64_encode ((const guchar *) buf, temp_size);
+ 
+       name = g_strdup_printf ("raster%d", raster_id);
+       gimp_drawable_get_offsets (GIMP_DRAWABLE (layer), &x, &y);
+diff --git a/plug-ins/file-psd/psd-chopgimp.c b/plug-ins/file-psd/psd-chopgimp.c
+index d5165fb..c41b2a4 100644
+--- a/plug-ins/file-psd/psd-chopgimp.c
++++ b/plug-ins/file-psd/psd-chopgimp.c
+@@ -410,6 +410,7 @@ write_text (GOutputStream *output,
+   GByteArray    *b;
+   gboolean       ok;
+   gdouble        top;
++  glong          n_units = 0;
+ 
+   if (! text)        /*  rich text (markup): only the plain text is kept  */
+     {
+@@ -425,6 +426,15 @@ write_text (GOutputStream *output,
+   if (color)
+     gegl_color_get_pixel (color, babl_format ("R'G'B'A double"), rgba);
+ 
++  /*  the size may be in points, mm…: EngineData and the bounds want pixels  */
++  if (unit && unit != gimp_unit_pixel ())
++    {
++      gdouble xres, yres;
++
++      gimp_image_get_resolution (image, &xres, &yres);
++      size = gimp_units_to_pixels (size, unit, yres);
++    }
++
+   switch (gimp_text_layer_get_justification (tl))
+     {
+     case GIMP_TEXT_JUSTIFY_RIGHT:  just = 1; break;
+@@ -458,6 +468,13 @@ write_text (GOutputStream *output,
+   ps_text = g_strdup_printf ("%s\r", text);
+   g_strdelimit (ps_text, "\n", '\r');
+ 
++  /*  run lengths count UTF-16 code units, like Photoshop  */
++  {
++    gunichar2 *u16 = g_utf8_to_utf16 (ps_text, -1, NULL, &n_units, NULL);
++
++    g_free (u16);
++  }
++
+   ed = g_string_new ("\n\n<<\n/EngineDict <<\n/Editor << /Text ");
+   ed_str (ed, ps_text);
+   {
+@@ -479,9 +496,9 @@ write_text (GOutputStream *output,
+                             " /RunLengthArray [ %d ] >>\n"
+                             "/Rendered << /Shapes << /Children [ << /ShapeType 0 >> ] >> >>\n>>\n"
+                             "/ResourceDict << /FontSet [ << /Name ",
+-                            just, (gint) g_utf8_strlen (ps_text, -1),
++                            just, (gint) n_units,
+                             fs, r, g, bl,
+-                            (gint) g_utf8_strlen (ps_text, -1));
++                            (gint) n_units);
+   }
+   ed_str (ed, psname);
+   g_string_append (ed, " /Script 0 /FontType 1 >> ] /StyleSheetSet [ << /Name ");
+-- 
+2.53.0
+

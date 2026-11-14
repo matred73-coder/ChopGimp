@@ -28,6 +28,11 @@ gi.require_version("Gtk", "3.0")
 gi.require_version("Gegl", "0.4")
 from gi.repository import Gimp, GimpUi, Gegl, GLib, GObject, Gtk
 
+try:                        # accélère la lecture/écriture des pixels (facultatif)
+    import numpy as np
+except Exception:
+    np = None
+
 MENU = "<Image>/Image"
 
 PROCS = {
@@ -187,6 +192,7 @@ def lqr():
     glib = ctypes.CDLL("libglib-2.0.so.0")
     glib.g_malloc.restype = ctypes.c_void_p
     glib.g_malloc.argtypes = [ctypes.c_size_t]
+    glib.g_free.argtypes = [ctypes.c_void_p]
     lib.lqr_carver_new.restype = ctypes.c_void_p
     lib.lqr_carver_new.argtypes = [ctypes.c_void_p, ctypes.c_int, ctypes.c_int, ctypes.c_int]
     lib.lqr_carver_init.argtypes = [ctypes.c_void_p, ctypes.c_int, ctypes.c_float]
@@ -197,6 +203,11 @@ def lqr():
     lib.lqr_carver_scan.argtypes = [ctypes.c_void_p, ctypes.POINTER(ctypes.c_int),
                                     ctypes.POINTER(ctypes.c_int),
                                     ctypes.POINTER(ctypes.POINTER(ctypes.c_ubyte))]
+    lib.lqr_carver_scan_by_row.restype = ctypes.c_int
+    lib.lqr_carver_scan_by_row.argtypes = [ctypes.c_void_p]
+    lib.lqr_carver_scan_line.restype = ctypes.c_int
+    lib.lqr_carver_scan_line.argtypes = [ctypes.c_void_p, ctypes.POINTER(ctypes.c_int),
+                                         ctypes.POINTER(ctypes.POINTER(ctypes.c_ubyte))]
     lib.lqr_carver_destroy.argtypes = [ctypes.c_void_p]
     return lib, glib
 
@@ -227,6 +238,36 @@ def rescale_dialog(w, h, has_sel):
     return res
 
 
+def read_carver(lib, carver, nw, nh):
+    """Résultat de liblqr (RGBA 8 bits) lu ligne par ligne → octets nw×nh×4.
+    Les « lignes » de liblqr sont des colonnes si le carver est transposé
+    (lqr_carver_scan_by_row faux)."""
+    by_row = bool(lib.lqr_carver_scan_by_row(carver))
+    n = ctypes.c_int()
+    px = ctypes.POINTER(ctypes.c_ubyte)()
+    length = (nw if by_row else nh) * 4
+    lib.lqr_carver_scan_reset(carver)
+    if np is not None:
+        out = np.zeros((nh, nw, 4), np.uint8)
+        while lib.lqr_carver_scan_line(carver, ctypes.byref(n), ctypes.byref(px)):
+            line = np.ctypeslib.as_array(px, shape=(length,)).reshape(-1, 4)
+            if by_row:
+                out[n.value] = line
+            else:
+                out[:, n.value] = line
+        return out.tobytes()
+    out = bytearray(nw * nh * 4)
+    while lib.lqr_carver_scan_line(carver, ctypes.byref(n), ctypes.byref(px)):
+        line = ctypes.string_at(px, length)
+        if by_row:
+            out[n.value * nw * 4:(n.value + 1) * nw * 4] = line
+        else:
+            for yy in range(nh):
+                i = (yy * nw + n.value) * 4
+                out[i:i + 4] = line[yy * 4:yy * 4 + 4]
+    return bytes(out)
+
+
 def liquid_rescale(image, layer, sx, sy, protect):
     lib, glib = lqr()
     if lib is None:
@@ -235,6 +276,11 @@ def liquid_rescale(image, layer, sx, sy, protect):
     nw, nh = max(1, int(round(w * sx))), max(1, int(round(h * sy)))
     if (nw, nh) == (w, h):
         return None
+    if image.get_precision() not in (Gimp.Precision.U8_LINEAR, Gimp.Precision.U8_NON_LINEAR,
+                                     Gimp.Precision.U8_PERCEPTUAL):
+        # liblqr travaille ici en 8 bits : le calque perd sa précision
+        Gimp.message("Mise à l'échelle selon le contenu : le calque est traité en 8 bits par "
+                     "couche (la précision de l'image est supérieure).")
     if not layer.has_alpha():
         layer.add_alpha()
     buf = layer.get_buffer()
@@ -243,6 +289,7 @@ def liquid_rescale(image, layer, sx, sy, protect):
     ctypes.memmove(raw, data, w * h * 4)
     carver = lib.lqr_carver_new(raw, w, h, 4)
     if not carver:
+        glib.g_free(raw)                           # non repris par liblqr
         return "liblqr : création impossible"
     try:
         if lib.lqr_carver_init(carver, 1, 0.0) != 1:
@@ -252,17 +299,15 @@ def liquid_rescale(image, layer, sx, sy, protect):
             _, ox, oy = layer.get_offsets()
             mb = mask.get_buffer().get(Gegl.Rectangle.new(ox, oy, w, h), 1.0, "Y u8",
                                        Gegl.AbyssPolicy.NONE)
-            bias = (ctypes.c_double * (w * h))(*[1000.0 if v > 127 else 0.0 for v in mb])
+            if np is not None:
+                bias_arr = np.where(np.frombuffer(mb, np.uint8) > 127, 1000.0, 0.0).astype(np.float64)
+                bias = bias_arr.ctypes.data_as(ctypes.POINTER(ctypes.c_double))
+            else:
+                bias = (ctypes.c_double * (w * h))(*[1000.0 if v > 127 else 0.0 for v in mb])
             lib.lqr_carver_bias_add(carver, bias, 1)
         if lib.lqr_carver_resize(carver, nw, nh) != 1:      # LqrRetVal : LQR_ERROR 0, LQR_OK 1
             return "liblqr : redimensionnement impossible"
-        out = bytearray(nw * nh * 4)
-        x, y = ctypes.c_int(), ctypes.c_int()
-        px = ctypes.POINTER(ctypes.c_ubyte)()
-        lib.lqr_carver_scan_reset(carver)
-        while lib.lqr_carver_scan(carver, ctypes.byref(x), ctypes.byref(y), ctypes.byref(px)):
-            i = (y.value * nw + x.value) * 4
-            out[i:i + 4] = bytes(px[0:4])
+        out = read_carver(lib, carver, nw, nh)
     finally:
         lib.lqr_carver_destroy(carver)
 

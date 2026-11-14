@@ -22,7 +22,8 @@ Plan complet : lots 0 à 6, idées en plus, calendrier de 17 étapes (voir l'his
 | 14 | 3.23.0 | Dessin I « Confort » | ✅ livrée |
 | 15 | 3.23.1 | Dessin II « Peintre » | ✅ livrée |
 | 16 | 3.23.2 | Dessin III « Atelier / BD » | ✅ livrée |
-| 17 | 3.24.0 | Revue finale | à faire |
+| 17 | 3.24.0 | Revue finale | ✅ livrée |
+| 18 | 3.24.1 | Optimisation « légèreté » et nettoyage en profondeur | à faire (validation des suppressions avant) |
 
 ## 3.16.2 — fin de la revue de code
 
@@ -364,3 +365,38 @@ Nouveau greffon `plug-ins/chopgimp_atelier/` et deux ajouts dans le cœur.
   - la capture se fait toutes les 2 s plutôt qu'à chaque trait ;
   - les guides de perspective sont visuels seulement ;
   - les références ne proposent pas de pipette.
+
+## 3.24.0 — Revue finale
+
+Relecture complète du code ajouté, en 4 lots parallèles : cœur C (peinture, affichage, interface), texte et formes (C), import PSD/PDF/SVG (Python), autres greffons et scripts. Environ 110 points relevés et corrigés.
+
+- **Corrections importantes** :
+  - l'**enregistrement automatique** ne copiait une image qu'une fois par période de modification (GIMP ne note que la première modification). Un compteur de changements par image le remplace, et le **timelapse** en profite : une capture par changement ;
+  - un seul enregistrement automatique par passage (le plus ancien d'abord), pour ne plus figer l'interface avec plusieurs grosses images ;
+  - QuickShape : minuteur arrêté quand l'outil change (risque de plantage) ;
+  - palette contextuelle : pinceaux et couleurs retenus par référence (plantage si un pinceau était supprimé) ; suivi des pinceaux dès le démarrage ;
+  - texture de papier ancrée sur le canevas (elle sautait quand le calque s'agrandissait) et calculée plus vite ;
+  - pot de peinture : l'agrandissement du calque et le remplissage forment une seule étape d'annulation ; transformation annulée : le recadrage automatique est annulé aussi ;
+  - macros : plus d'actions enregistrées en double, et une macro rejouée s'annule en une fois ;
+  - **texte** : la dérive avec Ctrl+poignée sur un texte à effets est corrigée ; l'échelle H/V et le faux italique respectent la rotation ; une mise à l'échelle de l'image change la taille de police au lieu de déformer le texte ; contour en motif conservé avec les effets ; aperçu de police en direct restauré sur le bon calque ;
+  - formes : plus de chemins orphelins dans le panneau Chemins après le constructeur de formes, la division, les effets de tracé ou la gomme vectorielle ;
+  - export PSD : taille de police en pt/mm convertie, longueurs du texte en UTF-16 (emoji) ;
+  - **import PSD** : un fichier tronqué ou malformé ne peut plus bloquer ni planter l'import (essai sur 400 fichiers corrompus). Le fichier est lu par projection mémoire : un PSD de 400 Mo n'occupe plus 400 Mo pour lire ses calques ;
+  - import PDF : les pages trop chargées ou en erreur sont vraiment importées en image ; taille de rendu limitée à 16 384 px de côté ;
+  - SVG : images liées conservées (la copie sans texte gardait un mauvais dossier de base), rotation autour d'un centre et inclinaisons, plafond d'objets ;
+  - « Supprimer l'arrière-plan » et « Options de fusion Si » ne détruisent plus un masque peint par l'utilisateur ;
+  - styles de calque : historique jamais laissé gelé après une erreur ; l'opacité s'applique à l'incrustation de couleur et au biseau (le biseau passe à 75 % par défaut) ;
+  - Couleurs des styles PS (photogimp_ps) corrigées (sRGB) ;
+  - export web, lots, compositions : plus d'images temporaires ni de dossiers laissés derrière ; « Exporter tout » ne modifie plus l'image ouverte ;
+  - agrandissement IA : mémoire fortement réduite (traitement par bandes) ; mise à l'échelle selon le contenu et aplats nettement plus rapides ;
+  - BD : la bulle et les lignes concentriques prenaient toute l'image quand il n'y avait pas de sélection (test de sélection inversé) ;
+  - export timelapse : chemin du fichier passé proprement à GStreamer.
+- **Nettoyage** : code mort, imports inutiles, doublons (actions de réglage, redessin des outils), traces du journal de session qui sortaient aussi dans le terminal, injecteur de plantage sans fuite.
+- **Compilation** : plus aucun avertissement dans le code ChopGimp (dont un format `printf` décalé dans le panneau Caractère, et une lecture d'un octet de trop dans l'export SVG).
+- **Construction** : le dépôt OSTree (`flatpak/repo`, plusieurs Go) n'est plus recopié à chaque compilation.
+- 100 tests verts ; vérifié au banc : 3 traits pendant l'enregistrement en accéléré donnent maintenant 4 captures.
+- **Restent ouverts** (notés pour la suite) :
+  - axes des polices variables (curseurs graisse/chasse…) : non faits, c'est un chantier à part ;
+  - un calque SVG masqué est importé vide ;
+  - le panneau texte se rafraîchit encore par minuteur (mais plus quand il est caché) ;
+  - nettoyage en profondeur (scripts v1 en doublon, anciens scripts, module commun aux greffons) : à valider à l'étape 18.

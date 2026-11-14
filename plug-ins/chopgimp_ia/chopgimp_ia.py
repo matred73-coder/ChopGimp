@@ -133,6 +133,10 @@ def ensure_model(key, interactive):
                 done += len(chunk)
                 Gimp.progress_update(min(1.0, done / float(size)))
     except OSError as e:
+        try:                        # pas de fichier partiel laissé sur le disque
+            os.unlink(tmp)
+        except OSError:
+            pass
         return None, "Téléchargement impossible : %s" % e
     finally:
         Gimp.progress_end()
@@ -244,17 +248,34 @@ def select_subject(image, interactive):
     return None
 
 
+IA_MASK_PARASITE = "chopgimp-ia-mask"
+
+
 def remove_background(image, layer, interactive):
+    import numpy as np
     w, h = layer.get_width(), layer.get_height()
     data, err = seg_mask(layer, w, h, current_seg_model(), interactive)
     if err:
         return err
-    if layer.get_mask() is not None:
+    mask = layer.get_mask()
+    if mask is not None and mask.get_parasite(IA_MASK_PARASITE) is not None:
+        # masque posé par une précédente suppression : remplacé
         layer.remove_mask(Gimp.MaskApplyMode.DISCARD)
-    if not layer.has_alpha():
-        layer.add_alpha()
-    mask = layer.create_mask(Gimp.AddMaskType.WHITE)
-    layer.add_mask(mask)
+        mask = None
+    if mask is not None:
+        # masque de l'utilisateur : conservé, multiplié par le détourage
+        cur = mask.get_buffer().get(Gegl.Rectangle.new(0, 0, w, h), 1.0, "Y u8",
+                                    Gegl.AbyssPolicy.NONE)
+        a = np.frombuffer(cur, np.uint8).astype(np.uint32)
+        b = np.frombuffer(data, np.uint8).astype(np.uint32)
+        data = ((a * b + 127) // 255).astype(np.uint8).tobytes()
+    else:
+        if not layer.has_alpha():
+            layer.add_alpha()
+        mask = layer.create_mask(Gimp.AddMaskType.WHITE)
+        layer.add_mask(mask)
+        # persistant + annulable : reconnu à la prochaine suppression
+        mask.attach_parasite(Gimp.Parasite.new(IA_MASK_PARASITE, 3, [49]))
     buf = mask.get_buffer()
     buf.set(Gegl.Rectangle.new(0, 0, w, h), "Y u8", data)
     buf.flush()
@@ -270,53 +291,66 @@ def upscale(image, factor, interactive):
     if err:
         return None, err
     flat = image.duplicate()
-    flat.merge_visible_layers(Gimp.MergeType.CLIP_TO_IMAGE)
-    src = read_rgb(flat.get_layers()[0]).astype(np.float32) / 255.0
-    h, w = src.shape[:2]
-    alpha = src[:, :, 3]
-    r, g, b = src[:, :, 0], src[:, :, 1], src[:, :, 2]
-    y = 0.299 * r + 0.587 * g + 0.114 * b
-    sess = session(path)
-    name = sess.get_inputs()[0].name
-    T, O, S = 224, 16, 3                         # tuile, recouvrement, facteur du réseau
-    step = T - 2 * O
-    out = np.zeros((h * S, w * S), np.float32)
-    pad = np.pad(y, ((O, T + O), (O, T + O)), mode="reflect")
-    tiles = [(ty, tx) for ty in range(0, h, step) for tx in range(0, w, step)]
     Gimp.progress_init("Agrandissement par l'IA…")
-    for i, (ty, tx) in enumerate(tiles):
-        tile = pad[ty:ty + T, tx:tx + T][None, None].astype(np.float32)
-        res = sess.run(None, {name: tile})[0][0, 0]
-        hh, ww = min(step, h - ty), min(step, w - tx)
-        out[ty * S:(ty + hh) * S, tx * S:(tx + ww) * S] = \
-            res[O * S:(O + hh) * S, O * S:(O + ww) * S]
-        Gimp.progress_update(0.9 * (i + 1) / len(tiles))
-    # chrominance et alpha : agrandissement cubique de GIMP
-    Gimp.context_push()
-    Gimp.context_set_interpolation(Gimp.InterpolationType.CUBIC)
-    flat.scale(w * S, h * S)
-    Gimp.context_pop()
-    big = read_rgb(flat.get_layers()[0]).astype(np.float32) / 255.0
-    yb = 0.299 * big[:, :, 0] + 0.587 * big[:, :, 1] + 0.114 * big[:, :, 2]
-    delta = np.clip(out, 0, 1) - yb
-    res = np.empty_like(big)
-    for c in range(3):
-        res[:, :, c] = np.clip(big[:, :, c] + delta, 0, 1)
-    res[:, :, 3] = big[:, :, 3]
-    lay = flat.get_layers()[0]
-    if not lay.has_alpha():
-        lay.add_alpha()
-    buf = lay.get_buffer()
-    buf.set(Gegl.Rectangle.new(0, 0, w * S, h * S), "R'G'B'A u8",
-            (res * 255 + 0.5).astype(np.uint8).tobytes())
-    buf.flush()
-    if factor != S:
+    try:
+        flat.merge_visible_layers(Gimp.MergeType.CLIP_TO_IMAGE)
+        # mémoire : images pleine taille en u8, calculs flottants par bandes
+        src = read_rgb(flat.get_layers()[0])
+        h, w = src.shape[:2]
+        y = (0.299 * src[:, :, 0].astype(np.float32) + 0.587 * src[:, :, 1].astype(np.float32) +
+             0.114 * src[:, :, 2].astype(np.float32)) / 255.0
+        del src
+        sess = session(path)
+        name = sess.get_inputs()[0].name
+        T, O, S = 224, 16, 3                         # tuile, recouvrement, facteur du réseau
+        step = T - 2 * O
+        out = np.zeros((h * S, w * S), np.uint8)     # luminance agrandie (u8)
+        pad = np.pad(y, ((O, T + O), (O, T + O)), mode="reflect")
+        del y
+        tiles = [(ty, tx) for ty in range(0, h, step) for tx in range(0, w, step)]
+        for i, (ty, tx) in enumerate(tiles):
+            tile = pad[ty:ty + T, tx:tx + T][None, None].astype(np.float32)
+            res = sess.run(None, {name: tile})[0][0, 0]
+            hh, ww = min(step, h - ty), min(step, w - tx)
+            out[ty * S:(ty + hh) * S, tx * S:(tx + ww) * S] = \
+                (np.clip(res[O * S:(O + hh) * S, O * S:(O + ww) * S], 0, 1) * 255 + 0.5).astype(np.uint8)
+            Gimp.progress_update(0.9 * (i + 1) / len(tiles))
+        del pad
+        # chrominance et alpha : agrandissement cubique de GIMP
         Gimp.context_push()
-        Gimp.context_set_interpolation(Gimp.InterpolationType.LOHALO)
-        flat.scale(w * factor, h * factor)
+        Gimp.context_set_interpolation(Gimp.InterpolationType.CUBIC)
+        flat.scale(w * S, h * S)
         Gimp.context_pop()
-    Gimp.progress_end()
-    del alpha
+        lay = flat.get_layers()[0]
+        big = read_rgb(lay)                          # u8, lecture seule
+        if not lay.has_alpha():
+            lay.add_alpha()
+        buf = lay.get_buffer()
+        W, H = w * S, h * S
+        band = max(1, (8 << 20) // (W * 4))          # ~8 Mo de pixels par bande
+        for r0 in range(0, H, band):
+            r1 = min(H, r0 + band)
+            bf = big[r0:r1].astype(np.float32) / 255.0
+            yb = 0.299 * bf[:, :, 0] + 0.587 * bf[:, :, 1] + 0.114 * bf[:, :, 2]
+            delta = out[r0:r1].astype(np.float32) / 255.0 - yb
+            res = np.empty_like(bf)
+            for c in range(3):
+                res[:, :, c] = np.clip(bf[:, :, c] + delta, 0, 1)
+            res[:, :, 3] = bf[:, :, 3]
+            buf.set(Gegl.Rectangle.new(0, r0, W, r1 - r0), "R'G'B'A u8",
+                    (res * 255 + 0.5).astype(np.uint8).tobytes())
+        buf.flush()
+        del big, out
+        if factor != S:
+            Gimp.context_push()
+            Gimp.context_set_interpolation(Gimp.InterpolationType.LOHALO)
+            flat.scale(w * factor, h * factor)
+            Gimp.context_pop()
+    except Exception:
+        flat.delete()
+        raise
+    finally:
+        Gimp.progress_end()
     return flat, None
 
 
@@ -391,6 +425,9 @@ class ChopGimpIA(Gimp.PlugIn):
         if name == "chopgimp-ia-upscale":
             p.add_int_argument("factor", "Facteur", "Facteur d'agrandissement", 2, 4, 2,
                                GObject.ParamFlags.READWRITE)
+            # appel par script : la nouvelle image est renvoyée
+            p.add_image_return_value("new-image", "Nouvelle image", "Image agrandie", True,
+                                     GObject.ParamFlags.READWRITE)
         if name in ("chopgimp-ia-remove-background", "chopgimp-ia-denoise"):
             p.set_sensitivity_mask(Gimp.ProcedureSensitivityMask.DRAWABLE)
         else:
@@ -438,6 +475,8 @@ class ChopGimpIA(Gimp.PlugIn):
                 Gimp.displays_flush()
                 if not msg:
                     rv = procedure.new_return_values(Gimp.PDBStatusType.SUCCESS, GLib.Error())
+                    rv.remove(1)
+                    rv.insert(1, GObject.Value(Gimp.Image, big))
                     return rv
         else:   # réduire le bruit (filtre non destructif)
             for d in drawables:
