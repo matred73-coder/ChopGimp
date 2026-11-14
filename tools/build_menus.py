@@ -147,8 +147,8 @@ texte = """    <submenu>
 
 # ── Calque : sous-menus Photoshop en tête ─────────────────────────────
 # « Style de calque » : filtres non destructifs natifs (modifiables via
-# l'icône fx du calque). Le plug-in photogimp_ps y ajoute Contour, Lueur
-# externe, Ombre interne, Effacer le style (même libellé → même sous-menu).
+# l'icône fx du calque). Le plug-in photogimp_ps y ajoute Effacer le style
+# (même libellé → même sous-menu).
 # « Nouveau calque de réglage » : actions ChopGimp layers-adjustment-* (groupe
 # « ◐ » + vraie fenêtre de réglage de GIMP sur le groupe).
 ADJ_ACTIONS = ["layers-adjustment-" + k for k in ['levels', 'curves', 'brightness-contrast', 'exposure', 'vibrance', 'hue-saturation', 'color-balance', 'black-white', 'photo-filter', 'channel-mixer', 'colorize', 'invert', 'posterize', 'threshold', 'shadows-highlights']]
@@ -161,7 +161,10 @@ def adjustment_submenu(indent):
              i + "  <section>"] +
             [i + '    <item><attribute name="action">app.%s</attribute></item>' % a for a in ADJ_ACTIONS] +
             [i + "  </section>", i + "</submenu>"])
-STYLE_NATIFS = ["filters-dropshadow", "filters-gegl-inner-glow", "filters-gegl-bevel",
+# Contour, Lueur externe, Ombre interne : actions ChopGimp filters-chopgimp-*
+# (fenêtre du filtre, comme l'ombre portée, avec des réglages de départ)
+STYLE_NATIFS = ["filters-dropshadow", "filters-chopgimp-stroke", "filters-chopgimp-outer-glow",
+                "filters-chopgimp-inner-shadow", "filters-chopgimp-inner-glow", "filters-gegl-bevel",
                 "filters-gegl-color-overlay", "filters-long-shadow", "filters-emboss"]
 
 

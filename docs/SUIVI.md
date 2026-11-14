@@ -452,3 +452,19 @@ Sauvegarde préalable : tag `backup-avant-nettoyage-3.24.1` (dépôt et sources 
 - Le traceur provisoire de la fenêtre Style de calque est retiré.
 - **Banc graphique** : il active désormais `attach-modal-dialogs` comme Ubuntu. Son arrêt ne laisse plus de processus.
 - Vérifié au banc avec le réglage d'Ubuntu : Camera Raw et Style de calque > Contour restent ouverts.
+
+## 3.24.4 — Styles de calque cohérents : une fenêtre de filtre par effet
+
+Demande de l'utilisateur : chaque style s'ouvre « dans le même style que l'ombre portée », en réutilisant et en améliorant ce qui existe au lieu de le réinventer.
+- **Calque > Style de calque** (et le même sous-menu dans le panneau Calques) : Ombre portée, **Contour…**, **Lueur externe…**, **Ombre interne…**, **Lueur interne…**, Biseau, Incrustation couleur, Ombre longue, Estampage. Tous ouvrent la fenêtre de filtre de GIMP : aperçu en direct, préréglages, « Appliquer directement au calque », modifiable ensuite par l'icône fx.
+- Contour, Lueur externe, Ombre interne et Lueur interne sont de nouvelles actions `filters-chopgimp-*`, qui ouvrent la fenêtre du filtre GEGL avec des réglages de départ :
+  - Contour : ombre portée sans décalage ni flou, épaisseur 3, noir, opacité 1 ;
+  - Lueur externe : flou 18, jaune clair ;
+  - Ombre interne : lueur interne noire décalée de 4 px ;
+  - Lueur interne : jaune clair, flou 10.
+
+  Pour cela, une action de filtre interactive accepte maintenant « opération\n(réglages) », un format que GIMP savait déjà lire pour ses filtres préréglés.
+- **Amélioration de l'existant** : le filtre GEGL « lueur interne » ne rend que la lueur. Appliqué en mode Remplacer (le défaut de GIMP), il rendait l'intérieur du calque transparent. Ombre interne et Lueur interne l'appliquent en mode Normal.
+- Panneau Caractère : les boutons Ombre… et Contour… ouvrent ces mêmes fenêtres.
+- La fenêtre ChopGimp « Style de calque… » (tous les effets ensemble) reste disponible pour les scripts et l'import PSD, mais n'est plus proposée dans ces menus.
+- Vérifié au banc : les quatre fenêtres s'ouvrent avec leurs réglages et leur aperçu. 100 tests.

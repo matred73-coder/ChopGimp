@@ -110,7 +110,10 @@ class PhotoGimpPS(Gimp.PlugIn):
         p.set_attribution(AUTHOR, AUTHOR, YEAR)
         if name in STYLES:
             label = STYLES[name][0] + "…"
-            paths = ["<Image>/Layer/Style de calque", "<Layers>/Layers Menu/Style de calque"]
+            # les menus ouvrent la fenêtre du filtre (actions ChopGimp
+            # filters-chopgimp-*, comme l'ombre portée) : ces procédures
+            # restent disponibles pour les scripts
+            paths = []
             doc = "Ajoute le style « %s » (filtre non destructif, modifiable via fx)" % STYLES[name][0]
         elif name in ADJUST:
             label = ADJUST[name][0]
