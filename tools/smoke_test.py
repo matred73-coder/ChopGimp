@@ -571,8 +571,28 @@ try:
         report(isinstance(by.get("Bonjour EPS"), Gimp.TextLayer) and
                len([l for l in ls if isinstance(l, Gimp.VectorLayer)]) >= 2,
                "EPS : formes vectorielles et texte (Ghostscript)")
+        res = run("file-chopgimp-svg-load-thumb", file=Gio.File.new_for_path(os.path.join(vdir, "test.svg")),
+                  **{"thumb-size": 128})
+        report(res is not None and res.index(0) == Gimp.PDBStatusType.SUCCESS and res.index(2) == 400,
+               "SVG : vignette (fenêtre d'ouverture)")
     except Exception as e:
         report(False, "Import vectoriel", repr(e)[:200])
+
+    # 3 quater. Objet dynamique : calques → XCF lié
+    try:
+        im = test_image()
+        grp = [l for l in im.get_layers() if isinstance(l, Gimp.GroupLayer)][0]
+        red = grp.get_children()[0]
+        red.set_offsets(30, 40)
+        r = run("chopgimp-smart-convert", **{"run-mode": Gimp.RunMode.NONINTERACTIVE, "image": im,
+                                             "drawables": [red]})
+        links = [l for l in grp.get_children() if isinstance(l, Gimp.LinkLayer)]
+        ok_ = (r.index(0) == Gimp.PDBStatusType.SUCCESS and len(links) == 1 and
+               links[0].get_offsets()[1:] == (30, 40) and links[0].get_file().query_exists(None))
+        report(ok_, "Objet dynamique : conversion en calque lié (XCF)",
+               links[0].get_file().get_path() if links else str(r.index(0)))
+    except Exception as e:
+        report(False, "Objet dynamique", repr(e)[:200])
 
     # 4. Réglages d'usine présents (thème, icônes, menus, raccourcis)
     data = Gimp.data_directory()

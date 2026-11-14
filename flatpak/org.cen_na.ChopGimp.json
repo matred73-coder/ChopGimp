@@ -980,7 +980,8 @@
                         "../patches/gimp-3.2.8/0076-ChopGimp-crash-report-keeps-the-stack-of-running-plu.patch",
                         "../patches/gimp-3.2.8/0077-ChopGimp-user-feedback-layers-grow-to-fill-paint-adj.patch",
                         "../patches/gimp-3.2.8/0078-ChopGimp-plug-in-dialogs-stay-above-the-image-window.patch",
-                        "../patches/gimp-3.2.8/0079-ChopGimp-PSD-export-writes-vector-layers-as-shape-la.patch"
+                        "../patches/gimp-3.2.8/0079-ChopGimp-PSD-export-writes-vector-layers-as-shape-la.patch",
+                        "../patches/gimp-3.2.8/0080-ChopGimp-File-Place-linked-Place-embedded-labels.patch"
                     ]
                 }
             ],

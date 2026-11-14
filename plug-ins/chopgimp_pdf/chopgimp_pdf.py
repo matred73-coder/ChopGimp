@@ -45,6 +45,8 @@ PROC = "file-chopgimp-pdf-load"
 PROC_THUMB = "file-chopgimp-pdf-load-thumb"
 PROC_PS = "file-chopgimp-eps-load"
 PROC_SVG = "file-chopgimp-svg-load"
+PROC_PS_THUMB = "file-chopgimp-eps-load-thumb"
+PROC_SVG_THUMB = "file-chopgimp-svg-load-thumb"
 
 
 # ─── outils ─────────────────────────────────────────────────────────────
@@ -927,21 +929,60 @@ def load(procedure, run_mode, file, metadata, flags, config, data, classic_file=
 
 
 def thumbnail(procedure, file, size, config, data):
-    res = pdb_run("file-pdf-load-thumb", file=file, size=size)
+    """Vignette PDF / EPS : celle de l'import d'origine de GIMP."""
+    name = procedure.get_name()
+    src = "file-ps-load-thumb" if name == PROC_PS_THUMB else "file-pdf-load-thumb"
+    res = pdb_run(src, **{"file": file, "thumb-size": size})
     if res is None or res.index(0) != Gimp.PDBStatusType.SUCCESS:
         return procedure.new_return_values(Gimp.PDBStatusType.EXECUTION_ERROR,
-                                           GLib.Error("Vignette PDF impossible"))
+                                           GLib.Error("Vignette impossible"))
     return res
+
+
+def thumbnail_svg(procedure, file, size, config, data):
+    """Vignette SVG rendue par librsvg (l'import SVG de GIMP n'en a pas)."""
+    gi.require_version("Rsvg", "2.0")
+    from gi.repository import Rsvg
+    try:
+        handle = Rsvg.Handle.new_from_file(file.get_path())
+        ok_, w, h = handle.get_intrinsic_size_in_pixels()
+        if not ok_ or w <= 0 or h <= 0:
+            dim = handle.get_dimensions()
+            w, h = dim.width, dim.height
+    except Exception:
+        return procedure.new_return_values(Gimp.PDBStatusType.EXECUTION_ERROR,
+                                           GLib.Error("SVG illisible"))
+    k = min(1.0, float(size) / max(w, h))
+    tw, th = max(1, int(w * k)), max(1, int(h * k))
+    surf = cairo.ImageSurface(cairo.FORMAT_ARGB32, tw, th)
+    vp = Rsvg.Rectangle()
+    vp.x, vp.y, vp.width, vp.height = 0, 0, tw, th
+    handle.render_document(cairo.Context(surf), vp)
+    surf.flush()
+    image = Gimp.Image.new(tw, th, Gimp.ImageBaseType.RGB)
+    layer = Gimp.Layer.new(image, "SVG", tw, th, Gimp.ImageType.RGBA_IMAGE, 100, Gimp.LayerMode.NORMAL)
+    image.insert_layer(layer, None, 0)
+    buf = layer.get_buffer()
+    buf.set(Gegl.Rectangle.new(0, 0, tw, th), "cairo-ARGB32", bytes(surf.get_data()))
+    buf.flush()
+    return Gimp.ValueArray.new_from_values([
+        GObject.Value(Gimp.PDBStatusType, Gimp.PDBStatusType.SUCCESS),
+        GObject.Value(Gimp.Image, image),
+        GObject.Value(GObject.TYPE_INT, int(w)),
+        GObject.Value(GObject.TYPE_INT, int(h)),
+        GObject.Value(Gimp.ImageType, Gimp.ImageType.RGBA_IMAGE),
+        GObject.Value(GObject.TYPE_INT, 1)])
 
 
 class ChopGimpPDF(Gimp.PlugIn):
     def do_query_procedures(self):
         # la vignette d'abord : GIMP refuse un chargeur de vignette pas encore déclaré
-        return [PROC_THUMB, PROC, PROC_PS, PROC_SVG]
+        return [PROC_THUMB, PROC_PS_THUMB, PROC_SVG_THUMB, PROC, PROC_PS, PROC_SVG]
 
     def do_create_procedure(self, name):
-        if name == PROC_THUMB:
-            p = Gimp.ThumbnailProcedure.new(self, name, Gimp.PDBProcType.PLUGIN, thumbnail, None)
+        if name in (PROC_THUMB, PROC_PS_THUMB, PROC_SVG_THUMB):
+            p = Gimp.ThumbnailProcedure.new(self, name, Gimp.PDBProcType.PLUGIN,
+                                            thumbnail_svg if name == PROC_SVG_THUMB else thumbnail, None)
             p.set_documentation("Vignette d'un PDF / AI", "Délègue à file-pdf-load-thumb.", name)
             p.set_attribution("ChopGimp", "ChopGimp", "2026")
             return p
@@ -955,6 +996,7 @@ class ChopGimpPDF(Gimp.PlugIn):
             p.set_mime_types("image/svg+xml")
             p.set_extensions("svg")
             p.set_priority(-1)
+            p.set_thumbnail_loader(PROC_SVG_THUMB)
             return p
         if name == PROC_PS:
             p = Gimp.LoadProcedure.new(self, name, Gimp.PDBProcType.PLUGIN, load_ps, None)
@@ -967,6 +1009,7 @@ class ChopGimpPDF(Gimp.PlugIn):
             p.set_extensions("eps,ps,ai")
             p.set_magics("0,string,%!PS,0,long,0xc5d0d3c6")
             p.set_priority(-1)
+            p.set_thumbnail_loader(PROC_PS_THUMB)
             return p
         p = Gimp.LoadProcedure.new(self, name, Gimp.PDBProcType.PLUGIN, load, None)
         p.set_menu_label("PDF / Illustrator (calques modifiables)")

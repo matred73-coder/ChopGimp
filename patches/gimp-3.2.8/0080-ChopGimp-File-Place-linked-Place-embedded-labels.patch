@@ -1,0 +1,32 @@
+From b6fe92c5b589531dc6c7801b988351476fd1068d Mon Sep 17 00:00:00 2001
+From: ChopGimp <mathieu.redon@proton.me>
+Date: Sat, 14 Nov 2026 01:29:40 +0100
+Subject: [PATCH] ChopGimp: File > Place (linked) / Place (embedded) labels
+
+---
+ app/actions/file-actions.c | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/app/actions/file-actions.c b/app/actions/file-actions.c
+index c00129e..1074a74 100644
+--- a/app/actions/file-actions.c
++++ b/app/actions/file-actions.c
+@@ -77,13 +77,13 @@ static const GimpActionEntry file_actions[] =
+     GIMP_HELP_FILE_OPEN },
+ 
+   { "file-open-as-layers", GIMP_ICON_LAYER,
+-    NC_("file-action", "Op_en as Layers..."), NULL, { "<primary><alt>O", NULL },
++    NC_("file-action", "Placer (_incorporé)..."), NULL, { "<primary><alt>O", NULL },
+     NC_("file-action", "Open an image file as layers"),
+     file_open_as_layers_cmd_callback,
+     GIMP_HELP_FILE_OPEN_AS_LAYER },
+ 
+   { "file-open-as-link-layers", GIMP_ICON_LAYER,
+-    NC_("file-action", "Op_en as Link Layer..."), NULL, { "<primary><alt><shift>O", NULL },
++    NC_("file-action", "_Placer (lié)..."), NULL, { "<primary><alt><shift>O", NULL },
+     NC_("file-action", "Open an image file as Link layer"),
+     file_open_as_link_layer_cmd_callback,
+     GIMP_HELP_FILE_OPEN_AS_LINK_LAYER },
+-- 
+2.53.0
+

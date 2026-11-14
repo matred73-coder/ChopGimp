@@ -13,7 +13,7 @@ Plan complet : lots 0 à 6, idées en plus, calendrier de 17 étapes (voir l'his
 | 5 ter | 3.19.2 | Retours d'utilisation (remplissage, filtres, styles, sélection auto) | ✅ livrée |
 | 6 | 3.19.3 | PSD II | ✅ livrée |
 | 7 | 3.20.0 | Vectoriel I (PDF/AI, + EPS et SVG en avance) | ✅ livrée |
-| 8 | 3.20.1 | Vectoriel II (Placer, aperçus) | à faire |
+| 8 | 3.20.1 | Vectoriel II (Placer, objets dynamiques, aperçus) | ✅ livrée |
 | 9 | 3.20.2 | Vectoriel III (SVG natif, export SVG) | à faire |
 | 10 | 3.21.0 | Base I | à faire |
 | 11 | 3.21.1 | Base II | à faire |
@@ -221,3 +221,13 @@ Signalés le 2026-11-13 en utilisant ChopGimp sur une affiche (scan 2480×3510) 
 - les découpes (masques d'écrêtage) ne sont pas appliquées aux vecteurs : voir le rendu de référence ;
 - les calques PDF imbriqués sont mis à plat ;
 - un texte situé dans un calque PDF va dans le groupe « Textes ».
+
+## 3.20.1 — Vectoriel II : Placer et objets dynamiques
+
+- **Fichier > Placer (lié)…** (Ctrl+Alt+Maj+O) et **Placer (incorporé)…** (Ctrl+Alt+O) : les actions « Ouvrir comme calque lié / comme calques » de GIMP, renommées comme dans Photoshop. Un calque lié est surveillé : il se met à jour quand son fichier change.
+- **Calque > Objet dynamique** (`plug-ins/chopgimp_smart`) :
+  - **Convertir en objet dynamique** : les calques sélectionnés sont enregistrés dans un XCF (`<dossier GIMP>/objets-dynamiques/<image>/`) et remplacés par un calque lié, à la même place ;
+  - **Modifier le contenu** : ouvre le fichier lié ; il suffit de l'enregistrer pour mettre à jour l'objet ;
+  - **Remplacer le contenu…** : lie le calque à un autre fichier.
+- **Vignettes** dans la fenêtre d'ouverture : SVG (rendu par librsvg ; l'import SVG de GIMP n'en avait pas), EPS/PS/AI et PDF (vignettes d'origine).
+- **2 nouveaux tests** : 79 tests.
