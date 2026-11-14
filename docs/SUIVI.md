@@ -466,5 +466,5 @@ Demande de l'utilisateur : chaque style s'ouvre « dans le même style que l'omb
   Pour cela, une action de filtre interactive accepte maintenant « opération\n(réglages) », un format que GIMP savait déjà lire pour ses filtres préréglés.
 - **Amélioration de l'existant** : le filtre GEGL « lueur interne » ne rend que la lueur. Appliqué en mode Remplacer (le défaut de GIMP), il rendait l'intérieur du calque transparent. Ombre interne et Lueur interne l'appliquent en mode Normal.
 - Panneau Caractère : les boutons Ombre… et Contour… ouvrent ces mêmes fenêtres.
-- La fenêtre ChopGimp « Style de calque… » (tous les effets ensemble) reste disponible pour les scripts et l'import PSD, mais n'est plus proposée dans ces menus.
+- La fenêtre ChopGimp qui regroupe tous les effets reste dans le sous-menu, sous le nom « Style de calque (fenêtre)… ». Elle sert aussi aux scripts et à l'import PSD. Les entrées par effet n'y mènent plus.
 - Vérifié au banc : les quatre fenêtres s'ouvrent avec leurs réglages et leur aperçu. 100 tests.
