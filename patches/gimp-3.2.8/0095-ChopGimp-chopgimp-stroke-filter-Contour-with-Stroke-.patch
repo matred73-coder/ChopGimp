@@ -1,0 +1,1172 @@
+From 8fc3f4a3f35b65f62bfcb502a2f912dc76398a00 Mon Sep 17 00:00:00 2001
+From: ChopGimp <mathieu.redon@proton.me>
+Date: Sat, 14 Nov 2026 23:10:33 +0100
+Subject: [PATCH] ChopGimp: chopgimp:stroke filter (Contour with Stroke
+ Selection options, editable)
+
+---
+ app/actions/filters-actions.c         |   9 +-
+ app/operations/gimp-operations.c      |   2 +
+ app/operations/gimpoperationcontour.c | 787 ++++++++++++++++++++++++++
+ app/operations/gimpoperationcontour.h |  59 ++
+ app/operations/meson.build            |   1 +
+ libgimp/gimpenums.c.tail              |   4 +
+ libgimpbase/gimpbase.def              |   2 +
+ libgimpbase/gimpbaseenums.c           |  78 +++
+ libgimpbase/gimpbaseenums.h           |  60 ++
+ pdb/enums.pl                          |  32 ++
+ 10 files changed, 1030 insertions(+), 4 deletions(-)
+ create mode 100644 app/operations/gimpoperationcontour.c
+ create mode 100644 app/operations/gimpoperationcontour.h
+
+diff --git a/app/actions/filters-actions.c b/app/actions/filters-actions.c
+index 9625f09..f2458f9 100644
+--- a/app/actions/filters-actions.c
++++ b/app/actions/filters-actions.c
+@@ -280,10 +280,11 @@ static const GimpStringActionEntry filters_interactive_actions[] =
+    */
+   { "filters-chopgimp-stroke", GIMP_ICON_GEGL,
+     NC_("filters-action", "Contour..."), NULL, { NULL }, NULL,
+-    "gegl:dropshadow\n"
+-    "(x 0.0)(y 0.0)(radius 0.0)(grow-shape circle)(grow-radius 3.0)"
+-    "(color (color-rgba 0.0 0.0 0.0 1.0))(opacity 1.0)",
+-    GIMP_HELP_FILTER_DROPSHADOW },
++    /*  app/operations/gimpoperationcontour.c, options de « Tracer la
++     *  sélection » ; ses réglages par défaut conviennent
++     */
++    "chopgimp:stroke",
++    NULL },
+ 
+   { "filters-chopgimp-outer-glow", GIMP_ICON_GEGL,
+     NC_("filters-action", "Lueur externe..."), NULL, { NULL }, NULL,
+diff --git a/app/operations/gimp-operations.c b/app/operations/gimp-operations.c
+index 6a8c2a9..e0b91b9 100644
+--- a/app/operations/gimp-operations.c
++++ b/app/operations/gimp-operations.c
+@@ -35,6 +35,7 @@
+ #include "gimpoperationcagecoefcalc.h"
+ #include "gimpoperationcagetransform.h"
+ #include "gimpoperationcomposecrop.h"
++#include "gimpoperationcontour.h"
+ #include "gimpoperationequalize.h"
+ #include "gimpoperationfillsource.h"
+ #include "gimpoperationflood.h"
+@@ -131,6 +132,7 @@ gimp_operations_init (Gimp *gimp)
+   g_type_class_ref (GIMP_TYPE_OPERATION_CAGE_COEF_CALC);
+   g_type_class_ref (GIMP_TYPE_OPERATION_CAGE_TRANSFORM);
+   g_type_class_ref (GIMP_TYPE_OPERATION_COMPOSE_CROP);
++  g_type_class_ref (GIMP_TYPE_OPERATION_CONTOUR);
+   g_type_class_ref (GIMP_TYPE_OPERATION_EQUALIZE);
+   g_type_class_ref (GIMP_TYPE_OPERATION_FILL_SOURCE);
+   g_type_class_ref (GIMP_TYPE_OPERATION_FLOOD);
+diff --git a/app/operations/gimpoperationcontour.c b/app/operations/gimpoperationcontour.c
+new file mode 100644
+index 0000000..f2343ec
+--- /dev/null
++++ b/app/operations/gimpoperationcontour.c
+@@ -0,0 +1,787 @@
++/* GIMP - The GNU Image Manipulation Program
++ * Copyright (C) 1995 Spencer Kimball and Peter Mattis
++ *
++ * gimpoperationcontour.c
++ * ChopGimp : style de calque « Contour » (chopgimp:stroke)
++ *
++ * Trace le bord des pixels du calque (contour de son alpha), avec les
++ * mêmes options que « Tracer la sélection » (épaisseur, couleur,
++ * anticrénelage, extrémités, jointures, limite d'onglet, pointillés),
++ * à l'extérieur, au centre ou à l'intérieur du bord.  C'est un filtre
++ * GEGL ordinaire : il reste modifiable (icône fx du calque) et il est
++ * enregistré dans le XCF comme tout autre filtre.
++ *
++ * This program is free software: you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation; either version 3 of the License, or
++ * (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License
++ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
++ */
++
++#include "config.h"
++
++#include <math.h>
++
++#include <cairo.h>
++#include <gegl.h>
++#include <gdk-pixbuf/gdk-pixbuf.h>
++
++#include "libgimpbase/gimpbase.h"
++
++#include "operations-types.h"
++
++#include "core/gimpboundary.h"
++#include "core/gimpdashpattern.h"
++
++#include "gimpoperationcontour.h"
++
++
++enum
++{
++  PROP_0,
++  PROP_POSITION,
++  PROP_WIDTH,
++  PROP_COLOR,
++  PROP_OPACITY,
++  PROP_ANTIALIAS,
++  PROP_DASH_PRESET,
++  PROP_CAP_STYLE,
++  PROP_JOIN_STYLE,
++  PROP_MITER_LIMIT,
++  PROP_THRESHOLD
++};
++
++
++static void          gimp_operation_contour_finalize      (GObject             *object);
++static void          gimp_operation_contour_get_property  (GObject             *object,
++                                                           guint                property_id,
++                                                           GValue              *value,
++                                                           GParamSpec          *pspec);
++static void          gimp_operation_contour_set_property  (GObject             *object,
++                                                           guint                property_id,
++                                                           const GValue        *value,
++                                                           GParamSpec          *pspec);
++
++static void          gimp_operation_contour_prepare       (GeglOperation       *operation);
++static GeglRectangle gimp_operation_contour_get_bounding_box
++                                                          (GeglOperation       *operation);
++static GeglRectangle gimp_operation_contour_get_required_for_output
++                                                          (GeglOperation       *operation,
++                                                           const gchar         *input_pad,
++                                                           const GeglRectangle *roi);
++static GeglRectangle gimp_operation_contour_get_invalidated_by_change
++                                                          (GeglOperation       *operation,
++                                                           const gchar         *input_pad,
++                                                           const GeglRectangle *input_region);
++static GeglRectangle gimp_operation_contour_get_cached_region
++                                                          (GeglOperation       *operation,
++                                                           const GeglRectangle *roi);
++
++static gboolean      gimp_operation_contour_process       (GeglOperation       *operation,
++                                                           GeglBuffer          *input,
++                                                           GeglBuffer          *output,
++                                                           const GeglRectangle *roi,
++                                                           gint                 level);
++
++
++G_DEFINE_TYPE (GimpOperationContour, gimp_operation_contour,
++               GEGL_TYPE_OPERATION_FILTER)
++
++#define parent_class gimp_operation_contour_parent_class
++
++
++static void
++gimp_operation_contour_class_init (GimpOperationContourClass *klass)
++{
++  GObjectClass             *object_class    = G_OBJECT_CLASS (klass);
++  GeglOperationClass       *operation_class = GEGL_OPERATION_CLASS (klass);
++  GeglOperationFilterClass *filter_class    = GEGL_OPERATION_FILTER_CLASS (klass);
++  GParamSpec               *pspec;
++
++  object_class->finalize     = gimp_operation_contour_finalize;
++  object_class->set_property = gimp_operation_contour_set_property;
++  object_class->get_property = gimp_operation_contour_get_property;
++
++  gegl_operation_class_set_keys (operation_class,
++                                 "name",        "chopgimp:stroke",
++                                 "title",       "Contour",
++                                 "categories",  "light",
++                                 "description", "Trace un contour autour des "
++                                                "pixels du calque (style de "
++                                                "calque)",
++                                 NULL);
++
++  operation_class->prepare                   = gimp_operation_contour_prepare;
++  operation_class->get_bounding_box          = gimp_operation_contour_get_bounding_box;
++  operation_class->get_required_for_output   = gimp_operation_contour_get_required_for_output;
++  operation_class->get_invalidated_by_change = gimp_operation_contour_get_invalidated_by_change;
++  operation_class->get_cached_region         = gimp_operation_contour_get_cached_region;
++  operation_class->threaded                  = FALSE;
++
++  filter_class->process                      = gimp_operation_contour_process;
++
++  /*  the properties are listed in the order of the filter dialog  */
++
++  g_object_class_install_property (object_class, PROP_POSITION,
++                                   g_param_spec_enum ("position",
++                                                      "Position",
++                                                      "Place du contour par "
++                                                      "rapport au bord du calque",
++                                                      GIMP_TYPE_CONTOUR_POSITION,
++                                                      GIMP_CONTOUR_POSITION_OUTSIDE,
++                                                      G_PARAM_READWRITE |
++                                                      G_PARAM_CONSTRUCT));
++
++  pspec = gegl_param_spec_double ("width",
++                                  "Épaisseur",
++                                  "Épaisseur du contour, en pixels",
++                                  0.5, 500.0, 3.0,
++                                  0.5, 100.0, 1.5,
++                                  G_PARAM_READWRITE |
++                                  G_PARAM_CONSTRUCT);
++  gegl_param_spec_double_set_steps (GEGL_PARAM_SPEC_DOUBLE (pspec), 0.5, 5.0);
++  gegl_param_spec_double_set_digits (GEGL_PARAM_SPEC_DOUBLE (pspec), 1);
++  gegl_param_spec_set_property_key (pspec, "unit", "pixel-distance");
++  g_object_class_install_property (object_class, PROP_WIDTH, pspec);
++
++  g_object_class_install_property (object_class, PROP_COLOR,
++                                   gegl_param_spec_color_from_string ("color",
++                                                                      "Couleur",
++                                                                      "Couleur du contour",
++                                                                      "black",
++                                                                      G_PARAM_READWRITE |
++                                                                      G_PARAM_CONSTRUCT));
++
++  pspec = gegl_param_spec_double ("opacity",
++                                  "Opacité",
++                                  "Opacité du contour",
++                                  0.0, 1.0, 1.0,
++                                  0.0, 1.0, 1.0,
++                                  G_PARAM_READWRITE |
++                                  G_PARAM_CONSTRUCT);
++  gegl_param_spec_double_set_steps (GEGL_PARAM_SPEC_DOUBLE (pspec), 0.01, 0.1);
++  gegl_param_spec_double_set_digits (GEGL_PARAM_SPEC_DOUBLE (pspec), 2);
++  g_object_class_install_property (object_class, PROP_OPACITY, pspec);
++
++  g_object_class_install_property (object_class, PROP_ANTIALIAS,
++                                   g_param_spec_boolean ("antialias",
++                                                         "Anticrénelage",
++                                                         "Lisser les bords du "
++                                                         "contour",
++                                                         TRUE,
++                                                         G_PARAM_READWRITE |
++                                                         G_PARAM_CONSTRUCT));
++
++  g_object_class_install_property (object_class, PROP_DASH_PRESET,
++                                   g_param_spec_enum ("dash-preset",
++                                                      "Pointillés",
++                                                      "Contour continu ou en "
++                                                      "pointillés",
++                                                      GIMP_TYPE_CONTOUR_DASH,
++                                                      GIMP_CONTOUR_DASH_LINE,
++                                                      G_PARAM_READWRITE |
++                                                      G_PARAM_CONSTRUCT));
++
++  /*  a closed outline has no ends: the caps only matter for dashes  */
++  pspec = g_param_spec_enum ("cap-style",
++                             "Extrémités",
++                             "Forme des extrémités des tirets",
++                             GIMP_TYPE_CAP_STYLE,
++                             GIMP_CAP_BUTT,
++                             G_PARAM_READWRITE |
++                             G_PARAM_CONSTRUCT);
++  gegl_param_spec_set_property_key (pspec, "sensitive", "! dash-preset {line}");
++  g_object_class_install_property (object_class, PROP_CAP_STYLE, pspec);
++
++  g_object_class_install_property (object_class, PROP_JOIN_STYLE,
++                                   g_param_spec_enum ("join-style",
++                                                      "Jointures",
++                                                      "Forme des angles du "
++                                                      "contour",
++                                                      GIMP_TYPE_JOIN_STYLE,
++                                                      GIMP_JOIN_ROUND,
++                                                      G_PARAM_READWRITE |
++                                                      G_PARAM_CONSTRUCT));
++
++  pspec = gegl_param_spec_double ("miter-limit",
++                                  "Limite d'onglet",
++                                  "Au-delà de cette limite, les angles en "
++                                  "onglet sont biseautés",
++                                  0.0, 100.0, 10.0,
++                                  0.0, 20.0, 1.0,
++                                  G_PARAM_READWRITE |
++                                  G_PARAM_CONSTRUCT);
++  gegl_param_spec_double_set_steps (GEGL_PARAM_SPEC_DOUBLE (pspec), 0.1, 1.0);
++  gegl_param_spec_double_set_digits (GEGL_PARAM_SPEC_DOUBLE (pspec), 1);
++  gegl_param_spec_set_property_key (pspec, "sensitive", "join-style {miter}");
++  g_object_class_install_property (object_class, PROP_MITER_LIMIT, pspec);
++
++  pspec = gegl_param_spec_double ("threshold",
++                                  "Seuil d'opacité",
++                                  "Opacité à partir de laquelle un pixel fait "
++                                  "partie du calque",
++                                  0.0, 0.99, 0.5,
++                                  0.0, 0.99, 1.0,
++                                  G_PARAM_READWRITE |
++                                  G_PARAM_CONSTRUCT);
++  gegl_param_spec_double_set_steps (GEGL_PARAM_SPEC_DOUBLE (pspec), 0.01, 0.1);
++  gegl_param_spec_double_set_digits (GEGL_PARAM_SPEC_DOUBLE (pspec), 2);
++  g_object_class_install_property (object_class, PROP_THRESHOLD, pspec);
++}
++
++static void
++gimp_operation_contour_init (GimpOperationContour *self)
++{
++}
++
++static void
++gimp_operation_contour_finalize (GObject *object)
++{
++  GimpOperationContour *self = GIMP_OPERATION_CONTOUR (object);
++
++  g_clear_object (&self->color);
++
++  G_OBJECT_CLASS (parent_class)->finalize (object);
++}
++
++static void
++gimp_operation_contour_get_property (GObject    *object,
++                                     guint       property_id,
++                                     GValue     *value,
++                                     GParamSpec *pspec)
++{
++  GimpOperationContour *self = GIMP_OPERATION_CONTOUR (object);
++
++  switch (property_id)
++    {
++    case PROP_POSITION:
++      g_value_set_enum (value, self->position);
++      break;
++
++    case PROP_WIDTH:
++      g_value_set_double (value, self->width);
++      break;
++
++    case PROP_COLOR:
++      g_value_set_object (value, self->color);
++      break;
++
++    case PROP_OPACITY:
++      g_value_set_double (value, self->opacity);
++      break;
++
++    case PROP_ANTIALIAS:
++      g_value_set_boolean (value, self->antialias);
++      break;
++
++    case PROP_DASH_PRESET:
++      g_value_set_enum (value, self->dash_preset);
++      break;
++
++    case PROP_CAP_STYLE:
++      g_value_set_enum (value, self->cap_style);
++      break;
++
++    case PROP_JOIN_STYLE:
++      g_value_set_enum (value, self->join_style);
++      break;
++
++    case PROP_MITER_LIMIT:
++      g_value_set_double (value, self->miter_limit);
++      break;
++
++    case PROP_THRESHOLD:
++      g_value_set_double (value, self->threshold);
++      break;
++
++    default:
++      G_OBJECT_WARN_INVALID_PROPERTY_ID (object, property_id, pspec);
++      break;
++    }
++}
++
++static void
++gimp_operation_contour_set_property (GObject      *object,
++                                     guint         property_id,
++                                     const GValue *value,
++                                     GParamSpec   *pspec)
++{
++  GimpOperationContour *self = GIMP_OPERATION_CONTOUR (object);
++
++  switch (property_id)
++    {
++    case PROP_POSITION:
++      self->position = g_value_get_enum (value);
++      break;
++
++    case PROP_WIDTH:
++      self->width = g_value_get_double (value);
++      break;
++
++    case PROP_COLOR:
++      g_clear_object (&self->color);
++      self->color = g_value_dup_object (value);
++      break;
++
++    case PROP_OPACITY:
++      self->opacity = g_value_get_double (value);
++      break;
++
++    case PROP_ANTIALIAS:
++      self->antialias = g_value_get_boolean (value);
++      break;
++
++    case PROP_DASH_PRESET:
++      self->dash_preset = g_value_get_enum (value);
++      break;
++
++    case PROP_CAP_STYLE:
++      self->cap_style = g_value_get_enum (value);
++      break;
++
++    case PROP_JOIN_STYLE:
++      self->join_style = g_value_get_enum (value);
++      break;
++
++    case PROP_MITER_LIMIT:
++      self->miter_limit = g_value_get_double (value);
++      break;
++
++    case PROP_THRESHOLD:
++      self->threshold = g_value_get_double (value);
++      break;
++
++    default:
++      G_OBJECT_WARN_INVALID_PROPERTY_ID (object, property_id, pspec);
++      break;
++    }
++}
++
++static void
++gimp_operation_contour_prepare (GeglOperation *operation)
++{
++  const Babl *space  = gegl_operation_get_source_space (operation, "input");
++  const Babl *format = babl_format_with_space ("RGBA float", space);
++
++  gegl_operation_set_format (operation, "input",  format);
++  gegl_operation_set_format (operation, "output", format);
++}
++
++/*  how far the stroke goes beyond the layer's edge, in pixels  */
++static gint
++gimp_operation_contour_get_grow (GimpOperationContour *self)
++{
++  gdouble half;
++
++  if (self->position == GIMP_CONTOUR_POSITION_INSIDE)
++    return 0;
++
++  if (self->position == GIMP_CONTOUR_POSITION_CENTER)
++    half = self->width / 2.0;
++  else
++    half = self->width;
++
++  /*  the outline only has right angles: a miter (or a square cap)
++   *  goes at most half * sqrt (2) away from the path, plus a pixel
++   *  of antialiasing
++   */
++  return (gint) ceil (half * G_SQRT2) + 2;
++}
++
++static GeglRectangle
++gimp_operation_contour_get_bounding_box (GeglOperation *operation)
++{
++  GimpOperationContour *self   = GIMP_OPERATION_CONTOUR (operation);
++  GeglRectangle         result = { 0, 0, 0, 0 };
++  const GeglRectangle  *in_rect;
++  gint                  grow;
++
++  in_rect = gegl_operation_source_get_bounding_box (operation, "input");
++
++  if (! in_rect)
++    return result;
++
++  if (gegl_rectangle_is_infinite_plane (in_rect) ||
++      gegl_rectangle_is_empty (in_rect))
++    return *in_rect;
++
++  grow = gimp_operation_contour_get_grow (self);
++
++  result.x      = in_rect->x - grow;
++  result.y      = in_rect->y - grow;
++  result.width  = in_rect->width  + 2 * grow;
++  result.height = in_rect->height + 2 * grow;
++
++  return result;
++}
++
++static GeglRectangle
++gimp_operation_contour_get_required_for_output (GeglOperation       *operation,
++                                                const gchar         *input_pad,
++                                                const GeglRectangle *roi)
++{
++  const GeglRectangle *in_rect;
++
++  /*  the outline depends on the whole layer  */
++  in_rect = gegl_operation_source_get_bounding_box (operation, "input");
++
++  if (in_rect && ! gegl_rectangle_is_infinite_plane (in_rect))
++    return *in_rect;
++
++  return *roi;
++}
++
++static GeglRectangle
++gimp_operation_contour_get_invalidated_by_change (GeglOperation       *operation,
++                                                  const gchar         *input_pad,
++                                                  const GeglRectangle *input_region)
++{
++  /*  a change anywhere can move the dashes everywhere  */
++  return gimp_operation_contour_get_bounding_box (operation);
++}
++
++static GeglRectangle
++gimp_operation_contour_get_cached_region (GeglOperation       *operation,
++                                          const GeglRectangle *roi)
++{
++  GeglRectangle result = gimp_operation_contour_get_bounding_box (operation);
++
++  if (gegl_rectangle_is_infinite_plane (&result))
++    return *roi;
++
++  return result;
++}
++
++/*  appends the sorted boundary groups to cr's path as closed polygons,
++ *  dropping the vertices where the outline goes straight on
++ */
++static void
++gimp_operation_contour_append_path (cairo_t            *cr,
++                                    const GimpBoundSeg *segs,
++                                    gint                n_groups)
++{
++  gint seg = 0;
++  gint group;
++
++  for (group = 0; group < n_groups; group++)
++    {
++      gint first = seg;
++      gint i;
++
++      while (segs[seg].x1 != -1 ||
++             segs[seg].y1 != -1 ||
++             segs[seg].x2 != -1 ||
++             segs[seg].y2 != -1)
++        seg++;
++
++      if (seg - first >= 2)
++        {
++          cairo_move_to (cr, segs[first].x1, segs[first].y1);
++
++          for (i = first + 1; i < seg; i++)
++            {
++              const GimpBoundSeg *prev = &segs[i - 1];
++              const GimpBoundSeg *cur  = &segs[i];
++
++              if ((prev->x1 == cur->x1 && cur->x1 == cur->x2) ||
++                  (prev->y1 == cur->y1 && cur->y1 == cur->y2))
++                continue;
++
++              cairo_line_to (cr, cur->x1, cur->y1);
++            }
++
++          cairo_close_path (cr);
++        }
++
++      /*  skip the group's end marker  */
++      seg++;
++    }
++}
++
++static gboolean
++gimp_operation_contour_process (GeglOperation       *operation,
++                                GeglBuffer          *input,
++                                GeglBuffer          *output,
++                                const GeglRectangle *roi,
++                                gint                 level)
++{
++  GimpOperationContour *self   = GIMP_OPERATION_CONTOUR (operation);
++  const Babl           *format = gegl_operation_get_format (operation, "output");
++  const GeglRectangle  *in_rect;
++  GeglBuffer           *alpha_buffer;
++  GeglBufferIterator   *iter;
++  GimpBoundSeg         *segs;
++  GimpBoundSeg         *sorted;
++  gint                  n_segs   = 0;
++  gint                  n_groups = 0;
++  gfloat               *alpha;
++  cairo_surface_t      *surface;
++  cairo_t              *cr;
++  const guchar         *mask;
++  gint                  stride;
++  gfloat                color[4] = { 0.0, 0.0, 0.0, 1.0 };
++  gfloat                strength;
++  gboolean              behind;
++  gboolean              clip_alpha;
++
++  in_rect = gegl_operation_source_get_bounding_box (operation, "input");
++
++  if (! in_rect                              ||
++      gegl_rectangle_is_empty (in_rect)      ||
++      gegl_rectangle_is_infinite_plane (in_rect) ||
++      self->opacity <= 0.0                   ||
++      roi->width  > 32767                    ||
++      roi->height > 32767)
++    {
++      gegl_buffer_copy (input, roi, GEGL_ABYSS_NONE, output, roi);
++      return TRUE;
++    }
++
++  /*  1. the outline of the layer's alpha, at the threshold  */
++
++  alpha = g_try_new (gfloat, (gsize) in_rect->width * in_rect->height);
++
++  if (! alpha)
++    {
++      gegl_buffer_copy (input, roi, GEGL_ABYSS_NONE, output, roi);
++      return TRUE;
++    }
++
++  gegl_buffer_get (input, in_rect, 1.0, babl_format ("A float"),
++                   alpha, GEGL_AUTO_ROWSTRIDE, GEGL_ABYSS_NONE);
++
++  /*  gimp_boundary_find() wants a buffer starting at 0, 0  */
++  alpha_buffer =
++    gegl_buffer_linear_new_from_data (alpha, babl_format ("Y float"),
++                                      GEGL_RECTANGLE (0, 0,
++                                                      in_rect->width,
++                                                      in_rect->height),
++                                      in_rect->width * sizeof (gfloat),
++                                      NULL, NULL);
++
++  segs = gimp_boundary_find (alpha_buffer, NULL, babl_format ("Y float"),
++                             GIMP_BOUNDARY_WITHIN_BOUNDS,
++                             0, 0, in_rect->width, in_rect->height,
++                             self->threshold,
++                             &n_segs);
++
++  g_object_unref (alpha_buffer);
++  g_free (alpha);
++
++  if (n_segs == 0)
++    {
++      g_free (segs);
++      gegl_buffer_copy (input, roi, GEGL_ABYSS_NONE, output, roi);
++      return TRUE;
++    }
++
++  sorted = gimp_boundary_sort (segs, n_segs, &n_groups);
++  g_free (segs);
++
++  /*  2. the stroke's coverage, rendered by cairo  */
++
++  surface = cairo_image_surface_create (CAIRO_FORMAT_A8,
++                                        roi->width, roi->height);
++
++  if (cairo_surface_status (surface) != CAIRO_STATUS_SUCCESS)
++    {
++      cairo_surface_destroy (surface);
++      g_free (sorted);
++      gegl_buffer_copy (input, roi, GEGL_ABYSS_NONE, output, roi);
++      return TRUE;
++    }
++
++  cr = cairo_create (surface);
++
++  /*  boundary coordinates are relative to the layer's origin  */
++  cairo_translate (cr, in_rect->x - roi->x, in_rect->y - roi->y);
++
++  cairo_set_antialias (cr, self->antialias ?
++                           CAIRO_ANTIALIAS_DEFAULT : CAIRO_ANTIALIAS_NONE);
++  cairo_set_fill_rule (cr, CAIRO_FILL_RULE_EVEN_ODD);
++
++  switch (self->position)
++    {
++    case GIMP_CONTOUR_POSITION_OUTSIDE:
++      /*  keep the outer half of the stroke only  */
++      cairo_rectangle (cr,
++                       roi->x - in_rect->x, roi->y - in_rect->y,
++                       roi->width, roi->height);
++      gimp_operation_contour_append_path (cr, sorted, n_groups);
++      cairo_clip (cr);
++      cairo_set_line_width (cr, 2.0 * self->width);
++      break;
++
++    case GIMP_CONTOUR_POSITION_CENTER:
++      cairo_set_line_width (cr, self->width);
++      break;
++
++    case GIMP_CONTOUR_POSITION_INSIDE:
++      /*  keep the inner half of the stroke only  */
++      gimp_operation_contour_append_path (cr, sorted, n_groups);
++      cairo_clip (cr);
++      cairo_set_line_width (cr, 2.0 * self->width);
++      break;
++    }
++
++  switch (self->cap_style)
++    {
++    case GIMP_CAP_BUTT:
++      cairo_set_line_cap (cr, CAIRO_LINE_CAP_BUTT);
++      break;
++    case GIMP_CAP_ROUND:
++      cairo_set_line_cap (cr, CAIRO_LINE_CAP_ROUND);
++      break;
++    case GIMP_CAP_SQUARE:
++      cairo_set_line_cap (cr, CAIRO_LINE_CAP_SQUARE);
++      break;
++    }
++
++  switch (self->join_style)
++    {
++    case GIMP_JOIN_MITER:
++      cairo_set_line_join (cr, CAIRO_LINE_JOIN_MITER);
++      break;
++    case GIMP_JOIN_ROUND:
++      cairo_set_line_join (cr, CAIRO_LINE_JOIN_ROUND);
++      break;
++    case GIMP_JOIN_BEVEL:
++      cairo_set_line_join (cr, CAIRO_LINE_JOIN_BEVEL);
++      break;
++    }
++
++  cairo_set_miter_limit (cr, self->miter_limit);
++
++  if (self->dash_preset != GIMP_CONTOUR_DASH_LINE)
++    {
++      GArray *pattern;
++
++      /*  GimpContourDash is GimpDashPreset without GIMP_DASH_CUSTOM  */
++      pattern = gimp_dash_pattern_new_from_preset ((GimpDashPreset)
++                                                   (self->dash_preset +
++                                                    GIMP_DASH_LINE));
++
++      if (pattern)
++        {
++          gdouble *dashes;
++          guint    i;
++
++          /*  dash lengths are in units of the visible stroke width,
++           *  like gimp_scan_convert_stroke() does
++           */
++          dashes = g_new (gdouble, pattern->len);
++
++          for (i = 0; i < pattern->len; i++)
++            dashes[i] = MAX (self->width, 1.0) *
++                        g_array_index (pattern, gdouble, i);
++
++          cairo_set_dash (cr, dashes, pattern->len, 0.0);
++
++          g_free (dashes);
++          gimp_dash_pattern_free (pattern);
++        }
++    }
++
++  cairo_new_path (cr);
++  gimp_operation_contour_append_path (cr, sorted, n_groups);
++  cairo_set_source_rgba (cr, 0.0, 0.0, 0.0, 1.0);
++  cairo_stroke (cr);
++
++  cairo_destroy (cr);
++  g_free (sorted);
++
++  cairo_surface_flush (surface);
++
++  mask   = cairo_image_surface_get_data (surface);
++  stride = cairo_image_surface_get_stride (surface);
++
++  /*  3. composite the stroke with the layer, in linear light  */
++
++  if (self->color)
++    gegl_color_get_pixel (self->color, format, color);
++
++  strength   = self->opacity * CLAMP (color[3], 0.0, 1.0) / 255.0;
++  behind     = (self->position == GIMP_CONTOUR_POSITION_OUTSIDE);
++  clip_alpha = (self->position == GIMP_CONTOUR_POSITION_INSIDE);
++
++  iter = gegl_buffer_iterator_new (output, roi, 0, format,
++                                   GEGL_ACCESS_WRITE, GEGL_ABYSS_NONE, 2);
++
++  gegl_buffer_iterator_add (iter, input, roi, 0, format,
++                            GEGL_ACCESS_READ, GEGL_ABYSS_NONE);
++
++  while (gegl_buffer_iterator_next (iter))
++    {
++      gfloat              *out  = iter->items[0].data;
++      const gfloat        *in   = iter->items[1].data;
++      const GeglRectangle *rect = &iter->items[0].roi;
++      gint                 x, y;
++
++      for (y = 0; y < rect->height; y++)
++        {
++          const guchar *m = mask +
++                            (rect->y + y - roi->y) * stride +
++                            (rect->x - roi->x);
++
++          for (x = 0; x < rect->width; x++)
++            {
++              gfloat la = in[3];
++              gfloat sa = m[x] * strength;
++              gfloat a;
++              gint   c;
++
++              if (sa <= 0.0f)
++                {
++                  out[0] = in[0];
++                  out[1] = in[1];
++                  out[2] = in[2];
++                  out[3] = in[3];
++                }
++              else
++                {
++                  if (clip_alpha)
++                    sa *= la;
++
++                  if (behind)
++                    {
++                      /*  layer OVER stroke  */
++                      gfloat k = sa * (1.0f - la);
++
++                      a = la + k;
++
++                      for (c = 0; c < 3; c++)
++                        out[c] = (a > 1e-7f ?
++                                  (in[c] * la + color[c] * k) / a : 0.0f);
++                    }
++                  else
++                    {
++                      /*  stroke OVER layer  */
++                      gfloat k = la * (1.0f - sa);
++
++                      a = sa + k;
++
++                      for (c = 0; c < 3; c++)
++                        out[c] = (a > 1e-7f ?
++                                  (color[c] * sa + in[c] * k) / a : 0.0f);
++                    }
++
++                  out[3] = a;
++                }
++
++              in  += 4;
++              out += 4;
++            }
++        }
++    }
++
++  cairo_surface_destroy (surface);
++
++  return TRUE;
++}
+diff --git a/app/operations/gimpoperationcontour.h b/app/operations/gimpoperationcontour.h
+new file mode 100644
+index 0000000..1b940e2
+--- /dev/null
++++ b/app/operations/gimpoperationcontour.h
+@@ -0,0 +1,59 @@
++/* GIMP - The GNU Image Manipulation Program
++ * Copyright (C) 1995 Spencer Kimball and Peter Mattis
++ *
++ * gimpoperationcontour.h
++ * ChopGimp : style de calque « Contour » (chopgimp:stroke)
++ *
++ * This program is free software: you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation; either version 3 of the License, or
++ * (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License
++ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
++ */
++
++#pragma once
++
++#include <gegl-plugin.h>
++
++
++#define GIMP_TYPE_OPERATION_CONTOUR            (gimp_operation_contour_get_type ())
++#define GIMP_OPERATION_CONTOUR(obj)            (G_TYPE_CHECK_INSTANCE_CAST ((obj), GIMP_TYPE_OPERATION_CONTOUR, GimpOperationContour))
++#define GIMP_OPERATION_CONTOUR_CLASS(klass)    (G_TYPE_CHECK_CLASS_CAST ((klass),  GIMP_TYPE_OPERATION_CONTOUR, GimpOperationContourClass))
++#define GIMP_IS_OPERATION_CONTOUR(obj)         (G_TYPE_CHECK_INSTANCE_TYPE ((obj), GIMP_TYPE_OPERATION_CONTOUR))
++#define GIMP_IS_OPERATION_CONTOUR_CLASS(klass) (G_TYPE_CHECK_CLASS_TYPE ((klass),  GIMP_TYPE_OPERATION_CONTOUR))
++#define GIMP_OPERATION_CONTOUR_GET_CLASS(obj)  (G_TYPE_INSTANCE_GET_CLASS ((obj),  GIMP_TYPE_OPERATION_CONTOUR, GimpOperationContourClass))
++
++
++typedef struct _GimpOperationContour      GimpOperationContour;
++typedef struct _GimpOperationContourClass GimpOperationContourClass;
++
++struct _GimpOperationContour
++{
++  GeglOperationFilter  parent_instance;
++
++  GimpContourPosition  position;
++  gdouble              width;
++  GeglColor           *color;
++  gdouble              opacity;
++  gboolean             antialias;
++  GimpContourDash      dash_preset;
++  GimpCapStyle         cap_style;
++  GimpJoinStyle        join_style;
++  gdouble              miter_limit;
++  gdouble              threshold;
++};
++
++struct _GimpOperationContourClass
++{
++  GeglOperationFilterClass  parent_class;
++};
++
++
++GType   gimp_operation_contour_get_type (void);
+diff --git a/app/operations/meson.build b/app/operations/meson.build
+index 7b6194d..189b540 100644
+--- a/app/operations/meson.build
++++ b/app/operations/meson.build
+@@ -34,6 +34,7 @@ libappoperations_sources = [
+   'gimpoperationcolorbalance.c',
+   'gimpoperationcolorize.c',
+   'gimpoperationcomposecrop.c',
++  'gimpoperationcontour.c',
+   'gimpoperationcurves.c',
+   'gimpoperationdesaturate.c',
+   'gimpoperationequalize.c',
+diff --git a/libgimp/gimpenums.c.tail b/libgimp/gimpenums.c.tail
+index d920bf9..d3f62f8 100644
+--- a/libgimp/gimpenums.c.tail
++++ b/libgimp/gimpenums.c.tail
+@@ -15,6 +15,8 @@ static const GimpGetTypeFunc get_type_funcs[] =
+   gimp_color_rendering_intent_get_type,
+   gimp_color_tag_get_type,
+   gimp_component_type_get_type,
++  gimp_contour_dash_get_type,
++  gimp_contour_position_get_type,
+   gimp_convert_dither_type_get_type,
+   gimp_convert_palette_type_get_type,
+   gimp_convolve_type_get_type,
+@@ -86,6 +88,8 @@ static const gchar * const type_names[] =
+   "GimpColorRenderingIntent",
+   "GimpColorTag",
+   "GimpComponentType",
++  "GimpContourDash",
++  "GimpContourPosition",
+   "GimpConvertDitherType",
+   "GimpConvertPaletteType",
+   "GimpConvolveType",
+diff --git a/libgimpbase/gimpbase.def b/libgimpbase/gimpbase.def
+index 26f0c50..d7c596a 100644
+--- a/libgimpbase/gimpbase.def
++++ b/libgimpbase/gimpbase.def
+@@ -36,6 +36,8 @@ EXPORTS
+ 	gimp_color_array_get_type
+ 	gimp_color_tag_get_type
+ 	gimp_component_type_get_type
++	gimp_contour_dash_get_type
++	gimp_contour_position_get_type
+ 	gimp_convert_palette_type_get_type
+ 	gimp_convolve_type_get_type
+ 	gimp_core_object_array_get_length
+diff --git a/libgimpbase/gimpbaseenums.c b/libgimpbase/gimpbaseenums.c
+index 520fa74..9b33f78 100644
+--- a/libgimpbase/gimpbaseenums.c
++++ b/libgimpbase/gimpbaseenums.c
+@@ -370,6 +370,84 @@ gimp_component_type_get_type (void)
+   return type;
+ }
+ 
++GType
++gimp_contour_dash_get_type (void)
++{
++  static const GEnumValue values[] =
++  {
++    { GIMP_CONTOUR_DASH_LINE, "GIMP_CONTOUR_DASH_LINE", "line" },
++    { GIMP_CONTOUR_DASH_LONG_DASH, "GIMP_CONTOUR_DASH_LONG_DASH", "long-dash" },
++    { GIMP_CONTOUR_DASH_MEDIUM_DASH, "GIMP_CONTOUR_DASH_MEDIUM_DASH", "medium-dash" },
++    { GIMP_CONTOUR_DASH_SHORT_DASH, "GIMP_CONTOUR_DASH_SHORT_DASH", "short-dash" },
++    { GIMP_CONTOUR_DASH_SPARSE_DOTS, "GIMP_CONTOUR_DASH_SPARSE_DOTS", "sparse-dots" },
++    { GIMP_CONTOUR_DASH_NORMAL_DOTS, "GIMP_CONTOUR_DASH_NORMAL_DOTS", "normal-dots" },
++    { GIMP_CONTOUR_DASH_DENSE_DOTS, "GIMP_CONTOUR_DASH_DENSE_DOTS", "dense-dots" },
++    { GIMP_CONTOUR_DASH_STIPPLES, "GIMP_CONTOUR_DASH_STIPPLES", "stipples" },
++    { GIMP_CONTOUR_DASH_DASH_DOT, "GIMP_CONTOUR_DASH_DASH_DOT", "dash-dot" },
++    { GIMP_CONTOUR_DASH_DASH_DOT_DOT, "GIMP_CONTOUR_DASH_DASH_DOT_DOT", "dash-dot-dot" },
++    { 0, NULL, NULL }
++  };
++
++  static const GimpEnumDesc descs[] =
++  {
++    { GIMP_CONTOUR_DASH_LINE, NC_("contour-dash", "Ligne continue"), NULL },
++    { GIMP_CONTOUR_DASH_LONG_DASH, NC_("contour-dash", "Tirets longs"), NULL },
++    { GIMP_CONTOUR_DASH_MEDIUM_DASH, NC_("contour-dash", "Tirets moyens"), NULL },
++    { GIMP_CONTOUR_DASH_SHORT_DASH, NC_("contour-dash", "Tirets courts"), NULL },
++    { GIMP_CONTOUR_DASH_SPARSE_DOTS, NC_("contour-dash", "Points espacés"), NULL },
++    { GIMP_CONTOUR_DASH_NORMAL_DOTS, NC_("contour-dash", "Points normaux"), NULL },
++    { GIMP_CONTOUR_DASH_DENSE_DOTS, NC_("contour-dash", "Points serrés"), NULL },
++    { GIMP_CONTOUR_DASH_STIPPLES, NC_("contour-dash", "Pointillés fins"), NULL },
++    { GIMP_CONTOUR_DASH_DASH_DOT, NC_("contour-dash", "Tiret, point"), NULL },
++    { GIMP_CONTOUR_DASH_DASH_DOT_DOT, NC_("contour-dash", "Tiret, point, point"), NULL },
++    { 0, NULL, NULL }
++  };
++
++  static GType type = 0;
++
++  if (G_UNLIKELY (! type))
++    {
++      type = g_enum_register_static ("GimpContourDash", values);
++      gimp_type_set_translation_domain (type, GETTEXT_PACKAGE "-libgimp");
++      gimp_type_set_translation_context (type, "contour-dash");
++      gimp_enum_set_value_descriptions (type, descs);
++    }
++
++  return type;
++}
++
++GType
++gimp_contour_position_get_type (void)
++{
++  static const GEnumValue values[] =
++  {
++    { GIMP_CONTOUR_POSITION_OUTSIDE, "GIMP_CONTOUR_POSITION_OUTSIDE", "outside" },
++    { GIMP_CONTOUR_POSITION_CENTER, "GIMP_CONTOUR_POSITION_CENTER", "center" },
++    { GIMP_CONTOUR_POSITION_INSIDE, "GIMP_CONTOUR_POSITION_INSIDE", "inside" },
++    { 0, NULL, NULL }
++  };
++
++  static const GimpEnumDesc descs[] =
++  {
++    { GIMP_CONTOUR_POSITION_OUTSIDE, NC_("contour-position", "Extérieur"), NULL },
++    { GIMP_CONTOUR_POSITION_CENTER, NC_("contour-position", "Centre"), NULL },
++    { GIMP_CONTOUR_POSITION_INSIDE, NC_("contour-position", "Intérieur"), NULL },
++    { 0, NULL, NULL }
++  };
++
++  static GType type = 0;
++
++  if (G_UNLIKELY (! type))
++    {
++      type = g_enum_register_static ("GimpContourPosition", values);
++      gimp_type_set_translation_domain (type, GETTEXT_PACKAGE "-libgimp");
++      gimp_type_set_translation_context (type, "contour-position");
++      gimp_enum_set_value_descriptions (type, descs);
++    }
++
++  return type;
++}
++
+ GType
+ gimp_convert_palette_type_get_type (void)
+ {
+diff --git a/libgimpbase/gimpbaseenums.h b/libgimpbase/gimpbaseenums.h
+index 202c9d9..88cf0e2 100644
+--- a/libgimpbase/gimpbaseenums.h
++++ b/libgimpbase/gimpbaseenums.h
+@@ -278,6 +278,66 @@ typedef enum
+ } GimpComponentType;
+ 
+ 
++/**
++ * GimpContourDash:
++ * @GIMP_CONTOUR_DASH_LINE:         Solid line
++ * @GIMP_CONTOUR_DASH_LONG_DASH:    Long dashes
++ * @GIMP_CONTOUR_DASH_MEDIUM_DASH:  Medium dashes
++ * @GIMP_CONTOUR_DASH_SHORT_DASH:   Short dashes
++ * @GIMP_CONTOUR_DASH_SPARSE_DOTS:  Sparse dots
++ * @GIMP_CONTOUR_DASH_NORMAL_DOTS:  Normal dots
++ * @GIMP_CONTOUR_DASH_DENSE_DOTS:   Dense dots
++ * @GIMP_CONTOUR_DASH_STIPPLES:     Stipples
++ * @GIMP_CONTOUR_DASH_DASH_DOT:     Dash, dot
++ * @GIMP_CONTOUR_DASH_DASH_DOT_DOT: Dash, dot, dot
++ *
++ * Dash patterns of the ChopGimp "chopgimp:stroke" (Contour) filter:
++ * the dash presets of stroking, without the custom one.
++ *
++ * Since: 3.2
++ **/
++#define GIMP_TYPE_CONTOUR_DASH (gimp_contour_dash_get_type ())
++
++GType gimp_contour_dash_get_type (void);
++
++typedef enum
++{
++  GIMP_CONTOUR_DASH_LINE,         /*< desc="Ligne continue"      >*/
++  GIMP_CONTOUR_DASH_LONG_DASH,    /*< desc="Tirets longs"        >*/
++  GIMP_CONTOUR_DASH_MEDIUM_DASH,  /*< desc="Tirets moyens"       >*/
++  GIMP_CONTOUR_DASH_SHORT_DASH,   /*< desc="Tirets courts"       >*/
++  GIMP_CONTOUR_DASH_SPARSE_DOTS,  /*< desc="Points espacés"      >*/
++  GIMP_CONTOUR_DASH_NORMAL_DOTS,  /*< desc="Points normaux"      >*/
++  GIMP_CONTOUR_DASH_DENSE_DOTS,   /*< desc="Points serrés"       >*/
++  GIMP_CONTOUR_DASH_STIPPLES,     /*< desc="Pointillés fins"     >*/
++  GIMP_CONTOUR_DASH_DASH_DOT,     /*< desc="Tiret, point"        >*/
++  GIMP_CONTOUR_DASH_DASH_DOT_DOT  /*< desc="Tiret, point, point" >*/
++} GimpContourDash;
++
++
++/**
++ * GimpContourPosition:
++ * @GIMP_CONTOUR_POSITION_OUTSIDE: Outside the layer's edge
++ * @GIMP_CONTOUR_POSITION_CENTER:  Centered on the layer's edge
++ * @GIMP_CONTOUR_POSITION_INSIDE:  Inside the layer's edge
++ *
++ * Position of the outline drawn by the ChopGimp "chopgimp:stroke"
++ * (Contour) filter.
++ *
++ * Since: 3.2
++ **/
++#define GIMP_TYPE_CONTOUR_POSITION (gimp_contour_position_get_type ())
++
++GType gimp_contour_position_get_type (void);
++
++typedef enum
++{
++  GIMP_CONTOUR_POSITION_OUTSIDE, /*< desc="Extérieur" >*/
++  GIMP_CONTOUR_POSITION_CENTER,  /*< desc="Centre"    >*/
++  GIMP_CONTOUR_POSITION_INSIDE   /*< desc="Intérieur" >*/
++} GimpContourPosition;
++
++
+ /**
+  * GimpConvertPaletteType:
+  * @GIMP_CONVERT_PALETTE_GENERATE: Generate optimum palette
+diff --git a/pdb/enums.pl b/pdb/enums.pl
+index 516fb1b..9ac7f96 100644
+--- a/pdb/enums.pl
++++ b/pdb/enums.pl
+@@ -125,6 +125,38 @@ package Gimp::CodeGen::enums;
+ 		       GIMP_COMPONENT_TYPE_FLOAT => '600',
+ 		       GIMP_COMPONENT_TYPE_DOUBLE => '700' }
+ 	},
++    GimpContourDash =>
++	{ contig => 1,
++	  header => 'libgimpbase/gimpbaseenums.h',
++	  symbols => [ qw(GIMP_CONTOUR_DASH_LINE GIMP_CONTOUR_DASH_LONG_DASH
++			  GIMP_CONTOUR_DASH_MEDIUM_DASH
++			  GIMP_CONTOUR_DASH_SHORT_DASH
++			  GIMP_CONTOUR_DASH_SPARSE_DOTS
++			  GIMP_CONTOUR_DASH_NORMAL_DOTS
++			  GIMP_CONTOUR_DASH_DENSE_DOTS
++			  GIMP_CONTOUR_DASH_STIPPLES GIMP_CONTOUR_DASH_DASH_DOT
++			  GIMP_CONTOUR_DASH_DASH_DOT_DOT) ],
++	  mapping => { GIMP_CONTOUR_DASH_LINE => '0',
++		       GIMP_CONTOUR_DASH_LONG_DASH => '1',
++		       GIMP_CONTOUR_DASH_MEDIUM_DASH => '2',
++		       GIMP_CONTOUR_DASH_SHORT_DASH => '3',
++		       GIMP_CONTOUR_DASH_SPARSE_DOTS => '4',
++		       GIMP_CONTOUR_DASH_NORMAL_DOTS => '5',
++		       GIMP_CONTOUR_DASH_DENSE_DOTS => '6',
++		       GIMP_CONTOUR_DASH_STIPPLES => '7',
++		       GIMP_CONTOUR_DASH_DASH_DOT => '8',
++		       GIMP_CONTOUR_DASH_DASH_DOT_DOT => '9' }
++	},
++    GimpContourPosition =>
++	{ contig => 1,
++	  header => 'libgimpbase/gimpbaseenums.h',
++	  symbols => [ qw(GIMP_CONTOUR_POSITION_OUTSIDE
++			  GIMP_CONTOUR_POSITION_CENTER
++			  GIMP_CONTOUR_POSITION_INSIDE) ],
++	  mapping => { GIMP_CONTOUR_POSITION_OUTSIDE => '0',
++		       GIMP_CONTOUR_POSITION_CENTER => '1',
++		       GIMP_CONTOUR_POSITION_INSIDE => '2' }
++	},
+     GimpConvertPaletteType =>
+ 	{ contig => 1,
+ 	  header => 'libgimpbase/gimpbaseenums.h',
+-- 
+2.53.0
+

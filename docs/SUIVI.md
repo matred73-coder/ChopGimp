@@ -468,3 +468,20 @@ Demande de l'utilisateur : chaque style s'ouvre « dans le même style que l'omb
 - Panneau Caractère : les boutons Ombre… et Contour… ouvrent ces mêmes fenêtres.
 - La fenêtre ChopGimp qui regroupe tous les effets reste dans le sous-menu, sous le nom « Style de calque (fenêtre)… ». Elle sert aussi aux scripts et à l'import PSD. Les entrées par effet n'y mènent plus.
 - Vérifié au banc : les quatre fenêtres s'ouvrent avec leurs réglages et leur aperçu. 100 tests.
+
+## 3.24.5 — Vrai filtre Contour et fenêtres au style de GIMP
+
+- **Calque > Style de calque > Contour…** est un vrai filtre GEGL, `chopgimp:stroke`. Il reste réglable par l'icône fx, est enregistré dans le XCF et suit l'objet quand on le retouche. Il reprend les options d'Édition > Tracer la sélection :
+  - position extérieur / centre / intérieur, épaisseur, couleur, opacité, anticrénelage ;
+  - pointillés (les préréglages de GIMP), extrémités, jointures (arrondies par défaut), limite d'onglet ;
+  - seuil d'opacité du bord.
+
+  Le contour est calculé à partir du bord des pixels avec le code de GIMP (`gimp_boundary_find`, motifs de tirets), puis tracé avec cairo et composé en virgule flottante.
+  - La fenêtre est celle, native, des filtres GIMP (même présentation que l'Ombre portée).
+  - **Non repris** : le motif (la fenêtre automatique des filtres n'a pas de sélecteur de motif) et le tracé avec un outil de peinture (impossible dans un filtre). Pour ces cas, Édition > Tracer la sélection reste disponible.
+  - Les deux listes du filtre (Position, Pointillés) sont dans libgimpbase, comme GimpCapStyle et GimpJoinStyle : greffons et scripts peuvent lire et régler ce filtre (`Gimp.ContourPosition`, `Gimp.ContourDash`).
+- **Fenêtres des greffons ChopGimp au style de GIMP** : curseurs GimpSpinScale (libellé dans la barre), boutons de couleur GIMP, cadres titrés, marges de GIMP.
+  - Fenêtres concernées : Style de calque (fenêtre), largeur et position du contour, Camera Raw, instantanés, Options de fusion « Si », calque de couleur, outils BD, harmonies, export web, lots, compositions, effets vivants, mise à l'échelle selon le contenu, effets de texte, IA, import PDF, polices absentes et rapport PSD.
+  - Éléments communs dans `chopgimp_common.py` : `spin_scale`, `color_button`, `frame`, `check_frame`…
+- 3 nouveaux tests (contour extérieur, intérieur, pointillés) : 103 tests.
+- Vérifié au banc : fenêtre Contour avec aperçu, Style de calque, Camera Raw, Cases de BD. Non vérifié : enregistrement XCF puis réouverture d'un calque avec Contour.

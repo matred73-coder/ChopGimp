@@ -30,7 +30,8 @@ from gi.repository import Gimp, GimpUi, GLib, GObject, Gtk
 
 from chopgimp_common import (ok, fail, srgb as gegl_color, copy_vector_style,
                              get_parasite_json as parasite_get, set_parasite_json,
-                             remove_layer_and_paths)
+                             remove_layer_and_paths, dialog_box, vbox, spin_scale,
+                             color_button, color_button_rgb, labeled, frame, check_frame)
 
 AUTHOR = "ChopGimp"
 YEAR = "2026"
@@ -621,58 +622,50 @@ def layer_style_dialog(image, layer, focus=None):
     dialog.add_button("_Annuler", Gtk.ResponseType.CANCEL)
     dialog.add_button("A_ppliquer", Gtk.ResponseType.APPLY)
     dialog.add_button("_OK", Gtk.ResponseType.OK)
-    box = dialog.get_content_area()
-    grid = Gtk.Grid(column_spacing=10, row_spacing=6, margin=12)
-    box.pack_start(grid, True, True, 0)
+    main = dialog_box(dialog, spacing=12)
+    # un cadre GIMP par effet (titre = case à cocher), sur deux colonnes
+    grid = Gtk.Grid(column_spacing=18, row_spacing=12, column_homogeneous=True)
+    main.pack_start(grid, True, True, 0)
 
     present = {f.get_name()[len(STYLE_PREFIX):] for f in (layer.get_filters() or [])
                if f.get_name().startswith(STYLE_PREFIX)}
     saved = parasite_get(layer, STYLE_PARASITE) or {}
     widgets = {}
-    row = 0
-    for key, label, op, params in STYLES:
+    for i, (key, label, op, params) in enumerate(STYLES):
         mem = saved.get(key)
-        check = Gtk.CheckButton(label=label)
-        check.set_active(label in present)
-        grid.attach(check, 0, row, 1, 1)
+        inner = vbox()
         col = mem[1][:3] if mem else DEFAULT_COLORS[key]
-        cbtn = Gtk.ColorButton.new_with_rgba(Gdk_rgba(col))
-        grid.attach(cbtn, 1, row, 1, 1)
+        cbtn = color_button(label + " — couleur", col)
+        inner.pack_start(labeled("Couleur", cbtn), False, False, 0)
         op_adj = Gtk.Adjustment(value=round(mem[2] * 100) if mem else
                                 (100 if key in ("stroke", "overlay") else 75), lower=0, upper=100,
-                                step_increment=1)
-        op_spin = Gtk.SpinButton(adjustment=op_adj, digits=0)
-        op_spin.set_tooltip_text("Opacité (%)")
-        grid.attach(op_spin, 2, row, 1, 1)
+                                step_increment=1, page_increment=10)
+        op_spin = spin_scale(op_adj, "Opacité (%)")
+        inner.pack_start(op_spin, False, False, 0)
         pw = {}
-        c = 3
         for plabel, pkey, lo, hi, default in params:
-            lab = Gtk.Label(label=plabel)
-            lab.get_style_context().add_class("dim-label")
-            grid.attach(lab, c, row, 1, 1)
             value = mem[0].get(pkey, default) if mem else default
-            adj = Gtk.Adjustment(value=value, lower=lo, upper=hi, step_increment=1)
-            sp = Gtk.SpinButton(adjustment=adj, digits=0)
-            grid.attach(sp, c + 1, row, 1, 1)
+            adj = Gtk.Adjustment(value=value, lower=lo, upper=hi, step_increment=1, page_increment=10)
+            sp = spin_scale(adj, plabel)
+            inner.pack_start(sp, False, False, 0)
             pw[pkey] = sp
-            c += 2
+        fr, check = check_frame(label, label in present, inner)
+        grid.attach(fr, i % 2, i // 2, 1, 1)
         widgets[key] = (check, cbtn, op_spin, pw)
         if key == focus:
             check.set_active(True)
-            check.get_child().set_markup("<b>%s</b>" % GLib.markup_escape_text(label))
-        row += 1
+            check.get_child().set_markup("<u>%s</u>" % GLib.markup_escape_text(label))
 
     preview = Gtk.CheckButton(label="Aperçu")
     preview.set_active(True)
-    grid.attach(preview, 0, row, 2, 1)
+    main.pack_start(preview, False, False, 0)
 
     def collect():
         chosen = {}
         for key, (check, cbtn, op_spin, pw) in widgets.items():
             if not check.get_active():
                 continue
-            rgba_ = cbtn.get_rgba()
-            color = gegl_color(rgba_.red, rgba_.green, rgba_.blue)
+            color = gegl_color(*color_button_rgb(cbtn))
             chosen[key] = ({k: sp.get_value() for k, sp in pw.items()}, color, op_spin.get_value() / 100.0)
         return chosen
 
@@ -718,7 +711,7 @@ def layer_style_dialog(image, layer, focus=None):
 
     for check, cbtn, op_spin, pw in widgets.values():
         check.connect("toggled", changed)
-        cbtn.connect("color-set", changed)
+        cbtn.connect("color-changed", changed)
         op_spin.connect("value-changed", changed)
         for sp in pw.values():
             sp.connect("value-changed", changed)
@@ -765,14 +758,6 @@ def layer_style_dialog(image, layer, focus=None):
                 pass
             image.undo_thaw()
         dialog.destroy()
-
-
-def Gdk_rgba(rgb):
-    gi.require_version("Gdk", "3.0")
-    from gi.repository import Gdk
-    c = Gdk.RGBA()
-    c.red, c.green, c.blue, c.alpha = rgb[0], rgb[1], rgb[2], 1.0
-    return c
 
 
 # ─── Déclaration des procédures ─────────────────────────────────────────
@@ -883,23 +868,19 @@ def stroke_width_dialog(layer, outside):
     dialog = GimpUi.Dialog(title=title, role="chopgimp-stroke-width", modal=True)
     dialog.add_button("_Annuler", Gtk.ResponseType.CANCEL)
     dialog.add_button("_OK", Gtk.ResponseType.OK)
-    grid = Gtk.Grid(column_spacing=10, row_spacing=6, margin=12)
-    dialog.get_content_area().pack_start(grid, True, True, 0)
-    grid.attach(Gtk.Label(label="Épaisseur (px)", xalign=0), 0, 0, 1, 1)
-    width = Gtk.SpinButton(adjustment=Gtk.Adjustment(value=max(1.0, layer.get_stroke_width()),
-                                                     lower=0.5, upper=500, step_increment=1),
-                           digits=1)
-    grid.attach(width, 1, 0, 1, 1)
-    grid.attach(Gtk.Label(label="Couleur", xalign=0), 0, 1, 1, 1)
+    box = dialog_box(dialog)
+    width = spin_scale(Gtk.Adjustment(value=max(1.0, layer.get_stroke_width()),
+                                      lower=0.5, upper=500, step_increment=1, page_increment=10),
+                       "Épaisseur (px)", digits=1, limits=(0.5, 100), gamma=1.5)
+    box.pack_start(width, False, False, 0)
     cur = rgba(layer.get_stroke_color())
-    cbtn = Gtk.ColorButton.new_with_rgba(Gdk_rgba(cur[:3]))
-    grid.attach(cbtn, 1, 1, 1, 1)
+    cbtn = color_button("Couleur du contour", cur[:3])
+    box.pack_start(labeled("Couleur", cbtn), False, False, 0)
     dialog.show_all()
     resp = dialog.run()
     res = None
     if resp == Gtk.ResponseType.OK:
-        c = cbtn.get_rgba()
-        res = (width.get_value(), gegl_color(c.red, c.green, c.blue))
+        res = (width.get_value(), gegl_color(*color_button_rgb(cbtn)))
     dialog.destroy()
     return res
 
@@ -909,8 +890,8 @@ def choose_stroke_side(current):
     dialog = GimpUi.Dialog(title="Position du contour", role="chopgimp-stroke-side", modal=True)
     dialog.add_button("_Annuler", Gtk.ResponseType.CANCEL)
     dialog.add_button("_OK", Gtk.ResponseType.OK)
-    box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6, margin=12)
-    dialog.get_content_area().pack_start(box, True, True, 0)
+    box = vbox()
+    dialog_box(dialog).pack_start(frame("Placer le contour", box), False, False, 0)
     group, buttons = None, {}
     for proc, label in STROKE_SIDES:
         rb = Gtk.RadioButton.new_with_label_from_widget(group, label)

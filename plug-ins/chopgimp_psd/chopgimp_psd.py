@@ -36,7 +36,8 @@ from gi.repository import Gimp, GimpUi, Gio, GLib, GObject, Gtk
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 import psdparse  # noqa: E402
-from chopgimp_common import pdb_run, srgb, walk_layers, set_parasite_text  # noqa: E402
+from chopgimp_common import (pdb_run, srgb, walk_layers, set_parasite_text,  # noqa: E402
+                             dialog_box, frame)
 
 PROC = "file-chopgimp-psd-load"
 PROC_THUMB = "file-chopgimp-psd-load-thumb"
@@ -892,21 +893,21 @@ def missing_fonts_dialog(missing):
     dialog = GimpUi.Dialog(title="Polices absentes", role="chopgimp-psd-fonts", modal=True)
     dialog.add_button("_Ignorer", Gtk.ResponseType.CANCEL)
     dialog.add_button("_Remplacer", Gtk.ResponseType.OK)
-    box = dialog.get_content_area()
-    grid = Gtk.Grid(column_spacing=12, row_spacing=6, margin=12)
-    box.pack_start(grid, True, True, 0)
-    grid.attach(Gtk.Label(label="Ces polices du fichier ne sont pas installées.\n"
-                                "Choisissez une police de remplacement pour chacune :",
-                          xalign=0), 0, 0, 2, 1)
+    box = dialog_box(dialog, spacing=12)
+    box.pack_start(Gtk.Label(label="Ces polices du fichier ne sont pas installées.\n"
+                                   "Choisissez une police de remplacement pour chacune :",
+                             xalign=0), False, False, 0)
+    grid = Gtk.Grid(column_spacing=12, row_spacing=6)
+    box.pack_start(frame("Polices de remplacement", grid), True, True, 0)
     choosers = {}
-    for i, ps in enumerate(missing, 1):
+    for i, ps in enumerate(missing):
         grid.attach(Gtk.Label(label=ps, xalign=0), 0, i, 1, 1)
         ch = GimpUi.FontChooser.new(None, None, Gimp.Font.get_by_name(DEFAULT_FONT))
         grid.attach(ch, 1, i, 1, 1)
         choosers[ps] = ch
     remember = Gtk.CheckButton(label="Mémoriser ces correspondances")
     remember.set_active(True)
-    grid.attach(remember, 0, len(missing) + 1, 2, 1)
+    box.pack_start(remember, False, False, 0)
     dialog.show_all()
     chosen = {}
     if dialog.run() == Gtk.ResponseType.OK:
@@ -923,13 +924,14 @@ def report_dialog(report, settings):
     GimpUi.init("chopgimp_psd")
     dialog = GimpUi.Dialog(title="Import PSD — rapport", role="chopgimp-psd-report", modal=True)
     dialog.add_button("_Fermer", Gtk.ResponseType.CLOSE)
-    box = dialog.get_content_area()
-    view = Gtk.TextView(editable=False, cursor_visible=False, wrap_mode=Gtk.WrapMode.WORD, margin=12)
+    box = dialog_box(dialog)
+    view = Gtk.TextView(editable=False, cursor_visible=False, wrap_mode=Gtk.WrapMode.WORD,
+                        left_margin=6, right_margin=6, top_margin=6, bottom_margin=6)
     view.get_buffer().set_text(report.text())
-    sw = Gtk.ScrolledWindow(min_content_height=260, min_content_width=480)
+    sw = Gtk.ScrolledWindow(min_content_height=260, min_content_width=480, shadow_type=Gtk.ShadowType.IN)
     sw.add(view)
     box.pack_start(sw, True, True, 0)
-    quiet = Gtk.CheckButton(label="Ne plus afficher ce rapport (sauf polices absentes)", margin=12)
+    quiet = Gtk.CheckButton(label="Ne plus afficher ce rapport (sauf polices absentes)")
     box.pack_start(quiet, False, False, 0)
     dialog.show_all()
     dialog.run()

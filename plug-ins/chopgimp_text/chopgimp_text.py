@@ -25,7 +25,7 @@ gi.require_version("GimpUi", "3.0")
 gi.require_version("Gtk", "3.0")
 from gi.repository import Gimp, GimpUi, GLib, GObject, Gtk
 
-from chopgimp_common import ok, fail, pdb_call as call, walk_layers
+from chopgimp_common import ok, fail, pdb_call as call, walk_layers, dialog_box, spin_scale, form_grid
 
 AUTHOR, YEAR = "ChopGimp", "2026"
 TXT = "<Image>/Layer/Texte"
@@ -183,21 +183,18 @@ def target_path(image, drawables):
 
 
 def fx_dialog(title, layer, rows, make_spec):
-    """rows: [(libellé, widget)] ; make_spec() → texte de l'effet.
+    """rows: [(libellé, widget)] — libellé vide : widget seul sur sa ligne
+    (glissières, dont le libellé est dans la barre) ; make_spec() → texte de l'effet.
     Aperçu en direct sans annulation, validé avec annulation."""
     GimpUi.init("chopgimp_text")
     original = fx_get(layer)
     dialog = GimpUi.Dialog(title=title, role="chopgimp-text-fx", modal=True)
     dialog.add_button("_Annuler", Gtk.ResponseType.CANCEL)
     dialog.add_button("_OK", Gtk.ResponseType.OK)
-    grid = Gtk.Grid(row_spacing=8, column_spacing=10, margin=12)
-    dialog.get_content_area().pack_start(grid, True, True, 0)
-    for r, (label, widget) in enumerate(rows):
-        if label:
-            grid.attach(Gtk.Label(label=label, xalign=1), 0, r, 1, 1)
-            grid.attach(widget, 1, r, 1, 1)
-        else:
-            grid.attach(widget, 0, r, 2, 1)
+    box = dialog_box(dialog)
+    box.set_size_request(340, -1)
+    for label, widget in rows:
+        box.pack_start(form_grid([(label, widget)]) if label else widget, False, False, 0)
 
     pending = [0]
 
@@ -233,14 +230,11 @@ def fx_dialog(title, layer, rows, make_spec):
         fx_set(layer, spec, True)           # une seule étape d'annulation
 
 
-def slider(lo, hi, value, step=1):
+def slider(label, lo, hi, value, step=1):
+    """Glissière GIMP (libellé dans la barre)."""
     adj = Gtk.Adjustment(value=value, lower=lo, upper=hi, step_increment=step,
                          page_increment=step * 10)
-    sc = Gtk.Scale(orientation=Gtk.Orientation.HORIZONTAL, adjustment=adj,
-                   digits=0, hexpand=True)
-    sc.set_size_request(260, -1)
-    sc.set_value_pos(Gtk.PositionType.RIGHT)
-    return sc
+    return spin_scale(adj, label)
 
 
 def warp_dialog(layer):
@@ -255,9 +249,9 @@ def warp_dialog(layer):
     orient = Gtk.Box(spacing=12)
     orient.pack_start(horiz, False, False, 0)
     orient.pack_start(vert, False, False, 0)
-    bend = slider(-100, 100, float(cur.get("bend", 50)))
-    hd = slider(-100, 100, float(cur.get("hdist", 0)))
-    vd = slider(-100, 100, float(cur.get("vdist", 0)))
+    bend = slider("Inflexion (%)", -100, 100, float(cur.get("bend", 50)))
+    hd = slider("Distorsion horizontale (%)", -100, 100, float(cur.get("hdist", 0)))
+    vd = slider("Distorsion verticale (%)", -100, 100, float(cur.get("vdist", 0)))
 
     def make():
         style = combo.get_active_id()
@@ -268,16 +262,16 @@ def warp_dialog(layer):
                           "vertical": int(vert.get_active())})
 
     fx_dialog("Déformer le texte", layer,
-              [("Style :", combo), ("", orient), ("Inflexion (%) :", bend),
-               ("Distorsion horizontale (%) :", hd), ("Distorsion verticale (%) :", vd)],
+              [("Style", combo), ("", orient), ("", bend), ("", hd), ("", vd)],
               make)
 
 
 def path_dialog(layer, path):
     cur = spec_parse(fx_get(layer))
     tattoo = path.get_tattoo()
-    start = slider(-100, 100, float(cur.get("start", 0)) if "path" in cur else 0)
-    shift = slider(-500, 500, float(cur.get("shift", 0)) if "path" in cur else 0)
+    start = slider("Départ (% du tracé)", -100, 100, float(cur.get("start", 0)) if "path" in cur else 0)
+    shift = slider("Décalage de la ligne de base (px)", -500, 500,
+                   float(cur.get("shift", 0)) if "path" in cur else 0)
     flip = Gtk.CheckButton(label="Faire passer de l'autre côté du tracé")
     flip.set_active("path" in cur and cur.get("flip") == "1")
 
@@ -287,20 +281,19 @@ def path_dialog(layer, path):
                           "flip": int(flip.get_active()), "shift": int(shift.get_value())})
 
     fx_dialog("Texte sur le tracé", layer,
-              [("Départ (% du tracé) :", start), ("Décalage de la ligne de base (px) :", shift),
-               ("", flip)], make)
+              [("", start), ("", shift), ("", flip)], make)
 
 
 def shape_dialog(layer, path):
     cur = spec_parse(fx_get(layer))
     tattoo = path.get_tattoo()
-    inset = slider(0, 500, float(cur.get("inset", 6)) if "shape" in cur else 6)
+    inset = slider("Marge intérieure (px)", 0, 500, float(cur.get("inset", 6)) if "shape" in cur else 6)
 
     def make():
         return spec_join({"shape": tattoo, "pname": path_name(path),
                           "inset": int(inset.get_value())})
 
-    fx_dialog("Texte dans la forme", layer, [("Marge intérieure (px) :", inset)], make)
+    fx_dialog("Texte dans la forme", layer, [("", inset)], make)
 
 
 # ─── rechercher / remplacer ─────────────────────────────────────────────
@@ -311,15 +304,15 @@ def find_replace_dialog(image):
                            modal=True)
     dialog.add_button("_Fermer", Gtk.ResponseType.CLOSE)
     dialog.add_button("_Tout remplacer", Gtk.ResponseType.APPLY)
-    grid = Gtk.Grid(row_spacing=6, column_spacing=8, margin=12)
-    dialog.get_content_area().pack_start(grid, True, True, 0)
+    grid = Gtk.Grid(row_spacing=6, column_spacing=6)
+    dialog_box(dialog).pack_start(grid, True, True, 0)
     find = Gtk.Entry(hexpand=True)
     repl = Gtk.Entry(hexpand=True)
     case = Gtk.CheckButton(label="Respecter la casse")
     whole = Gtk.CheckButton(label="Mot entier")
     status = Gtk.Label(xalign=0)
     for row, (lab, w) in enumerate([("Rechercher :", find), ("Remplacer par :", repl)]):
-        grid.attach(Gtk.Label(label=lab, xalign=1), 0, row, 1, 1)
+        grid.attach(Gtk.Label(label=lab, xalign=0), 0, row, 1, 1)
         grid.attach(w, 1, row, 1, 1)
     grid.attach(case, 1, 2, 1, 1)
     grid.attach(whole, 1, 3, 1, 1)

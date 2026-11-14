@@ -41,7 +41,8 @@ gi.require_foreign("cairo")
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 import cairoscript  # noqa: E402
-from chopgimp_common import pdb_run, srgb, set_parasite_text  # noqa: E402
+from chopgimp_common import (pdb_run, srgb, set_parasite_text, dialog_box, vbox,  # noqa: E402
+                             spin_scale, form_grid, frame)
 
 PROC = "file-chopgimp-pdf-load"
 PROC_THUMB = "file-chopgimp-pdf-load-thumb"
@@ -547,44 +548,31 @@ def options_dialog(n_pages, n_layers):
     dialog = GimpUi.Dialog(title="Importer un PDF / Illustrator", role="chopgimp-pdf", modal=True)
     dialog.add_button("_Annuler", Gtk.ResponseType.CANCEL)
     dialog.add_button("_Importer", Gtk.ResponseType.OK)
-    grid = Gtk.Grid(column_spacing=12, row_spacing=8, margin=12)
-    dialog.get_content_area().pack_start(grid, True, True, 0)
-    row = 0
-
-    def label(t):
-        grid.attach(Gtk.Label(label=t, xalign=0), 0, row, 1, 1)
-
-    label("Importer comme")
+    main = dialog_box(dialog, spacing=12)
     mode = Gtk.ComboBoxText()
     mode.append("layers", "Calques modifiables (vecteurs, textes, images)")
     mode.append("image", "Image (comme avant)")
     mode.set_active_id("layers")
-    grid.attach(mode, 1, row, 1, 1)
-    row += 1
-    label("Pages (ex. 1, 3-5)")
     pages = Gtk.Entry(text="1")
     pages.set_tooltip_text("%d page(s) dans le document" % n_pages)
-    grid.attach(pages, 1, row, 1, 1)
-    row += 1
-    label("Texte")
     text = Gtk.ComboBoxText()
     text.append("editable", "Calques de texte modifiables")
     text.append("outline", "Contours vectoriels")
     text.append("none", "Ignorer")
     text.set_active_id("editable")
-    grid.attach(text, 1, row, 1, 1)
-    row += 1
-    label("Résolution (ppp)")
-    dpi = Gtk.SpinButton(adjustment=Gtk.Adjustment(value=150, lower=36, upper=1200, step_increment=1))
-    grid.attach(dpi, 1, row, 1, 1)
-    row += 1
-    label("Nombre maximal d'objets")
-    mx = Gtk.SpinButton(adjustment=Gtk.Adjustment(value=1500, lower=50, upper=50000, step_increment=50))
-    grid.attach(mx, 1, row, 1, 1)
-    row += 1
+    main.pack_start(frame("Contenu", form_grid([("Importer comme", mode), ("Pages (ex. 1, 3-5)", pages),
+                                                ("Texte", text)])), False, False, 0)
+    opt_box = vbox()
+    dpi = spin_scale(Gtk.Adjustment(value=150, lower=36, upper=1200, step_increment=1, page_increment=50),
+                     "Résolution (ppp)", limits=(36, 600))
+    opt_box.pack_start(dpi, False, False, 0)
+    mx = spin_scale(Gtk.Adjustment(value=1500, lower=50, upper=50000, step_increment=50, page_increment=500),
+                    "Nombre maximal d'objets", limits=(50, 10000), gamma=2.0)
+    opt_box.pack_start(mx, False, False, 0)
     hidden = Gtk.CheckButton(label="Importer aussi les calques masqués (%d calque(s) PDF)" % n_layers)
     hidden.set_active(True)
-    grid.attach(hidden, 0, row, 2, 1)
+    opt_box.pack_start(hidden, False, False, 0)
+    main.pack_start(frame("Options", opt_box), False, False, 0)
     dialog.show_all()
     resp = dialog.run()
     opts = None

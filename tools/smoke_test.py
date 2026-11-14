@@ -789,6 +789,47 @@ try:
     except Exception as e:
         report(False, "Atelier", repr(e)[:200])
 
+    # 3 decies. Filtre Contour (chopgimp:stroke), non destructif
+    try:
+        def contour_img(props):
+            im = Gimp.Image.new(200, 200, Gimp.ImageBaseType.RGB)
+            l = Gimp.Layer.new(im, "Objet", 200, 200, Gimp.ImageType.RGBA_IMAGE, 100, Gimp.LayerMode.NORMAL)
+            im.insert_layer(l, None, 0)
+            l.fill(Gimp.FillType.TRANSPARENT)
+            Gimp.context_set_foreground(color(1.0, 0.0, 0.0))
+            im.select_rectangle(Gimp.ChannelOps.REPLACE, 50, 50, 100, 100)
+            l.edit_fill(Gimp.FillType.FOREGROUND)
+            Gimp.Selection.none(im)
+            f = Gimp.DrawableFilter.new(l, "chopgimp:stroke", "Contour")
+            cfg = f.get_config()
+            for k, v in props.items():
+                cfg.set_property(k, v)
+            f.update()
+            l.append_filter(f)
+            l.merge_filters()
+            return im, l
+
+        def px(l, x, y):
+            ok_, x0, y0 = l.get_offsets()
+            return tuple(round(c * 255) for c in l.get_pixel(x - x0, y - y0).get_rgba_with_space(None))
+
+        im, l = contour_img({"width": 6.0})
+        out = px(l, 47, 100); inn = px(l, 53, 100); far = px(l, 30, 100)
+        report(out[3] > 200 and out[0] < 60 and inn[0] > 200 and far[3] == 0,
+               "Contour : extérieur noir autour de l'objet", "%s %s %s" % (out, inn, far))
+        im.delete()
+        im, l = contour_img({"width": 6.0, "position": 2})
+        out = px(l, 47, 100); inn = px(l, 53, 100); mid = px(l, 100, 100)
+        report(out[3] == 0 and inn[0] < 60 and inn[3] > 200 and mid[0] > 200,
+               "Contour : intérieur", "%s %s %s" % (out, inn, mid))
+        im.delete()
+        im, l = contour_img({"width": 4.0, "dash-preset": 2})
+        alphas = [px(l, 47, y)[3] for y in range(55, 145)]
+        report(min(alphas) < 40 and max(alphas) > 200, "Contour : pointillés", str(alphas[:12]))
+        im.delete()
+    except Exception as e:
+        report(False, "Contour", repr(e)[:200])
+
     # 4. Réglages d'usine présents (thème, icônes, menus, raccourcis)
     data = Gimp.data_directory()
     sysconf = Gimp.sysconf_directory()

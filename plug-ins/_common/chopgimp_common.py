@@ -197,3 +197,120 @@ def remove_layer_and_paths(image, layer):
     paths = vector_paths(layer)
     image.remove_layer(layer)
     remove_unused_paths(image, paths)
+
+
+# ─── dialogues : les widgets de GIMP ────────────────────────────────────
+# Mêmes widgets et mêmes marges que les dialogues des filtres de GIMP :
+# GimpSpinScale (libellé dans la glissière), GimpColorButton, GimpFrame
+# (titre en gras), bordure 12 px, espacement 6 px. GimpUi / Gtk ne sont
+# importés qu'à l'appel (les plug-ins sans dialogue ne les chargent pas).
+
+def _ui():
+    gi.require_version("GimpUi", "3.0")
+    gi.require_version("Gtk", "3.0")
+    from gi.repository import GimpUi, Gtk
+    return GimpUi, Gtk
+
+
+def dialog_box(dialog, spacing=6):
+    """Boîte verticale principale (bordure 12, espacement 6) placée dans la
+    zone de contenu du dialogue, comme dans les dialogues de GIMP."""
+    GimpUi, Gtk = _ui()
+    box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=spacing)
+    box.set_border_width(12)
+    dialog.get_content_area().pack_start(box, True, True, 0)
+    return box
+
+
+def vbox(spacing=6):
+    GimpUi, Gtk = _ui()
+    return Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=spacing)
+
+
+def spin_scale(adj, label, digits=0, limits=None, gamma=None):
+    """Glissière GIMP (GimpSpinScale) sur l'ajustement adj : le libellé est
+    dans la barre. limits=(bas, haut) restreint la plage de la glissière
+    (la saisie au clavier garde toute la plage de adj) ; gamma > 1 donne
+    plus de précision vers le bas d'une plage large."""
+    GimpUi, Gtk = _ui()
+    sc = GimpUi.SpinScale.new(adj, label, digits)
+    sc.set_hexpand(True)
+    if limits is not None:
+        lo = max(limits[0], adj.get_lower())
+        hi = min(limits[1], adj.get_upper())
+        if lo < hi:
+            sc.set_scale_limits(lo, hi)
+    if gamma is not None:
+        sc.set_gamma(gamma)
+    return sc
+
+
+def color_button(title, rgb, width=60, height=20):
+    """Bouton de couleur de GIMP (GimpColorButton) — rgb : sRGB 0..1."""
+    GimpUi, Gtk = _ui()
+    btn = GimpUi.ColorButton.new(title, width, height, srgb(*rgb[:3]),
+                                 GimpUi.ColorAreaType.FLAT)
+    return btn
+
+
+def color_button_rgb(btn):
+    """Couleur d'un GimpColorButton → (r, g, b) sRGB 0..1."""
+    r, g, b, _a = btn.get_color().get_rgba_with_space(None)
+    return (r, g, b)
+
+
+def labeled(label, widget):
+    """Ligne « libellé  widget » (couleur, liste…), libellé aligné à gauche."""
+    GimpUi, Gtk = _ui()
+    row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+    lab = Gtk.Label(label=label, xalign=0.0)
+    lab.set_mnemonic_widget(widget)
+    row.pack_start(lab, False, False, 0)
+    # bouton de couleur : taille fixe, à droite (comme dans les dialogues de GIMP)
+    if isinstance(widget, GimpUi.ColorButton):
+        row.pack_end(widget, False, False, 0)
+    else:
+        row.pack_start(widget, True, True, 0)
+    return row
+
+
+def form_grid(rows):
+    """Grille « libellé | widget » alignée (comme gimp_grid_attach_aligned) ;
+    rows : [(libellé, widget)] — libellé vide : le widget prend toute la
+    ligne (case à cocher…)."""
+    GimpUi, Gtk = _ui()
+    grid = Gtk.Grid(column_spacing=6, row_spacing=6)
+    for i, (label, widget) in enumerate(rows):
+        widget.set_hexpand(True)
+        if label:
+            lab = Gtk.Label(label=label, xalign=0.0)
+            lab.set_mnemonic_widget(widget)
+            grid.attach(lab, 0, i, 1, 1)
+            grid.attach(widget, 1, i, 1, 1)
+        else:
+            grid.attach(widget, 0, i, 2, 1)
+    return grid
+
+
+def frame(title, child=None):
+    """GimpFrame : titre en gras, contenu en retrait (sans cadre dessiné)."""
+    GimpUi, Gtk = _ui()
+    fr = GimpUi.Frame.new(title)
+    if child is not None:
+        fr.add(child)
+    return fr
+
+
+def check_frame(label, active, child):
+    """GimpFrame dont le titre est une case à cocher : le contenu n'est
+    modifiable que si la case est cochée (comme les options d'outils de
+    GIMP). → (frame, case)."""
+    GimpUi, Gtk = _ui()
+    check = Gtk.CheckButton(label=label)
+    check.set_active(bool(active))
+    fr = GimpUi.Frame.new(None)
+    fr.set_label_widget(check)
+    fr.add(child)
+    child.set_sensitive(bool(active))
+    check.connect("toggled", lambda w: child.set_sensitive(w.get_active()))
+    return fr, check

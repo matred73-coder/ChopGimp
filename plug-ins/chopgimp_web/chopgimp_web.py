@@ -32,7 +32,8 @@ gi.require_version("Gtk", "3.0")
 gi.require_version("GdkPixbuf", "2.0")
 from gi.repository import Gimp, GimpUi, Gio, GLib, GdkPixbuf, Gtk
 
-from chopgimp_common import ok, fail, walk_layers, get_parasite_json, set_parasite_json
+from chopgimp_common import (ok, fail, walk_layers, get_parasite_json, set_parasite_json, dialog_box,
+                             vbox, spin_scale, form_grid, frame)
 
 PROCS = {
     "chopgimp-export-web": ("Exporter pour le web…", "<Image>/File/Export"),
@@ -92,13 +93,13 @@ def export_web(image):
     dlg = GimpUi.Dialog(title="Exporter pour le web", role="chopgimp-export-web", modal=True)
     dlg.add_button("_Annuler", Gtk.ResponseType.CANCEL)
     dlg.add_button("_Enregistrer…", Gtk.ResponseType.OK)
-    box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12, margin=12)
-    dlg.get_content_area().pack_start(box, True, True, 0)
-    previews = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+    box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
+    dialog_box(dlg).pack_start(box, True, True, 0)
+    previews = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
     box.pack_start(previews, True, True, 0)
     pics, caps = [], []
     for title in ("Original", "Exporté"):
-        col = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
+        col = vbox()
         img = Gtk.Image()
         img.set_size_request(320, 320)
         cap = Gtk.Label(label=title)
@@ -107,24 +108,23 @@ def export_web(image):
         previews.pack_start(col, True, True, 0)
         pics.append(img)
         caps.append(cap)
-    grid = Gtk.Grid(column_spacing=8, row_spacing=8)
-    box.pack_start(grid, False, False, 0)
-    grid.attach(Gtk.Label(label="Format", xalign=0), 0, 0, 1, 1)
+    opts = vbox()
+    opts.set_size_request(220, -1)
+    box.pack_start(frame("Réglages", opts), False, False, 0)
     fmt = Gtk.ComboBoxText()
     for k, lab in (("jpg", "JPEG"), ("webp", "WebP"), ("avif", "AVIF"), ("png", "PNG")):
         fmt.append(k, lab)
     fmt.set_active_id("jpg")
-    grid.attach(fmt, 1, 0, 1, 1)
-    grid.attach(Gtk.Label(label="Qualité", xalign=0), 0, 1, 1, 1)
-    qual = Gtk.Scale.new_with_range(Gtk.Orientation.HORIZONTAL, 10, 100, 1)
-    qual.set_value(80)
-    qual.set_size_request(180, -1)
-    grid.attach(qual, 1, 1, 1, 1)
-    grid.attach(Gtk.Label(label="Taille (%)", xalign=0), 0, 2, 1, 1)
-    size = Gtk.SpinButton(adjustment=Gtk.Adjustment(value=100, lower=5, upper=100, step_increment=5))
-    grid.attach(size, 1, 2, 1, 1)
+    opts.pack_start(form_grid([("Format", fmt)]), False, False, 0)
+    qual = spin_scale(Gtk.Adjustment(value=80, lower=10, upper=100, step_increment=1, page_increment=10),
+                      "Qualité")
+    opts.pack_start(qual, False, False, 0)
+    size = spin_scale(Gtk.Adjustment(value=100, lower=5, upper=100, step_increment=5, page_increment=10),
+                      "Taille (%)")
+    opts.pack_start(size, False, False, 0)
     info = Gtk.Label(xalign=0)
-    grid.attach(info, 0, 3, 2, 1)
+    info.get_style_context().add_class("dim-label")
+    opts.pack_start(info, False, False, 0)
 
     tmpdir = tempfile.mkdtemp(prefix="chopgimp-web-")
     pending = [0]
@@ -273,11 +273,11 @@ def batch_dialog():
     dlg = GimpUi.Dialog(title="Traitement par lots", role="chopgimp-batch", modal=True)
     dlg.add_button("_Annuler", Gtk.ResponseType.CANCEL)
     dlg.add_button("_Lancer", Gtk.ResponseType.OK)
-    g = Gtk.Grid(column_spacing=10, row_spacing=8, margin=12)
-    dlg.get_content_area().pack_start(g, True, True, 0)
+    main = dialog_box(dlg, spacing=12)
     src = Gtk.FileChooserButton(title="Dossier source", action=Gtk.FileChooserAction.SELECT_FOLDER)
     dst = Gtk.FileChooserButton(title="Dossier de sortie", action=Gtk.FileChooserAction.SELECT_FOLDER)
-    maxs = Gtk.SpinButton(adjustment=Gtk.Adjustment(value=2000, lower=0, upper=20000, step_increment=100))
+    maxs = spin_scale(Gtk.Adjustment(value=2000, lower=0, upper=20000, step_increment=100, page_increment=500),
+                      "Côté maximal (px, 0 = garder)", limits=(0, 8000))
     sharpen = Gtk.CheckButton(label="Accentuer légèrement")
     srgb = Gtk.CheckButton(label="Convertir en sRGB")
     srgb.set_active(True)
@@ -286,12 +286,17 @@ def batch_dialog():
     for k, lab in (("jpg", "JPEG"), ("webp", "WebP"), ("png", "PNG"), ("avif", "AVIF")):
         fmt.append(k, lab)
     fmt.set_active_id("jpg")
-    qual = Gtk.SpinButton(adjustment=Gtk.Adjustment(value=85, lower=10, upper=100, step_increment=1))
-    rows = [("Dossier source", src), ("Dossier de sortie", dst), ("Côté maximal (px, 0 = garder)", maxs),
-            ("", sharpen), ("", srgb), ("Filigrane", mark), ("Format", fmt), ("Qualité", qual)]
-    for i, (lab, w) in enumerate(rows):
-        g.attach(Gtk.Label(label=lab, xalign=0), 0, i, 1, 1)
-        g.attach(w, 1, i, 1, 1)
+    qual = spin_scale(Gtk.Adjustment(value=85, lower=10, upper=100, step_increment=1, page_increment=10),
+                      "Qualité")
+    main.pack_start(frame("Dossiers", form_grid([("Source", src), ("Sortie", dst)])), False, False, 0)
+    img_box = vbox()
+    for w in (maxs, sharpen, srgb, form_grid([("Filigrane", mark)])):
+        img_box.pack_start(w, False, False, 0)
+    main.pack_start(frame("Traitement", img_box), False, False, 0)
+    out_box = vbox()
+    out_box.pack_start(form_grid([("Format", fmt)]), False, False, 0)
+    out_box.pack_start(qual, False, False, 0)
+    main.pack_start(frame("Export", out_box), False, False, 0)
     dlg.show_all()
     resp = dlg.run()
     opts = None
@@ -397,15 +402,14 @@ def layer_comps(image):
     GimpUi.init("chopgimp_web")
     dlg = GimpUi.Dialog(title="Compositions de calques", role="chopgimp-layer-comps", modal=True)
     dlg.add_button("_Fermer", Gtk.ResponseType.CLOSE)
-    box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6, margin=12)
-    dlg.get_content_area().pack_start(box, True, True, 0)
+    box = dialog_box(dlg)
     store = Gtk.ListStore(str)
     view = Gtk.TreeView(model=store, headers_visible=False)
     view.append_column(Gtk.TreeViewColumn("Nom", Gtk.CellRendererText(), text=0))
-    sw = Gtk.ScrolledWindow(min_content_height=200, min_content_width=280)
+    sw = Gtk.ScrolledWindow(min_content_height=200, min_content_width=280, shadow_type=Gtk.ShadowType.IN)
     sw.add(view)
     box.pack_start(sw, True, True, 0)
-    row = Gtk.Box(spacing=4)
+    row = Gtk.Box(spacing=6)
     box.pack_start(row, False, False, 0)
 
     def reload():

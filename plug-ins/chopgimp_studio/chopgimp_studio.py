@@ -29,7 +29,8 @@ gi.require_version("Gtk", "3.0")
 gi.require_version("Gegl", "0.4")
 from gi.repository import Gimp, GimpUi, Gegl, Gio, GLib, Gtk
 
-from chopgimp_common import ok, fail, srgb, get_parasite_text, set_parasite_text
+from chopgimp_common import (ok, fail, get_parasite_text, set_parasite_text, dialog_box, vbox,
+                             spin_scale, frame)
 
 try:                        # accélère les options de fusion « Si » (facultatif)
     import numpy as np
@@ -65,16 +66,22 @@ def fill_color(image, interactive):
     color = Gimp.context_get_foreground()
     if interactive:
         GimpUi.init("chopgimp_studio")
-        dlg = Gtk.ColorChooserDialog(title="Calque de remplissage — couleur unie")
-        r, g, b, a = color.get_rgba_with_space(None)
-        from gi.repository import Gdk
-        dlg.set_rgba(Gdk.RGBA(r, g, b, 1.0))
+        # sélecteur de couleur de GIMP (celui de ses boutons de couleur)
+        dlg = GimpUi.Dialog(title="Calque de remplissage — couleur unie", role="chopgimp-fill-color")
+        dlg.add_button("_Annuler", Gtk.ResponseType.CANCEL)
+        dlg.add_button("_OK", Gtk.ResponseType.OK)
+        sel = GimpUi.ColorSelection.new()
+        sel.set_show_alpha(False)
+        sel.set_color(color)
+        sel.set_old_color(color)
+        dialog_box(dlg).pack_start(sel, True, True, 0)
+        dlg.show_all()
         resp = dlg.run()
-        rgba = dlg.get_rgba()
+        chosen = sel.get_color()
         dlg.destroy()
         if resp != Gtk.ResponseType.OK:
             return "cancel"
-        color = srgb(rgba.red, rgba.green, rgba.blue)
+        color = chosen
     w, h = image.get_width(), image.get_height()
     path = Gimp.Path.new(image, "Remplissage")
     path.stroke_new_from_points(Gimp.PathStrokeType.BEZIER,
@@ -157,11 +164,16 @@ def snapshot_revert(image):
     dlg = GimpUi.Dialog(title="Revenir à un instantané", role="chopgimp-snapshot", modal=True)
     dlg.add_button("_Annuler", Gtk.ResponseType.CANCEL)
     dlg.add_button("_Ouvrir", Gtk.ResponseType.OK)
-    lb = Gtk.ListBox(margin=12)
+    lb = Gtk.ListBox()
     for im in snaps:
         lb.add(Gtk.Label(label=im.get_name(), xalign=0, margin=6))
     lb.select_row(lb.get_row_at_index(len(snaps) - 1))
-    dlg.get_content_area().pack_start(lb, True, True, 0)
+    lb.connect("row-activated", lambda *_: dlg.response(Gtk.ResponseType.OK))
+    sw = Gtk.ScrolledWindow(shadow_type=Gtk.ShadowType.IN)
+    sw.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+    sw.set_min_content_height(min(240, 32 * len(snaps) + 8))
+    sw.add(lb)
+    dialog_box(dlg).pack_start(frame("Instantanés de l'image", sw), True, True, 0)
     dlg.show_all()
     resp = dlg.run()
     row = lb.get_selected_row()
@@ -195,6 +207,12 @@ CR = [
      lambda v: {"red": v / 400.0, "green": v / 400.0, "blue": v / 400.0, "independent": False,
                 "gaussian": True, "linear": False}),
 ]
+
+# regroupement dans la fenêtre (cadres GIMP)
+CR_GROUPS = [("Lumière", ("exposure", "contrast", "highlights", "shadows")),
+             ("Présence", ("clarity", "vibrance", "saturation")),
+             ("Couleur", ("temperature",)),
+             ("Effets", ("vignette", "grain"))]
 
 
 def cr_apply(layer, values, keep=None):
@@ -230,18 +248,21 @@ def camera_raw(image, layer):
     dlg.add_button("_Réinitialiser", 1)
     dlg.add_button("_Annuler", Gtk.ResponseType.CANCEL)
     dlg.add_button("_OK", Gtk.ResponseType.OK)
-    grid = Gtk.Grid(column_spacing=12, row_spacing=6, margin=12)
-    dlg.get_content_area().pack_start(grid, True, True, 0)
+    main = dialog_box(dlg, spacing=12)
+    main.set_size_request(340, -1)
+    boxes = {}
+    for title, keys in CR_GROUPS:
+        b = vbox()
+        main.pack_start(frame(title, b), False, False, 0)
+        boxes.update({k: b for k in keys})
     scales = {}
-    for row, (key, label, lo, hi, default, op, props) in enumerate(CR):
-        grid.attach(Gtk.Label(label=label, xalign=0), 0, row, 1, 1)
-        step = 0.05 if isinstance(lo, float) else 1
-        sc = Gtk.Scale.new_with_range(Gtk.Orientation.HORIZONTAL, lo, hi, step)
-        sc.set_value(default)
-        sc.set_hexpand(True)
-        sc.set_size_request(260, -1)
-        sc.set_digits(2 if isinstance(lo, float) else 0)
-        grid.attach(sc, 1, row, 1, 1)
+    for key, label, lo, hi, default, op, props in CR:
+        is_float = isinstance(lo, float)
+        step = 0.05 if is_float else 1
+        page = 0.5 if is_float else (500 if hi - lo > 1000 else 10)
+        adj = Gtk.Adjustment(value=default, lower=lo, upper=hi, step_increment=step, page_increment=page)
+        sc = spin_scale(adj, label, digits=2 if is_float else 0)
+        boxes[key].pack_start(sc, False, False, 0)
         scales[key] = sc
 
     # filtres d'origine masqués pendant l'aperçu, historique gelé
@@ -411,20 +432,22 @@ def blend_if_dialog(layer):
                         modal=True)
     dlg.add_button("_Annuler", Gtk.ResponseType.CANCEL)
     dlg.add_button("_OK", Gtk.ResponseType.OK)
-    grid = Gtk.Grid(column_spacing=10, row_spacing=6, margin=12)
-    dlg.get_content_area().pack_start(grid, True, True, 0)
+    main = dialog_box(dlg, spacing=12)
+    main.set_size_request(320, -1)
     spins = []
     labels = ["Noir début", "Noir fin", "Blanc début", "Blanc fin"]
     for block, title in ((0, "Ce calque"), (1, "Calque du dessous")):
-        grid.attach(Gtk.Label(label="<b>%s</b>" % title, use_markup=True, xalign=0), 0, block * 5, 4, 1)
+        b = vbox()
+        main.pack_start(frame(title, b), False, False, 0)
         for i, lab in enumerate(labels):
-            grid.attach(Gtk.Label(label=lab, xalign=0), 0, block * 5 + 1 + i, 1, 1)
-            sp = Gtk.SpinButton(adjustment=Gtk.Adjustment(value=vals[block * 4 + i], lower=0, upper=255,
-                                                          step_increment=1))
-            grid.attach(sp, 1, block * 5 + 1 + i, 1, 1)
+            sp = spin_scale(Gtk.Adjustment(value=vals[block * 4 + i], lower=0, upper=255,
+                                           step_increment=1, page_increment=16), lab)
+            b.pack_start(sp, False, False, 0)
             spins.append(sp)
-    grid.attach(Gtk.Label(label="Les pixels hors de la plage deviennent transparents (masque de calque).\n"
-                                "Relancez la commande pour modifier.", xalign=0), 0, 10, 4, 1)
+    hint = Gtk.Label(label="Les pixels hors de la plage deviennent transparents (masque de calque).\n"
+                           "Relancez la commande pour modifier.", xalign=0)
+    hint.get_style_context().add_class("dim-label")
+    main.pack_start(hint, False, False, 0)
     dlg.show_all()
     resp = dlg.run()
     v = [int(s.get_value()) for s in spins]

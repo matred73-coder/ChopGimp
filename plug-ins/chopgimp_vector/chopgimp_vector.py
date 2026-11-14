@@ -23,7 +23,8 @@ gi.require_version("Gtk", "3.0")
 from gi.repository import Gimp, GimpUi, GLib, GObject, Gtk
 
 from chopgimp_common import (ok, fail, pdb_call as call, copy_vector_style,
-                             get_parasite_text, set_parasite_text, walk_layers)
+                             get_parasite_text, set_parasite_text, walk_layers, dialog_box, vbox,
+                             spin_scale, form_grid)
 
 AUTHOR = "ChopGimp"
 YEAR = "2026"
@@ -369,14 +370,14 @@ def effects_dialog(image, layer):
     dialog.add_button("_Annuler", Gtk.ResponseType.CANCEL)
     dialog.add_button("_OK", Gtk.ResponseType.OK)
     dialog.set_default_size(520, 420)
-    box = dialog.get_content_area()
+    box = dialog_box(dialog)
 
     intro = Gtk.Label(label="Les effets s'appliquent au rendu : le chemin reste modifiable nœud par nœud "
-                            "(outil Sélection directe, A) et l'effet suit en direct.", wrap=True, xalign=0,
-                      margin=8)
+                            "(outil Sélection directe, A) et l'effet suit en direct.", wrap=True, xalign=0)
+    intro.get_style_context().add_class("dim-label")
     box.pack_start(intro, False, False, 0)
 
-    add_row = Gtk.Box(spacing=6, margin=8)
+    add_row = Gtk.Box(spacing=6)
     combo = Gtk.ComboBoxText()
     for key, label, _, _ in EFFECTS:
         combo.append(key, label)
@@ -386,8 +387,9 @@ def effects_dialog(image, layer):
     add_row.pack_start(add_btn, False, False, 0)
     box.pack_start(add_row, False, False, 0)
 
-    scroller = Gtk.ScrolledWindow(vexpand=True)
-    listbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6, margin=8)
+    scroller = Gtk.ScrolledWindow(vexpand=True, shadow_type=Gtk.ShadowType.IN)
+    scroller.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+    listbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12, margin=6)
     scroller.add(listbox)
     box.pack_start(scroller, True, True, 0)
 
@@ -408,25 +410,31 @@ def effects_dialog(image, layer):
             listbox.remove(child)
         for idx, e in enumerate(effects):
             key, label, params, _ = EFFECT_BY_KEY[e["type"]]
-            frame = Gtk.Frame()
-            inner = Gtk.Grid(column_spacing=8, row_spacing=4, margin=6)
-            frame.add(inner)
-            on = Gtk.CheckButton(label=label)
+            # cadre GIMP : titre = case « effet actif » + boutons d'ordre
+            inner = vbox()
+            on = Gtk.CheckButton()
+            on.add(Gtk.Label(label="<b>%s</b>" % GLib.markup_escape_text(label), use_markup=True))
             on.set_active(e.get("enabled", "1") != "0")
-            on.connect("toggled", lambda w, e=e: (e.__setitem__("enabled", "1" if w.get_active() else "0"),
-                                                  changed()))
-            inner.attach(on, 0, 0, 2, 1)
+            inner.set_sensitive(on.get_active())
+            on.connect("toggled", lambda w, e=e, inner=inner: (
+                e.__setitem__("enabled", "1" if w.get_active() else "0"),
+                inner.set_sensitive(w.get_active()), changed()))
+            header = Gtk.Box(spacing=6)
+            header.pack_start(on, True, True, 0)
             tools = Gtk.Box(spacing=2)
             for icon, tip, fn in [("go-up-symbolic", "Monter", lambda i=idx: move(i, -1)),
                                   ("go-down-symbolic", "Descendre", lambda i=idx: move(i, 1)),
                                   ("edit-delete-symbolic", "Supprimer l'effet", lambda i=idx: remove(i))]:
                 b = Gtk.Button.new_from_icon_name(icon, Gtk.IconSize.MENU)
+                b.set_relief(Gtk.ReliefStyle.NONE)
                 b.set_tooltip_text(tip)
                 b.connect("clicked", lambda w, fn=fn: fn())
                 tools.pack_start(b, False, False, 0)
-            inner.attach(tools, 2, 0, 1, 1)
-            for row, (pk, plabel, lo, hi, default) in enumerate(params, start=1):
-                inner.attach(Gtk.Label(label=plabel, xalign=0), 0, row, 1, 1)
+            header.pack_end(tools, False, False, 0)
+            fr = GimpUi.Frame.new(None)
+            fr.set_label_widget(header)
+            fr.add(inner)
+            for pk, plabel, lo, hi, default in params:
                 value = e.get(pk, str(default))
                 if lo == "layer":
                     w = Gtk.ComboBoxText()
@@ -437,17 +445,21 @@ def effects_dialog(image, layer):
                         w.set_active(0)
                     w.connect("changed", lambda w, e=e, pk=pk: (e.__setitem__(pk, w.get_active_id() or "0"),
                                                                 changed()))
+                    w = form_grid([(plabel, w)])
                 elif lo is None:
                     w = Gtk.Entry(text=str(value), hexpand=True)
                     w.connect("changed", lambda w, e=e, pk=pk: (e.__setitem__(pk, w.get_text()), changed()))
+                    w = form_grid([(plabel, w)])
                 else:
+                    step = 0.05 if hi <= 1 else 1
                     adj = Gtk.Adjustment(value=float(value), lower=lo, upper=hi,
-                                         step_increment=0.05 if hi <= 1 else 1)
-                    w = Gtk.SpinButton(adjustment=adj, digits=2 if hi <= 1 else 0, hexpand=True)
+                                         step_increment=step, page_increment=step * 10)
+                    w = spin_scale(adj, plabel, digits=2 if hi <= 1 else 0,
+                                   gamma=2.0 if lo >= 0 and hi - lo > 200 else None)
                     w.connect("value-changed",
                               lambda w, e=e, pk=pk: (e.__setitem__(pk, "%g" % w.get_value()), changed()))
-                inner.attach(w, 1, row, 2, 1)
-            listbox.pack_start(frame, False, False, 0)
+                inner.pack_start(w, False, False, 0)
+            listbox.pack_start(fr, False, False, 0)
         listbox.show_all()
 
     def move(i, d):

@@ -35,7 +35,7 @@ gi.require_version("GdkPixbuf", "2.0")
 from gi.repository import Gimp, GimpUi, Gegl, GLib, GdkPixbuf, Gtk
 
 from chopgimp_common import (ok, fail, srgb as color, walk_layers, pdb_call,
-                             copy_vector_style, remove_layer_and_paths)
+                             copy_vector_style, remove_layer_and_paths, dialog_box, spin_scale)
 
 BD = "<Image>/Filters/BD"
 PROCS = {
@@ -114,14 +114,13 @@ def spin_dialog(title, rows):
     dlg = GimpUi.Dialog(title=title, role="chopgimp-atelier", modal=True)
     dlg.add_button("_Annuler", Gtk.ResponseType.CANCEL)
     dlg.add_button("_OK", Gtk.ResponseType.OK)
-    grid = Gtk.Grid(column_spacing=10, row_spacing=6, margin=12)
-    dlg.get_content_area().pack_start(grid, True, True, 0)
+    box = dialog_box(dlg)
+    box.set_size_request(300, -1)
     spins = {}
-    for i, (k, lab, lo, hi, val, step) in enumerate(rows):
-        grid.attach(Gtk.Label(label=lab, xalign=0), 0, i, 1, 1)
-        sp = Gtk.SpinButton(adjustment=Gtk.Adjustment(value=val, lower=lo, upper=hi, step_increment=step),
-                            digits=0 if step >= 1 else 2)
-        grid.attach(sp, 1, i, 1, 1)
+    for k, lab, lo, hi, val, step in rows:
+        adj = Gtk.Adjustment(value=val, lower=lo, upper=hi, step_increment=step, page_increment=step * 10)
+        sp = spin_scale(adj, lab, digits=0 if step >= 1 else 2)
+        box.pack_start(sp, False, False, 0)
         spins[k] = sp
     dlg.show_all()
     resp = dlg.run()
@@ -464,8 +463,9 @@ def harmonies():
     dlg = GimpUi.Dialog(title="Harmonies de couleurs", role="chopgimp-harmonies", modal=True)
     dlg.add_button("_Fermer", Gtk.ResponseType.CLOSE)
     dlg.add_button("Enregistrer en _palette", 1)
-    grid = Gtk.Grid(column_spacing=6, row_spacing=6, margin=12)
-    dlg.get_content_area().pack_start(grid, True, True, 0)
+    box = dialog_box(dlg)
+    grid = Gtk.Grid(column_spacing=6, row_spacing=6)
+    box.pack_start(grid, True, True, 0)
     all_colors = []
     for row, (name, offs) in enumerate(schemes):
         grid.attach(Gtk.Label(label=name, xalign=0), 0, row, 1, 1)
@@ -476,8 +476,9 @@ def harmonies():
             area.set_tooltip_text("#%02x%02x%02x" % (int(rr * 255), int(gg * 255), int(bb * 255)))
             grid.attach(area, c + 1, row, 1, 1)
             all_colors.append((name, rr, gg, bb))
-    grid.attach(Gtk.Label(label="Couleur de base : la couleur de premier plan.", xalign=0),
-                0, len(schemes), 5, 1)
+    hint = Gtk.Label(label="Couleur de base : la couleur de premier plan.", xalign=0)
+    hint.get_style_context().add_class("dim-label")
+    box.pack_start(hint, False, False, 0)
     dlg.show_all()
     resp = dlg.run()
     dlg.destroy()

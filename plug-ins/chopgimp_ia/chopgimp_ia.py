@@ -27,7 +27,7 @@ gi.require_version("Gtk", "3.0")
 gi.require_version("Gegl", "0.4")
 from gi.repository import Gimp, GimpUi, Gegl, GLib, GObject, Gtk
 
-from chopgimp_common import ok, fail
+from chopgimp_common import ok, fail, dialog_box, vbox, form_grid, frame
 
 MODELS = {
     "u2netp": ("Détourage rapide (U²-Net p)", 320, (0.485, 0.456, 0.406), (0.229, 0.224, 0.225),
@@ -352,8 +352,9 @@ def upscale_dialog():
     dlg = GimpUi.Dialog(title="Agrandir (IA)", role="chopgimp-ia-upscale", modal=True)
     dlg.add_button("_Annuler", Gtk.ResponseType.CANCEL)
     dlg.add_button("_Agrandir", Gtk.ResponseType.OK)
-    box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6, margin=12)
-    dlg.get_content_area().pack_start(box, True, True, 0)
+    main = dialog_box(dlg)
+    box = vbox()
+    main.pack_start(frame("Facteur d'agrandissement", box), False, False, 0)
     group, buttons = None, {}
     for f in (2, 3, 4):
         rb = Gtk.RadioButton.new_with_label_from_widget(group, "× %d" % f)
@@ -361,7 +362,9 @@ def upscale_dialog():
         box.pack_start(rb, False, False, 0)
         buttons[f] = rb
     buttons[2].set_active(True)
-    box.pack_start(Gtk.Label(label="Le résultat s'ouvre dans une nouvelle image.", xalign=0), False, False, 6)
+    hint = Gtk.Label(label="Le résultat s'ouvre dans une nouvelle image.", xalign=0)
+    hint.get_style_context().add_class("dim-label")
+    main.pack_start(hint, False, False, 0)
     dlg.show_all()
     resp = dlg.run()
     choice = next(f for f, rb in buttons.items() if rb.get_active())
@@ -375,15 +378,15 @@ def models_dialog():
     GimpUi.init("chopgimp_ia")
     dlg = GimpUi.Dialog(title="Modèles d'IA", role="chopgimp-ia-models", modal=True)
     dlg.add_button("_Fermer", Gtk.ResponseType.CLOSE)
-    grid = Gtk.Grid(column_spacing=12, row_spacing=8, margin=12)
-    dlg.get_content_area().pack_start(grid, True, True, 0)
-    grid.attach(Gtk.Label(label="Modèle de détourage utilisé :", xalign=0), 0, 0, 2, 1)
+    main = dialog_box(dlg, spacing=12)
     combo = Gtk.ComboBoxText()
     for k in SEG_MODELS:
         combo.append(k, "%s — %.0f Mo" % (MODELS[k][0], MODELS[k][6] / 1048576.0))
     combo.set_active_id(current_seg_model())
-    grid.attach(combo, 2, 0, 2, 1)
-    row = 1
+    main.pack_start(frame("Détourage", form_grid([("Modèle utilisé", combo)])), False, False, 0)
+    grid = Gtk.Grid(column_spacing=12, row_spacing=6)
+    main.pack_start(frame("Modèles", grid), True, True, 0)
+    row = 0
     for k, (label, _, _, _, _, _, size) in MODELS.items():
         present = os.path.exists(model_path(k))
         grid.attach(Gtk.Label(label=label, xalign=0), 0, row, 1, 1)
@@ -394,7 +397,9 @@ def models_dialog():
             b.connect("clicked", lambda btn, key=k: (os.unlink(model_path(key)), btn.set_sensitive(False)))
             grid.attach(b, 3, row, 1, 1)
         row += 1
-    grid.attach(Gtk.Label(label="Dossier : " + models_dir(), xalign=0, selectable=True), 0, row, 4, 1)
+    folder = Gtk.Label(label="Dossier : " + models_dir(), xalign=0, selectable=True)
+    folder.get_style_context().add_class("dim-label")
+    main.pack_start(folder, False, False, 0)
     dlg.show_all()
     dlg.run()
     s = settings()

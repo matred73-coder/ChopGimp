@@ -28,7 +28,7 @@ gi.require_version("Gtk", "3.0")
 gi.require_version("Gegl", "0.4")
 from gi.repository import Gimp, GimpUi, Gegl, GLib, GObject, Gtk
 
-from chopgimp_common import ok, fail
+from chopgimp_common import ok, fail, dialog_box, vbox, spin_scale, frame
 
 try:                        # accélère la lecture/écriture des pixels (facultatif)
     import numpy as np
@@ -210,19 +210,20 @@ def rescale_dialog(w, h, has_sel):
     dialog = GimpUi.Dialog(title="Mise à l'échelle selon le contenu", role="chopgimp-lqr", modal=True)
     dialog.add_button("_Annuler", Gtk.ResponseType.CANCEL)
     dialog.add_button("_OK", Gtk.ResponseType.OK)
-    grid = Gtk.Grid(column_spacing=12, row_spacing=8, margin=12)
-    dialog.get_content_area().pack_start(grid, True, True, 0)
-    grid.attach(Gtk.Label(label="Largeur (%)", xalign=0), 0, 0, 1, 1)
-    sw = Gtk.SpinButton(adjustment=Gtk.Adjustment(value=75, lower=10, upper=200, step_increment=1))
-    grid.attach(sw, 1, 0, 1, 1)
-    grid.attach(Gtk.Label(label="Hauteur (%)", xalign=0), 0, 1, 1, 1)
-    sh = Gtk.SpinButton(adjustment=Gtk.Adjustment(value=100, lower=10, upper=200, step_increment=1))
-    grid.attach(sh, 1, 1, 1, 1)
+    main = dialog_box(dialog)
+    main.set_size_request(300, -1)
+    size = vbox()
+    main.pack_start(frame("Calque actif : %d × %d px" % (w, h), size), False, False, 0)
+    sw = spin_scale(Gtk.Adjustment(value=75, lower=10, upper=200, step_increment=1, page_increment=10),
+                    "Largeur (%)")
+    size.pack_start(sw, False, False, 0)
+    sh = spin_scale(Gtk.Adjustment(value=100, lower=10, upper=200, step_increment=1, page_increment=10),
+                    "Hauteur (%)")
+    size.pack_start(sh, False, False, 0)
     protect = Gtk.CheckButton(label="Protéger la sélection (visages, sujet…)")
     protect.set_active(has_sel)
     protect.set_sensitive(has_sel)
-    grid.attach(protect, 0, 2, 2, 1)
-    grid.attach(Gtk.Label(label="Calque actif : %d × %d px" % (w, h), xalign=0), 0, 3, 2, 1)
+    main.pack_start(protect, False, False, 0)
     dialog.show_all()
     res = None
     if dialog.run() == Gtk.ResponseType.OK:
