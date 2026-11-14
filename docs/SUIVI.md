@@ -21,7 +21,7 @@ Plan complet : lots 0 à 6, idées en plus, calendrier de 17 étapes (voir l'his
 | 13 | 3.22.0 | IA locale | ✅ livrée |
 | 14 | 3.23.0 | Dessin I « Confort » | ✅ livrée |
 | 15 | 3.23.1 | Dessin II « Peintre » | ✅ livrée |
-| 16 | 3.23.2 | Dessin III « Atelier / BD » | à faire |
+| 16 | 3.23.2 | Dessin III « Atelier / BD » | ✅ livrée |
 | 17 | 3.24.0 | Revue finale | à faire |
 
 ## 3.16.2 — fin de la revue de code
@@ -337,3 +337,30 @@ Signalés le 2026-11-13 en utilisant ChopGimp sur une affiche (scan 2480×3510) 
 - **Aperçu de trait des préréglages** : non fait. Le panneau montre l'icône de l'outil.
 - Vérifié au banc graphique : un cercle tremblé devient une ellipse nette. 93 tests.
 - **Correctif après le tag** : `tools/build_documents.py` vidait tout le dossier des préréglages en régénérant les « PS-… », ce qui effaçait les nouveaux préréglages de peinture. Il ne supprime plus que ses propres fichiers. Le paquet 3.23.1 a été reconstruit avec la correction.
+
+## 3.23.2 — Dessin III « Atelier / BD »
+
+Nouveau greffon `plug-ins/chopgimp_atelier/` et deux ajouts dans le cœur.
+- **Calque de croquis bleu** (Calque > Nouveau calque de croquis) :
+  - calque teinté en bleu par un filtre non destructif, marqué « croquis » ;
+  - **ignoré à l'export** (masqué pendant l'export, réaffiché ensuite) ;
+  - Affichage > Croquis : afficher / masquer.
+- **Aplats sous l'encrage** (Calque > Aplats…) : une couleur par zone fermée du calque d'encrage, avec fermeture des petites ouvertures. Le calque « Aplats » est créé sous l'encrage.
+- **Outils BD** (Filtres > BD) :
+  - **Cases** : planche découpée en N × M cases vectorielles avec gouttières et marge ;
+  - **Bulle** : ellipse et queue unies en une seule forme vectorielle (opération booléenne ChopGimp), avec un calque de texte centré ;
+  - **Trame** : demi-teintes non destructives (`gegl:newsprint`) ;
+  - **Lignes de vitesse** et **lignes concentriques**, en calque vectoriel.
+- **Gomme vectorielle** (Calque > Effets de tracé) : retire la sélection de la forme vectorielle. Le résultat reste vectoriel et garde son style.
+- **Guides de perspective** (Affichage) : 1, 2 ou 3 points de fuite, sur un calque de croquis verrouillé à 50 %. Il n'y a pas d'aimantation des traits.
+- **Harmonies de couleurs** (Couleurs) : complémentaire, triade, analogues, tétrade, complémentaires adjacentes, à partir de la couleur de premier plan. Elles peuvent être enregistrées en palette.
+- **Références** (Fenêtres) : une fenêtre toujours au premier plan, avec des onglets d'images ajustées à la taille.
+- **Enregistrement en accéléré** :
+  - Affichage > Enregistrer en accéléré capture l'image toutes les 2 s si elle a changé (`gimpdir/timelapse/image-N/`) ;
+  - Fichier > Exporter > Exporter le timelapse… encode les captures en WebM (VP8, 12 images/s).
+- **Tests** : 7 nouveaux tests, 100 au total. Au banc graphique, 3 traits peints pendant l'enregistrement ont donné 2 captures (une toutes les 2 s). L'encodage WebM a été vérifié dans le Flatpak.
+- **Correctif pendant les tests** : la forme gommée perdait son nom (GIMP renomme le calque d'après le chemin à l'insertion).
+- **Limites** :
+  - la capture se fait toutes les 2 s plutôt qu'à chaque trait ;
+  - les guides de perspective sont visuels seulement ;
+  - les références ne proposent pas de pipette.

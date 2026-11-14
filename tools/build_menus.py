@@ -209,7 +209,11 @@ apparence = ["    <submenu>",
     ["  " + l for l in radio_sub("_Taille de l'interface", "ui-size", ["90", "100", "115", "130"])] + \
     ["      </section>", "    </submenu>"]
 affichage = insert_before_close(get["_View"], ["      <section>"] + ["  " + l for l in apparence] +
-                                ["      </section>"])
+                                ["      </section>",
+                                 "      <section>",
+                                 '        <item><attribute name="action">app.view-popup-palette</attribute></item>',
+                                 '        <item><attribute name="action">app.view-timelapse</attribute></item>',
+                                 "      </section>"])
 
 order = [
     get["_File"],

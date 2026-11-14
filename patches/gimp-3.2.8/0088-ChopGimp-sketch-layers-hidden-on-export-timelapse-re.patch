@@ -1,0 +1,302 @@
+From 73c329c4b58ff46ee16ea3010c8a3f762d68c32a Mon Sep 17 00:00:00 2001
+From: ChopGimp <mathieu.redon@proton.me>
+Date: Sat, 14 Nov 2026 03:40:03 +0100
+Subject: [PATCH] ChopGimp: sketch layers hidden on export, timelapse recording
+
+---
+ app/actions/view-actions.c   |   8 +++
+ app/actions/view-commands.c  |  12 ++++
+ app/actions/view-commands.h  |   3 +
+ app/file/file-save.c         |  31 +++++++++
+ app/gui/chopgimp-timelapse.c | 125 +++++++++++++++++++++++++++++++++++
+ app/gui/chopgimp-timelapse.h |   7 ++
+ app/gui/meson.build          |   1 +
+ 7 files changed, 187 insertions(+)
+ create mode 100644 app/gui/chopgimp-timelapse.c
+ create mode 100644 app/gui/chopgimp-timelapse.h
+
+diff --git a/app/actions/view-actions.c b/app/actions/view-actions.c
+index 256959a..7335774 100644
+--- a/app/actions/view-actions.c
++++ b/app/actions/view-actions.c
+@@ -169,6 +169,14 @@ static const GimpActionEntry view_actions[] =
+ 
+ static const GimpToggleActionEntry view_toggle_actions[] =
+ {
++  { "view-timelapse", "media-record",
++    "_Enregistrer en accéléré (timelapse)", NULL, { NULL },
++    "Capture l'image à chaque modification ; Fichier > Exporter > Exporter le timelapse… "
++    "en fait une vidéo",
++    view_timelapse_cmd_callback,
++    FALSE,
++    NULL },
++
+ 
+   { "view-show-all", NULL,
+     NC_("view-action", "Show _All"), NULL, { NULL },
+diff --git a/app/actions/view-commands.c b/app/actions/view-commands.c
+index 8d5bba9..3dbbbf9 100644
+--- a/app/actions/view-commands.c
++++ b/app/actions/view-commands.c
+@@ -47,6 +47,7 @@
+ #include "display/gimpdisplay-foreach.h"
+ #include "display/gimpdisplayshell.h"
+ #include "display/chopgimp-popup-palette.h"
++#include "gui/chopgimp-timelapse.h"
+ #include "display/gimpdisplayshell-appearance.h"
+ #include "display/gimpdisplayshell-filter-dialog.h"
+ #include "display/gimpdisplayshell-rotate.h"
+@@ -637,6 +638,17 @@ view_color_management_enable_cmd_callback (GimpAction *action,
+     }
+ }
+ 
++void
++view_timelapse_cmd_callback (GimpAction *action,
++                             GVariant   *value,
++                             gpointer    data)
++{
++  Gimp *gimp;
++  return_if_no_gimp (gimp, data);
++
++  chopgimp_timelapse_set_recording (gimp, g_variant_get_boolean (value));
++}
++
+ void
+ view_popup_palette_cmd_callback (GimpAction *action,
+                                  GVariant   *value,
+diff --git a/app/actions/view-commands.h b/app/actions/view-commands.h
+index c97b575..e86e990 100644
+--- a/app/actions/view-commands.h
++++ b/app/actions/view-commands.h
+@@ -100,6 +100,9 @@ void   view_color_management_reset_cmd_callback     (GimpAction *action,
+ void   view_color_management_enable_cmd_callback    (GimpAction *action,
+                                                      GVariant   *value,
+                                                      gpointer    data);
++void   view_timelapse_cmd_callback               (GimpAction *action,
++                                                   GVariant   *value,
++                                                   gpointer    data);
+ void   view_popup_palette_cmd_callback            (GimpAction *action,
+                                                    GVariant   *value,
+                                                    gpointer    data);
+diff --git a/app/file/file-save.c b/app/file/file-save.c
+index 26a459b..647b507 100644
+--- a/app/file/file-save.c
++++ b/app/file/file-save.c
+@@ -37,6 +37,8 @@
+ #include "core/gimpdrawable.h"
+ #include "core/gimpimage.h"
+ #include "core/gimpimagefile.h"
++#include "core/gimpitem.h"
++#include "core/gimpprojectable.h"
+ #include "core/gimpparamspecs.h"
+ #include "core/gimpprogress.h"
+ 
+@@ -70,6 +72,7 @@ file_save (Gimp                *gimp,
+   GimpPDBStatusType  status     = GIMP_PDB_EXECUTION_ERROR;
+   GFile             *local_file = NULL;
+   gboolean           mounted    = TRUE;
++  GList             *hidden_sketches = NULL;   /*  ChopGimp  */
+   GError            *my_error   = NULL;
+   GimpExportOptions *options    = NULL;
+ 
+@@ -183,6 +186,24 @@ file_save (Gimp                *gimp,
+       g_free (my_path);
+     }
+ 
++  /*  ChopGimp: sketch layers (and perspective guides) are not exported  */
++  if (export_backward || export_forward)
++    {
++      GList *all = gimp_image_get_layer_list (image);
++      GList *iter;
++
++      for (iter = all; iter; iter = iter->next)
++        if (gimp_item_get_visible (iter->data) &&
++            gimp_item_parasite_find (iter->data, "chopgimp-sketch"))
++          {
++            gimp_item_set_visible (iter->data, FALSE, FALSE);
++            hidden_sketches = g_list_prepend (hidden_sketches, iter->data);
++          }
++      g_list_free (all);
++      if (hidden_sketches)
++        gimp_projectable_invalidate_preview (GIMP_PROJECTABLE (image));
++    }
++
+   return_vals =
+     gimp_pdb_execute_procedure_by_name (image->gimp->pdb,
+                                         gimp_get_user_context (gimp),
+@@ -195,6 +216,16 @@ file_save (Gimp                *gimp,
+                                         G_TYPE_NONE);
+   status = g_value_get_enum (gimp_value_array_index (return_vals, 0));
+ 
++  /*  ChopGimp: sketch layers back  */
++  if (hidden_sketches)
++    {
++      GList *iter;
++
++      for (iter = hidden_sketches; iter; iter = iter->next)
++        gimp_item_set_visible (iter->data, TRUE, FALSE);
++      g_clear_pointer (&hidden_sketches, g_list_free);
++    }
++
+   gimp_value_array_unref (return_vals);
+ 
+   if (local_file)
+diff --git a/app/gui/chopgimp-timelapse.c b/app/gui/chopgimp-timelapse.c
+new file mode 100644
+index 0000000..cd755e8
+--- /dev/null
++++ b/app/gui/chopgimp-timelapse.c
+@@ -0,0 +1,125 @@
++/* ChopGimp — enregistrement en accéléré (timelapse)
++ *
++ * This program is free software: you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation; either version 3 of the License, or
++ * (at your option) any later version.
++ *
++ * Affichage > Enregistrer en accéléré : toutes les 2 s, si une image a
++ * changé depuis la dernière capture, sa vue (réduite à 1280 px au plus)
++ * est écrite en PNG dans <gimpdir>/timelapse/image-<id>/000001.png…
++ * Fichier > Exporter > Exporter le timelapse… (plug-in chopgimp_atelier)
++ * en fait une vidéo WebM.
++ */
++
++#include "config.h"
++
++#include <gegl.h>
++#include <gtk/gtk.h>
++
++#include "libgimpbase/gimpbase.h"
++
++#include "gui-types.h"
++
++#include "core/gimp.h"
++#include "core/gimpimage.h"
++#include "core/gimppickable.h"
++#include "core/gimpprojection.h"
++
++#include "chopgimp-timelapse.h"
++
++
++static guint       timer   = 0;
++static GHashTable *last_dt = NULL;   /*  image id → dirty time of the last frame  */
++static GHashTable *n_frame = NULL;   /*  image id → next frame number  */
++
++static void
++capture (GimpImage *image)
++{
++  GeglBuffer *buffer = gimp_pickable_get_buffer (GIMP_PICKABLE (gimp_image_get_projection (image)));
++  gint        w      = gimp_image_get_width (image);
++  gint        h      = gimp_image_get_height (image);
++  gdouble     scale  = MIN (1.0, 1280.0 / MAX (w, h));
++  gint        sw     = MAX (1, (gint) (w * scale));
++  gint        sh     = MAX (1, (gint) (h * scale));
++  guchar     *data   = g_malloc ((gsize) sw * sh * 4);
++  gint        id     = gimp_image_get_id (image);
++  gint        n      = GPOINTER_TO_INT (g_hash_table_lookup (n_frame, GINT_TO_POINTER (id)));
++  gchar      *dir, *name, *path;
++  GdkPixbuf  *pixbuf;
++
++  gimp_pickable_flush (GIMP_PICKABLE (gimp_image_get_projection (image)));
++  gegl_buffer_get (buffer, GEGL_RECTANGLE (0, 0, sw, sh), scale,
++                   babl_format ("R'G'B'A u8"), data, sw * 4, GEGL_ABYSS_NONE);
++
++  dir  = g_strdup_printf ("%s/timelapse/image-%d", gimp_directory (), id);
++  g_mkdir_with_parents (dir, 0700);
++  name = g_strdup_printf ("%06d.png", n);
++  path = g_build_filename (dir, name, NULL);
++
++  pixbuf = gdk_pixbuf_new_from_data (data, GDK_COLORSPACE_RGB, TRUE, 8, sw, sh, sw * 4, NULL, NULL);
++  gdk_pixbuf_save (pixbuf, path, "png", NULL, "compression", "3", NULL);
++  g_object_unref (pixbuf);
++
++  g_hash_table_insert (n_frame, GINT_TO_POINTER (id), GINT_TO_POINTER (n + 1));
++  g_free (data);
++  g_free (path);
++  g_free (name);
++  g_free (dir);
++}
++
++static gboolean
++tick (gpointer data)
++{
++  Gimp  *gimp = data;
++  GList *list;
++
++  for (list = gimp_get_image_iter (gimp); list; list = g_list_next (list))
++    {
++      GimpImage *image = list->data;
++      gint       id    = gimp_image_get_id (image);
++      gint64     dt    = gimp_image_get_dirty_time (image);
++      gint64    *prev  = g_hash_table_lookup (last_dt, GINT_TO_POINTER (id));
++
++      if (prev && *prev == dt)
++        continue;
++
++      capture (image);
++      if (! prev)
++        {
++          prev = g_new (gint64, 1);
++          g_hash_table_insert (last_dt, GINT_TO_POINTER (id), prev);
++        }
++      *prev = dt;
++    }
++
++  return G_SOURCE_CONTINUE;
++}
++
++gboolean
++chopgimp_timelapse_is_recording (void)
++{
++  return timer != 0;
++}
++
++void
++chopgimp_timelapse_set_recording (Gimp     *gimp,
++                                  gboolean  recording)
++{
++  if (! last_dt)
++    {
++      last_dt = g_hash_table_new_full (NULL, NULL, NULL, g_free);
++      n_frame = g_hash_table_new (NULL, NULL);
++    }
++
++  if (recording && ! timer)
++    {
++      timer = g_timeout_add_seconds (2, tick, gimp);
++      tick (gimp);
++    }
++  else if (! recording && timer)
++    {
++      g_source_remove (timer);
++      timer = 0;
++    }
++}
+diff --git a/app/gui/chopgimp-timelapse.h b/app/gui/chopgimp-timelapse.h
+new file mode 100644
+index 0000000..23c75a3
+--- /dev/null
++++ b/app/gui/chopgimp-timelapse.h
+@@ -0,0 +1,7 @@
++/* ChopGimp — enregistrement en accéléré (voir le .c) */
++
++#pragma once
++
++gboolean   chopgimp_timelapse_is_recording  (void);
++void       chopgimp_timelapse_set_recording (Gimp     *gimp,
++                                             gboolean  recording);
+diff --git a/app/gui/meson.build b/app/gui/meson.build
+index d3377de..ca270f6 100644
+--- a/app/gui/meson.build
++++ b/app/gui/meson.build
+@@ -8,6 +8,7 @@ gimpdbusservice_gen = gnome.gdbus_codegen(
+ 
+ libappgui_sources = [
+   'chopgimp-autosave.c',
++  'chopgimp-timelapse.c',
+   'gimpapp.c',
+   'gimpdbusservice.c',
+   'gimpuiconfigurer.c',
+-- 
+2.53.0
+

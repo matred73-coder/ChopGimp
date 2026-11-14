@@ -724,6 +724,71 @@ try:
     except Exception as e:
         report(False, "IA locale", repr(e)[:200])
 
+    # 3 nonies. Atelier / BD (plug-in chopgimp_atelier, valeurs par défaut)
+    try:
+        im = Gimp.Image.new(600, 400, Gimp.ImageBaseType.RGB)
+        bg = Gimp.Layer.new(im, "Fond", 600, 400, Gimp.ImageType.RGB_IMAGE, 100, Gimp.LayerMode.NORMAL)
+        im.insert_layer(bg, None, 0)
+        bg.fill(Gimp.FillType.WHITE)
+        ink = Gimp.Layer.new(im, "Encrage", 600, 400, Gimp.ImageType.RGBA_IMAGE, 100, Gimp.LayerMode.NORMAL)
+        im.insert_layer(ink, None, 0)
+        ink.fill(Gimp.FillType.TRANSPARENT)
+        Gimp.context_set_foreground(color(0, 0, 0))
+        for x, y, w, h in ((40, 40, 200, 150), (300, 60, 220, 260)):
+            im.select_rectangle(Gimp.ChannelOps.REPLACE, x, y, w, h)
+            im.select_rectangle(Gimp.ChannelOps.SUBTRACT, x + 6, y + 6, w - 12, h - 12)
+            ink.edit_fill(Gimp.FillType.FOREGROUND)
+        Gimp.Selection.none(im)
+
+        def at(proc, drawables=None):
+            return run(proc, **{"run-mode": Gimp.RunMode.NONINTERACTIVE, "image": im,
+                                "drawables": drawables if drawables is not None else [ink]})
+
+        def names():
+            out = []
+            def w_(ls):
+                for l in ls:
+                    out.append(l)
+                    if isinstance(l, Gimp.GroupLayer):
+                        w_(l.get_children())
+            w_(im.get_layers())
+            return out
+
+        r = at("chopgimp-flats")
+        report(r.index(0) == Gimp.PDBStatusType.SUCCESS and any(l.get_name() == "Aplats" for l in names()),
+               "Atelier : aplats sous l'encrage", str(r.index(1)) if r.length() > 1 else "")
+        at("chopgimp-sketch-layer")
+        sk = [l for l in names() if l.get_parasite("chopgimp-sketch")]
+        report(len(sk) == 1 and len(sk[0].get_filters() or []) == 1, "Atelier : calque de croquis bleu")
+        at("chopgimp-comic-panels")
+        cases = [l for l in names() if l.get_name().startswith("Case ")]
+        report(len(cases) == 6 and all(isinstance(l, Gimp.VectorLayer) for l in cases),
+               "Atelier : cases de BD (3 × 2)", str(len(cases)))
+        r = at("chopgimp-comic-balloon")
+        report(r.index(0) == Gimp.PDBStatusType.SUCCESS and any(l.get_name() == "Bulle" for l in names()) and
+               any(isinstance(l, Gimp.TextLayer) for l in names()), "Atelier : bulle + texte")
+        at("chopgimp-speed-lines")
+        at("chopgimp-focus-lines")
+        at("chopgimp-perspective-guides")
+        nm = [l.get_name() for l in names()]
+        report("Lignes de vitesse" in nm and "Lignes concentriques" in nm and
+               any(n.startswith("⟂ Perspective") for n in nm),
+               "Atelier : lignes de vitesse, concentriques, perspective")
+        at("chopgimp-screentone", [bg])
+        report(any(f.get_operation_name() == "gegl:newsprint" for f in (bg.get_filters() or [])),
+               "Atelier : trame non destructive")
+        case1 = [l for l in names() if l.get_name() == "Case 1"][0]
+        _, cx, cy = case1.get_offsets()
+        im.select_rectangle(Gimp.ChannelOps.REPLACE, cx, cy, 30, 30)
+        r = at("chopgimp-vector-eraser", [case1])
+        report(r.index(0) == Gimp.PDBStatusType.SUCCESS and
+               len([l for l in names() if l.get_name() == "Case 1"]) == 1,
+               "Atelier : gomme vectorielle",
+               "%s n=%d %s" % (r.index(0), len([l for l in names() if l.get_name() == "Case 1"]),
+                               str(r.index(1)) if r.length() > 1 else ""))
+    except Exception as e:
+        report(False, "Atelier", repr(e)[:200])
+
     # 4. Réglages d'usine présents (thème, icônes, menus, raccourcis)
     data = Gimp.data_directory()
     sysconf = Gimp.sysconf_directory()
