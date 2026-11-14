@@ -675,6 +675,25 @@ try:
     except Exception as e:
         report(False, "Base II", repr(e)[:200])
 
+    # 3 septies. Base III : génération de ressources (manuelle et à l'enregistrement)
+    try:
+        im = test_image()
+        red = [l for l in im.get_layers() if isinstance(l, Gimp.GroupLayer)][0].get_children()[0]
+        red.set_name("logo.png, vignette.jpg 50%")
+        xcf = os.path.join(TMP, "ressources.xcf")
+        Gimp.file_save(Gimp.RunMode.NONINTERACTIVE, im, Gio.File.new_for_path(xcf), None)
+        res_dir = os.path.join(TMP, "ressources-ressources")
+        r = run("chopgimp-generate-assets", **{"run-mode": Gimp.RunMode.NONINTERACTIVE, "image": im,
+                                               "drawables": []})
+        report(r.index(0) == Gimp.PDBStatusType.SUCCESS and
+               os.path.exists(os.path.join(res_dir, "logo.png")) and
+               os.path.exists(os.path.join(res_dir, "vignette.jpg")),
+               "Génération de ressources (calques nommés comme des fichiers)")
+        # (la génération à chaque enregistrement passe par l'enregistrement de
+        # l'interface, Ctrl+S : vérifiée au banc graphique, pas ici)
+    except Exception as e:
+        report(False, "Base III", repr(e)[:200])
+
     # 4. Réglages d'usine présents (thème, icônes, menus, raccourcis)
     data = Gimp.data_directory()
     sysconf = Gimp.sysconf_directory()

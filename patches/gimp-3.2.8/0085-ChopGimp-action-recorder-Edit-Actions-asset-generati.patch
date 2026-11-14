@@ -1,0 +1,269 @@
+From c27e2e43075404648b693f45be3c54540cafcac9 Mon Sep 17 00:00:00 2001
+From: ChopGimp <mathieu.redon@proton.me>
+Date: Sat, 14 Nov 2026 02:36:53 +0100
+Subject: [PATCH] ChopGimp: action recorder (Edit > Actions), asset generation
+ after each XCF save
+
+---
+ app/actions/edit-actions.c       | 13 +++++++
+ app/actions/edit-commands.c      | 58 ++++++++++++++++++++++++++++++++
+ app/actions/edit-commands.h      |  6 ++++
+ app/file/file-save.c             | 29 ++++++++++++++++
+ app/widgets/gimpaction-history.c | 50 +++++++++++++++++++++++++++
+ app/widgets/gimpaction-history.h |  3 ++
+ 6 files changed, 159 insertions(+)
+
+diff --git a/app/actions/edit-actions.c b/app/actions/edit-actions.c
+index 110b3cc..2d3cafb 100644
+--- a/app/actions/edit-actions.c
++++ b/app/actions/edit-actions.c
+@@ -62,6 +62,19 @@ static void   edit_actions_pattern_changed    (GimpContext     *context,
+ 
+ static const GimpActionEntry edit_actions[] =
+ {
++  /*  ChopGimp: action recorder (Photoshop « Actions »)  */
++  { "edit-macro-record", GIMP_ICON_RECORD,
++    "_Enregistrer une action (démarrer / arrêter)", NULL, { NULL },
++    "Enregistre les commandes lancées (menus, filtres, calques…) jusqu'au prochain arrêt",
++    edit_macro_record_cmd_callback,
++    NULL },
++
++  { "edit-macro-play", "media-playback-start",
++    "_Rejouer l'action", NULL, { NULL },
++    "Relance, dans l'ordre, les commandes de la dernière action enregistrée",
++    edit_macro_play_cmd_callback,
++    NULL },
++
+   { "edit-undo", GIMP_ICON_EDIT_UNDO,
+     NC_("edit-action", "_Undo"), NULL, { "<primary>Z", NULL },
+     NC_("edit-action", "Undo the last operation"),
+diff --git a/app/actions/edit-commands.c b/app/actions/edit-commands.c
+index 4641ba7..507f461 100644
+--- a/app/actions/edit-commands.c
++++ b/app/actions/edit-commands.c
+@@ -56,6 +56,12 @@
+ #include "widgets/gimpmessagedialog.h"
+ #include "widgets/gimpwidgets-utils.h"
+ #include "widgets/gimpwindowstrategy.h"
++#include "widgets/gimpaction.h"
++#include "widgets/gimpaction-history.h"
++#include "widgets/gimpuimanager.h"
++#include "widgets/chopgimp-rc.h"
++
++#include "menus/menus.h"
+ 
+ #include "display/gimpdisplay.h"
+ #include "display/gimpdisplayshell.h"
+@@ -91,6 +97,58 @@ static void       copy_named_visible_buffer_callback (GtkWidget     *widget,
+ 
+ /*  public functions  */
+ 
++void
++edit_macro_record_cmd_callback (GimpAction *action,
++                                GVariant   *value,
++                                gpointer    data)
++{
++  Gimp     *gimp;
++  gboolean  now;
++  return_if_no_gimp (gimp, data);
++
++  now = ! chopgimp_macro_is_recording ();
++  chopgimp_macro_set_recording (now);
++  gimp_message_literal (gimp, NULL, GIMP_MESSAGE_INFO,
++                        now ? _("Enregistrement de l'action : lancez les commandes à "
++                                "enregistrer, puis Édition > Actions > Enregistrer une action "
++                                "pour arrêter.")
++                            : _("Action enregistrée : Édition > Actions > Rejouer l'action."));
++}
++
++void
++edit_macro_play_cmd_callback (GimpAction *action,
++                              GVariant   *value,
++                              gpointer    data)
++{
++  Gimp          *gimp;
++  GimpUIManager *manager;
++  gchar        **names;
++  gint           i, played = 0;
++  return_if_no_gimp (gimp, data);
++
++  if (chopgimp_macro_is_recording ())
++    chopgimp_macro_set_recording (FALSE);
++
++  names   = chopgimp_rc_get_strings ("macro", "actions");
++  manager = menus_get_image_manager_singleton (gimp);
++
++  for (i = 0; names && names[i]; i++)
++    {
++      GimpAction *a = gimp_ui_manager_find_action (manager, NULL, names[i]);
++
++      if (a && gimp_action_is_sensitive (a, NULL))
++        {
++          gimp_action_activate (a);
++          played++;
++        }
++    }
++
++  if (! names || ! names[0])
++    gimp_message_literal (gimp, NULL, GIMP_MESSAGE_INFO,
++                          _("Aucune action enregistrée (Édition > Actions > Enregistrer une action)."));
++  g_strfreev (names);
++}
++
+ void
+ edit_undo_cmd_callback (GimpAction *action,
+                         GVariant   *value,
+diff --git a/app/actions/edit-commands.h b/app/actions/edit-commands.h
+index 636d10a..9fc0138 100644
+--- a/app/actions/edit-commands.h
++++ b/app/actions/edit-commands.h
+@@ -18,6 +18,12 @@
+ #pragma once
+ 
+ 
++void   edit_macro_record_cmd_callback   (GimpAction *action,
++                                         GVariant   *value,
++                                         gpointer    data);
++void   edit_macro_play_cmd_callback     (GimpAction *action,
++                                         GVariant   *value,
++                                         gpointer    data);
+ void   edit_undo_cmd_callback               (GimpAction *action,
+                                              GVariant   *value,
+                                              gpointer    data);
+diff --git a/app/file/file-save.c b/app/file/file-save.c
+index 239fc91..26a459b 100644
+--- a/app/file/file-save.c
++++ b/app/file/file-save.c
+@@ -20,6 +20,8 @@
+ 
+ #include "config.h"
+ 
++#include <string.h>
++
+ #include <gdk-pixbuf/gdk-pixbuf.h>
+ #include <gegl.h>
+ 
+@@ -278,6 +280,33 @@ file_save (Gimp                *gimp,
+                                        g_slist_nth_data (file_proc->mime_types_list, 0),
+                                        image,
+                                        NULL);
++
++      /*  ChopGimp: « Générer les ressources à chaque enregistrement »
++       *  (Photoshop Generator): layers named like files are exported
++       */
++      if (change_saved_state)
++        {
++          const GimpParasite *gen = gimp_image_parasite_find (image, "chopgimp-generator-on");
++          guint32             len = 0;
++          const gchar        *val = gen ? gimp_parasite_get_data (gen, &len) : NULL;
++
++          if (val && len >= 4 && ! strncmp (val, "true", 4))
++            {
++              GimpValueArray *rv;
++              GObject       **none = g_new0 (GObject *, 1);   /*  no drawable  */
++
++              rv = gimp_pdb_execute_procedure_by_name (gimp->pdb, gimp_get_user_context (gimp),
++                                                       progress, NULL,
++                                                       "chopgimp-generate-assets",
++                                                       GIMP_TYPE_RUN_MODE, GIMP_RUN_NONINTERACTIVE,
++                                                       GIMP_TYPE_IMAGE,    image,
++                                                       GIMP_TYPE_CORE_OBJECT_ARRAY, none,
++                                                       G_TYPE_NONE);
++              if (rv)
++                gimp_value_array_unref (rv);
++              g_free (none);
++            }
++        }
+     }
+   else if (status != GIMP_PDB_CANCEL)
+     {
+diff --git a/app/widgets/gimpaction-history.c b/app/widgets/gimpaction-history.c
+index 246d74f..57b1215 100644
+--- a/app/widgets/gimpaction-history.c
++++ b/app/widgets/gimpaction-history.c
+@@ -38,6 +38,7 @@
+ #include "gimpaction-history.h"
+ 
+ #include "chopgimp-crash.h"
++#include "chopgimp-rc.h"
+ 
+ 
+ #define GIMP_ACTION_HISTORY_FILENAME "action-history"
+@@ -357,6 +358,51 @@ gimp_action_history_is_excluded_action (const gchar *action_name)
+ /* Called whenever a GimpAction is activated.
+  * It allows us to log all used actions.
+  */
++/*  ChopGimp: action recorder (Édition > Actions). Image-changing commands
++ *  only: views, windows, dialogs, tools, files and the recorder itself are
++ *  not recorded. Saved in chopgimprc [macro] actions.
++ */
++static gboolean   macro_recording = FALSE;
++static GPtrArray *macro_actions   = NULL;
++
++gboolean
++chopgimp_macro_is_recording (void)
++{
++  return macro_recording;
++}
++
++void
++chopgimp_macro_set_recording (gboolean recording)
++{
++  if (recording)
++    {
++      g_clear_pointer (&macro_actions, g_ptr_array_unref);
++      macro_actions = g_ptr_array_new_with_free_func (g_free);
++    }
++  else if (macro_recording && macro_actions)
++    {
++      g_ptr_array_add (macro_actions, NULL);
++      chopgimp_rc_set_strings ("macro", "actions", (const gchar * const *) macro_actions->pdata);
++      g_ptr_array_set_size (macro_actions, macro_actions->len - 1);
++    }
++  macro_recording = recording;
++}
++
++static gboolean
++chopgimp_macro_records (const gchar *name)
++{
++  static const gchar *skip[] = { "view-", "windows-", "dialogs-", "tools-", "file-", "context-",
++                                 "dock-", "dockable-", "edit-macro-", "help-", "plug-in-reset",
++                                 "edit-undo", "edit-redo", "image-new", "layers-select-",
++                                 "cursor-info-", "debug-", NULL };
++  gint i;
++
++  for (i = 0; skip[i]; i++)
++    if (g_str_has_prefix (name, skip[i]))
++      return FALSE;
++  return TRUE;
++}
++
+ void
+ gimp_action_history_action_activated (GimpAction *action)
+ {
+@@ -369,6 +415,10 @@ gimp_action_history_action_activated (GimpAction *action)
+ 
+   chopgimp_crash_note_action (gimp_action_get_name (action));
+ 
++  if (macro_recording && macro_actions &&
++      chopgimp_macro_records (gimp_action_get_name (action)))
++    g_ptr_array_add (macro_actions, g_strdup (gimp_action_get_name (action)));
++
+   /* Silently return when called at the wrong time, like when the
+    * activated action was "quit" and the history is already gone.
+    */
+diff --git a/app/widgets/gimpaction-history.h b/app/widgets/gimpaction-history.h
+index 340dbdf..5304045 100644
+--- a/app/widgets/gimpaction-history.h
++++ b/app/widgets/gimpaction-history.h
+@@ -39,4 +39,7 @@ GList    * gimp_action_history_search                (Gimp                *gimp,
+ gboolean   gimp_action_history_is_blacklisted_action (const gchar         *action_name);
+ gboolean   gimp_action_history_is_excluded_action    (const gchar         *action_name);
+ 
++gboolean   chopgimp_macro_is_recording     (void);
++void       chopgimp_macro_set_recording    (gboolean    recording);
++
+ void       gimp_action_history_action_activated      (GimpAction          *action);
+-- 
+2.53.0
+

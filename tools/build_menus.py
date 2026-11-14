@@ -213,7 +213,14 @@ affichage = insert_before_close(get["_View"], ["      <section>"] + ["  " + l fo
 
 order = [
     get["_File"],
-    get["_Edit"],
+    insert_before_close(get["_Edit"], [
+        "      <section>",
+        "        <submenu>",
+        '          <attribute name="label" translatable="no">Actions</attribute>',
+        '          <item><attribute name="action">app.edit-macro-record</attribute></item>',
+        '          <item><attribute name="action">app.edit-macro-play</attribute></item>',
+        "        </submenu>",
+        "      </section>"]),
     image,
     get["_Colors"],
     calque,

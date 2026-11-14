@@ -17,7 +17,7 @@ Plan complet : lots 0 à 6, idées en plus, calendrier de 17 étapes (voir l'his
 | 9 | 3.20.2 | Vectoriel III (SVG natif, export SVG) | ✅ livrée |
 | 10 | 3.21.0 | Base I | ✅ livrée |
 | 11 | 3.21.1 | Base II | ✅ livrée |
-| 12 | 3.21.2 | Base III | à faire |
+| 12 | 3.21.2 | Base III | ✅ livrée |
 | 13 | 3.22.0 | IA locale | à faire |
 | 14 | 3.23.0 | Dessin I « Confort » | à faire |
 | 15 | 3.23.1 | Dessin II « Peintre » | à faire |
@@ -277,3 +277,17 @@ Signalés le 2026-11-13 en utilisant ChopGimp sur une affiche (scan 2480×3510) 
 - **Filtres > Camera Raw…** : exposition, contraste, hautes lumières, ombres, clarté, vibrance, saturation, température, vignettage, grain. Chaque réglage devient un filtre modifiable « Camera Raw : … », avec aperçu en direct, une seule étape d'annulation, et Réinitialiser.
 - **Épreuve écran en un clic** : Ctrl+Y (couleurs d'impression), Ctrl+Maj+Y (couleurs non imprimables).
 - **2 nouveaux tests** : 87 tests.
+
+## 3.21.2 — Base III
+
+- **Édition > Actions** : « Enregistrer une action » (démarrer / arrêter) et « Rejouer l'action ».
+  - Les commandes qui modifient l'image (menus, filtres, calques, plug-ins…) sont enregistrées dans `chopgimprc [macro]`, puis relancées dans l'ordre.
+  - Une commande avec fenêtre la rouvre.
+  - Ne sont pas enregistrés : affichage, fenêtres, outils, fichiers.
+- **Fichier > Exporter > Traitement par lots…** : sur un dossier, côté maximal, accentuation, conversion sRGB, filigrane texte, format (JPEG, WebP, PNG, AVIF) et qualité.
+- **Fichier > Exporter > Exporter pour le web…** : JPEG, WebP, AVIF ou PNG, qualité, taille, et aperçu avant/après avec le poids du fichier, recalculé à chaque réglage.
+- **Fichier > Exporter > Générer les ressources** :
+  - les calques nommés comme des fichiers (« logo.png », « vignette.jpg 50% », « icône.png 200% », plusieurs séparés par des virgules) sont exportés dans `<image>-ressources/` ;
+  - « Générer les ressources à chaque enregistrement » le fait à chaque Ctrl+S (`app/file/file-save.c`).
+- **Fenêtres > Compositions de calques…** : nouvelle, mettre à jour, appliquer (double-clic), supprimer, exporter tout. Une composition mémorise la visibilité, la position et l'opacité ; elle est enregistrée dans le XCF.
+- **1 nouveau test** : 88 tests. La génération à l'enregistrement et les actions ont été vérifiées au banc graphique.
