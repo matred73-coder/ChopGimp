@@ -179,6 +179,8 @@ PS_MAP = [
     ("Affichage", "view-rotate-reset",     [S + "Escape"],   "Réinitialiser la rotation"),
 
     # ── Fenêtre ────────────────────────────────────────────────────────
+    ("Affichage", "view-color-management-softproof", [P + "y"], "Épreuve écran (couleurs d'impression)"),
+    ("Affichage", "view-softproof-gamut-check", [P + S + "y"], "Couleurs non imprimables"),
     ("Fenêtre", "dialogs-action-search",   [P + "f", "slash"], "Rechercher (commandes, filtres, menus)"),
     ("Fenêtre", "dialogs-brushes",         ["F5"],           "Pinceaux"),
     ("Fenêtre", "dialogs-colors",          ["F6"],           "Couleur"),

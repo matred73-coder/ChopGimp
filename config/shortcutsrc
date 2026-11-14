@@ -304,6 +304,10 @@
 (action "windows-hide-right-docks" "<Shift>Tab")
 # Réinitialiser la rotation
 (action "view-rotate-reset" "<Shift>Escape")
+# Épreuve écran (couleurs d'impression)
+(action "view-color-management-softproof" "<Primary>y")
+# Couleurs non imprimables
+(action "view-softproof-gamut-check" "<Primary><Shift>y")
 
 # ── Fenêtre ─────────────────────────────────────────────────────
 # Rechercher (commandes, filtres, menus)
@@ -330,6 +334,8 @@
 (action "dialogs-toolbox")
 # était : <primary>semicolon
 (action "edit-fill-pattern")
+# était : <primary><shift>Y
+(action "edit-strong-redo")
 # était : <primary><alt><shift>O
 (action "file-open-as-link-layers")
 # était : <primary><alt>F

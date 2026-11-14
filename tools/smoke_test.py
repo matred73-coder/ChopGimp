@@ -647,6 +647,34 @@ try:
     except Exception as e:
         report(False, "Base I", repr(e)[:200])
 
+    # 3 sexies. Base II : calques de remplissage, instantané
+    try:
+        im = test_image()
+
+        def all_layers(ls):
+            for l in ls:
+                yield l
+                if isinstance(l, Gimp.GroupLayer):
+                    yield from all_layers(l.get_children())
+        n0 = len(list(all_layers(im.get_layers())))
+        r1 = run("chopgimp-fill-color", **{"run-mode": Gimp.RunMode.NONINTERACTIVE, "image": im,
+                                           "drawables": []})
+        r2 = run("chopgimp-fill-pattern", **{"run-mode": Gimp.RunMode.NONINTERACTIVE, "image": im,
+                                             "drawables": []})
+        kinds = [type(l).__name__ for l in all_layers(im.get_layers())]
+        report(r1.index(0) == Gimp.PDBStatusType.SUCCESS and r2.index(0) == Gimp.PDBStatusType.SUCCESS and
+               len(kinds) == n0 + 2 and "VectorLayer" in kinds,
+               "Calques de remplissage (couleur unie, motif)", ", ".join(kinds))
+        before = len(Gimp.get_images())
+        r = run("chopgimp-snapshot-new", **{"run-mode": Gimp.RunMode.NONINTERACTIVE, "image": im,
+                                            "drawables": []})
+        snaps = [i for i in Gimp.get_images() if i.get_parasite("chopgimp-snapshot-of")]
+        report(r.index(0) == Gimp.PDBStatusType.SUCCESS and len(Gimp.get_images()) == before + 1 and
+               snaps and len(snaps[0].get_layers()) == len(im.get_layers()),
+               "Instantané (copie de l'image)")
+    except Exception as e:
+        report(False, "Base II", repr(e)[:200])
+
     # 4. Réglages d'usine présents (thème, icônes, menus, raccourcis)
     data = Gimp.data_directory()
     sysconf = Gimp.sysconf_directory()

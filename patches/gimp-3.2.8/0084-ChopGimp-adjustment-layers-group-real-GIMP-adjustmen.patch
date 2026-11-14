@@ -1,0 +1,271 @@
+From 80cd561f3386d583d42a7ae9a176d21482a17ef8 Mon Sep 17 00:00:00 2001
+From: ChopGimp <mathieu.redon@proton.me>
+Date: Sat, 14 Nov 2026 02:25:42 +0100
+Subject: [PATCH] ChopGimp: adjustment layers (group + real GIMP adjustment
+ dialog on it)
+
+---
+ app/actions/layers-actions.c  | 114 ++++++++++++++++++++++++++++++++++
+ app/actions/layers-commands.c |  85 +++++++++++++++++++++++++
+ app/actions/layers-commands.h |   3 +
+ 3 files changed, 202 insertions(+)
+
+diff --git a/app/actions/layers-actions.c b/app/actions/layers-actions.c
+index 4b03def..30930c2 100644
+--- a/app/actions/layers-actions.c
++++ b/app/actions/layers-actions.c
+@@ -466,6 +466,100 @@ static const GimpEnumActionEntry layers_color_tag_actions[] =
+     GIMP_HELP_LAYER_COLOR_TAG }
+ };
+ 
++/*  ChopGimp: adjustment layers (Photoshop): see layers_adjustment_cmd_callback  */
++static const GimpEnumActionEntry layers_adjustment_actions[] =
++{
++  { "layers-adjustment-levels", NULL,
++    "Niveaux…", NULL, { NULL },
++    "Nouveau calque de réglage : Niveaux (agit sur les calques du dessous, reste modifiable)",
++    0, FALSE,
++    GIMP_HELP_LAYER_NEW },
++
++  { "layers-adjustment-curves", NULL,
++    "Courbes…", NULL, { NULL },
++    "Nouveau calque de réglage : Courbes (agit sur les calques du dessous, reste modifiable)",
++    1, FALSE,
++    GIMP_HELP_LAYER_NEW },
++
++  { "layers-adjustment-brightness-contrast", NULL,
++    "Luminosité/Contraste…", NULL, { NULL },
++    "Nouveau calque de réglage : Luminosité/Contraste (agit sur les calques du dessous, reste modifiable)",
++    2, FALSE,
++    GIMP_HELP_LAYER_NEW },
++
++  { "layers-adjustment-exposure", NULL,
++    "Exposition…", NULL, { NULL },
++    "Nouveau calque de réglage : Exposition (agit sur les calques du dessous, reste modifiable)",
++    3, FALSE,
++    GIMP_HELP_LAYER_NEW },
++
++  { "layers-adjustment-vibrance", NULL,
++    "Vibrance…", NULL, { NULL },
++    "Nouveau calque de réglage : Vibrance (agit sur les calques du dessous, reste modifiable)",
++    4, FALSE,
++    GIMP_HELP_LAYER_NEW },
++
++  { "layers-adjustment-hue-saturation", NULL,
++    "Teinte/Saturation…", NULL, { NULL },
++    "Nouveau calque de réglage : Teinte/Saturation (agit sur les calques du dessous, reste modifiable)",
++    5, FALSE,
++    GIMP_HELP_LAYER_NEW },
++
++  { "layers-adjustment-color-balance", NULL,
++    "Balance des couleurs…", NULL, { NULL },
++    "Nouveau calque de réglage : Balance des couleurs (agit sur les calques du dessous, reste modifiable)",
++    6, FALSE,
++    GIMP_HELP_LAYER_NEW },
++
++  { "layers-adjustment-black-white", NULL,
++    "Noir et blanc…", NULL, { NULL },
++    "Nouveau calque de réglage : Noir et blanc (agit sur les calques du dessous, reste modifiable)",
++    7, FALSE,
++    GIMP_HELP_LAYER_NEW },
++
++  { "layers-adjustment-photo-filter", NULL,
++    "Filtre photo…", NULL, { NULL },
++    "Nouveau calque de réglage : Filtre photo (agit sur les calques du dessous, reste modifiable)",
++    8, FALSE,
++    GIMP_HELP_LAYER_NEW },
++
++  { "layers-adjustment-channel-mixer", NULL,
++    "Mélangeur de couches…", NULL, { NULL },
++    "Nouveau calque de réglage : Mélangeur de couches (agit sur les calques du dessous, reste modifiable)",
++    9, FALSE,
++    GIMP_HELP_LAYER_NEW },
++
++  { "layers-adjustment-colorize", NULL,
++    "Coloriser…", NULL, { NULL },
++    "Nouveau calque de réglage : Coloriser (agit sur les calques du dessous, reste modifiable)",
++    10, FALSE,
++    GIMP_HELP_LAYER_NEW },
++
++  { "layers-adjustment-invert", NULL,
++    "Négatif…", NULL, { NULL },
++    "Nouveau calque de réglage : Négatif (agit sur les calques du dessous, reste modifiable)",
++    11, FALSE,
++    GIMP_HELP_LAYER_NEW },
++
++  { "layers-adjustment-posterize", NULL,
++    "Isohélie…", NULL, { NULL },
++    "Nouveau calque de réglage : Isohélie (agit sur les calques du dessous, reste modifiable)",
++    12, FALSE,
++    GIMP_HELP_LAYER_NEW },
++
++  { "layers-adjustment-threshold", NULL,
++    "Seuil…", NULL, { NULL },
++    "Nouveau calque de réglage : Seuil (agit sur les calques du dessous, reste modifiable)",
++    13, FALSE,
++    GIMP_HELP_LAYER_NEW },
++
++  { "layers-adjustment-shadows-highlights", NULL,
++    "Tons foncés/Tons clairs…", NULL, { NULL },
++    "Nouveau calque de réglage : Tons foncés/Tons clairs (agit sur les calques du dessous, reste modifiable)",
++    14, FALSE,
++    GIMP_HELP_LAYER_NEW }
++};
++
+ static const GimpEnumActionEntry layers_mask_apply_actions[] =
+ {
+   { "layers-mask-apply", NULL,
+@@ -715,6 +809,11 @@ layers_actions_setup (GimpActionGroup *group)
+                                       G_N_ELEMENTS (layers_color_tag_actions),
+                                       layers_color_tag_cmd_callback);
+ 
++  gimp_action_group_add_enum_actions (group, "layers-action",
++                                      layers_adjustment_actions,
++                                      G_N_ELEMENTS (layers_adjustment_actions),
++                                      layers_adjustment_cmd_callback);
++
+   gimp_action_group_add_enum_actions (group, "layers-action",
+                                       layers_mask_apply_actions,
+                                       G_N_ELEMENTS (layers_mask_apply_actions),
+@@ -1037,6 +1136,21 @@ layers_actions_update (GimpActionGroup *group,
+   SET_SENSITIVE ("layers-new-last-values",  image);
+   SET_SENSITIVE ("layers-new-from-visible", image);
+   SET_SENSITIVE ("layers-new-group",        image && !indexed && !fs);
++  SET_SENSITIVE ("layers-adjustment-levels", image && !indexed && !fs && layer);
++  SET_SENSITIVE ("layers-adjustment-curves", image && !indexed && !fs && layer);
++  SET_SENSITIVE ("layers-adjustment-brightness-contrast", image && !indexed && !fs && layer);
++  SET_SENSITIVE ("layers-adjustment-exposure", image && !indexed && !fs && layer);
++  SET_SENSITIVE ("layers-adjustment-vibrance", image && !indexed && !fs && layer);
++  SET_SENSITIVE ("layers-adjustment-hue-saturation", image && !indexed && !fs && layer);
++  SET_SENSITIVE ("layers-adjustment-color-balance", image && !indexed && !fs && layer);
++  SET_SENSITIVE ("layers-adjustment-black-white", image && !indexed && !fs && layer);
++  SET_SENSITIVE ("layers-adjustment-photo-filter", image && !indexed && !fs && layer);
++  SET_SENSITIVE ("layers-adjustment-channel-mixer", image && !indexed && !fs && layer);
++  SET_SENSITIVE ("layers-adjustment-colorize", image && !indexed && !fs && layer);
++  SET_SENSITIVE ("layers-adjustment-invert", image && !indexed && !fs && layer);
++  SET_SENSITIVE ("layers-adjustment-posterize", image && !indexed && !fs && layer);
++  SET_SENSITIVE ("layers-adjustment-threshold", image && !indexed && !fs && layer);
++  SET_SENSITIVE ("layers-adjustment-shadows-highlights", image && !indexed && !fs && layer);
+   SET_SENSITIVE ("layers-duplicate",        n_selected_layers > 0 && !fs && !ac);
+   SET_SENSITIVE ("layers-delete",           n_selected_layers > 0 && !ac);
+ 
+diff --git a/app/actions/layers-commands.c b/app/actions/layers-commands.c
+index 0a286c1..4f6c8fe 100644
+--- a/app/actions/layers-commands.c
++++ b/app/actions/layers-commands.c
+@@ -74,6 +74,9 @@
+ #include "widgets/gimphelp-ids.h"
+ #include "widgets/gimpopendialog.h"
+ #include "widgets/gimpprogressdialog.h"
++#include "widgets/gimpuimanager.h"
++
++#include "menus/menus.h"
+ 
+ #include "display/gimpdisplay.h"
+ #include "display/gimpdisplayshell.h"
+@@ -607,6 +610,88 @@ layers_new_from_visible_cmd_callback (GimpAction *action,
+   gimp_image_flush (image);
+ }
+ 
++/*  ChopGimp: adjustment layer (Photoshop). A group « ◐ name » takes the
++ *  selected layer and every layer below it (same parent); the group is
++ *  selected and the GIMP adjustment is started on it: a filter on a group
++ *  always stays an editable non-destructive filter (fx), with its full
++ *  dialog and live preview. Opacity / visibility of the group act as those
++ *  of the adjustment.
++ */
++void
++layers_adjustment_cmd_callback (GimpAction *action,
++                                GVariant   *value,
++                                gpointer    data)
++{
++  static const struct { const gchar *label; const gchar *filter; } adjustments[] =
++  {
++    { "Niveaux", "filters-levels" },
++    { "Courbes", "filters-curves" },
++    { "Luminosité/Contraste", "filters-brightness-contrast" },
++    { "Exposition", "filters-exposure" },
++    { "Vibrance", "filters-saturation" },
++    { "Teinte/Saturation", "filters-hue-saturation" },
++    { "Balance des couleurs", "filters-color-balance" },
++    { "Noir et blanc", "filters-mono-mixer" },
++    { "Filtre photo", "filters-color-temperature" },
++    { "Mélangeur de couches", "filters-channel-mixer" },
++    { "Coloriser", "filters-colorize" },
++    { "Négatif", "filters-invert-perceptual" },
++    { "Isohélie", "filters-posterize" },
++    { "Seuil", "filters-threshold" },
++    { "Tons foncés/Tons clairs", "filters-shadows-highlights" },
++  };
++  GimpImage     *image;
++  GimpLayer     *layer;
++  GimpLayer     *parent;
++  GimpLayer     *group;
++  GimpContainer *container;
++  GList         *below = NULL;
++  GList         *iter;
++  GList         *sel;
++  gint           index, n, i;
++  gchar         *name;
++  return_if_no_image (image, data);
++
++  index = g_variant_get_int32 (value);
++  if (index < 0 || index >= (gint) G_N_ELEMENTS (adjustments))
++    return;
++
++  sel = gimp_image_get_selected_layers (image);
++  if (g_list_length (sel) != 1)
++    return;
++
++  layer     = sel->data;
++  parent    = GIMP_LAYER (gimp_item_get_parent (GIMP_ITEM (layer)));
++  container = gimp_item_get_container (GIMP_ITEM (layer));
++  n         = gimp_container_get_n_children (container);
++
++  for (i = gimp_item_get_index (GIMP_ITEM (layer)); i < n; i++)
++    below = g_list_append (below, gimp_container_get_child_by_index (container, i));
++
++  gimp_image_undo_group_start (image, GIMP_UNDO_GROUP_LAYER_ADD,
++                               _("Nouveau calque de réglage"));
++
++  group = gimp_group_layer_new (image);
++  name  = g_strdup_printf ("◐ %s", adjustments[index].label);
++  gimp_object_take_name (GIMP_OBJECT (group), name);
++  gimp_image_add_layer (image, group, parent, gimp_item_get_index (GIMP_ITEM (layer)), TRUE);
++
++  for (iter = below, i = 0; iter; iter = iter->next, i++)
++    gimp_image_reorder_item (image, iter->data, GIMP_ITEM (group), i, TRUE, NULL);
++
++  sel = g_list_prepend (NULL, group);
++  gimp_image_set_selected_layers (image, sel);
++  g_list_free (sel);
++  g_list_free (below);
++
++  gimp_image_undo_group_end (image);
++  gimp_image_flush (image);
++
++  /*  the real adjustment dialog, on the group  */
++  gimp_ui_manager_activate_action (menus_get_image_manager_singleton (image->gimp),
++                                   "filters", adjustments[index].filter);
++}
++
+ void
+ layers_new_group_cmd_callback (GimpAction *action,
+                                GVariant   *value,
+diff --git a/app/actions/layers-commands.h b/app/actions/layers-commands.h
+index 4a105b4..15958af 100644
+--- a/app/actions/layers-commands.h
++++ b/app/actions/layers-commands.h
+@@ -41,6 +41,9 @@ void   layers_new_from_visible_cmd_callback   (GimpAction *action,
+                                                GVariant   *value,
+                                                gpointer    data);
+ 
++void   layers_adjustment_cmd_callback         (GimpAction *action,
++                                               GVariant   *value,
++                                               gpointer    data);
+ void   layers_new_group_cmd_callback          (GimpAction *action,
+                                                GVariant   *value,
+                                                gpointer    data);
+-- 
+2.53.0
+

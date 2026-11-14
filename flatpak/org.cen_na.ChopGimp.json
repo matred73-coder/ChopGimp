@@ -1003,7 +1003,8 @@
                         "../patches/gimp-3.2.8/0080-ChopGimp-File-Place-linked-Place-embedded-labels.patch",
                         "../patches/gimp-3.2.8/0081-ChopGimp-SVG-export-numbers-with-a-dot-whatever-the-.patch",
                         "../patches/gimp-3.2.8/0082-ChopGimp-align-distribute-in-the-move-tool-options-b.patch",
-                        "../patches/gimp-3.2.8/0083-ChopGimp-smart-guides-labels-snap-to-bounding-boxes-.patch"
+                        "../patches/gimp-3.2.8/0083-ChopGimp-smart-guides-labels-snap-to-bounding-boxes-.patch",
+                        "../patches/gimp-3.2.8/0084-ChopGimp-adjustment-layers-group-real-GIMP-adjustmen.patch"
                     ]
                 }
             ],

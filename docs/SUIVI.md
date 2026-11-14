@@ -16,7 +16,7 @@ Plan complet : lots 0 à 6, idées en plus, calendrier de 17 étapes (voir l'his
 | 8 | 3.20.1 | Vectoriel II (Placer, objets dynamiques, aperçus) | ✅ livrée |
 | 9 | 3.20.2 | Vectoriel III (SVG natif, export SVG) | ✅ livrée |
 | 10 | 3.21.0 | Base I | ✅ livrée |
-| 11 | 3.21.1 | Base II | à faire |
+| 11 | 3.21.1 | Base II | ✅ livrée |
 | 12 | 3.21.2 | Base III | à faire |
 | 13 | 3.22.0 | IA locale | à faire |
 | 14 | 3.23.0 | Dessin I « Confort » | à faire |
@@ -260,3 +260,20 @@ Signalés le 2026-11-13 en utilisant ChopGimp sur une affiche (scan 2480×3510) 
 - **Image > Redresser…** : avec un chemin de 2 points, l'image tourne vers l'horizontale ou la verticale la plus proche, puis est recadrée sur le plus grand rectangle sans bord vide. Le bouton « Redresser » de l'outil Mesure existe aussi.
 - **Image > Mise à l'échelle selon le contenu…** : Liquid Rescale (liblqr ajoutée au paquet, compilée en C17), avec option pour protéger la sélection.
 - **3 nouveaux tests** : 85 tests. Récupération testée au banc, en tuant ChopGimp.
+
+## 3.21.1 — Base II
+
+- **Calque > Nouveau calque de réglage** (15 réglages : Niveaux, Courbes, Luminosité/Contraste, Exposition, Vibrance, Teinte/Saturation, Balance des couleurs, Noir et blanc, Filtre photo, Mélangeur de couches, Coloriser, Négatif, Isohélie, Seuil, Tons foncés/Tons clairs) :
+  - un groupe « ◐ nom » reçoit le calque sélectionné et tous ceux du dessous, puis **la vraie fenêtre de réglage de GIMP s'ouvre sur ce groupe**, avec aperçu en direct ;
+  - un filtre sur un groupe reste toujours modifiable (icône fx) ;
+  - l'opacité, la visibilité et le masque du groupe font office de ceux du réglage.
+  - Un vrai type « calque de réglage » demanderait un nouveau format XCF, illisible par GIMP.
+- **Calque > Nouveau calque de remplissage** :
+  - couleur unie : calque vectoriel couvrant l'image, couleur modifiable ;
+  - dégradé : incrustation de dégradé modifiable ;
+  - motif.
+- **Calque > Style de calque > Options de fusion « Si »…** : plages « Ce calque » et « Calque du dessous », avec rampes comme les curseurs scindés de Photoshop. Le résultat est un masque de calque, recalculé en relançant la commande (réglages mémorisés).
+- **Image > Instantané** : créer un instantané (copie de l'image, dans le panneau Images) et revenir à un instantané.
+- **Filtres > Camera Raw…** : exposition, contraste, hautes lumières, ombres, clarté, vibrance, saturation, température, vignettage, grain. Chaque réglage devient un filtre modifiable « Camera Raw : … », avec aperçu en direct, une seule étape d'annulation, et Réinitialiser.
+- **Épreuve écran en un clic** : Ctrl+Y (couleurs d'impression), Ctrl+Maj+Y (couleurs non imprimables).
+- **2 nouveaux tests** : 87 tests.

@@ -156,7 +156,18 @@ texte = """    <submenu>
 # « Style de calque » : filtres non destructifs natifs (modifiables via
 # l'icône fx du calque). Le plug-in photogimp_ps y ajoute Contour, Lueur
 # externe, Ombre interne, Effacer le style (même libellé → même sous-menu).
-# « Nouveau calque de réglage » est entièrement fourni par le plug-in.
+# « Nouveau calque de réglage » : actions ChopGimp layers-adjustment-* (groupe
+# « ◐ » + vraie fenêtre de réglage de GIMP sur le groupe).
+ADJ_ACTIONS = ["layers-adjustment-" + k for k in ['levels', 'curves', 'brightness-contrast', 'exposure', 'vibrance', 'hue-saturation', 'color-balance', 'black-white', 'photo-filter', 'channel-mixer', 'colorize', 'invert', 'posterize', 'threshold', 'shadows-highlights']]
+
+
+def adjustment_submenu(indent):
+    i = " " * indent
+    return ([i + "<submenu>",
+             i + '  <attribute name="label" translatable="no">Nouveau calque de réglage</attribute>',
+             i + "  <section>"] +
+            [i + '    <item><attribute name="action">app.%s</attribute></item>' % a for a in ADJ_ACTIONS] +
+            [i + "  </section>", i + "</submenu>"])
 STYLE_NATIFS = ["filters-dropshadow", "filters-gegl-inner-glow", "filters-gegl-bevel",
                 "filters-gegl-color-overlay", "filters-long-shadow", "filters-emboss"]
 
@@ -171,11 +182,7 @@ def style_submenu(indent):
     return l
 
 
-calque_head = ["      <section>"] + style_submenu(8) + [
-    "        <submenu>",
-    '          <attribute name="label" translatable="no">Nouveau calque de réglage</attribute>',
-    "        </submenu>",
-    "      </section>"]
+calque_head = ["      <section>"] + style_submenu(8) + adjustment_submenu(8) + ["      </section>"]
 calque = get["_Layer"][:2] + calque_head + get["_Layer"][2:]
 
 # Affichage > Apparence (ChopGimp) : variantes, accent, densité, police, taille
@@ -270,7 +277,7 @@ layers_popup = """<?xml version="1.0" encoding="utf-8"?>
     sec(items(["layers-new", "layers-duplicate", "layers-delete", "layers-new-group",
                "layers-new-from-visible"])),
     sec("\n".join(style_submenu(8)),
-        '        <submenu>\n          <attribute name="label" translatable="no">Nouveau calque de réglage</attribute>\n        </submenu>',
+        "\n".join(adjustment_submenu(8)),
         sub("Mode de composition", ["layers-composite-mode-auto", "layers-composite-mode-union",
                                     "layers-composite-mode-clip-to-backdrop",
                                     "layers-composite-mode-clip-to-layer",
