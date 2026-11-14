@@ -12,8 +12,8 @@ Plan complet : lots 0 à 6, idées en plus, calendrier de 17 étapes (voir l'his
 | 5 bis | 3.19.1 | Traceur de plantage + correctif (hors plan) | ✅ livrée |
 | 5 ter | 3.19.2 | Retours d'utilisation (remplissage, filtres, styles, sélection auto) | ✅ livrée |
 | 6 | 3.19.3 | PSD II | ✅ livrée |
-| 7 | 3.20.0 | Vectoriel I (PDF/AI) | à faire |
-| 8 | 3.20.1 | Vectoriel II (EPS, SVG, aperçus, Placer) | à faire |
+| 7 | 3.20.0 | Vectoriel I (PDF/AI, + EPS et SVG en avance) | ✅ livrée |
+| 8 | 3.20.1 | Vectoriel II (Placer, aperçus) | à faire |
 | 9 | 3.20.2 | Vectoriel III (SVG natif, export SVG) | à faire |
 | 10 | 3.21.0 | Base I | à faire |
 | 11 | 3.21.1 | Base II | à faire |
@@ -196,3 +196,28 @@ Signalés le 2026-11-13 en utilisant ChopGimp sur une affiche (scan 2480×3510) 
 - **6 nouveaux tests**, dont l'aller-retour PSD (forme et texte relus modifiables) : 72 tests.
 
 **À vérifier dans Photoshop** : l'export des textes, que je ne peux pas tester ici.
+
+## 3.20.0 — Vectoriel I : PDF, Illustrator, EPS, SVG
+
+- **Approche** (plus simple et portable que l'OutputDev C++ prévu) :
+  - poppler (accessible depuis Python grâce à l'introspection activée dans le manifeste) et librsvg dessinent sur une surface **CairoScript** ;
+  - `plug-ins/chopgimp_pdf/cairoscript.py` relit cet enregistrement : tracés de Bézier, couleurs, contours (épaisseur, extrémités, angles, tirets), dégradés, images incorporées.
+- **PDF / AI moderne** (`file-chopgimp-pdf-load`, prioritaire) :
+  - chaque **calque PDF (OCG, calques d'Illustrator)** devient un groupe : la page est rendue une fois par calque, et les objets propres à chaque calque sont séparés de ceux de la base ; la visibilité est reprise ;
+  - tracés → **calques vectoriels** (fond, contour) ; les objets consécutifs de même style sont réunis, avec un plafond réglable (1 500 objets) au-delà duquel la page est importée en image ;
+  - **images** → calques d'image placés sur leurs 4 coins ;
+  - **textes** → calques de texte modifiables, ligne par ligne, avec police (polices standard Helvetica/Times/Courier ramenées à leur famille), taille et couleur ; ou contours vectoriels ;
+  - **dégradés** → pixels exacts du rendu, masqués par la forme ;
+  - **rendu de référence** de la page, masqué, pour comparer ;
+  - fenêtre d'options (calques modifiables ou image comme avant, pages, texte, résolution, plafond, calques masqués) et rapport.
+- **EPS / PS / ancien AI** (`file-chopgimp-eps-load`) : la bibliothèque Ghostscript du paquet (`libgs`, sans commande `gs`) convertit en PDF, puis même import.
+- **SVG** (`file-chopgimp-svg-load`) : librsvg dessine chaque calque Inkscape séparément (groupes, visibilité) ; les textes sont relus dans le XML (position, taille, police, gras/italique, couleur) et deviennent modifiables ; dégradés en pixels.
+- **Corrigé** :
+  - signature de fichier de même longueur que celle de GIMP, sinon la priorité ne compte pas ;
+  - procédure de vignette déclarée avant l'import (PSD aussi).
+- **5 nouveaux tests** (`tools/fixtures/make_pdf.py`, `make_vector.py`) : 77 tests.
+
+**Limites** :
+- les découpes (masques d'écrêtage) ne sont pas appliquées aux vecteurs : voir le rendu de référence ;
+- les calques PDF imbriqués sont mis à plat ;
+- un texte situé dans un calque PDF va dans le groupe « Textes ».

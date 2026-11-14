@@ -533,6 +533,47 @@ try:
     except Exception as e:
         report(False, "Import PSD", repr(e)[:200])
 
+    # 3 ter. Import vectoriel PDF / SVG / EPS (plug-in chopgimp_pdf)
+    try:
+        import runpy
+        repo = os.environ.get("SMOKE_REPO", os.path.expanduser("~/DOCKER/photogimp-pro"))
+        vdir = os.path.join(TMP, "vectoriel")
+        runpy.run_path(os.path.join(repo, "tools", "fixtures", "make_vector.py"))["write"](vdir)
+        runpy.run_path(os.path.join(repo, "tools", "fixtures", "make_pdf.py"))["write"](
+            os.path.join(vdir, "test.pdf"))
+
+        def flat(ls):
+            for l in ls:
+                yield l
+                if isinstance(l, Gimp.GroupLayer):
+                    yield from flat(l.get_children())
+
+        def load_v(name):
+            im = Gimp.file_load(Gimp.RunMode.NONINTERACTIVE, Gio.File.new_for_path(os.path.join(vdir, name)))
+            return im, list(flat(im.get_layers()))
+
+        im, ls = load_v("test.pdf")
+        by = {l.get_name(): l for l in ls}
+        vec = [l for l in ls if isinstance(l, Gimp.VectorLayer)]
+        report(len(vec) >= 3 and "Bleu" in by and by["Bleu"].get_visible() and
+               "Vert" in by and not by["Vert"].get_visible(),
+               "PDF : calques OCG en groupes, formes vectorielles", "%d formes" % len(vec))
+        report(isinstance(by.get("Bonjour PDF"), Gimp.TextLayer), "PDF : texte modifiable")
+        report(any(n.startswith("Image ") for n in by) and any(n.startswith("Dégradé") for n in by),
+               "PDF : image placée et dégradé en pixels")
+        im, ls = load_v("test.svg")
+        by = {l.get_name(): l for l in ls}
+        report("Fond" in by and "Dessin" in by and "Caché" in by and not by["Caché"].get_visible() and
+               isinstance(by.get("Salut SVG"), Gimp.TextLayer),
+               "SVG : calques Inkscape et texte modifiable")
+        im, ls = load_v("test.eps")
+        by = {l.get_name(): l for l in ls}
+        report(isinstance(by.get("Bonjour EPS"), Gimp.TextLayer) and
+               len([l for l in ls if isinstance(l, Gimp.VectorLayer)]) >= 2,
+               "EPS : formes vectorielles et texte (Ghostscript)")
+    except Exception as e:
+        report(False, "Import vectoriel", repr(e)[:200])
+
     # 4. Réglages d'usine présents (thème, icônes, menus, raccourcis)
     data = Gimp.data_directory()
     sysconf = Gimp.sysconf_directory()

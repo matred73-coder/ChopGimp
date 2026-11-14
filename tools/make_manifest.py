@@ -49,6 +49,26 @@ gimp["config-opts"] = [o if not o.startswith("-Dbuild-id=") else "-Dbuild-id=%s.
                        for o in gimp["config-opts"]]
 gimp["post-install"] = [c for c in gimp["post-install"] if "extensions" not in c]
 
+
+def find_module(mods, name):
+    for x in mods:
+        if isinstance(x, dict):
+            if x.get("name") == name:
+                return x
+            found = find_module(x.get("modules", []), name)
+            if found:
+                return found
+    return None
+
+
+# ── poppler accessible depuis Python (gi.repository.Poppler) : l'import
+#    vectoriel PDF/AI de ChopGimp (plug-in chopgimp_vector_import) l'utilise
+poppler = find_module(m["modules"], "poppler")
+if poppler is not None:
+    poppler["config-opts"] = ["-DENABLE_GOBJECT_INTROSPECTION=ON"
+                              if o.startswith("-DENABLE_GOBJECT_INTROSPECTION") else o
+                              for o in poppler["config-opts"]]
+
 # ── Moteur géométrique d'Inkscape (lib2geom 1.4, celle d'Inkscape 1.4) et
 #    ses dépendances, avant GIMP : outils vectoriels avancés (Pathfinder,
 #    décalages, effets de chemin…). Seules les bibliothèques partagées

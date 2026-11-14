@@ -986,7 +986,7 @@ def thumbnail(procedure, file, size, config, data):
 
 class ChopGimpPSD(Gimp.PlugIn):
     def do_query_procedures(self):
-        return [PROC, PROC_THUMB]
+        return [PROC_THUMB, PROC]
 
     def do_create_procedure(self, name):
         if name == PROC_THUMB:
