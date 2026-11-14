@@ -444,3 +444,11 @@ Sauvegarde préalable : tag `backup-avant-nettoyage-3.24.1` (dépôt et sources 
 - **Style de calque (Contour…)** : la fenêtre se fermait aussitôt ouverte chez l'utilisateur, sans erreur (non reproduit au banc). Une fermeture reçue moins d'une seconde après l'ouverture est maintenant ignorée, et chaque réponse est notée dans le journal de session (« [style de calque] réponse … »).
 - **Banc graphique** : l'arrêt tue aussi les services de sa session privée. Ils s'accumulaient à chaque essai (environ 800 processus) et ont saturé les connexions D-Bus de l'utilisateur, ce qui empêchait d'installer le paquet.
 - Restent à traiter : lenteur du Ctrl + clic sur un calque très détaillé.
+
+## 3.24.3 — Fenêtres des greffons refermées aussitôt
+
+- **Cause** : sous Ubuntu, GNOME accroche les fenêtres modales à leur parent (`attach-modal-dialogs`, activé par défaut). Une fenêtre de greffon modale, rattachée à la fenêtre de ChopGimp (un autre processus), était refermée dès son ouverture, plus de 2 000 fois par seconde. Étaient touchés : Style de calque (Contour, Lueur externe, Ombre interne), Camera Raw, Exporter pour le web, Harmonies, outils BD, IA, import PDF… Les fenêtres de réglage standard de GIMP (Ombre portée) n'étaient pas touchées.
+- **Correction** (libgimp) : les fenêtres de greffons rattachées à ChopGimp ne sont plus modales. Le marquage n'avait aucun effet entre deux processus.
+- Le traceur provisoire de la fenêtre Style de calque est retiré.
+- **Banc graphique** : il active désormais `attach-modal-dialogs` comme Ubuntu. Son arrêt ne laisse plus de processus.
+- Vérifié au banc avec le réglage d'Ubuntu : Camera Raw et Style de calque > Contour restent ouverts.

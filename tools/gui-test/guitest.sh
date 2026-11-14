@@ -36,6 +36,13 @@ start_shell() {
     for _ in $(seq 30); do [ -S "$D/run/wl-chop" ] && break; sleep 0.5; done
     [ -S "$D/run/wl-chop" ] || { echo "le compositeur n'a pas démarré, voir $D/shell.log"; exit 1; }
     sleep 3
+    # comme Ubuntu : fenêtres modales accrochées à leur parent (révèle les
+    # fenêtres de greffons refermées aussitôt, cf. 3.24.3)
+    $CLEAN DBUS_SESSION_BUS_ADDRESS="$(cat "$D/bus")" XDG_RUNTIME_DIR="$D/run" \
+        gdbus call --session --dest org.gnome.Shell --object-path /org/gnome/Shell \
+        --method org.gnome.Shell.Eval \
+        "new imports.gi.Gio.Settings({schema_id:'org.gnome.mutter'}).set_boolean('attach-modal-dialogs', true)" \
+        > /dev/null 2>&1
 }
 
 start_gimp() {

@@ -729,17 +729,8 @@ def layer_style_dialog(image, layer, focus=None):
         if focus in widgets:
             widgets[focus][0].grab_focus()
             changed()                      # aperçu immédiat de l'effet coché
-        shown_at = GLib.get_monotonic_time()
         while True:
             resp = dialog.run()
-            elapsed = (GLib.get_monotonic_time() - shown_at) / 1e6
-            # traceur (journal de session) : pourquoi la fenêtre se ferme
-            sys.stderr.write("[style de calque] réponse %s après %.2f s\n" % (resp, elapsed))
-            # fermeture parasite juste après l'ouverture (gestionnaire de
-            # fenêtres, clic du menu relâché sur la fenêtre…) : ignorée
-            if resp in (Gtk.ResponseType.DELETE_EVENT, Gtk.ResponseType.NONE) and \
-                    elapsed < 1.0 and dialog.get_visible():
-                continue
             if pending[0]:
                 GLib.source_remove(pending[0])
                 pending[0] = 0
