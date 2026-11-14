@@ -1,0 +1,510 @@
+From 41d7f4c1cf994904282e62ba07c4bcd75ba97920 Mon Sep 17 00:00:00 2001
+From: ChopGimp <mathieu.redon@proton.me>
+Date: Sat, 14 Nov 2026 03:21:00 +0100
+Subject: [PATCH] ChopGimp: paper texture (pattern grain in canvas space),
+ QuickShape (line / ellipse / circle)
+
+---
+ app/display/gimpoptionsbar.c |   5 +-
+ app/paint/gimpbrushcore.c    |  88 +++++++++++++++++--
+ app/paint/gimpbrushcore.h    |   7 ++
+ app/paint/gimppaintoptions.c |  58 ++++++++++++
+ app/paint/gimppaintoptions.h |   8 ++
+ app/tools/gimppainttool.c    | 165 ++++++++++++++++++++++++++++++++++-
+ app/tools/gimppainttool.h    |   5 ++
+ 7 files changed, 326 insertions(+), 10 deletions(-)
+
+diff --git a/app/display/gimpoptionsbar.c b/app/display/gimpoptionsbar.c
+index 05bf05b..8c93e9a 100644
+--- a/app/display/gimpoptionsbar.c
++++ b/app/display/gimpoptionsbar.c
+@@ -107,9 +107,10 @@ static const BarSpec bar_specs[] =
+ {
+   /* Peinture */
+   { "gimp-paintbrush-tool",        { PAINT_COMMON, "use-smoothing", "stabilizer",
+-                                     "stabilizer-length", "@pressure", NULL } },
++                                     "stabilizer-length", "@pressure", "quickshape",
++                                     "paper-texture", "pattern", "paper-strength", NULL } },
+   { "gimp-pencil-tool",            { PAINT_COMMON, "use-smoothing", "stabilizer",
+-                                     "stabilizer-length", "@pressure", NULL } },
++                                     "stabilizer-length", "@pressure", "quickshape", NULL } },
+   { "gimp-airbrush-tool",          { PAINT_COMMON, "flow", "rate", "motion-only", NULL } },
+   { "gimp-eraser-tool",            { "brush", "brush-size", "brush-hardness", "opacity",
+                                      "hard", "anti-erase", "use-smoothing", NULL } },
+diff --git a/app/paint/gimpbrushcore.c b/app/paint/gimpbrushcore.c
+index c0baf62..29f56f0 100644
+--- a/app/paint/gimpbrushcore.c
++++ b/app/paint/gimpbrushcore.c
+@@ -40,6 +40,7 @@
+ #include "core/gimpimage.h"
+ #include "core/gimpsymmetry.h"
+ #include "core/gimptempbuf.h"
++#include "core/gimppattern.h"
+ 
+ #include "gimpbrushcore.h"
+ #include "gimpbrushcore-loops.h"
+@@ -228,6 +229,7 @@ gimp_brush_core_finalize (GObject *object)
+       g_clear_pointer (&core->solid_brushes[i][j], gimp_temp_buf_unref);
+ 
+   g_clear_pointer (&core->rand, g_rand_free);
++  g_clear_pointer (&core->paper, g_free);
+ 
+   for (i = 0; i < KERNEL_SUBSAMPLE + 1; i++)
+     for (j = 0; j < KERNEL_SUBSAMPLE + 1; j++)
+@@ -365,6 +367,26 @@ gimp_brush_core_start (GimpPaintCore     *paint_core,
+ 
+   gimp_brush_core_set_brush (core, gimp_context_get_brush (context));
+ 
++  /*  ChopGimp: paper texture, luminance of the active pattern  */
++  g_clear_pointer (&core->paper, g_free);
++  if (paint_options->paper_texture && gimp_context_get_pattern (context))
++    {
++      GimpTempBuf *mask = gimp_pattern_get_mask (gimp_context_get_pattern (context));
++      gint         w    = gimp_temp_buf_get_width (mask);
++      gint         h    = gimp_temp_buf_get_height (mask);
++      gfloat      *lum  = g_new (gfloat, w * h);
++      gpointer     data = gimp_temp_buf_lock (mask, babl_format ("Y float"), GEGL_ACCESS_READ);
++
++      memcpy (lum, data, sizeof (gfloat) * w * h);
++      gimp_temp_buf_unlock (mask, data);
++
++      core->paper          = lum;
++      core->paper_w        = w;
++      core->paper_h        = h;
++      core->paper_scale    = paint_options->paper_scale;
++      core->paper_strength = paint_options->paper_strength;
++    }
++
+   if (gimp_paint_options_are_dynamics_enabled (paint_options))
+     {
+       gimp_brush_core_set_dynamics (core, gimp_context_get_dynamics (context));
+@@ -963,6 +985,52 @@ gimp_brush_core_set_dynamics (GimpBrushCore *core,
+     g_signal_emit (core, core_signals[SET_DYNAMICS], 0, dynamics);
+ }
+ 
++/*  ChopGimp: the brush mask modulated by the paper grain, in canvas
++ *  coordinates (the grain stays still on the sheet). Returns a new mask, or
++ *  NULL when there is no texture.
++ */
++static GimpTempBuf *
++chopgimp_paper_mask (GimpBrushCore     *core,
++                     const GimpTempBuf *mask,
++                     gint               x0,
++                     gint               y0)
++{
++  GimpTempBuf *out;
++  gfloat      *data;
++  gint         w, h, i, j;
++  gdouble      k, s;
++
++  if (! core->paper || gimp_temp_buf_get_format (mask) != babl_format ("Y float"))
++    return NULL;
++
++  out  = gimp_temp_buf_copy (mask);
++  data = (gfloat *) gimp_temp_buf_get_data (out);
++  w    = gimp_temp_buf_get_width  (out);
++  h    = gimp_temp_buf_get_height (out);
++  k    = 1.0 / MAX (core->paper_scale, 0.01);
++  s    = core->paper_strength;
++
++  for (j = 0; j < h; j++)
++    {
++      gint py = ((gint) floor ((y0 + j) * k)) % core->paper_h;
++
++      if (py < 0)
++        py += core->paper_h;
++
++      for (i = 0; i < w; i++)
++        {
++          gint px = ((gint) floor ((x0 + i) * k)) % core->paper_w;
++
++          if (px < 0)
++            px += core->paper_w;
++
++          data[j * w + i] *= (gfloat) (1.0 - s + s * core->paper[py * core->paper_w + px]);
++        }
++    }
++
++  return out;
++}
++
+ void
+ gimp_brush_core_paste_canvas (GimpBrushCore            *core,
+                               GimpDrawable             *drawable,
+@@ -994,13 +1062,19 @@ gimp_brush_core_paste_canvas (GimpBrushCore            *core,
+       off_x = (x < 0) ? -x : 0;
+       off_y = (y < 0) ? -y : 0;
+ 
+-      gimp_paint_core_paste (paint_core, brush_mask,
+-                             off_x, off_y,
+-                             drawable,
+-                             brush_opacity,
+-                             image_opacity,
+-                             paint_mode,
+-                             mode);
++      {
++        GimpTempBuf *paper = chopgimp_paper_mask (core, brush_mask, x, y);
++
++        gimp_paint_core_paste (paint_core, paper ? paper : brush_mask,
++                               off_x, off_y,
++                               drawable,
++                               brush_opacity,
++                               image_opacity,
++                               paint_mode,
++                               mode);
++        if (paper)
++          gimp_temp_buf_unref (paper);
++      }
+     }
+ }
+ 
+diff --git a/app/paint/gimpbrushcore.h b/app/paint/gimpbrushcore.h
+index 3b008a1..b556ae2 100644
+--- a/app/paint/gimpbrushcore.h
++++ b/app/paint/gimpbrushcore.h
+@@ -71,6 +71,13 @@ struct _GimpBrushCore
+   gdouble            jitter_lut_y[BRUSH_CORE_JITTER_LUTSIZE];
+ 
+   GRand             *rand;
++
++  /*  ChopGimp: paper texture, luminance of the pattern (0..1)  */
++  gfloat            *paper;
++  gint               paper_w;
++  gint               paper_h;
++  gdouble            paper_scale;
++  gdouble            paper_strength;
+ };
+ 
+ struct _GimpBrushCoreClass
+diff --git a/app/paint/gimppaintoptions.c b/app/paint/gimppaintoptions.c
+index a1a41f4..2f6b9fb 100644
+--- a/app/paint/gimppaintoptions.c
++++ b/app/paint/gimppaintoptions.c
+@@ -136,6 +136,10 @@ enum
+   PROP_USE_SMOOTHING,
+   PROP_SMOOTHING_QUALITY,
+   PROP_SMOOTHING_FACTOR,
++  PROP_QUICKSHAPE,
++  PROP_PAPER_TEXTURE,
++  PROP_PAPER_STRENGTH,
++  PROP_PAPER_SCALE,
+   PROP_STABILIZER,
+   PROP_STABILIZER_LENGTH,
+   PROP_STABILIZER_CATCH_UP,
+@@ -485,6 +489,36 @@ gimp_paint_options_class_init (GimpPaintOptionsClass *klass)
+                            3.0, 1000.0, DEFAULT_SMOOTHING_FACTOR,
+                            GIMP_PARAM_STATIC_STRINGS);
+ 
++  /*  ChopGimp: QuickShape  */
++  GIMP_CONFIG_PROP_BOOLEAN (object_class, PROP_QUICKSHAPE,
++                            "quickshape",
++                            "QuickShape",
++                            "Garder le stylet immobile en fin de trait le redresse en ligne, "
++                            "ellipse ou cercle (Procreate)",
++                            TRUE,
++                            GIMP_PARAM_STATIC_STRINGS);
++
++  /*  ChopGimp: paper texture  */
++  GIMP_CONFIG_PROP_BOOLEAN (object_class, PROP_PAPER_TEXTURE,
++                            "paper-texture",
++                            "Texture de papier",
++                            "Le grain du motif actif (papier, toile…) module le trait, fixe sur "
++                            "la feuille comme dans Corel Painter",
++                            FALSE,
++                            GIMP_PARAM_STATIC_STRINGS);
++  GIMP_CONFIG_PROP_DOUBLE (object_class, PROP_PAPER_STRENGTH,
++                           "paper-strength",
++                           "Grain",
++                           "Intensité du grain du papier",
++                           0.0, 1.0, 0.7,
++                           GIMP_PARAM_STATIC_STRINGS);
++  GIMP_CONFIG_PROP_DOUBLE (object_class, PROP_PAPER_SCALE,
++                           "paper-scale",
++                           "Échelle du papier",
++                           "Taille du grain du papier",
++                           0.1, 10.0, 1.0,
++                           GIMP_PARAM_STATIC_STRINGS);
++
+   /*  ChopGimp: string stabilizer  */
+   GIMP_CONFIG_PROP_BOOLEAN (object_class, PROP_STABILIZER,
+                             "stabilizer",
+@@ -701,6 +735,18 @@ gimp_paint_options_set_property (GObject      *object,
+     case PROP_SMOOTHING_FACTOR:
+       smoothing_options->smoothing_factor = g_value_get_double (value);
+       break;
++    case PROP_QUICKSHAPE:
++      options->quickshape = g_value_get_boolean (value);
++      break;
++    case PROP_PAPER_TEXTURE:
++      options->paper_texture = g_value_get_boolean (value);
++      break;
++    case PROP_PAPER_STRENGTH:
++      options->paper_strength = g_value_get_double (value);
++      break;
++    case PROP_PAPER_SCALE:
++      options->paper_scale = g_value_get_double (value);
++      break;
+     case PROP_STABILIZER:
+       smoothing_options->stabilizer = g_value_get_boolean (value);
+       break;
+@@ -869,6 +915,18 @@ gimp_paint_options_get_property (GObject    *object,
+     case PROP_SMOOTHING_FACTOR:
+       g_value_set_double (value, smoothing_options->smoothing_factor);
+       break;
++    case PROP_QUICKSHAPE:
++      g_value_set_boolean (value, options->quickshape);
++      break;
++    case PROP_PAPER_TEXTURE:
++      g_value_set_boolean (value, options->paper_texture);
++      break;
++    case PROP_PAPER_STRENGTH:
++      g_value_set_double (value, options->paper_strength);
++      break;
++    case PROP_PAPER_SCALE:
++      g_value_set_double (value, options->paper_scale);
++      break;
+     case PROP_STABILIZER:
+       g_value_set_boolean (value, smoothing_options->stabilizer);
+       break;
+diff --git a/app/paint/gimppaintoptions.h b/app/paint/gimppaintoptions.h
+index 18d1769..5eeca8a 100644
+--- a/app/paint/gimppaintoptions.h
++++ b/app/paint/gimppaintoptions.h
+@@ -88,6 +88,14 @@ struct _GimpPaintOptions
+ 
+   GimpBrush                *brush; /* weak-refed storage for the GUI */
+ 
++  /*  ChopGimp: QuickShape (hold still at the end of a stroke)  */
++  gboolean                  quickshape;
++
++  /*  ChopGimp: paper texture (grain of the active pattern)  */
++  gboolean                  paper_texture;
++  gdouble                   paper_strength;
++  gdouble                   paper_scale;
++
+   gdouble                   brush_size;
+   gdouble                   brush_angle;
+   gdouble                   brush_aspect_ratio;
+diff --git a/app/tools/gimppainttool.c b/app/tools/gimppainttool.c
+index 73252cb..421855d 100644
+--- a/app/tools/gimppainttool.c
++++ b/app/tools/gimppainttool.c
+@@ -56,6 +56,10 @@
+ #include "gimpcoloroptions.h"
+ #include "gimppaintoptions-gui.h"
+ #include "gimppainttool.h"
++#include "gimppaintbrushtool.h"
++#include "gimppenciltool.h"
++#include "gimpairbrushtool.h"
++#include "gimpinktool.h"
+ #include "gimppainttool-paint.h"
+ #include "gimpsourcetool.h"
+ #include "gimptoolcontrol.h"
+@@ -402,6 +406,17 @@ gimp_paint_tool_button_press (GimpTool            *tool,
+   tool->display   = display;
+   tool->drawables = drawables;
+ 
++  /*  ChopGimp: QuickShape, only for a freehand stroke (not Shift lines)  */
++  paint_tool->qs_done = FALSE;
++  g_clear_pointer (&paint_tool->qs_points, g_array_unref);
++  if (GIMP_PAINT_TOOL_GET_OPTIONS (tool)->quickshape && ! paint_tool->draw_line &&
++      (GIMP_IS_PAINTBRUSH_TOOL (tool) || GIMP_IS_PENCIL_TOOL (tool) ||
++       GIMP_IS_AIRBRUSH_TOOL (tool) || GIMP_IS_INK_TOOL (tool)))
++    {
++      paint_tool->qs_points = g_array_new (FALSE, FALSE, sizeof (GimpCoords));
++      g_array_append_val (paint_tool->qs_points, *coords);
++    }
++
+   /*  pause the current selection  */
+   gimp_display_shell_selection_pause (shell);
+ 
+@@ -410,6 +425,124 @@ gimp_paint_tool_button_press (GimpTool            *tool,
+   gimp_tool_control_activate (tool->control);
+ }
+ 
++/*  ChopGimp: QuickShape (Procreate). The pen held still for a moment at the
++ *  end of a stroke: an almost straight stroke becomes a line, an almost
++ *  closed round one an ellipse (or a circle). The freehand stroke is
++ *  cancelled and the shape is painted with the same brush.
++ */
++#define QS_DELAY 800
++
++static gboolean
++chopgimp_quickshape_fit (GArray     *pts,
++                         GimpCoords *out,
++                         gint       *n_out,
++                         gint        max_out)
++{
++  GimpCoords *p = (GimpCoords *) pts->data;
++  gint        n = pts->len, i;
++  gdouble     ax = p[0].x, ay = p[0].y, bx = p[n - 1].x, by = p[n - 1].y;
++  gdouble     len = hypot (bx - ax, by - ay), path = 0.0, dev = 0.0, pressure = 0.0;
++  gdouble     x1 = G_MAXDOUBLE, y1 = G_MAXDOUBLE, x2 = -G_MAXDOUBLE, y2 = -G_MAXDOUBLE;
++
++  if (n < 8)
++    return FALSE;
++
++  for (i = 0; i < n; i++)
++    {
++      if (i)
++        path += hypot (p[i].x - p[i - 1].x, p[i].y - p[i - 1].y);
++      if (len > 0)
++        dev = MAX (dev, fabs ((bx - ax) * (ay - p[i].y) - (ax - p[i].x) * (by - ay)) / len);
++      x1 = MIN (x1, p[i].x); y1 = MIN (y1, p[i].y);
++      x2 = MAX (x2, p[i].x); y2 = MAX (y2, p[i].y);
++      pressure += p[i].pressure;
++    }
++  pressure /= n;
++
++  /*  line  */
++  if (len > 15.0 && dev < MAX (4.0, 0.05 * len))
++    {
++      gint steps = MIN (max_out - 1, (gint) (len / 2.0) + 1);
++
++      for (i = 0; i <= steps; i++)
++        {
++          out[i]          = p[0];
++          out[i].x        = ax + (bx - ax) * i / steps;
++          out[i].y        = ay + (by - ay) * i / steps;
++          out[i].pressure = pressure;
++        }
++      *n_out = steps + 1;
++      return TRUE;
++    }
++
++  /*  ellipse / circle  */
++  if (path > 60.0 && len < 0.25 * path)
++    {
++      gdouble cx = (x1 + x2) / 2, cy = (y1 + y2) / 2;
++      gdouble rx = (x2 - x1) / 2, ry = (y2 - y1) / 2, err = 0.0;
++      gint    steps = max_out - 1;
++
++      if (rx < 4 || ry < 4)
++        return FALSE;
++      for (i = 0; i < n; i++)
++        err += fabs (SQR ((p[i].x - cx) / rx) + SQR ((p[i].y - cy) / ry) - 1.0);
++      if (err / n > 0.3)
++        return FALSE;
++      if (fabs (rx - ry) < 0.12 * MAX (rx, ry))
++        rx = ry = (rx + ry) / 2;
++
++      for (i = 0; i <= steps; i++)
++        {
++          gdouble a = 2 * G_PI * i / steps;
++
++          out[i]          = p[0];
++          out[i].x        = cx + rx * cos (a);
++          out[i].y        = cy + ry * sin (a);
++          out[i].pressure = pressure;
++        }
++      *n_out = steps + 1;
++      return TRUE;
++    }
++
++  return FALSE;
++}
++
++static gboolean
++chopgimp_quickshape_timeout (GimpPaintTool *paint_tool)
++{
++  GimpDisplay *display = paint_tool->display;
++  GimpCoords   shape[400];
++  gint         n = 0, i;
++
++  paint_tool->qs_timer = 0;
++
++  if (! display || ! paint_tool->qs_points || paint_tool->qs_done ||
++      ! gimp_paint_tool_paint_is_active (paint_tool) ||
++      ! chopgimp_quickshape_fit (paint_tool->qs_points, shape, &n, G_N_ELEMENTS (shape)))
++    return G_SOURCE_REMOVE;
++
++  paint_tool->qs_done = TRUE;
++
++  gimp_draw_tool_pause (GIMP_DRAW_TOOL (paint_tool));
++
++  /*  the freehand stroke goes, the shape comes  */
++  gimp_paint_tool_paint_end (paint_tool, 0, TRUE);
++  if (gimp_paint_tool_paint_start (paint_tool, display, &shape[0], 0, FALSE, NULL))
++    {
++      paint_tool->core->stab_release = TRUE;   /*  no stabilizer lag on the shape  */
++      for (i = 1; i < n; i++)
++        gimp_paint_tool_paint_motion (paint_tool, &shape[i], 0);
++      gimp_paint_tool_paint_end (paint_tool, 0, FALSE);
++    }
++
++  gimp_image_flush (gimp_display_get_image (display));
++  gimp_draw_tool_resume (GIMP_DRAW_TOOL (paint_tool));
++  gimp_tool_push_status (GIMP_TOOL (paint_tool), display,
++                         _("QuickShape : forme redressée (Ctrl+Z pour annuler)"));
++
++  return G_SOURCE_REMOVE;
++}
++
+ static void
+ gimp_paint_tool_button_release (GimpTool              *tool,
+                                 const GimpCoords      *coords,
+@@ -433,7 +566,17 @@ gimp_paint_tool_button_release (GimpTool              *tool,
+ 
+   cancel = (release_type == GIMP_BUTTON_RELEASE_CANCEL);
+ 
+-  gimp_paint_tool_paint_end (paint_tool, time, cancel);
++  if (paint_tool->qs_timer)
++    {
++      g_source_remove (paint_tool->qs_timer);
++      paint_tool->qs_timer = 0;
++    }
++  g_clear_pointer (&paint_tool->qs_points, g_array_unref);
++
++  if (paint_tool->qs_done)
++    paint_tool->qs_done = FALSE;          /*  QuickShape already finished it  */
++  else
++    gimp_paint_tool_paint_end (paint_tool, time, cancel);
+ 
+   gimp_tool_control_halt (tool->control);
+ 
+@@ -461,6 +604,26 @@ gimp_paint_tool_motion (GimpTool         *tool,
+   if (gimp_color_tool_is_enabled (GIMP_COLOR_TOOL (tool)))
+     return;
+ 
++  if (paint_tool->qs_done)
++    return;
++
++  /*  ChopGimp: QuickShape, record the stroke and wait for the pen to rest  */
++  if (paint_tool->qs_points)
++    {
++      GimpCoords *last = paint_tool->qs_points->len ?
++        &g_array_index (paint_tool->qs_points, GimpCoords, paint_tool->qs_points->len - 1) : NULL;
++
++      if (! last || hypot (coords->x - last->x, coords->y - last->y) > 2.0)
++        {
++          g_array_append_val (paint_tool->qs_points, *coords);
++          if (paint_tool->qs_timer)
++            g_source_remove (paint_tool->qs_timer);
++          paint_tool->qs_timer = g_timeout_add (QS_DELAY,
++                                                (GSourceFunc) chopgimp_quickshape_timeout,
++                                                paint_tool);
++        }
++    }
++
+   if (! paint_tool->snap_brush)
+     gimp_draw_tool_pause  (GIMP_DRAW_TOOL (tool));
+ 
+diff --git a/app/tools/gimppainttool.h b/app/tools/gimppainttool.h
+index b4ffc3a..1a96f01 100644
+--- a/app/tools/gimppainttool.h
++++ b/app/tools/gimppainttool.h
+@@ -66,6 +66,11 @@ struct _GimpPaintTool
+ 
+   gdouble        paint_x;
+   gdouble        paint_y;
++
++  /*  ChopGimp: QuickShape  */
++  GArray        *qs_points;
++  guint          qs_timer;
++  gboolean       qs_done;
+ };
+ 
+ struct _GimpPaintToolClass
+-- 
+2.53.0
+

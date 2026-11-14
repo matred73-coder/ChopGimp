@@ -20,7 +20,7 @@ Plan complet : lots 0 à 6, idées en plus, calendrier de 17 étapes (voir l'his
 | 12 | 3.21.2 | Base III | ✅ livrée |
 | 13 | 3.22.0 | IA locale | ✅ livrée |
 | 14 | 3.23.0 | Dessin I « Confort » | ✅ livrée |
-| 15 | 3.23.1 | Dessin II « Peintre » | à faire |
+| 15 | 3.23.1 | Dessin II « Peintre » | ✅ livrée |
 | 16 | 3.23.2 | Dessin III « Atelier / BD » | à faire |
 | 17 | 3.24.0 | Revue finale | à faire |
 
@@ -319,4 +319,20 @@ Signalés le 2026-11-13 en utilisant ChopGimp sur une affiche (scan 2480×3510) 
 - **Réglage du pinceau à la volée** (Alt + clic droit glissé), comme dans Photoshop : à l'horizontale la taille, à la verticale la dureté, avec les valeurs dans la barre d'état.
 - **Palette contextuelle** (Maj + clic droit, modificateur personnalisable) : une bulle sous le curseur avec les 10 derniers pinceaux, la taille, les couleurs récentes et un sélecteur de couleur.
 - **Gestes** : pincer pour zoomer et faire pivoter à deux doigts existent déjà dans GIMP 3.2. Les tapes à deux ou trois doigts (annuler, rétablir) ne sont pas faites : sans écran tactile pour les tester, je n'ai pas voulu toucher à la gestion des événements du stylet.
-- Vérifié au banc graphique : traits avec et sans stabilisateur, rattrapage, palette contextuelle. 88 tests automatiques.
+- Vérifié au banc graphique : traits avec et sans stabilisateur, rattrapage, palette contextuelle. 91 tests automatiques.
+
+## 3.23.1 — Dessin II « Peintre »
+
+- **Texture de papier** (Corel Painter), dans le moteur de pinceau (`gimpbrushcore.c`) :
+  - le masque du pinceau est multiplié par la luminance du motif actif (papier, papier froissé, toile…), lue dans les coordonnées de l'image : le grain reste fixe sur la feuille ;
+  - réglages « Texture de papier », motif, « Grain » (intensité) et échelle, dans la barre d'options du pinceau.
+- **QuickShape** (Procreate), pour le pinceau, le crayon, l'aérographe et la plume :
+  - garder le stylet immobile 0,8 s en fin de trait le remplace par une ligne (trait presque droit), une ellipse ou un cercle (trait presque fermé) ;
+  - même pinceau, une étape d'annulation ;
+  - option « QuickShape » dans la barre d'options.
+- **Préréglages d'outils** (panneau Préréglages d'outils, dossier PhotoGIMP) :
+  - Huile (toile de jute), Gouache, Aquarelle sèche (papier froissé), Fusain, Pastel sec, avec texture de papier et dynamiques de pression ;
+  - Pinceau mélangeur humide et sec (outil Barbouiller avec débit de couleur, sans effacement).
+- **Pinceau mélangeur** : c'est l'outil Barbouiller de GIMP avec ses options « débit » (mélange de la couleur de premier plan) et « sans effacement ». Pas de nouveau moteur.
+- **Aperçu de trait des préréglages** : non fait. Le panneau montre l'icône de l'outil.
+- Vérifié au banc graphique : un cercle tremblé devient une ellipse nette. 93 tests.

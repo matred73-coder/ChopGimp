@@ -1,0 +1,24 @@
+# GIMP tool preset file — ChopGimp
+
+(icon-name "gimp-tool-paintbrush")
+(name "Aquarelle sèche")
+(tool-options "GimpPaintOptions"
+    (tool "gimp-paintbrush-tool")
+    (brush "Hardness 025")
+    (dynamics "Pressure Opacity")
+    (brush-size 80.000000)
+    (opacity 0.350000)
+    (pattern "Crinkled Paper")
+    (paper-texture yes)
+    (paper-strength 0.800000)
+    (paper-scale 1.500000)
+    (dynamics-enabled yes))
+(use-fg-bg no)
+(use-brush yes)
+(use-dynamics yes)
+(use-gradient no)
+(use-pattern yes)
+(use-palette no)
+(use-font no)
+
+# end of GIMP tool preset file
