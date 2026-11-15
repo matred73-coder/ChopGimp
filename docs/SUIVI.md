@@ -517,3 +517,13 @@ Constat de l'utilisateur : peindre ou gommer sur un calque avec effets est lent,
 - Un clic sur une case à cocher ou un choix d'option (Affichage > Afficher…, Aligner sur…, etc.) bascule l'option **sans refermer le menu**. On peut en régler plusieurs d'affilée. Les commandes ordinaires et le clavier ferment toujours le menu (`gimpmenu.c`, interception du relâchement du clic gauche).
 - Vérifié au banc : « Afficher la grille » puis « Aligner sur la grille » dans le même menu ouvert.
 - L'utilisateur confirme que QuickShape et l'à-coup de fin de trait ne se manifestent plus : c'étaient des effets de l'aimantation, corrigée en 3.24.8.
+
+## 3.24.10 — Barre d'espace comme Photoshop, croix sur les petites brosses
+
+- **Espace** (réglage « déplacer la vue », par défaut) :
+  - l'appui affiche aussitôt la **main** ; bouger la souris ne déplace plus rien ;
+  - **Espace + clic maintenu + glisser** déplace la vue, sans trace de pinceau ; on peut relâcher le bouton et recommencer tant qu'Espace est enfoncé ;
+  - au relâchement d'Espace, l'outil et son curseur reviennent ;
+  - Espace + Maj / Ctrl (rotation, zoom) fonctionnent au glisser ; le bouton du milieu marche comme avant ; Espace se tape toujours dans un texte.
+- **Petites brosses** : sous 10 px à l'écran, une croix de visée (11 px, contrastée) s'affiche au centre du cercle de la brosse.
+- Vérifié au banc : main dès l'appui sur Espace, vue déplacée par Espace + glisser sans trace, cercle rétabli au relâchement, croix sur une brosse de 4 px. 103 tests.

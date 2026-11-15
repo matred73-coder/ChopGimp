@@ -1,0 +1,500 @@
+From cda2c74286516a74e20a1d583b666a84fb8ca311 Mon Sep 17 00:00:00 2001
+From: ChopGimp <mathieu.redon@proton.me>
+Date: Sun, 15 Nov 2026 20:59:22 +0100
+Subject: [PATCH] ChopGimp: Space+drag pans like Photoshop (hand cursor on
+ Space), crosshair on small brushes
+
+---
+ app/display/gimpdisplayshell-cursor.c      |  23 +++
+ app/display/gimpdisplayshell-cursor.h      |   4 +
+ app/display/gimpdisplayshell-tool-events.c | 177 +++++++++++++++++----
+ app/display/gimpdisplayshell.h             |   6 +
+ app/tools/gimppainttool.c                  |  50 ++++++
+ 5 files changed, 225 insertions(+), 35 deletions(-)
+
+diff --git a/app/display/gimpdisplayshell-cursor.c b/app/display/gimpdisplayshell-cursor.c
+index 1988d42..cde67a7 100644
+--- a/app/display/gimpdisplayshell-cursor.c
++++ b/app/display/gimpdisplayshell-cursor.c
+@@ -100,6 +100,29 @@ gimp_display_shell_set_override_cursor (GimpDisplayShell *shell,
+     }
+ }
+ 
++/*  ChopGimp: an override cursor with a tool cursor (the Photoshop hand
++ *  of the space bar).  override_cursor cannot describe it, so it is reset
++ *  and any later gimp_display_shell_set_override_cursor() installs its
++ *  cursor again.
++ */
++void
++gimp_display_shell_set_override_tool_cursor (GimpDisplayShell   *shell,
++                                             GimpCursorType      cursor_type,
++                                             GimpToolCursorType  tool_cursor)
++{
++  g_return_if_fail (GIMP_IS_DISPLAY_SHELL (shell));
++
++  shell->override_cursor       = (GimpCursorType) -1;
++  shell->using_override_cursor = TRUE;
++
++  if (gtk_widget_get_realized (shell->canvas))
++    gimp_cursor_set (shell->canvas,
++                     shell->cursor_handedness,
++                     cursor_type,
++                     tool_cursor,
++                     GIMP_CURSOR_MODIFIER_NONE);
++}
++
+ void
+ gimp_display_shell_unset_override_cursor (GimpDisplayShell *shell)
+ {
+diff --git a/app/display/gimpdisplayshell-cursor.h b/app/display/gimpdisplayshell-cursor.h
+index c97570a..91a996d 100644
+--- a/app/display/gimpdisplayshell-cursor.h
++++ b/app/display/gimpdisplayshell-cursor.h
+@@ -27,6 +27,10 @@ void   gimp_display_shell_set_cursor             (GimpDisplayShell    *shell,
+ void   gimp_display_shell_unset_cursor           (GimpDisplayShell    *shell);
+ void   gimp_display_shell_set_override_cursor    (GimpDisplayShell    *shell,
+                                                   GimpCursorType       cursor_type);
++void   gimp_display_shell_set_override_tool_cursor
++                                                 (GimpDisplayShell    *shell,
++                                                  GimpCursorType       cursor_type,
++                                                  GimpToolCursorType   tool_cursor);
+ void   gimp_display_shell_unset_override_cursor  (GimpDisplayShell    *shell);
+ 
+ 
+diff --git a/app/display/gimpdisplayshell-tool-events.c b/app/display/gimpdisplayshell-tool-events.c
+index b4baa1b..fc2f485 100644
+--- a/app/display/gimpdisplayshell-tool-events.c
++++ b/app/display/gimpdisplayshell-tool-events.c
+@@ -130,6 +130,9 @@ static void       gimp_display_shell_space_pressed            (GimpDisplayShell
+ static void       gimp_display_shell_released                 (GimpDisplayShell  *shell,
+                                                                const GdkEvent    *event,
+                                                                const GimpCoords  *image_coords);
++static void       gimp_display_shell_space_pan_cursor         (GimpDisplayShell  *shell);
++static void       gimp_display_shell_space_pan_disarm         (GimpDisplayShell  *shell);
++static gboolean   gimp_display_shell_tool_proximity           (GimpDisplayShell  *shell);
+ 
+ static gboolean   gimp_display_shell_tab_pressed              (GimpDisplayShell  *shell,
+                                                                const GdkEventKey *event);
+@@ -518,6 +521,9 @@ gimp_display_shell_canvas_tool_events (GtkWidget        *canvas,
+             if (shell->grab_seat)
+               return TRUE;
+ 
++            /*  ChopGimp: the Space release goes to another window  */
++            gimp_display_shell_space_pan_disarm (shell);
++
+             /*  release modifier keys when the canvas loses the focus  */
+             gimp_display_shell_update_focus (shell, FALSE,
+                                              &image_coords, 0);
+@@ -570,6 +576,18 @@ gimp_display_shell_canvas_tool_events (GtkWidget        *canvas,
+                                           &image_coords, state & ~button_state,
+                                           FALSE);
+ 
++        /*  ChopGimp (Photoshop): Space held + button 1 drag pans the
++         *  view; the tool never receives this press
++         */
++        if (bevent->button == 1 && shell->space_pan_armed)
++          {
++            shell->space_pan_dragging = TRUE;
++
++            gimp_display_shell_start_scrolling (shell, event, state,
++                                                bevent->x, bevent->y);
++            return TRUE;
++          }
++
+         if (bevent->button == 1)
+           {
+             if (! gimp_display_shell_pointer_grab (shell, event,
+@@ -659,7 +677,8 @@ gimp_display_shell_canvas_tool_events (GtkWidget        *canvas,
+         GdkEventButton *bevent = (GdkEventButton *) event;
+         GimpTool       *active_tool;
+ 
+-        if (gimp->busy)
++        /*  ChopGimp: no double/triple click for the tool during a Space pan  */
++        if (gimp->busy || shell->space_pan_dragging)
+           return TRUE;
+ 
+         active_tool = tool_manager_get_active (gimp);
+@@ -686,7 +705,8 @@ gimp_display_shell_canvas_tool_events (GtkWidget        *canvas,
+         GdkEventButton *bevent = (GdkEventButton *) event;
+         GimpTool       *active_tool;
+ 
+-        if (gimp->busy)
++        /*  ChopGimp: no double/triple click for the tool during a Space pan  */
++        if (gimp->busy || shell->space_pan_dragging)
+           return TRUE;
+ 
+         active_tool = tool_manager_get_active (gimp);
+@@ -715,6 +735,41 @@ gimp_display_shell_canvas_tool_events (GtkWidget        *canvas,
+ 
+         gimp_display_shell_autoscroll_stop (shell);
+ 
++        /*  ChopGimp: end of a Space + button 1 pan; the hand stays
++         *  while Space is held
++         */
++        if (bevent->button == 1 && shell->space_pan_dragging)
++          {
++            shell->space_pan_dragging = FALSE;
++
++            gimp_display_shell_stop_scrolling (shell, event);
++
++            state &= ~GDK_BUTTON1_MASK;
++
++            /*  the focus went away during the pan: the Space release
++             *  will not come here
++             */
++            if (! gtk_widget_has_focus (canvas))
++              gimp_display_shell_space_pan_disarm (shell);
++
++            if (shell->space_pan_armed)
++              {
++                gimp_display_shell_space_pan_cursor (shell);
++              }
++            else if (! gimp->busy)
++              {
++                if (gtk_widget_has_focus (canvas))
++                  gimp_display_shell_update_focus (shell, TRUE,
++                                                   &image_coords, state);
++                else
++                  gimp_display_shell_update_focus (shell, FALSE,
++                                                   &image_coords, 0);
++              }
++
++            return_val = TRUE;
++            break;
++          }
++
+         if (bevent->button == 1 && shell->button1_release_pending)
+           {
+             gimp_display_shell_released (shell, event, NULL);
+@@ -787,10 +842,14 @@ gimp_display_shell_canvas_tool_events (GtkWidget        *canvas,
+               case GIMP_MODIFIER_ACTION_STEP_ROTATING:
+               case GIMP_MODIFIER_ACTION_LAYER_PICKING:
+                 if (shell->mod_action != GIMP_MODIFIER_ACTION_NONE &&
+-                    ! shell->button1_release_pending &&
+-                    (! shell->space_release_pending ||
+-                     shell->display->config->space_bar_action != GIMP_SPACE_BAR_ACTION_PAN))
+-                  gimp_display_shell_stop_scrolling (shell, event);
++                    ! shell->button1_release_pending)
++                  {
++                    gimp_display_shell_stop_scrolling (shell, event);
++
++                    /*  ChopGimp: Space still held, back to the hand  */
++                    if (shell->space_pan_armed)
++                      gimp_display_shell_space_pan_cursor (shell);
++                  }
+                 break;
+               case GIMP_MODIFIER_ACTION_BRUSH_PIXEL_SIZE:
+                 gimp_statusbar_pop (gimp_display_shell_get_statusbar (shell), "chopgimp-hud");
+@@ -904,8 +963,7 @@ gimp_display_shell_canvas_tool_events (GtkWidget        *canvas,
+         update_sw_cursor = TRUE;
+ 
+         if (shell->mod_action != GIMP_MODIFIER_ACTION_NONE ||
+-            (shell->space_release_pending &&
+-             shell->display->config->space_bar_action == GIMP_SPACE_BAR_ACTION_PAN))
++            shell->space_pan_dragging)
+           {
+             gimp_display_shell_handle_scrolling (shell,
+                                                  state, mevent->x, mevent->y);
+@@ -1022,7 +1080,7 @@ gimp_display_shell_canvas_tool_events (GtkWidget        *canvas,
+               {
+                 gimp_motion_buffer_request_hover (shell->motion_buffer,
+                                                   state,
+-                                                  shell->proximity);
++                                                  gimp_display_shell_tool_proximity (shell));
+               }
+           }
+ 
+@@ -1176,7 +1234,7 @@ gimp_display_shell_canvas_tool_events (GtkWidget        *canvas,
+ 
+             tool_manager_oper_update_active (gimp,
+                                              &image_coords, state,
+-                                             shell->proximity,
++                                             gimp_display_shell_tool_proximity (shell),
+                                              display);
+           }
+       }
+@@ -1268,7 +1326,15 @@ gimp_display_shell_canvas_tool_events (GtkWidget        *canvas,
+               {
+               case GDK_KEY_space:
+               case GDK_KEY_KP_Space:
+-                if ((state & GDK_BUTTON1_MASK))
++                if (shell->space_pan_dragging)
++                  {
++                    /*  ChopGimp: the pan goes on until the button
++                     *  release, which restores the tool
++                     */
++                    shell->space_pan_armed       = FALSE;
++                    shell->space_release_pending = FALSE;
++                  }
++                else if ((state & GDK_BUTTON1_MASK))
+                   {
+                     shell->button1_release_pending = TRUE;
+                     shell->space_release_pending   = FALSE;
+@@ -1309,7 +1375,7 @@ gimp_display_shell_canvas_tool_events (GtkWidget        *canvas,
+ 
+             tool_manager_oper_update_active (gimp,
+                                              &image_coords, state,
+-                                             shell->proximity,
++                                             gimp_display_shell_tool_proximity (shell),
+                                              display);
+           }
+       }
+@@ -1740,7 +1806,8 @@ gimp_display_shell_start_scrolling (GimpDisplayShell *shell,
+ {
+   GimpModifierAction mod_action = shell->mod_action;
+ 
+-  if (mod_action == GIMP_MODIFIER_ACTION_NONE && shell->space_release_pending)
++  if (mod_action == GIMP_MODIFIER_ACTION_NONE &&
++      (shell->space_release_pending || shell->space_pan_dragging))
+     {
+       /* XXX The space actions are still hard-coded (instead of
+        * customizable throguh GimpModifiersManager). It might be
+@@ -1842,8 +1909,13 @@ gimp_display_shell_start_scrolling (GimpDisplayShell *shell,
+     case GIMP_MODIFIER_ACTION_PANNING:
+     case GIMP_MODIFIER_ACTION_ACTION:
+     case GIMP_MODIFIER_ACTION_NONE:
+-      gimp_display_shell_set_override_cursor (shell,
+-                                              (GimpCursorType) GDK_FLEUR);
++      /*  ChopGimp: the hand for the Space pan, like Photoshop  */
++      if (shell->space_pan_dragging &&
++          mod_action == GIMP_MODIFIER_ACTION_PANNING)
++        gimp_display_shell_space_pan_cursor (shell);
++      else
++        gimp_display_shell_set_override_cursor (shell,
++                                                (GimpCursorType) GDK_FLEUR);
+       break;
+     }
+ }
+@@ -1898,7 +1970,8 @@ gimp_display_shell_handle_scrolling (GimpDisplayShell *shell,
+   gboolean           size_update_pos = TRUE;
+   gdouble            size_multiplier = 1.0;
+ 
+-  if (mod_action == GIMP_MODIFIER_ACTION_NONE && shell->space_release_pending)
++  if (mod_action == GIMP_MODIFIER_ACTION_NONE &&
++      (shell->space_release_pending || shell->space_pan_dragging))
+     {
+       state &= gimp_get_all_modifiers_mask ();
+ 
+@@ -2108,23 +2181,12 @@ gimp_display_shell_space_pressed (GimpDisplayShell *shell,
+       break;
+ 
+     case GIMP_SPACE_BAR_ACTION_PAN:
+-      {
+-        GimpDeviceManager *manager;
+-        GimpDeviceInfo    *current_device;
+-        GimpCoords         coords;
+-        GdkModifierType    state = 0;
+-
+-        manager = gimp_devices_get_manager (gimp);
+-        current_device = gimp_device_manager_get_current_device (manager);
+-
+-        gimp_device_info_get_device_coords (current_device,
+-                                            gtk_widget_get_window (shell->canvas),
+-                                            &coords);
+-        gdk_event_get_state (event, &state);
+-
+-        gimp_display_shell_start_scrolling (shell, event, state,
+-                                            coords.x, coords.y);
+-      }
++      /*  ChopGimp (Photoshop): Space held only shows the hand, the view
++       *  is panned by a button 1 drag (see the button press handler).
++       *  Space is not handled here while button 1 is down (painting).
++       */
++      shell->space_pan_armed = TRUE;
++      gimp_display_shell_space_pan_cursor (shell);
+       break;
+ 
+     case GIMP_SPACE_BAR_ACTION_MOVE:
+@@ -2168,7 +2230,16 @@ gimp_display_shell_released (GimpDisplayShell *shell,
+       break;
+ 
+     case GIMP_SPACE_BAR_ACTION_PAN:
+-      gimp_display_shell_stop_scrolling (shell, event);
++      /*  ChopGimp: a running button 1 pan ends on its button release;
++       *  a running middle-button pan keeps its cursor until its release
++       */
++      shell->space_pan_armed = FALSE;
++
++      if (! shell->space_pan_dragging &&
++          shell->mod_action == GIMP_MODIFIER_ACTION_NONE)
++        {
++          gimp_display_shell_unset_override_cursor (shell);
++        }
+       break;
+ 
+     case GIMP_SPACE_BAR_ACTION_MOVE:
+@@ -2201,6 +2272,42 @@ gimp_display_shell_released (GimpDisplayShell *shell,
+   shell->button1_release_pending = FALSE;
+ }
+ 
++/*  ChopGimp: the Photoshop hand of the space bar (the « Main » tool
++ *  cursor; no closed hand exists, the same hand is kept while dragging)
++ */
++static void
++gimp_display_shell_space_pan_cursor (GimpDisplayShell *shell)
++{
++  gimp_display_shell_set_override_tool_cursor (shell,
++                                               GIMP_CURSOR_MOUSE,
++                                               GIMP_TOOL_CURSOR_HAND);
++}
++
++/*  ChopGimp: forget an armed Space whose release will never come here
++ *  (focus lost); a running pan ends on its own button release
++ */
++static void
++gimp_display_shell_space_pan_disarm (GimpDisplayShell *shell)
++{
++  if (! shell->space_pan_armed || shell->space_pan_dragging)
++    return;
++
++  shell->space_pan_armed       = FALSE;
++  shell->space_release_pending = FALSE;
++
++  if (shell->mod_action == GIMP_MODIFIER_ACTION_NONE)
++    gimp_display_shell_unset_override_cursor (shell);
++}
++
++/*  ChopGimp: no tool hover (brush outline…) while the Space hand is shown  */
++static gboolean
++gimp_display_shell_tool_proximity (GimpDisplayShell *shell)
++{
++  return (shell->proximity          &&
++          ! shell->space_pan_armed  &&
++          ! shell->space_pan_dragging);
++}
++
+ static gboolean
+ gimp_display_shell_tab_pressed (GimpDisplayShell  *shell,
+                                 const GdkEventKey *kevent)
+@@ -2308,7 +2415,7 @@ gimp_display_shell_update_focus (GimpDisplayShell *shell,
+   if (image_coords)
+     tool_manager_oper_update_active (gimp,
+                                      image_coords, state,
+-                                     shell->proximity,
++                                     gimp_display_shell_tool_proximity (shell),
+                                      shell->display);
+ }
+ 
+diff --git a/app/display/gimpdisplayshell.h b/app/display/gimpdisplayshell.h
+index 6d36c69..b74d49b 100644
+--- a/app/display/gimpdisplayshell.h
++++ b/app/display/gimpdisplayshell.h
+@@ -214,6 +214,12 @@ struct _GimpDisplayShell
+   gboolean           button1_release_pending;
+   const gchar       *space_shaded_tool;
+ 
++  /*  ChopGimp (Photoshop space bar): with space-bar-action "pan", Space
++   *  held only shows the hand (armed), a button 1 drag pans (dragging)
++   */
++  gboolean           space_pan_armed;
++  gboolean           space_pan_dragging;
++
+   /* Modifier action currently ON. */
+   GimpModifierAction mod_action;
+   gchar             *mod_action_desc;
+diff --git a/app/tools/gimppainttool.c b/app/tools/gimppainttool.c
+index 2de15b3..603c651 100644
+--- a/app/tools/gimppainttool.c
++++ b/app/tools/gimppainttool.c
+@@ -48,6 +48,7 @@
+ #include "widgets/gimpdevices.h"
+ #include "widgets/gimpwidgets-utils.h"
+ 
++#include "display/gimpcanvasitem.h"
+ #include "display/gimpdisplay.h"
+ #include "display/gimpdisplayshell.h"
+ #include "display/gimpdisplayshell-selection.h"
+@@ -944,6 +945,19 @@ gimp_paint_tool_oper_update (GimpTool         *tool,
+   g_list_free (drawables);
+ }
+ 
++/*  ChopGimp: brush tips smaller than this on screen get a crosshair  */
++#define CHOPGIMP_SMALL_TIP_SIZE  10.0
++#define CHOPGIMP_SMALL_TIP_CROSS 11
++
++static gdouble
++chopgimp_paint_tool_screen_size (GimpDrawTool *draw_tool,
++                                 gdouble       image_size)
++{
++  GimpDisplayShell *shell = gimp_display_get_shell (draw_tool->display);
++
++  return image_size * MAX (shell->scale_x, shell->scale_y);
++}
++
+ static void
+ gimp_paint_tool_draw (GimpDrawTool *draw_tool)
+ {
+@@ -956,6 +970,7 @@ gimp_paint_tool_draw (GimpDrawTool *draw_tool)
+       GimpCanvasItem *outline    = NULL;
+       gboolean        line_drawn = FALSE;
+       gdouble         cur_x, cur_y;
++      gdouble         tip_size   = 0.0;  /* brush tip on screen, in pixels */
+ 
+       if (gimp_paint_tool_paint_is_active (paint_tool) &&
+           paint_tool->snap_brush)
+@@ -1014,6 +1029,22 @@ gimp_paint_tool_draw (GimpDrawTool *draw_tool)
+ 
+       if (outline)
+         {
++          cairo_region_t *extents = gimp_canvas_item_get_extents (outline);
++
++          /*  outline extents are padded by 1.5 px on each side  */
++          if (extents)
++            {
++              cairo_rectangle_int_t rect;
++
++              cairo_region_get_extents (extents, &rect);
++              tip_size = MAX (rect.width, rect.height) - 3.0;
++              cairo_region_destroy (extents);
++            }
++          else
++            {
++              tip_size = G_MAXDOUBLE;  /* unknown: no crosshair */
++            }
++
+           gimp_draw_tool_add_item (draw_tool, outline);
+           g_object_unref (outline);
+         }
+@@ -1028,6 +1059,8 @@ gimp_paint_tool_draw (GimpDrawTool *draw_tool)
+            */
+           gint size = (gint) paint_tool->fallback_size;
+ 
++          tip_size = chopgimp_paint_tool_screen_size (draw_tool, size);
++
+ #define TICKMARK_ANGLE 48
+ #define ROTATION_ANGLE G_PI / 4
+ 
+@@ -1068,6 +1101,8 @@ gimp_paint_tool_draw (GimpDrawTool *draw_tool)
+         {
+           gint size = (gint) paint_tool->circle_size;
+ 
++          tip_size = chopgimp_paint_tool_screen_size (draw_tool, size);
++
+           /* draw an indicatory circle */
+           gimp_draw_tool_add_arc (draw_tool,
+                                   FALSE,
+@@ -1077,6 +1112,21 @@ gimp_paint_tool_draw (GimpDrawTool *draw_tool)
+                                   0.0, (2.0 * G_PI));
+         }
+ 
++      /*  ChopGimp (Photoshop « crosshair in brush tip »): a small cross
++       *  at the centre of a brush tip too small to see the pointer in
++       *  (no outline at all here means the outline was too small)
++       */
++      if (paint_tool->draw_brush &&
++          tip_size < CHOPGIMP_SMALL_TIP_SIZE)
++        {
++          gimp_draw_tool_add_handle (draw_tool,
++                                     GIMP_HANDLE_CROSS,
++                                     cur_x, cur_y,
++                                     CHOPGIMP_SMALL_TIP_CROSS,
++                                     CHOPGIMP_SMALL_TIP_CROSS,
++                                     GIMP_HANDLE_ANCHOR_CENTER);
++        }
++
+       if (! outline                   &&
+           ! paint_tool->draw_fallback &&
+           ! line_drawn                &&
+-- 
+2.53.0
+
