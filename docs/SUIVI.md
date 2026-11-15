@@ -493,3 +493,21 @@ Demande de l'utilisateur : chaque style s'ouvre « dans le même style que l'omb
 - **Correction** (`gimppainttool-paint.c`) : quand un calque visible de l'image porte des effets, le rendu pendant le trait passe par le rendu en morceaux de GIMP (`gimp_projection_flush`), qui rend la main entre deux morceaux et répartit le travail sur les fils de calcul. Sans effet, rien ne change. Après correction : 0 échantillon dans le recalcul immédiat.
 - **Vignettes recadrées** : le cadrage était calculé sur tout le calque en pleine résolution après chaque trait (≈ 0,6 s mesurée sur l'affiche). Il est maintenant estimé sur une copie réduite (512 px de côté au plus, en virgule flottante pour ne rater aucun pixel pâle), avec une marge d'un échantillon. Les outils (recadrage au contenu…) gardent le calcul exact.
 - 103 tests verts ; vérifié au banc : trait de gomme, ombre portée et vignette à jour.
+
+## 3.24.7 — Effets de calque : peinture fluide
+
+Constat de l'utilisateur : peindre ou gommer sur un calque avec effets est lent, même sur l'écran du portable (DisplayLink écarté). Confirmé après correction : « c'est mieux, le problème vient du calcul de l'effet ».
+- **Flou des ombres et lueurs limité à la zone touchée** (patch GEGL `0002-layer-styles-fir-blur`) :
+  - en mode AUTO, le flou gaussien de GEGL passe en IIR dès σ ≥ 1, et l'IIR exige des lignes et colonnes entières (`gblur-1d.c`, `get_required_for_output`), donc tout le calque à chaque touche ;
+  - `gegl:dropshadow` (Ombre portée, Lueur externe, ancien Contour) passe en FIR jusqu'à σ 40 ; `gegl:inner-glow` et `gegl:bevel` toujours en FIR (rayons ≤ 40 et ≤ 8) ;
+  - environ 12 fois plus rapide sur une zone de 64 px, pour une différence invisible (≤ 8/255 sur les bords).
+- **Rendu des effets mis en mémoire par calque** : un nœud `gegl:cache` est placé après les filtres et avant opacité, mode et masque, et actif seulement s'il y a des effets. Peindre sur un calque ne recalcule plus les effets des autres calques.
+- **« Effets à la fin du trait »** (option des outils de peinture, activée par défaut, aussi dans la barre d'options) : pendant un trait, les effets du calque peint sont court-circuités dans le graphe de rendu (pas de modification du filtre, de l'historique ni du fichier). Ils sont recalculés une fois au relâchement. Ils sont aussi rétablis à l'annulation, au changement d'outil, à la fermeture et en cas d'échec.
+- Mesure sur la session de l'utilisateur pendant qu'il peint : le fil du curseur reste léger la plupart du temps. Il reste un à-coup de 0,5 à 1 s à chaque relâchement (recalcul des effets), à traiter.
+
+## 3.24.8 — Traits sans paliers : la peinture n'est plus aimantée
+
+- **Symptôme** : des paliers horizontaux dans les traits, toujours à la même hauteur (le milieu du document), même dans une image neuve.
+- **Cause** : dans GIMP, les outils de peinture suivent l'aimantation (guides, bords et milieu du canevas, bords des calques, espacements), et ChopGimp l'active par défaut pour les guides intelligents. Sur un trait en biais, la hauteur restait collée à la ligne d'accroche pendant que la main avançait : un palier. Confirmé par l'utilisateur en décochant une aimantation.
+- **Correction** : comme dans Photoshop, les outils de peinture (pinceau, crayon, aérographe, gomme, tampon, correcteur, doigt, plume, MyPaint…) ne sont plus jamais aimantés. Déplacement, sélections, formes, transformations et guides le restent.
+- 103 tests verts ; vérifié au banc : traits en biais à travers le milieu, sans palier.

@@ -776,6 +776,10 @@
                 {
                     "type": "patch",
                     "path": "../patches/gegl-0.4.72/0001-tile-backend-buffer-do-not-dup-damaged-mipmap-tiles.patch"
+                },
+                {
+                    "type": "patch",
+                    "path": "../patches/gegl-0.4.72/0002-layer-styles-fir-blur.patch"
                 }
             ],
             "buildsystem": "meson",
@@ -1040,7 +1044,9 @@
                         "../patches/gimp-3.2.8/0093-ChopGimp-plug-in-dialogs-not-modal-GNOME-attach-moda.patch",
                         "../patches/gimp-3.2.8/0094-ChopGimp-Contour-Lueur-externe-Ombre-interne-open-th.patch",
                         "../patches/gimp-3.2.8/0095-ChopGimp-chopgimp-stroke-filter-Contour-with-Stroke-.patch",
-                        "../patches/gimp-3.2.8/0096-ChopGimp-painting-on-images-with-filters-uses-chunke.patch"
+                        "../patches/gimp-3.2.8/0096-ChopGimp-painting-on-images-with-filters-uses-chunke.patch",
+                        "../patches/gimp-3.2.8/0097-ChopGimp-cache-filtered-drawables-paint-strokes-defe.patch",
+                        "../patches/gimp-3.2.8/0098-ChopGimp-paint-tools-never-snap-steps-in-strokes-at-.patch"
                     ]
                 }
             ],

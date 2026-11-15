@@ -1,0 +1,123 @@
+From: ChopGimp <mathieu.redon@proton.me>
+Subject: [PATCH] dropshadow, inner-glow, bevel: blur with FIR for moderate radii
+
+gegl:gaussian-blur in AUTO mode picks the IIR filter of gegl:gblur-1d as soon
+as std-dev >= 1. The IIR path needs whole rows of the input extent for the
+horizontal pass and whole columns for the vertical pass
+(gegl_gblur_1d_get_required_for_output / get_cached_region), so through
+hblur -> vblur any request, however small, needs the full input extent.
+When painting on a layer with a drop shadow, outer glow, inner glow/shadow or
+bump bevel, every brush dab re-blurs the whole layer.
+
+The FIR path only needs the requested area grown by the kernel radius
+(ceil (6.5 * std-dev) taps). Both are gaussians; measured differences in
+alpha are at most a few 1/255 at shape edges (mean < 0.002).
+
+- dropshadow: FIR while radius <= 40, AUTO (IIR) above, updated when the
+  radius changes.
+- inner-glow (radius <= 40) and bevel (radius <= 8): always FIR.
+---
+ operations/common/bevel.c      |  5 +++++
+ operations/common/dropshadow.c | 35 +++++++++++++++++++++++++++++++++++
+ operations/common/inner-glow.c |  5 +++++
+ 3 files changed, 45 insertions(+)
+
+diff --git a/operations/common/bevel.c b/operations/common/bevel.c
+index e9c376a..f4a02d0 100644
+--- a/operations/common/bevel.c
++++ b/operations/common/bevel.c
+@@ -155,6 +155,11 @@ static void attach (GeglOperation *operation)
+ 
+   state->blur = gegl_node_new_child (gegl,
+                                   "operation", "gegl:gaussian-blur", "clip-extent", FALSE,   "abyss-policy", 0,                
++                                  /* FIR: radius is at most 8 here, and unlike IIR it
++                                   * only needs the requested area grown by the kernel
++                                   * radius, not the whole input extent (painting on
++                                   * the layer stays fast) */
++                                  "filter", 1 /* GEGL_GAUSSIAN_BLUR_FILTER2_FIR */,
+                                   NULL);
+ 
+   state->emb   = gegl_node_new_child (gegl,
+diff --git a/operations/common/dropshadow.c b/operations/common/dropshadow.c
+index c15a10d..bbde184 100644
+--- a/operations/common/dropshadow.c
++++ b/operations/common/dropshadow.c
+@@ -84,13 +84,42 @@ property_double (opacity, _("Opacity"), 0.5)
+ 
+ #include "gegl-op.h"
+ 
++/* Values of GeglGaussianBlurFilter2 (gaussian-blur.c) */
++#define DROPSHADOW_BLUR_FILTER_AUTO 0
++#define DROPSHADOW_BLUR_FILTER_FIR  1
++
++/* Up to this standard deviation, the blur uses the FIR filter: it only needs
++ * the requested area grown by the kernel radius (~3.25 * std-dev), whereas the
++ * IIR filter needs whole rows, then whole columns, i.e. the full input extent
++ * for any request.  When painting on a layer with a drop shadow / outer glow,
++ * every small update would otherwise re-blur the whole layer.  Above this
++ * value the FIR kernel gets too long and IIR (AUTO) is kept.
++ */
++#define DROPSHADOW_FIR_MAX_STD_DEV 40.0
++
+ typedef struct
+ {
+   GeglNode *input;
+   GeglNode *grow;
+   GeglNode *darken;
++  GeglNode *blur;
++  gint      blur_filter;
+ } State;
+ 
++static void
++update_blur_filter (GeglProperties *o,
++                    State          *state)
++{
++  gint filter = o->radius <= DROPSHADOW_FIR_MAX_STD_DEV ?
++                DROPSHADOW_BLUR_FILTER_FIR : DROPSHADOW_BLUR_FILTER_AUTO;
++
++  if (filter != state->blur_filter)
++    {
++      state->blur_filter = filter;
++      gegl_node_set (state->blur, "filter", filter, NULL);
++    }
++}
++
+ static void
+ update_graph (GeglOperation *operation)
+ {
+@@ -98,6 +127,8 @@ update_graph (GeglOperation *operation)
+   State *state = o->user_data;
+   if (!state) return;
+ 
++  update_blur_filter (o, state);
++
+   if (fabs (o->grow_radius) > 0.0001)
+   {
+     gegl_node_link_many (state->input, state->grow, state->darken, NULL);
+@@ -141,6 +172,10 @@ attach (GeglOperation *operation)
+   state->input = input;
+   state->grow = grow;
+   state->darken = darken;
++  state->blur = blur;
++  state->blur_filter = -1;
++
++  update_blur_filter (o, state);
+ 
+   g_object_unref (black_color);
+ 
+diff --git a/operations/common/inner-glow.c b/operations/common/inner-glow.c
+index d1c771b..4a9a713 100644
+--- a/operations/common/inner-glow.c
++++ b/operations/common/inner-glow.c
+@@ -105,6 +105,11 @@ static void attach (GeglOperation *operation)
+ 
+  gaussian    = gegl_node_new_child (gegl,
+                                   "operation", "gegl:gaussian-blur", "abyss-policy", 0, "clip-extent", FALSE,  
++                                  /* FIR: radius is at most 40 here, and unlike IIR it
++                                   * only needs the requested area grown by the kernel
++                                   * radius, not the whole input extent (painting on
++                                   * the layer stays fast) */
++                                  "filter", 1 /* GEGL_GAUSSIAN_BLUR_FILTER2_FIR */,
+                                   NULL);
+ 
+  opacity    = gegl_node_new_child (gegl,
