@@ -511,3 +511,9 @@ Constat de l'utilisateur : peindre ou gommer sur un calque avec effets est lent,
 - **Cause** : dans GIMP, les outils de peinture suivent l'aimantation (guides, bords et milieu du canevas, bords des calques, espacements), et ChopGimp l'active par défaut pour les guides intelligents. Sur un trait en biais, la hauteur restait collée à la ligne d'accroche pendant que la main avançait : un palier. Confirmé par l'utilisateur en décochant une aimantation.
 - **Correction** : comme dans Photoshop, les outils de peinture (pinceau, crayon, aérographe, gomme, tampon, correcteur, doigt, plume, MyPaint…) ne sont plus jamais aimantés. Déplacement, sélections, formes, transformations et guides le restent.
 - 103 tests verts ; vérifié au banc : traits en biais à travers le milieu, sans palier.
+
+## 3.24.9 — Menus : les cases à cocher laissent le menu ouvert
+
+- Un clic sur une case à cocher ou un choix d'option (Affichage > Afficher…, Aligner sur…, etc.) bascule l'option **sans refermer le menu**. On peut en régler plusieurs d'affilée. Les commandes ordinaires et le clavier ferment toujours le menu (`gimpmenu.c`, interception du relâchement du clic gauche).
+- Vérifié au banc : « Afficher la grille » puis « Aligner sur la grille » dans le même menu ouvert.
+- L'utilisateur confirme que QuickShape et l'à-coup de fin de trait ne se manifestent plus : c'étaient des effets de l'aimantation, corrigée en 3.24.8.

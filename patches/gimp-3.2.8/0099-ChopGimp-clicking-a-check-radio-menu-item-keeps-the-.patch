@@ -1,0 +1,59 @@
+From 3ac45bbbc35b3f93d9bd03b5d7b2e939eb16dad0 Mon Sep 17 00:00:00 2001
+From: ChopGimp <mathieu.redon@proton.me>
+Date: Sun, 15 Nov 2026 20:37:00 +0100
+Subject: [PATCH] ChopGimp: clicking a check/radio menu item keeps the menu
+ open
+
+---
+ app/widgets/gimpmenu.c | 28 ++++++++++++++++++++++++++++
+ 1 file changed, 28 insertions(+)
+
+diff --git a/app/widgets/gimpmenu.c b/app/widgets/gimpmenu.c
+index 4540288..eb7403e 100644
+--- a/app/widgets/gimpmenu.c
++++ b/app/widgets/gimpmenu.c
+@@ -142,6 +142,30 @@ gimp_menu_class_init (GimpMenuClass *klass)
+   gimp_menu_shell_install_properties (object_class);
+ }
+ 
++/*  ChopGimp : cliquer sur une case à cocher ou un choix d'option bascule
++ *  l'option sans refermer le menu (on peut en régler plusieurs d'affilée).
++ *  Les commandes ordinaires et le clavier gardent le comportement normal.
++ */
++static gboolean
++chopgimp_menu_button_release (GtkWidget      *widget,
++                              GdkEventButton *event,
++                              gpointer        data)
++{
++  GtkWidget *item = gtk_menu_shell_get_selected_item (GTK_MENU_SHELL (widget));
++
++  if (event->button == 1                &&
++      item                              &&
++      GTK_IS_CHECK_MENU_ITEM (item)     &&
++      gtk_widget_is_sensitive (item))
++    {
++      gtk_menu_item_activate (GTK_MENU_ITEM (item));
++
++      return TRUE;
++    }
++
++  return FALSE;
++}
++
+ static void
+ gimp_menu_init (GimpMenu *menu)
+ {
+@@ -156,6 +180,10 @@ gimp_menu_init (GimpMenu *menu)
+ 
+   gimp_help_connect (GTK_WIDGET (menu), NULL, gimp_menu_help_fun,
+                      GIMP_HELP_MAIN, menu, NULL);
++
++  g_signal_connect (menu, "button-release-event",
++                    G_CALLBACK (chopgimp_menu_button_release),
++                    NULL);
+ }
+ 
+ static void
+-- 
+2.53.0
+
