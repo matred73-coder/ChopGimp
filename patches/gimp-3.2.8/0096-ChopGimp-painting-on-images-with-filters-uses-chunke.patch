@@ -1,0 +1,230 @@
+From 758bb9e2285740a306e50bbc49b8fc3433c14b84 Mon Sep 17 00:00:00 2001
+From: ChopGimp <mathieu.redon@proton.me>
+Date: Sun, 15 Nov 2026 07:25:30 +0100
+Subject: [PATCH] ChopGimp: painting on images with filters uses chunked
+ projection rendering (fluid cursor)
+
+---
+ app/core/chopgimp-alpha-bounds.c       | 84 ++++++++++++++++++++++++++
+ app/core/chopgimp-alpha-bounds.h       | 11 ++++
+ app/tools/gimppainttool-paint.c        | 43 ++++++++++++-
+ app/widgets/gimpviewrendererdrawable.c |  3 +-
+ 4 files changed, 137 insertions(+), 4 deletions(-)
+
+diff --git a/app/core/chopgimp-alpha-bounds.c b/app/core/chopgimp-alpha-bounds.c
+index 4825b19..4b28204 100644
+--- a/app/core/chopgimp-alpha-bounds.c
++++ b/app/core/chopgimp-alpha-bounds.c
+@@ -12,6 +12,8 @@
+ #include <gdk-pixbuf/gdk-pixbuf.h>
+ #include <gegl.h>
+ 
++#include "libgimpmath/gimpmath.h"
++
+ #include "core-types.h"
+ 
+ #include "gimpdrawable.h"
+@@ -101,3 +103,85 @@ chopgimp_alpha_bounds (GimpDrawable *drawable,
+ 
+   return GIMP_AUTO_SHRINK_SHRINK;
+ }
++
++
++GimpAutoShrink
++chopgimp_alpha_bounds_fast (GimpDrawable *drawable,
++                            gint          max_side,
++                            gint         *x,
++                            gint         *y,
++                            gint         *width,
++                            gint         *height)
++{
++  GeglBuffer *buffer;
++  gfloat     *data;
++  gdouble     scale;
++  gint        w, h, sw, sh, row, col;
++  gint        x1 = G_MAXINT, y1 = G_MAXINT;
++  gint        x2 = G_MININT, y2 = G_MININT;
++
++  g_return_val_if_fail (GIMP_IS_DRAWABLE (drawable), GIMP_AUTO_SHRINK_UNSHRINKABLE);
++
++  w = gimp_item_get_width  (GIMP_ITEM (drawable));
++  h = gimp_item_get_height (GIMP_ITEM (drawable));
++
++  if (MAX (w, h) <= max_side || max_side <= 0)
++    return chopgimp_alpha_bounds (drawable, x, y, width, height);
++
++  *x = 0; *y = 0; *width = w; *height = h;
++
++  if (! gimp_drawable_has_alpha (drawable))
++    return GIMP_AUTO_SHRINK_UNSHRINKABLE;
++
++  scale = (gdouble) max_side / MAX (w, h);
++  sw    = MAX (1, (gint) ceil (w * scale));
++  sh    = MAX (1, (gint) ceil (h * scale));
++
++  /*  « A float » : a block holding only a few faint pixels keeps a
++   *  non-zero average (with « A u8 » it could round down to 0)
++   */
++  buffer = gimp_drawable_get_buffer (drawable);
++  data   = g_try_new (gfloat, (gsize) sw * sh);
++
++  if (! data)
++    return chopgimp_alpha_bounds (drawable, x, y, width, height);
++
++  gegl_buffer_get (buffer, GEGL_RECTANGLE (0, 0, sw, sh), scale,
++                   babl_format ("A float"), data,
++                   GEGL_AUTO_ROWSTRIDE, GEGL_ABYSS_NONE);
++
++  for (row = 0; row < sh; row++)
++    {
++      const gfloat *p = data + (gsize) row * sw;
++
++      for (col = 0; col < sw; col++)
++        if (p[col] > 0.0f)
++          {
++            x1 = MIN (x1, col);
++            x2 = MAX (x2, col);
++            y1 = MIN (y1, row);
++            y2 = MAX (y2, row);
++          }
++    }
++
++  g_free (data);
++
++  if (x1 > x2 || y1 > y2)
++    return GIMP_AUTO_SHRINK_EMPTY;
++
++  /*  back to full resolution, one sample of margin on each side  */
++  x1 = MAX (0, (gint) floor ((x1 - 1) / scale));
++  y1 = MAX (0, (gint) floor ((y1 - 1) / scale));
++  x2 = MIN (w - 1, (gint) ceil ((x2 + 2) / scale));
++  y2 = MIN (h - 1, (gint) ceil ((y2 + 2) / scale));
++
++  *x      = x1;
++  *y      = y1;
++  *width  = x2 - x1 + 1;
++  *height = y2 - y1 + 1;
++
++  if (*width == w && *height == h)
++    return GIMP_AUTO_SHRINK_UNSHRINKABLE;
++
++  return GIMP_AUTO_SHRINK_SHRINK;
++}
+diff --git a/app/core/chopgimp-alpha-bounds.h b/app/core/chopgimp-alpha-bounds.h
+index 3f17f59..8bc9ca5 100644
+--- a/app/core/chopgimp-alpha-bounds.h
++++ b/app/core/chopgimp-alpha-bounds.h
+@@ -19,3 +19,14 @@ GimpAutoShrink   chopgimp_alpha_bounds (GimpDrawable *drawable,
+                                         gint         *y,
+                                         gint         *width,
+                                         gint         *height);
++
++/*  Same, estimated on a reduced copy (mipmaps) when the drawable is
++ *  larger than @max_side: fast, never smaller than the real bounds (one
++ *  sample of margin).  For thumbnails, not for exact crops.
++ */
++GimpAutoShrink   chopgimp_alpha_bounds_fast (GimpDrawable *drawable,
++                                             gint          max_side,
++                                             gint         *x,
++                                             gint         *y,
++                                             gint         *width,
++                                             gint         *height);
+diff --git a/app/tools/gimppainttool-paint.c b/app/tools/gimppainttool-paint.c
+index 467dc84..4a929d4 100644
+--- a/app/tools/gimppainttool-paint.c
++++ b/app/tools/gimppainttool-paint.c
+@@ -25,6 +25,7 @@
+ #include "tools-types.h"
+ 
+ #include "core/gimpdrawable.h"
++#include "core/gimpdrawable-filters.h"
+ #include "core/gimpimage.h"
+ #include "core/gimplayer.h"
+ #include "core/gimplayermask.h"
+@@ -160,6 +161,42 @@ gimp_paint_tool_paint_thread (gpointer data)
+   return NULL;
+ }
+ 
++/*  ChopGimp : pendant un trait, le recalcul immédiat (synchrone) de la
++ *  zone peinte bloque le fil principal quand l'image porte des effets
++ *  (filtres non destructifs : ombre portée, contour…) : le curseur
++ *  saccade. Dans ce cas, on passe par le rendu en morceaux de GIMP, qui
++ *  rend la main entre deux morceaux ; sans effet, rien ne change.
++ */
++static gboolean
++chopgimp_image_has_visible_filters (GimpImage *image)
++{
++  GList    *layers = gimp_image_get_layer_list (image);
++  GList    *iter;
++  gboolean  found  = FALSE;
++
++  for (iter = layers; iter && ! found; iter = g_list_next (iter))
++    {
++      if (gimp_item_is_visible (GIMP_ITEM (iter->data)) &&
++          gimp_drawable_has_visible_filters (GIMP_DRAWABLE (iter->data)))
++        found = TRUE;
++    }
++
++  g_list_free (layers);
++
++  return found;
++}
++
++static void
++chopgimp_paint_flush_projection (GimpImage *image)
++{
++  GimpProjection *projection = gimp_image_get_projection (image);
++
++  if (chopgimp_image_has_visible_filters (image))
++    gimp_projection_flush (projection);
++  else
++    gimp_projection_flush_now (projection, TRUE);
++}
++
+ static gboolean
+ gimp_paint_tool_paint_timeout (GimpPaintTool *paint_tool)
+ {
+@@ -197,7 +234,7 @@ gimp_paint_tool_paint_timeout (GimpPaintTool *paint_tool)
+       if (paint_tool->snap_brush)
+         gimp_draw_tool_pause (draw_tool);
+ 
+-      gimp_projection_flush_now (gimp_image_get_projection (image), TRUE);
++      chopgimp_paint_flush_projection (image);
+       gimp_display_flush_now (display);
+ 
+       if (paint_tool->snap_brush)
+@@ -365,7 +402,7 @@ gimp_paint_tool_paint_start (GimpPaintTool     *paint_tool,
+                              GIMP_PAINT_STATE_MOTION, time);
+     }
+ 
+-  gimp_projection_flush_now (gimp_image_get_projection (image), TRUE);
++  chopgimp_paint_flush_projection (image);
+   gimp_display_flush_now (display);
+ 
+   /*  Start the display update timeout  */
+@@ -529,7 +566,7 @@ gimp_paint_tool_paint_push (GimpPaintTool          *paint_tool,
+ 
+       func (paint_tool, data);
+ 
+-      gimp_projection_flush_now (gimp_image_get_projection (image), TRUE);
++      chopgimp_paint_flush_projection (image);
+       gimp_display_flush_now (display);
+ 
+       gimp_draw_tool_resume (draw_tool);
+diff --git a/app/widgets/gimpviewrendererdrawable.c b/app/widgets/gimpviewrendererdrawable.c
+index fd8360d..020d61f 100644
+--- a/app/widgets/gimpviewrendererdrawable.c
++++ b/app/widgets/gimpviewrendererdrawable.c
+@@ -364,7 +364,8 @@ chopgimp_content_bounds (GimpLayer *layer,
+         return cb->ok;
+       }
+ 
+-    switch (chopgimp_alpha_bounds (GIMP_DRAWABLE (layer), x, y, w, h))
++    /*  thumbnail: an estimate on a reduced copy is enough (and fast)  */
++    switch (chopgimp_alpha_bounds_fast (GIMP_DRAWABLE (layer), 512, x, y, w, h))
+       {
+       case GIMP_AUTO_SHRINK_SHRINK:
+         cb->ok = TRUE;
+-- 
+2.53.0
+

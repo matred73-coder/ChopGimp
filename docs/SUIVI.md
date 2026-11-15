@@ -485,3 +485,11 @@ Demande de l'utilisateur : chaque style s'ouvre « dans le même style que l'omb
   - Éléments communs dans `chopgimp_common.py` : `spin_scale`, `color_button`, `frame`, `check_frame`…
 - 3 nouveaux tests (contour extérieur, intérieur, pointillés) : 103 tests.
 - Vérifié au banc : fenêtre Contour avec aperçu, Style de calque, Camera Raw, Cases de BD. Non vérifié : enregistrement XCF puis réouverture d'un calque avec Contour.
+
+## 3.24.6 — Peinture fluide sur les calques avec effets
+
+- **Symptôme** : gommer ou peindre sur un calque portant un effet (ombre portée, contour…) rendait tout lent, avec un curseur saccadé.
+- **Mesure** (journal de performance de GIMP, affiche de 2480 × 3508 avec ombre portée, même coup de gomme) : le fil principal passait 41 de ses 59 échantillons actifs dans `gimp_projection_flush_now`. GIMP y recalcule l'image sur place, effet compris, toutes les quelques millisecondes pendant le trait, et le curseur attend la fin de chaque calcul.
+- **Correction** (`gimppainttool-paint.c`) : quand un calque visible de l'image porte des effets, le rendu pendant le trait passe par le rendu en morceaux de GIMP (`gimp_projection_flush`), qui rend la main entre deux morceaux et répartit le travail sur les fils de calcul. Sans effet, rien ne change. Après correction : 0 échantillon dans le recalcul immédiat.
+- **Vignettes recadrées** : le cadrage était calculé sur tout le calque en pleine résolution après chaque trait (≈ 0,6 s mesurée sur l'affiche). Il est maintenant estimé sur une copie réduite (512 px de côté au plus, en virgule flottante pour ne rater aucun pixel pâle), avec une marge d'un échantillon. Les outils (recadrage au contenu…) gardent le calcul exact.
+- 103 tests verts ; vérifié au banc : trait de gomme, ombre portée et vignette à jour.

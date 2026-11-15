@@ -1039,7 +1039,8 @@
                         "../patches/gimp-3.2.8/0092-ChopGimp-clone-source-no-cross-at-the-old-source-whi.patch",
                         "../patches/gimp-3.2.8/0093-ChopGimp-plug-in-dialogs-not-modal-GNOME-attach-moda.patch",
                         "../patches/gimp-3.2.8/0094-ChopGimp-Contour-Lueur-externe-Ombre-interne-open-th.patch",
-                        "../patches/gimp-3.2.8/0095-ChopGimp-chopgimp-stroke-filter-Contour-with-Stroke-.patch"
+                        "../patches/gimp-3.2.8/0095-ChopGimp-chopgimp-stroke-filter-Contour-with-Stroke-.patch",
+                        "../patches/gimp-3.2.8/0096-ChopGimp-painting-on-images-with-filters-uses-chunke.patch"
                     ]
                 }
             ],
