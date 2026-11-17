@@ -537,3 +537,25 @@ Constat de l'utilisateur : peindre ou gommer sur un calque avec effets est lent,
 - **Liste des effets (icône fx)** : un bouton **Copier** ne met que l'effet choisi dans le presse-papiers.
 - Repose sur le mécanisme de GIMP qui recopie les effets lors de la duplication d'un calque. La création des effets collés suit la duplication et le chargement XCF.
 - Vérifié au banc : style copié de « Haut », collé sur « Milieu » (ombre portée visible), annulé en une fois ; entrées du menu présentes. 103 tests.
+
+## 3.25.0 — Passe de performance, styles de calque complets, traduction
+
+**Mesures sur la copie de l'affiche de l'utilisateur** (`tools/dev/bench-all.sh`, médiane de 3, avec effets) :
+
+| Geste | CPU total 3.24.11 → 3.25.0 | Blocage max de l'interface |
+|---|---|---|
+| Ouverture | 3,58 s → 2,15 s | 229 → 113 ms |
+| Trait | 0,87 → 0,80 s | 41 → 25 ms |
+| Déplacer un calque | 4,18 → 3,46 s | ~300 → ~285 ms |
+| Masquer un calque | 0,66 → 0,58 s | ~310 → ~285 ms |
+| Ctrl+clic vignette | 1,34 → 1,27 s | ~970 → ~960 ms |
+
+Restent à traiter (identiques avec ou sans effets) : blocages au déplacement, au masquage et au Ctrl+clic.
+
+- **Affichage** : rendu de la projection par tranches de 8 ms pendant l'action ; « Aperçu rapide » (barre d'options) : seule la zone visible est rendue pendant l'action, le reste 200 ms après ; mise à jour du trait calée sur l'horloge d'affichage.
+- **Effets** : flou de l'ombre et des lueurs sur l'alpha seul (patch GEGL 0004, ×2,5 à ×3,5) ; Contour calculé sur la zone demandée ; cache des effets préservé (translate/crop non réécrits à l'identique) ; seule la zone peinte recalculée au relâchement ; groupes à effets mis à jour localement ; texte non rendu s'il n'a pas changé ; réglages des fenêtres de filtre regroupés ; doublon de cache supprimé ; correctif amont buffer-source-validate.
+- **Panneaux** : copie réduite (512 px) du rendu des effets pour les vignettes, mise à jour par zones ; vignettes et Navigation limitées à 2 rafraîchissements/s ; histogramme non bloquant (échantillon pendant le travail) ; panneau Calques mis à jour au plus toutes les 250 ms ; contour de sélection (gimpboundary) et fourmis rapides ; Tableau de bord : groupe « Réactivité ».
+- **Système** : mimalloc (lanceur `/app/bin/chopgimp`, `CHOPGIMP_NO_MIMALLOC=1` pour couper) ; babl et GEGL en -O3 + LTO (`make build LTO=0` pour revenir) ; PGO en option (`make build PGO=1`, non essayé) ; sauvegarde automatique repoussée pendant le travail ; mesures `tools/dev/bench-all.sh`.
+- **Styles de calque façon Photoshop** : Contour avec remplissage Couleur / Dégradé (6 styles dont éclat de forme) / Motif, mode de fusion, surimpression ; glisser sur l'image pour déplacer ombre, ombre interne, lueurs, dégradé ou motif ; lueurs : bruit, source dégradé, courbes de contour, plage (patch GEGL 0005, `gegl:glow-map`) ; « Ajouter un autre contour » et numérotation dans la liste fx ; « Définir par défaut » / « Rétablir ». Non fait : mode de fusion de l'ombre portée et de la lueur externe (demande le fond sous le calque), « Aligner sur le calque », technique précise.
+- **Traduction** : ~650 libellés de menus et de filtres (gimp, plug-ins, GEGL : patch 0003) ; liste dans `docs/dev/traductions-3.25.0.tsv`. **Pixelliser le style de calque** (Calque > Style de calque).
+- Vérifié : 103 tests ; fenêtre Contour au banc (dégradé linéaire et éclat de forme).

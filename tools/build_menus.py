@@ -170,6 +170,10 @@ STYLE_NATIFS = ["filters-dropshadow", "filters-chopgimp-stroke", "filters-chopgi
 # Copier / coller le style de calque (ChopGimp, presse-papiers de styles)
 STYLE_PRESSE_PAPIERS = ["layers-style-copy", "layers-style-paste", "layers-style-paste-add"]
 
+# Pixelliser le style de calque (ChopGimp) : fusion des filtres de GIMP
+# (bouton de la liste fx) sur tous les calques sélectionnés
+STYLE_PIXELLISER = ["layers-style-rasterize"]
+
 
 def style_submenu(indent):
     i = " " * indent
@@ -179,6 +183,8 @@ def style_submenu(indent):
     l += [i + '    <item><attribute name="action">app.%s</attribute></item>' % a for a in STYLE_NATIFS]
     l += [i + "  </section>", i + "  <section>"]
     l += [i + '    <item><attribute name="action">app.%s</attribute></item>' % a for a in STYLE_PRESSE_PAPIERS]
+    l += [i + "  </section>", i + "  <section>"]
+    l += [i + '    <item><attribute name="action">app.%s</attribute></item>' % a for a in STYLE_PIXELLISER]
     l += [i + "  </section>", i + "</submenu>"]
     return l
 

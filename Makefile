@@ -9,7 +9,11 @@
 #   make repo      publie le dépôt de mises à jour dans $(REPO_DEST)
 #   make vanilla   compile GIMP 3.2.8 sans modification (référence)
 #
-# Variables : GPG_KEY=<id>   signe le dépôt et le paquet
+# Variables : LTO=1|all|0   optimisation à l'édition de liens (1 = babl et GEGL, défaut ;
+#                           all = GIMP aussi ; 0 = aucune)
+#             PGO=1          GIMP optimisé d'après un profil d'exécution (compilation ×2,
+#                           voir tools/dev/pgo_train.py)
+#             GPG_KEY=<id>   signe le dépôt et le paquet
 #             REPO_DEST=<chemin ou serveur rsync>   destination de « make repo »
 #             REPO_URL=<https://…/photogimp/repo>   URL publique du dépôt
 # ═══════════════════════════════════════════════════════════════
@@ -20,6 +24,8 @@ FLATHUB   := https://dl.flathub.org/repo/flathub.flatpakrepo
 REPO_DEST ?= dist/repo-public
 REPO_URL  ?= https://example.cen-na.org/photogimp/repo
 GPG       := $(if $(GPG_KEY),--gpg-sign=$(GPG_KEY),)
+LTO       ?= 1
+PGO       ?= 0
 FB        := flatpak-builder --user --ccache --disable-rofiles-fuse --force-clean \
              --install-deps-from=flathub --state-dir=.flatpak-builder
 
@@ -41,7 +47,7 @@ patches:
 	 echo "$$((c - n)) nouveau(x) patch(s), $$c au total"
 
 manifest:
-	python3 tools/make_manifest.py
+	CHOPGIMP_LTO=$(LTO) CHOPGIMP_PGO=$(PGO) python3 tools/make_manifest.py
 
 build: manifest
 	cd flatpak && $(FB) --repo=repo $(GPG) --default-branch=stable \

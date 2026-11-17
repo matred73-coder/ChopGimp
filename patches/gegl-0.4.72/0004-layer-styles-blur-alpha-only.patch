@@ -1,0 +1,233 @@
+From: ChopGimp <mathieu.redon@proton.me>
+Subject: [PATCH] dropshadow, inner-glow: blur the alpha only
+
+gegl:dropshadow (drop shadow, outer glow) and gegl:inner-glow (inner glow,
+inner shadow) blurred four RaGaBaA float components, although only the
+alpha of the blurred buffer is used:
+
+- dropshadow blurred the shadow color clipped to the input alpha (src-in);
+  as the color is constant, blur (color * a) == color * blur (a);
+- inner-glow only uses the alpha of the blurred buffer (src-out), the color
+  is replaced by color-overlay afterwards.
+
+Both now extract the alpha as a linear "Y float" buffer
+(gegl:component-extract), blur it alone, and turn it back into an RGBA
+alpha with gegl:opacity (aux) on a color, cropped to the blurred extent
+(dropshadow: the shadow color and opacity, inner-glow: black).
+
+Measured on a 2500x2500 layer: dropshadow 0.90 s -> 0.36 s (std-dev 15),
+1.99 s -> 0.59 s (std-dev 30). Outputs are identical (max difference
+0.004/255, float rounding of the color alpha), bounding boxes unchanged.
+---
+ operations/common/dropshadow.c | 58 +++++++++++++++++++++++++++------
+ operations/common/inner-glow.c | 59 +++++++++++++++++++++++++++++++++-
+ 2 files changed, 106 insertions(+), 11 deletions(-)
+
+diff --git a/operations/common/dropshadow.c b/operations/common/dropshadow.c
+index bbde184..61054eb 100644
+--- a/operations/common/dropshadow.c
++++ b/operations/common/dropshadow.c
+@@ -101,7 +101,7 @@ typedef struct
+ {
+   GeglNode *input;
+   GeglNode *grow;
+-  GeglNode *darken;
++  GeglNode *alpha;
+   GeglNode *blur;
+   gint      blur_filter;
+ } State;
+@@ -131,22 +131,55 @@ update_graph (GeglOperation *operation)
+ 
+   if (fabs (o->grow_radius) > 0.0001)
+   {
+-    gegl_node_link_many (state->input, state->grow, state->darken, NULL);
++    gegl_node_link_many (state->input, state->grow, state->alpha, NULL);
+   }
+   else
+   {
+-    gegl_node_link_many (state->input, state->darken, NULL);
++    gegl_node_link_many (state->input, state->alpha, NULL);
+   }
+ }
+ 
+ 
+-/* in attach we hook into graph adding the needed nodes */
++/* gegl:component-extract's enum type is private to its module, set the
++ * component by nick
++ */
++static void
++set_alpha_component (GeglNode *node)
++{
++  GeglOperation *op    = gegl_node_get_gegl_operation (node);
++  GParamSpec    *pspec = NULL;
++
++  if (op)
++    pspec = g_object_class_find_property (G_OBJECT_GET_CLASS (op),
++                                          "component");
++
++  if (pspec && G_IS_PARAM_SPEC_ENUM (pspec))
++    {
++      GEnumValue *value =
++        g_enum_get_value_by_nick (G_PARAM_SPEC_ENUM (pspec)->enum_class,
++                                  "alpha");
++
++      if (value)
++        gegl_node_set (node, "component", value->value, NULL);
++    }
++}
++
++/* in attach we hook into graph adding the needed nodes
++ *
++ * The shadow is a single color, so only its alpha needs blurring: the alpha
++ * of the (grown) input is extracted as a linear Y buffer and blurred alone,
++ * then used as the mask of the color (gegl:opacity aux), which also applies
++ * the shadow opacity.  Blurring the premultiplied color clipped to the input
++ * alpha (src-in) gives the same result, as the color is constant, but blurs
++ * four components instead of one.  The crop restores the bounding box of the
++ * blurred alpha (the color is an infinite plane).
++ */
+ static void
+ attach (GeglOperation *operation)
+ {
+   GeglProperties *o = GEGL_PROPERTIES (operation);
+   GeglNode  *gegl = operation->node;
+-  GeglNode  *input, *output, *over, *translate, *opacity, *grow, *blur, *darken, *color;
++  GeglNode  *input, *output, *over, *translate, *opacity, *grow, *blur, *alpha, *crop, *color;
+   GeglColor *black_color = gegl_color_new ("rgb(0.0,0.0,0.0)");
+ 
+   input     = gegl_node_get_input_proxy (gegl, "input");
+@@ -154,6 +187,7 @@ attach (GeglOperation *operation)
+   over      = gegl_node_new_child (gegl, "operation", "gegl:over", NULL);
+   translate = gegl_node_new_child (gegl, "operation", "gegl:translate", NULL);
+   opacity   = gegl_node_new_child (gegl, "operation", "gegl:opacity", NULL);
++  crop      = gegl_node_new_child (gegl, "operation", "gegl:crop", NULL);
+   blur      = gegl_node_new_child (gegl, "operation", "gegl:gaussian-blur",
+                                          "clip-extent", FALSE,
+                                          "abyss-policy", 0,
+@@ -163,7 +197,9 @@ attach (GeglOperation *operation)
+                                          "alpha-percentile", 100.0,
+                                          "abyss-policy",     GEGL_ABYSS_NONE,
+                                          NULL);
+-  darken    = gegl_node_new_child (gegl, "operation", "gegl:src-in", NULL);
++  alpha     = gegl_node_new_child (gegl, "operation", "gegl:component-extract",
++                                         "linear", TRUE,
++                                         NULL);
+   color     = gegl_node_new_child (gegl, "operation", "gegl:color",
+                                    "value", black_color,
+                                    NULL);
+@@ -171,18 +207,20 @@ attach (GeglOperation *operation)
+   o->user_data = state;
+   state->input = input;
+   state->grow = grow;
+-  state->darken = darken;
++  state->alpha = alpha;
+   state->blur = blur;
+   state->blur_filter = -1;
+ 
++  set_alpha_component (alpha);
+   update_blur_filter (o, state);
+ 
+   g_object_unref (black_color);
+ 
+-  gegl_node_link_many (input, grow, darken, blur, opacity, translate, over, output,
+-                       NULL);
++  gegl_node_link_many (input, grow, alpha, blur, NULL);
++  gegl_node_link_many (color, opacity, crop, translate, over, output, NULL);
++  gegl_node_connect (opacity, "aux", blur, "output");
++  gegl_node_connect (crop, "aux", blur, "output");
+   gegl_node_connect (over, "aux", input, "output");
+-  gegl_node_connect (darken, "aux", color, "output");
+ 
+   gegl_operation_meta_redirect (operation, "grow-shape", grow, "neighborhood");
+   gegl_operation_meta_redirect (operation, "grow-radius", grow, "radius");
+diff --git a/operations/common/inner-glow.c b/operations/common/inner-glow.c
+index 4a9a713..24d5097 100644
+--- a/operations/common/inner-glow.c
++++ b/operations/common/inner-glow.c
+@@ -95,10 +95,40 @@ property_double  (cover, _("Median fix for non-affected pixels on edges"), 60)
+ 
+ #include "gegl-op.h"
+ 
++/* gegl:component-extract's enum type is private to its module, set the
++ * component by nick
++ */
++static void
++set_alpha_component (GeglNode *node)
++{
++  GeglOperation *op    = gegl_node_get_gegl_operation (node);
++  GParamSpec    *pspec = NULL;
++
++  if (op)
++    pspec = g_object_class_find_property (G_OBJECT_GET_CLASS (op),
++                                          "component");
++
++  if (pspec && G_IS_PARAM_SPEC_ENUM (pspec))
++    {
++      GEnumValue *value =
++        g_enum_get_value_by_nick (G_PARAM_SPEC_ENUM (pspec)->enum_class,
++                                  "alpha");
++
++      if (value)
++        gegl_node_set (node, "component", value->value, NULL);
++    }
++}
++
++/* Only the alpha of the blurred, shrunk input is used (by src-out), so the
++ * alpha is extracted as a linear Y buffer and blurred alone instead of the
++ * four components, then turned back into the alpha of an RGBA buffer
++ * (a color masked by it through gegl:opacity aux, cropped to its extent).
++ */
+ static void attach (GeglOperation *operation)
+ {
+   GeglNode *gegl = operation->node;
+   GeglNode *input, *color, *translate, *out, *median, *medianfix, *crop, *opacity, *gaussian,  *output;
++  GeglNode *alpha, *alpha_color, *alpha_mask, *alpha_crop;
+ 
+   input    = gegl_node_get_input_proxy (gegl, "input");
+   output   = gegl_node_get_output_proxy (gegl, "output");
+@@ -142,6 +172,30 @@ static void attach (GeglOperation *operation)
+  out    = gegl_node_new_child (gegl,
+                                   "operation", "gegl:src-out",
+                                   NULL);
++
++ alpha       = gegl_node_new_child (gegl,
++                                    "operation", "gegl:component-extract",
++                                    "linear",    TRUE,
++                                    NULL);
++ set_alpha_component (alpha);
++
++ alpha_color = gegl_node_new_child (gegl,
++                                    "operation", "gegl:color",
++                                    NULL);
++ {
++   GeglColor *black = gegl_color_new ("rgb(0.0,0.0,0.0)");
++
++   gegl_node_set (alpha_color, "value", black, NULL);
++   g_object_unref (black);
++ }
++
++ alpha_mask  = gegl_node_new_child (gegl,
++                                    "operation", "gegl:opacity",
++                                    NULL);
++
++ alpha_crop  = gegl_node_new_child (gegl,
++                                    "operation", "gegl:crop",
++                                    NULL);
+  /* This is meant so inner glow to reach pixels in tight corners */
+ 
+ gegl_operation_meta_redirect (operation, "grow_radius", median, "radius");
+@@ -155,7 +209,10 @@ gegl_operation_meta_redirect (operation, "y", translate, "y");
+ gegl_operation_meta_redirect (operation, "cover", medianfix, "alpha-percentile");
+ 
+ 
+- gegl_node_link_many (input, median, gaussian, translate, out, color, opacity, medianfix, crop, output, NULL);
++ gegl_node_link_many (input, median, alpha, gaussian, NULL);
++ gegl_node_link_many (alpha_color, alpha_mask, alpha_crop, translate, out, color, opacity, medianfix, crop, output, NULL);
++ gegl_node_connect (alpha_mask, "aux", gaussian, "output");
++ gegl_node_connect (alpha_crop, "aux", gaussian, "output");
+  gegl_node_connect (out, "aux", input, "output");
+  gegl_node_connect (crop, "aux", input, "output");
+ 
+-- 
+2.53.0
+

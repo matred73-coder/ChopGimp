@@ -117,10 +117,13 @@ for f in "$SRC/scripts/python/"*.py; do
     install_plugin "$(basename "$f" .py)" "$f"
 done
 
-# 8. Lanceur : nom et description
+# 8. Lanceur : nom et description ; commande « chopgimp » (flatpak/chopgimp-launch.sh :
+#    environnement de performance, mimalloc) au lieu de gimp-3.2
+install -m 755 "$SRC/flatpak/chopgimp-launch.sh" "$DEST/bin/chopgimp"
 DESK="$DEST/share/applications/gimp.desktop"
 if [ -f "$DESK" ]; then
     sed -i -e 's/^Name=.*/Name=ChopGimp/' -e '/^Name\[/d' \
+           -e 's/^Exec=gimp-3\.2 /Exec=chopgimp /' -e 's/^TryExec=.*/TryExec=chopgimp/' \
            -e 's/^GenericName=.*/GenericName=Éditeur d'"'"'images façon Photoshop/' -e '/^GenericName\[/d' \
            -e 's/^Comment=.*/Comment=Retouche d'"'"'images avec une interface familière (basé sur GIMP)/' -e '/^Comment\[/d' \
            "$DESK"

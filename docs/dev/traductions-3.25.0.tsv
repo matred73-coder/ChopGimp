@@ -1,0 +1,649 @@
+gimp30		Start _GtkInspector	Démarrer _GtkInspector	app/actions/debug-actions.c:40
+gimp30		Invalidates the entire projection, measures the time it takes to validate (render) the part that is visible in the active display, and print the result to stdout.	Invalide toute la projection, mesure le temps nécessaire pour valider (rendre) la partie visible dans l’affichage actif, et affiche le résultat sur la sortie standard.	app/actions/debug-actions.c:51
+gimp30		Dump _Attached Data	Afficher les _données attachées	app/actions/debug-actions.c:69
+gimp30	edit-action	Paste as _Floating Data	Coller en tant que données _flottantes	app/actions/edit-actions.c:211
+gimp30		%s...	%s…	app/actions/filters-actions.c:911
+gimp30	layers-action	Select the layers above each currently selected layer. Layers will not be selected outside their current group level.	Sélectionne les calques au-dessus de chaque calque sélectionné. Les calques ne sont pas sélectionnés en dehors de leur niveau de groupe.	app/actions/layers-actions.c:675
+gimp30	layers-action	Select the layers below each currently selected layer. Layers will not be selected outside their current group level.	Sélectionne les calques en dessous de chaque calque sélectionné. Les calques ne sont pas sélectionnés en dehors de leur niveau de groupe.	app/actions/layers-actions.c:683
+gimp30		Cannot delete paths attached to vector layers	Impossible de supprimer des chemins liés à des calques vectoriels	app/actions/paths-commands.c:488
+gimp30	text-tool-action	Paste un_formatted text	Coller le texte sans _mise en forme	app/actions/text-tool-actions.c:65
+gimp30	text-tool-action	Restore On-Canvas Editor Position	Rétablir la position de l’éditeur sur le canevas	app/actions/text-tool-actions.c:116
+gimp30		Experimental multi-display stuff!\nClick OK and have fun crashing GIMP...	Fonctionnalité expérimentale multi-écran !\nCliquez sur Valider et amusez-vous à faire planter GIMP…	app/actions/window-commands.c:88
+gimp30		Can't open display '%s'. Please try another one:	Impossible d’ouvrir l’écran « %s ». Essayez-en un autre :	app/actions/window-commands.c:118
+gimp30	modifier-action	Change brush size in canvas pixels	Modifier la taille de la brosse en pixels du canevas	app/display/display-enums.c:624
+gimp30	modifier-action	Change brush radius' size in canvas pixels	Modifier le rayon de la brosse en pixels du canevas	app/display/display-enums.c:625
+gimp30		Link layers must be rasterized (%s).	Les calques liés doivent être pixellisés (%s).	app/display/gimpdisplayshell-dnd.c:408
+gimp30		Text layers must be rasterized (%s).	Les calques de texte doivent être pixellisés (%s).	app/display/gimpdisplayshell-dnd.c:412
+gimp30		Toggle soft-proofing view when a soft-proofing profile is set\nRight-click to show the soft-proofing options	Activer/désactiver l’épreuve écran lorsqu’un profil d’épreuve est défini\nClic droit pour afficher les options d’épreuve écran	app/display/gimpstatusbar.c:464
+gimp30		Tone Reproduction Curve	Courbe de reproduction des tons	app/operations/gimpcurvesconfig.c:104
+gimp30		Work on linear RGB (this property is ignored; use \"trc\" instead)	Travailler en RVB linéaire (propriété ignorée ; utilisez « trc » à la place)	app/operations/gimplevelsconfig.c:130
+gimp30		Wrong shortcutsrc (%s) file format version: %d (expected: %d). We tried to load shortcuts as well as possible.\n	Version de format du fichier shortcutsrc (%s) incorrecte : %d (attendue : %d). Les raccourcis ont été chargés au mieux.\n	app/menus/shortcuts-rc.c:137
+gimp30		Gain	Gain	app/paint/gimpmybrushoptions.c:128
+gimp30		Adjust strength of input pressure	Ajuster l’intensité de la pression en entrée	app/paint/gimpmybrushoptions.c:129
+gimp30		Amount of expansion	Quantité d’agrandissement	app/paint/gimppaintoptions.c:335
+gimp30		Apply dynamics curves to paint settings	Appliquer les courbes de dynamique aux réglages de peinture	app/paint/gimppaintoptions.c:358
+gimp30		\"Registered\" alignment cannot paint on multiple drawables.	L’alignement « Recalé » ne peut pas peindre sur plusieurs calques.	app/paint/gimpsourcecore.c:158
+gimp30		Invalid markup format in text parasite	Format de balisage non valide dans le parasite de texte	app/text/gimptext-parasite.c:184
+gimp30		Selected layers will be aligned or distributed by the tool	Les calques sélectionnés seront alignés ou répartis par l’outil	app/tools/gimpalignoptions.c:159
+gimp30		Selected paths will be aligned or distributed by the tool	Les chemins sélectionnés seront alignés ou répartis par l’outil	app/tools/gimpalignoptions.c:165
+gimp30		Instead of aligning or distributing on layer borders, use its content bounding box	Au lieu d’aligner ou de répartir selon les bords du calque, utiliser le cadre de son contenu	app/tools/gimpalignoptions.c:171
+gimp30		%s-pick target guides (%s-%s to add more)	%s-clic pour choisir les guides cibles (%s-%s pour en ajouter)	app/tools/gimpalignoptions.c:428
+gimp30		Align anchor points of targets on left edge of reference	Aligner les points d’ancrage des cibles sur le bord gauche de la référence	app/tools/gimpalignoptions.c:487
+gimp30		Align anchor points of targets on right edge of reference	Aligner les points d’ancrage des cibles sur le bord droit de la référence	app/tools/gimpalignoptions.c:495
+gimp30		Align anchor points of targets on top edge of reference	Aligner les points d’ancrage des cibles sur le bord supérieur de la référence	app/tools/gimpalignoptions.c:504
+gimp30		Align anchor points of targets on horizontal middle of reference	Aligner les points d’ancrage des cibles sur le milieu horizontal de la référence	app/tools/gimpalignoptions.c:508
+gimp30		Align anchor points of targets on bottom of reference	Aligner les points d’ancrage des cibles sur le bas de la référence	app/tools/gimpalignoptions.c:512
+gimp30		1 guide will be aligned or distributed	1 guide sera aligné ou réparti | %d guides seront alignés ou répartis	app/tools/gimpalignoptions.c:796
+gimp30		Click on a guide to add it to objects to align, click anywhere else to unselect all guides	Cliquez sur un guide pour l’ajouter aux objets à aligner, cliquez ailleurs pour désélectionner tous les guides	app/tools/gimpaligntool.c:580
+gimp30		Manual closure in fill layer	Fermeture manuelle dans le calque de remplissage	app/tools/gimpbucketfilloptions.c:222
+gimp30		Consider pixels of selected layer and filled with the fill color as line art closure	Considérer les pixels du calque sélectionné remplis de la couleur de remplissage comme fermeture du dessin au trait	app/tools/gimpbucketfilloptions.c:223
+gimp30		Stroke borders	Contourner les bords	app/tools/gimpbucketfilloptions.c:250
+gimp30		Stroke fill borders with last stroke options	Contourner les bords du remplissage avec les dernières options de contour	app/tools/gimpbucketfilloptions.c:251
+gimp30		The tool to stroke the fill borders with	L’outil avec lequel contourner les bords du remplissage	app/tools/gimpbucketfilloptions.c:258
+gimp30		Geometric analysis of the stroke contours to close line arts by splines/segments	Analyse géométrique des contours des traits pour fermer le dessin au trait par des courbes ou des segments	app/tools/gimpbucketfilloptions.c:264
+gimp30		Opaque pixels will be considered as line art instead of low luminance pixels	Les pixels opaques seront considérés comme le dessin au trait au lieu des pixels de faible luminance	app/tools/gimpbucketfilloptions.c:568
+gimp30		No valid source drawable selected	Aucun calque source valide sélectionné	app/tools/gimpbucketfilloptions.c:620
+gimp30		The source drawable has no alpha channel	Le calque source n’a pas de canal alpha	app/tools/gimpbucketfilloptions.c:622
+gimp30		Detect opacity rather than grayscale	Détecter l’opacité plutôt que les niveaux de gris	app/tools/gimpbucketfilloptions.c:765
+gimp30		Line Art Closure	Fermeture du dessin au trait	app/tools/gimpbucketfilloptions.c:775
+gimp30		Fill borders	Remplir les bords	app/tools/gimpbucketfilloptions.c:806
+gimp30		Cannot fill multiple layers. Select only one layer.	Impossible de remplir plusieurs calques. Sélectionnez un seul calque.	app/tools/gimpbucketfilltool.c:627
+gimp30		No selected drawables.	Aucun calque sélectionné.	app/tools/gimpbucketfilltool.c:629
+gimp30		Cannot modify multiple layers. Select only one layer.	Impossible de modifier plusieurs calques. Sélectionnez un seul calque.	app/tools/gimpcagetool.c:229
+gimp30		Source: %d item to itself	Source : %d élément vers lui-même | Source : %d éléments vers eux-mêmes	app/tools/gimpcloneoptions-gui.c:175
+gimp30		Cannot modify multiple drawables. Select only one.	Impossible de modifier plusieurs calques. Sélectionnez-en un seul.	app/tools/gimpcurvestool.c:218
+gimp30		Disabled because filters cannot be merged on vector layers.	Désactivé, car les filtres ne peuvent pas être fusionnés sur les calques vectoriels.	app/tools/gimpfiltertool.c:460
+gimp30		Disabled because filters cannot be merged on link layers.	Désactivé, car les filtres ne peuvent pas être fusionnés sur les calques liés.	app/tools/gimpfiltertool.c:462
+gimp30		Disabled because filters cannot be merged on text layers.	Désactivé, car les filtres ne peuvent pas être fusionnés sur les calques de texte.	app/tools/gimpfiltertool.c:464
+gimp30		Disabled because GEGL Graph is unsafe.\nFor development purpose, set environment variable GIMP_ALLOW_GEGL_GRAPH_LAYER_EFFECT.	Désactivé, car le graphe GEGL n’est pas sûr.\nPour le développement, définissez la variable d’environnement GIMP_ALLOW_GEGL_GRAPH_LAYER_EFFECT.	app/tools/gimpfiltertool.c:466
+gimp30		Cannot paint on multiple drawables. Select only one.	Impossible de peindre sur plusieurs calques. Sélectionnez-en un seul.	app/tools/gimpgradienttool.c:260
+gimp30		No active drawables.	Aucun calque actif.	app/tools/gimpgradienttool.c:262
+gimp30		Show scribbles	Afficher les gribouillis	app/tools/gimppaintselectoptions.c:86
+gimp30		Paint Select Tool: Select objects by painting roughly	Sélection par peinture : sélectionner des objets en peignant grossièrement	app/tools/gimppaintselecttool.c:165
+gimp30		Cannot paint select on multiple layers. Select only one layer.	Impossible de faire une sélection par peinture sur plusieurs calques. Sélectionnez un seul calque.	app/tools/gimppaintselecttool.c:409
+gimp30		The vector layer you picked was rasterized. Editing its path will discard any modifications.	Le calque vectoriel choisi a été pixellisé. Modifier son chemin annulera toutes les modifications.	app/tools/gimppathtool.c:1171
+gimp30		The text layer you picked was rasterized. Editing its text will discard any modifications.	Le calque de texte choisi a été pixellisé. Modifier son texte annulera toutes les modifications.	app/tools/gimptexttool.c:2352
+gimp30		Vector layers must be rasterized (%s).	Les calques vectoriels doivent être pixellisés (%s).	app/tools/gimptool.c:782
+gimp30		Cannot warp multiple layers. Select only one layer.	Impossible de déformer plusieurs calques. Sélectionnez un seul calque.	app/tools/gimpwarptool.c:778
+gimp30		Copy-paste this whole debug data to report to developers	Copiez-collez toutes ces données de débogage pour les signaler aux développeurs	app/widgets/gimpcriticaldialog.c:279
+gimp30		Pad Actions are not supported on your platform yet	Les actions de tablette ne sont pas encore prises en charge sur votre plateforme	app/widgets/gimpdeviceinfoeditor.c:501
+gimp30		Ring %d	Anneau %d	app/widgets/gimpdeviceinfoeditor.c:580
+gimp30		Cannot reorder a filter that is being edited.	Impossible de réordonner un filtre en cours de modification.	app/widgets/gimpdrawabletreeview-filters.c:719
+gimp30		Compute unique colors:	Calculer les couleurs uniques :	app/widgets/gimphistogrameditor.c:242
+gimp30		Click here to set a button's modifiers	Cliquez ici pour définir les modificateurs d’un bouton	app/widgets/gimpmodifierseditor.c:196
+gimp30		Modifiers cannot be customized on the primary button.	Les modificateurs ne peuvent pas être personnalisés sur le bouton principal.	app/widgets/gimpmodifierseditor.c:208
+gimp30		Editing modifiers for button %d of %s	Modification des modificateurs du bouton %d de %s	app/widgets/gimpmodifierseditor.c:356
+gimp30		Editing modifiers for button %d	Modification des modificateurs du bouton %d	app/widgets/gimpmodifierseditor.c:360
+gimp30		Editing modifiers for %s button %d	Modification des modificateurs du bouton %s %d	app/widgets/gimpmodifierseditor.c:664
+gimp30		menu	menu	app/widgets/gimpsearchpopup.c:343
+gimp30		Restore On-Canvas Editor Position	Rétablir la position de l’éditeur sur le canevas	app/widgets/gimptextstyleeditor.c:303
+gimp30		Left-to-Right	De gauche à droite	app/widgets/gimptextstyleeditor.c:473
+gimp30		Right-to-Left	De droite à gauche	app/widgets/gimptextstyleeditor.c:485
+gimp30	filters-action	De_velopment	_Développement	menus/image-menu.ui.in.in:853
+gimp30	filters-action	_Python-Fu	_Python-Fu	menus/image-menu.ui.in.in:858
+gimp30		Tool Path	Chemin de l’outil	app/actions/actions.c:237
+gimp30	channels-action	Channels to Sele_ction	Canaux vers _sélection	app/actions/channels-actions.c:183
+gimp30	channels-action	Replace the selection with selected channels	Remplace la sélection par les canaux sélectionnés	app/actions/channels-actions.c:184
+gimp30	channels-action	_Add Channels to Selection	_Ajouter les canaux à la sélection	app/actions/channels-actions.c:189
+gimp30	channels-action	Add selected channels to the current selection	Ajoute les canaux sélectionnés à la sélection actuelle	app/actions/channels-actions.c:190
+gimp30	channels-action	_Subtract Channels from Selection	S_oustraire les canaux de la sélection	app/actions/channels-actions.c:195
+gimp30	channels-action	Subtract selected channels from the current selection	Soustrait les canaux sélectionnés de la sélection actuelle	app/actions/channels-actions.c:196
+gimp30	channels-action	_Intersect Channels with Selection	_Intersection des canaux avec la sélection	app/actions/channels-actions.c:201
+gimp30	channels-action	Intersect selected channels with the current selection and each other	Intersection des canaux sélectionnés avec la sélection actuelle et entre eux	app/actions/channels-actions.c:202
+gimp30		Channels to selection	Canaux vers sélection	app/actions/channels-commands.c:511
+gimp30	colormap-action	_Delete Color...	_Supprimer la couleur…	app/actions/colormap-actions.c:53
+gimp30	colormap-action	Delete this color	Supprimer cette couleur	app/actions/colormap-actions.c:54
+gimp30		_Memory Profile	Profil _mémoire	app/actions/debug-actions.c:45
+gimp30		Benchmark _Projection	Mesurer la _projection	app/actions/debug-actions.c:50
+gimp30		Show Image _Graph	Afficher le _graphe de l’image	app/actions/debug-actions.c:58
+gimp30		Creates a new image showing the GEGL graph of this image	Crée une nouvelle image montrant le graphe GEGL de cette image	app/actions/debug-actions.c:59
+gimp30		Dump _Keyboard Shortcuts	Afficher les raccourcis _clavier	app/actions/debug-actions.c:64
+gimp30	dialogs-action	Tool _Options Dialog	_Options de l’outil	app/actions/dialogs-actions.c:57
+gimp30	dialogs-action	_Device Status Dialog	État des _périphériques	app/actions/dialogs-actions.c:65
+gimp30	dialogs-action	_Symmetry Painting Dialog	Peinture en _symétrie	app/actions/dialogs-actions.c:73
+gimp30	dialogs-action	_Layers Dialog	_Calques	app/actions/dialogs-actions.c:81
+gimp30	dialogs-action	_Channels Dialog	C_anaux	app/actions/dialogs-actions.c:89
+gimp30	dialogs-action	_Paths Dialog	C_hemins	app/actions/dialogs-actions.c:97
+gimp30	dialogs-action	Color_map Dialog	_Palette des couleurs indexées	app/actions/dialogs-actions.c:105
+gimp30	dialogs-action	Histogra_m Dialog	Histogra_mme	app/actions/dialogs-actions.c:113
+gimp30	dialogs-action	Na_vigation Dialog	Na_vigation	app/actions/dialogs-actions.c:128
+gimp30	dialogs-action	Undo _History Dialog	_Historique	app/actions/dialogs-actions.c:136
+gimp30	dialogs-action	_Pointer Dialog	_Pointeur	app/actions/dialogs-actions.c:192
+gimp30	dialogs-action	_Sample Points Dialog	Points d’_échantillonnage	app/actions/dialogs-actions.c:200
+gimp30	dialogs-action	Colo_rs Dialog	Coule_urs	app/actions/dialogs-actions.c:208
+gimp30	dialogs-action	_Brushes Dialog	_Brosses	app/actions/dialogs-actions.c:216
+gimp30	dialogs-action	Paint D_ynamics Dialog	D_ynamique de la brosse	app/actions/dialogs-actions.c:231
+gimp30	dialogs-action	_MyPaint Brushes Dialog	Brosses _MyPaint	app/actions/dialogs-actions.c:246
+gimp30	dialogs-action	P_atterns Dialog	_Motifs	app/actions/dialogs-actions.c:254
+gimp30	dialogs-action	_Gradients Dialog	_Dégradés	app/actions/dialogs-actions.c:262
+gimp30	dialogs-action	Pal_ettes Dialog	Pal_ettes	app/actions/dialogs-actions.c:277
+gimp30	dialogs-action	Tool Pre_sets Dialog	_Préréglages d’outils	app/actions/dialogs-actions.c:293
+gimp30	dialogs-action	_Fonts Dialog	_Polices	app/actions/dialogs-actions.c:301
+gimp30	dialogs-action	B_uffers Dialog	Presse-p_apiers	app/actions/dialogs-actions.c:309
+gimp30	dialogs-action	_Images Dialog	_Images	app/actions/dialogs-actions.c:317
+gimp30	dialogs-action	Document Histor_y Dialog	Histori_que des documents	app/actions/dialogs-actions.c:325
+gimp30	dialogs-action	_Templates Dialog	Mod_èles	app/actions/dialogs-actions.c:333
+gimp30	dialogs-action	_Input Devices Editor	Périp_hériques d’entrée	app/actions/dialogs-actions.c:370
+gimp30	dialogs-action	_Keyboard Shortcuts Editor	Raccourcis cla_vier	app/actions/dialogs-actions.c:378
+gimp30	dialogs-action	_Modules Dialog	_Modules	app/actions/dialogs-actions.c:386
+gimp30	documents-action	_Open Images	_Ouvrir les images	app/actions/documents-actions.c:42
+gimp30	documents-action	Open the selected entries	Ouvre les éléments sélectionnés	app/actions/documents-actions.c:43
+gimp30	documents-action	Remove _Entries	Supprimer les _entrées	app/actions/documents-actions.c:72
+gimp30	documents-action	Remove the selected entries	Supprime les éléments sélectionnés	app/actions/documents-actions.c:73
+gimp30	drawable-action	Toggle Drawables _Visibility	Activer/désactiver la _visibilité des calques	app/actions/drawable-actions.c:60
+gimp30	drawable-action	L_ock Pixels of Drawables	Verr_ouiller les pixels des calques	app/actions/drawable-actions.c:66
+gimp30	drawable-action	Keep the pixels on selected drawables from being modified	Empêche toute modification des pixels des calques sélectionnés	app/actions/drawable-actions.c:68
+gimp30	drawable-action	L_ock Position of Drawables	Verrouiller la _position des calques	app/actions/drawable-actions.c:74
+gimp30	drawable-action	Keep the position on selected drawables from being modified	Empêche toute modification de la position des calques sélectionnés	app/actions/drawable-actions.c:76
+gimp30		Equalize	Égaliser	app/actions/drawable-commands.c:61
+gimp30		Lock/Unlock content	Verrouiller/déverrouiller le contenu	app/actions/drawable-commands.c:244
+gimp30		Lock/Unlock position	Verrouiller/déverrouiller la position	app/actions/drawable-commands.c:312
+gimp30		Flip Drawables	Retourner les calques	app/actions/drawable-commands.c:346
+gimp30		Rotate Drawables	Faire pivoter les calques	app/actions/drawable-commands.c:400
+gimp30	edit-action	Paste as _New Image	Coller comme _nouvelle image	app/actions/edit-actions.c:128
+gimp30	edit-action	_Paste as Single Layer	_Coller en un seul calque	app/actions/edit-actions.c:183
+gimp30	edit-action	Paste the content of the clipboard as a single layer	Colle le contenu du presse-papiers en un seul calque	app/actions/edit-actions.c:184
+gimp30	edit-action	Paste as Single Layer In P_lace	Coller en un seul calque sur p_lace	app/actions/edit-actions.c:189
+gimp30	edit-action	Paste the content of the clipboard at its original position as a single layer	Colle le contenu du presse-papiers à sa position d’origine, en un seul calque	app/actions/edit-actions.c:191
+gimp30	edit-action	Paste as Floating Data _Into Selection	Coller en données flottantes _dans la sélection	app/actions/edit-actions.c:196
+gimp30	edit-action	Paste as Floating Data Int_o Selection In Place	Coller en données flottantes dans la sélecti_on, sur place	app/actions/edit-actions.c:203
+gimp30	edit-action	Paste the content of the clipboard as Floating Data	Colle le contenu du presse-papiers en tant que données flottantes	app/actions/edit-actions.c:212
+gimp30	edit-action	Paste as Floa_ting Data In Place	Coller en données flottan_tes sur place	app/actions/edit-actions.c:217
+gimp30	edit-action	Paste the content of the clipboard as Floating Data at its original position	Colle le contenu du presse-papiers en tant que données flottantes, à sa position d’origine	app/actions/edit-actions.c:218
+gimp30		Pasted as new layer because the target is not a single layer or layer mask.	Collé dans un nouveau calque, car la cible n’est pas un calque ou un masque de calque unique.	app/actions/edit-commands.c:862
+gimp30	file-action	Open an image file as Link layer	Ouvre un fichier image en tant que calque lié	app/actions/file-actions.c:87
+gimp30		Open \"%s\"	Ouvrir « %s »	app/actions/file-actions.c:403
+gimp30		Open Image as Link Layer	Ouvrir une image en tant que calque lié	app/actions/file-commands.c:165
+gimp30	filters-action	_Laplace...	_Laplace…	app/actions/filters-actions.c:319
+gimp30	gradient-editor-action	Flip	Retourner	app/actions/gradient-editor-actions.c:77
+gimp30	gradient-editor-action	Replicate	Dupliquer	app/actions/gradient-editor-actions.c:82
+gimp30	gradient-editor-action	Split Midpoint	Couper au point médian	app/actions/gradient-editor-actions.c:87
+gimp30	gradient-editor-action	Split Uniformly	Couper uniformément	app/actions/gradient-editor-actions.c:92
+gimp30	gradient-editor-action	Delete	Supprimer	app/actions/gradient-editor-actions.c:97
+gimp30	gradient-editor-action	Recenter	Recentrer	app/actions/gradient-editor-actions.c:102
+gimp30	gradient-editor-action	Redistribute	Redistribuer	app/actions/gradient-editor-actions.c:107
+gimp30	image-action	_Soft-proof Profile...	Profil d’é_preuve écran…	app/actions/image-actions.c:85
+gimp30	image-action	Set the soft-proofing profile	Définir le profil d’épreuve écran	app/actions/image-actions.c:86
+gimp30	image-action	_Black Point Compensation	Compensation du point _noir	app/actions/image-actions.c:175
+gimp30	image-action	Use black point compensation for soft-proofing	Utiliser la compensation du point noir pour l’épreuve écran	app/actions/image-actions.c:176
+gimp30	image-convert-action	8-bit integer	Entier 8 bits	app/actions/image-actions.c:203
+gimp30	image-convert-action	Convert the image to 8-bit integer	Convertit l’image en entier 8 bits	app/actions/image-actions.c:205
+gimp30	image-convert-action	16-bit integer	Entier 16 bits	app/actions/image-actions.c:209
+gimp30	image-convert-action	Convert the image to 16-bit integer	Convertit l’image en entier 16 bits	app/actions/image-actions.c:211
+gimp30	image-convert-action	32-bit integer	Entier 32 bits	app/actions/image-actions.c:215
+gimp30	image-convert-action	Convert the image to 32-bit integer	Convertit l’image en entier 32 bits	app/actions/image-actions.c:217
+gimp30	image-convert-action	16-bit floating point	Virgule flottante 16 bits	app/actions/image-actions.c:221
+gimp30	image-convert-action	Convert the image to 16-bit floating point	Convertit l’image en virgule flottante 16 bits	app/actions/image-actions.c:223
+gimp30	image-convert-action	32-bit floating point	Virgule flottante 32 bits	app/actions/image-actions.c:227
+gimp30	image-convert-action	Convert the image to 32-bit floating point	Convertit l’image en virgule flottante 32 bits	app/actions/image-actions.c:229
+gimp30	image-convert-action	64-bit floating point	Virgule flottante 64 bits	app/actions/image-actions.c:233
+gimp30	image-convert-action	Convert the image to 64-bit floating point	Convertit l’image en virgule flottante 64 bits	app/actions/image-actions.c:235
+gimp30	image-action	_Perceptual	_Perceptuel	app/actions/image-actions.c:299
+gimp30	image-action	Soft-proofing rendering intent is perceptual	Le mode de rendu de l’épreuve écran est perceptuel	app/actions/image-actions.c:300
+gimp30	image-action	_Relative Colorimetric	Colorimétrique _relatif	app/actions/image-actions.c:305
+gimp30	image-action	Soft-proofing rendering intent is relative colorimetric	Le mode de rendu de l’épreuve écran est colorimétrique relatif	app/actions/image-actions.c:306
+gimp30	image-action	_Saturation	_Saturation	app/actions/image-actions.c:311
+gimp30	image-action	Soft-proofing rendering intent is saturation	Le mode de rendu de l’épreuve écran est saturation	app/actions/image-actions.c:312
+gimp30	image-action	_Absolute Colorimetric	Colorimétrique _absolu	app/actions/image-actions.c:317
+gimp30	image-action	Soft-proofing rendering intent is absolute colorimetric	Le mode de rendu de l’épreuve écran est colorimétrique absolu	app/actions/image-actions.c:318
+gimp30		There are no selected items to fill.	Aucun élément sélectionné à remplir.	app/actions/items-commands.c:276
+gimp30	layers-action	Edit Te_xt on Canvas	Modifier le te_xte sur le canevas	app/actions/layers-actions.c:62
+gimp30	layers-action	Edit Vector on Canvas	Modifier le vecteur sur le canevas	app/actions/layers-actions.c:68
+gimp30	layers-action	Activate the path tool on this vector layer	Activer l’outil Chemins sur ce calque vectoriel	app/actions/layers-actions.c:69
+gimp30	layers-action	D_uplicate Layers	D_upliquer les calques	app/actions/layers-actions.c:105
+gimp30	layers-action	_Raise Layers	_Monter les calques	app/actions/layers-actions.c:118
+gimp30	layers-action	Raise the selected layers one step in the layer stack	Monte les calques sélectionnés d’un rang dans la pile des calques	app/actions/layers-actions.c:119
+gimp30	layers-action	Layers to _Top	Calques au premier _plan	app/actions/layers-actions.c:124
+gimp30	layers-action	Move the selected layers to the top of the layer stack	Place les calques sélectionnés tout en haut de la pile des calques	app/actions/layers-actions.c:125
+gimp30	layers-action	_Lower Layers	_Descendre les calques	app/actions/layers-actions.c:130
+gimp30	layers-action	Lower the selected layers one step in the layer stack	Descend les calques sélectionnés d’un rang dans la pile des calques	app/actions/layers-actions.c:131
+gimp30	layers-action	Layers to _Bottom	Calques à l’arrière-pl_an	app/actions/layers-actions.c:136
+gimp30	layers-action	Move the selected layers to the bottom of the layer stack	Place les calques sélectionnés tout en bas de la pile des calques	app/actions/layers-actions.c:137
+gimp30	layers-action	_Anchor Floating Layer or Mask	_Ancrer le calque ou le masque flottant	app/actions/layers-actions.c:142
+gimp30	layers-action	Anchor the floating layer or mask	Ancre le calque ou le masque flottant	app/actions/layers-actions.c:143
+gimp30	layers-action	_Rasterize	_Pixelliser	app/actions/layers-actions.c:187
+gimp30	layers-action	Turn selected text, link or vector layers into raster layers	Transforme les calques de texte, liés ou vectoriels sélectionnés en calques de pixels	app/actions/layers-actions.c:188
+gimp30	layers-action	_Revert Rasterize	_Annuler la pixellisation	app/actions/layers-actions.c:193
+gimp30	layers-action	Turn rasterized layers back into text, link or vector layers	Retransforme les calques pixellisés en calques de texte, liés ou vectoriels	app/actions/layers-actions.c:194
+gimp30	layers-action	Create paths from text layers	Crée des chemins à partir des calques de texte	app/actions/layers-actions.c:200
+gimp30	layers-action	_Resize Layers to Selection	_Redimensionner les calques à la sélection	app/actions/layers-actions.c:229
+gimp30	layers-action	Resize the layers to the extents of the selection	Redimensionne les calques aux limites de la sélection	app/actions/layers-actions.c:230
+gimp30	layers-action	Crop Layers to C_ontent	Recadrer les calques selon le c_ontenu	app/actions/layers-actions.c:235
+gimp30	layers-action	Add La_yer Masks with Last Values	Ajouter des masques de calque avec les _dernières valeurs	app/actions/layers-actions.c:258
+gimp30	layers-action	Dismiss the effect of the layer masks	Annule l’effet des masques de calque	app/actions/layers-actions.c:315
+gimp30	layers-action	RGB (from color profile)	RVB (selon le profil colorimétrique)	app/actions/layers-actions.c:362
+gimp30	layers-action	Layer Blend Space: RGB (from color profile)	Espace de fusion du calque : RVB (selon le profil colorimétrique)	app/actions/layers-actions.c:363
+gimp30	layers-action	Layer Composite Space: RGB (from color profile)	Espace composite du calque : RVB (selon le profil colorimétrique)	app/actions/layers-actions.c:390
+gimp30	layers-action	Apply Layer _Masks	Appliquer les _masques de calque	app/actions/layers-actions.c:588
+gimp30	layers-action	Apply the effect of the layer masks and remove them	Applique l’effet des masques de calque et les supprime	app/actions/layers-actions.c:589
+gimp30	layers-action	Delete Layer Mas_ks	Supprimer les mas_ques de calque	app/actions/layers-actions.c:594
+gimp30	layers-action	Select Previous Layers (flattened view)	Sélectionner les calques précédents (vue aplatie)	app/actions/layers-actions.c:689
+gimp30	layers-action	Select the layers above each currently selected layer	Sélectionne les calques au-dessus de chaque calque sélectionné	app/actions/layers-actions.c:690
+gimp30	layers-action	Select Next Layers (flattened view)	Sélectionner les calques suivants (vue aplatie)	app/actions/layers-actions.c:695
+gimp30	layers-action	Select the layers below each currently selected layer	Sélectionne les calques en dessous de chaque calque sélectionné	app/actions/layers-actions.c:696
+gimp30		Cannot merge a pass through layer group.	Impossible de fusionner un groupe de calques en mode Traverser.	app/actions/layers-commands.c:1138
+gimp30		Rasterize Layers	Pixelliser les calques	app/actions/layers-commands.c:1239
+gimp30		Revert Rasterize	Annuler la pixellisation	app/actions/layers-commands.c:1262
+gimp30		Add Paths	Ajouter des chemins	app/actions/layers-commands.c:1286
+gimp30	paths-action	D_uplicate Paths	D_upliquer les chemins	app/actions/paths-actions.c:70
+gimp30	paths-action	Duplicate these paths	Duplique ces chemins	app/actions/paths-actions.c:71
+gimp30	paths-action	_Delete Paths	_Supprimer les chemins	app/actions/paths-actions.c:76
+gimp30	paths-action	Delete the selected paths	Supprime les chemins sélectionnés	app/actions/paths-actions.c:77
+gimp30	paths-action	_Raise Paths	_Monter les chemins	app/actions/paths-actions.c:87
+gimp30	paths-action	Raise the selected paths	Monte les chemins sélectionnés	app/actions/paths-actions.c:88
+gimp30	paths-action	Raise Paths to _Top	Chemins tout en _haut	app/actions/paths-actions.c:93
+gimp30	paths-action	Raise the selected paths to the top	Place les chemins sélectionnés tout en haut	app/actions/paths-actions.c:94
+gimp30	paths-action	_Lower Paths	_Descendre les chemins	app/actions/paths-actions.c:99
+gimp30	paths-action	Lower the selected paths	Descend les chemins sélectionnés	app/actions/paths-actions.c:100
+gimp30	paths-action	Lower Paths to _Bottom	Chemins tout en _bas	app/actions/paths-actions.c:105
+gimp30	paths-action	Lower the selected paths to the bottom	Place les chemins sélectionnés tout en bas	app/actions/paths-actions.c:106
+gimp30	paths-action	Fill Pat_hs...	Remplir les c_hemins…	app/actions/paths-actions.c:111
+gimp30	paths-action	Fill the paths	Remplit les chemins	app/actions/paths-actions.c:112
+gimp30	paths-action	Fill Paths	Remplir les chemins	app/actions/paths-actions.c:117
+gimp30	paths-action	Fill the paths with last values	Remplit les chemins avec les dernières valeurs	app/actions/paths-actions.c:118
+gimp30	paths-action	Stro_ke Paths...	_Tracer les chemins…	app/actions/paths-actions.c:123
+gimp30	paths-action	Paint along the paths	Peint le long des chemins	app/actions/paths-actions.c:124
+gimp30	paths-action	Stro_ke Paths	_Tracer les chemins	app/actions/paths-actions.c:129
+gimp30	paths-action	Paint along the paths with last values	Peint le long des chemins avec les dernières valeurs	app/actions/paths-actions.c:130
+gimp30	paths-action	Co_py Paths	Co_pier les chemins	app/actions/paths-actions.c:135
+gimp30	paths-action	E_xport Paths...	E_xporter les chemins…	app/actions/paths-actions.c:145
+gimp30	paths-action	Path to Vector Layer	Chemin vers calque vectoriel	app/actions/paths-actions.c:155
+gimp30	paths-action	Paths to Sele_ction	Chemins vers _sélection	app/actions/paths-actions.c:241
+gimp30	paths-action	Selection Fr_om Paths	Sélection depuis les ch_emins	app/actions/paths-actions.c:247
+gimp30	paths-action	Replace selection with paths	Remplace la sélection par les chemins	app/actions/paths-actions.c:248
+gimp30	paths-action	_Add Paths to Selection	_Ajouter les chemins à la sélection	app/actions/paths-actions.c:253
+gimp30	paths-action	Add paths to selection	Ajoute les chemins à la sélection	app/actions/paths-actions.c:254
+gimp30	paths-action	_Subtract Paths from Selection	S_oustraire les chemins de la sélection	app/actions/paths-actions.c:259
+gimp30	paths-action	Subtract paths from selection	Soustrait les chemins de la sélection	app/actions/paths-actions.c:260
+gimp30	paths-action	_Intersect Paths with Selection	_Intersection des chemins avec la sélection	app/actions/paths-actions.c:265
+gimp30	paths-action	Intersect paths with selection	Intersection des chemins avec la sélection	app/actions/paths-actions.c:266
+gimp30	paths-action	Select the path below the current path	Sélectionne le chemin en dessous du chemin actuel	app/actions/paths-actions.c:309
+gimp30		Raise Path	Monter le chemin | Monter les chemins	app/actions/paths-commands.c:288
+gimp30		Raise Path to Top	Chemin tout en haut | Chemins tout en haut	app/actions/paths-commands.c:326
+gimp30		Lower Path	Descendre le chemin | Descendre les chemins	app/actions/paths-commands.c:373
+gimp30		Lower Path to Bottom	Chemin tout en bas | Chemins tout en bas	app/actions/paths-commands.c:413
+gimp30		Duplicate Paths	Dupliquer les chemins	app/actions/paths-commands.c:443
+gimp30		Remove Paths	Supprimer les chemins	app/actions/paths-commands.c:499
+gimp30		Cannot merge paths attached to vector layers	Impossible de fusionner des chemins liés à des calques vectoriels	app/actions/paths-commands.c:535
+gimp30		Paths to selection	Chemins vers sélection	app/actions/paths-commands.c:589
+gimp30	select-action	Cu_t and Float	Cou_per et rendre flottant	app/actions/select-actions.c:62
+gimp30	select-action	Cut the selection directly into a floating selection	Coupe la sélection directement dans une sélection flottante	app/actions/select-actions.c:63
+gimp30	select-action	_Copy and Float	_Copier et rendre flottant	app/actions/select-actions.c:68
+gimp30	select-action	Copy the selection directly into a floating selection	Copie la sélection directement dans une sélection flottante	app/actions/select-actions.c:69
+gimp30	text-tool-action	_Bold	_Gras	app/actions/text-tool-actions.c:71
+gimp30	text-tool-action	_Italic	_Italique	app/actions/text-tool-actions.c:76
+gimp30	text-tool-action	_Underline	_Souligné	app/actions/text-tool-actions.c:81
+gimp30	text-tool-action	Text to _Path	Texte vers _chemin	app/actions/text-tool-actions.c:102
+gimp30		Text along path failed: %s	Échec du texte le long du chemin : %s	app/actions/text-tool-commands.c:231
+gimp30	tool-path-action	_Delete Anchor	_Supprimer l’ancre	app/actions/tool-path-actions.c:45
+gimp30	tool-path-action	Shift S_tart	Décaler le _départ	app/actions/tool-path-actions.c:49
+gimp30	tool-path-action	_Insert Anchor	_Insérer une ancre	app/actions/tool-path-actions.c:54
+gimp30	tool-path-action	Delete _Segment	Supprimer le _segment	app/actions/tool-path-actions.c:58
+gimp30	tool-path-action	_Reverse Stroke	_Inverser le tracé	app/actions/tool-path-actions.c:62
+gimp30	tools-action	Activate _Last Tool	Activer le _dernier outil	app/actions/tools-actions.c:48
+gimp30	tools-action	Switch back to the last activated tool	Revient au dernier outil activé	app/actions/tools-actions.c:49
+gimp30		Activate tool \"%s\"	Activer l’outil « %s »	app/actions/tools-actions.c:900
+gimp30	view-zoom-action	Zoom 16:1 (1600%)	Zoom 16:1 (1600 %)	app/actions/view-actions.c:393
+gimp30	view-zoom-action	Zoom 8:1 (800%)	Zoom 8:1 (800 %)	app/actions/view-actions.c:401
+gimp30	view-zoom-action	Zoom 4:1 (400%)	Zoom 4:1 (400 %)	app/actions/view-actions.c:409
+gimp30	view-zoom-action	Zoom 2:1 (200%)	Zoom 2:1 (200 %)	app/actions/view-actions.c:417
+gimp30	view-zoom-action	Zoom 1:1 (100%)	Zoom 1:1 (100 %)	app/actions/view-actions.c:425
+gimp30	view-zoom-action	Zoom 1:2 (50%)	Zoom 1:2 (50 %)	app/actions/view-actions.c:433
+gimp30	view-zoom-action	Zoom 1:4 (25%)	Zoom 1:4 (25 %)	app/actions/view-actions.c:441
+gimp30	view-zoom-action	Zoom 1:8 (12.5%)	Zoom 1:8 (12,5 %)	app/actions/view-actions.c:449
+gimp30	view-zoom-action	Zoom 1:16 (6.25%)	Zoom 1:16 (6,25 %)	app/actions/view-actions.c:457
+gimp30	view-action	Display Rotation Absolute Angle Set	Définir l’angle absolu de rotation de l’affichage	app/actions/view-actions.c:493
+gimp30		_Zoom (%.0f%%)	_Zoom (%.0f %%)	app/actions/view-actions.c:1025
+gimp30		_Zoom (%.2f%%)	_Zoom (%.2f %%)	app/actions/view-actions.c:1027
+gimp30		Open Display	Ouvrir un écran	app/actions/window-commands.c:73
+gimp30		Please enter the name of the new display:	Saisissez le nom du nouvel écran :	app/actions/window-commands.c:92
+gimp30		Show \"%s-%d.%d\"	Afficher « %s-%d.%d »	app/actions/windows-actions.c:639
+gimp30		Switch to the first image view: %1$s	Basculer vers la première vue de l’image : %1$s | Basculer vers la vue de l’image %2$d : %1$s	app/actions/windows-actions.c:718
+gimp30		Remove filter	Supprimer le filtre	app/core/gimpimage.c:2114
+gimp30	path-mode	Design	Conception	app/display/display-enums.c:544
+gimp30	path-mode	Edit	Édition	app/display/display-enums.c:545
+gimp30	path-mode	Move	Déplacement	app/display/display-enums.c:546
+gimp30	modifier-action	No action	Aucune action	app/display/display-enums.c:616
+gimp30	modifier-action	Pan	Faire défiler	app/display/display-enums.c:617
+gimp30	modifier-action	Zoom	Zoom	app/display/display-enums.c:618
+gimp30	modifier-action	Rotate View	Faire pivoter la vue	app/display/display-enums.c:619
+gimp30	modifier-action	Rotate View by 15 degree steps	Faire pivoter la vue par pas de 15 degrés	app/display/display-enums.c:620
+gimp30	modifier-action	Pick a layer	Choisir un calque	app/display/display-enums.c:621
+gimp30	modifier-action	Display the menu	Afficher le menu	app/display/display-enums.c:622
+gimp30	modifier-action	Custom action	Action personnalisée	app/display/display-enums.c:623
+gimp30	modifier-action	Change tool opacity	Modifier l’opacité de l’outil	app/display/display-enums.c:626
+gimp30		Layer > Rasterize	Calque > Pixelliser	app/display/gimpdisplayshell-dnd.c:404
+gimp30		Custom Zoom (%s)...	Zoom personnalisé (%s)…	app/display/gimpdisplayshell-scale-dialog.c:251
+gimp30		invalid value '%s' for contextual action	valeur « %s » non valide pour l’action contextuelle	app/display/gimpmodifiersmanager.c:232
+gimp30		Cancel	Annuler	app/display/gimpstatusbar.c:427
+gimp30		_Proof Colors	Épreuve _écran	app/display/gimpstatusbar.c:495
+gimp30		Current Soft-Proofing Profile	Profil d’épreuve écran actuel	app/display/gimpstatusbar.c:508
+gimp30		Soft-Proofing Profile	Profil d’épreuve écran	app/display/gimpstatusbar.c:522
+gimp30		_Soft-proofing Profile: 	_Profil d’épreuve écran : 	app/display/gimpstatusbar.c:531
+gimp30		Perceptual	Perceptuel	app/display/gimpstatusbar.c:540
+gimp30		Relative Colorimetric	Colorimétrique relatif	app/display/gimpstatusbar.c:541
+gimp30		Absolute Colorimetric	Colorimétrique absolu	app/display/gimpstatusbar.c:543
+gimp30		_Rendering Intent: 	Mode de _rendu : 	app/display/gimpstatusbar.c:550
+gimp30		Use _Black Point Compensation	Utiliser la compensation du point _noir	app/display/gimpstatusbar.c:559
+gimp30		O_ptimize soft-proofing for: 	O_ptimiser l’épreuve écran pour : 	app/display/gimpstatusbar.c:578
+gimp30		_Mark Out of Gamut Colors	_Indiquer les couleurs hors gamme	app/display/gimpstatusbar.c:587
+gimp30	layer-color-space	RGB (from color profile)	RVB (selon le profil colorimétrique)	app/operations/operations-enums.c:29
+gimp30	layer-mode	Overwrite	Écraser	app/operations/operations-enums.c:292
+gimp30		Work on linear or perceptual RGB, or following the image's TRC	Travailler en RVB linéaire ou perceptuel, ou selon la courbe de reproduction des tons de l’image	app/operations/gimpcurvesconfig.c:105
+gimp30		Color Balance	Balance des couleurs	app/operations/gimpoperationcolorbalance.c:65
+gimp30		Colorize	Colorier	app/operations/gimpoperationcolorize.c:92
+gimp30		Desaturate	Désaturer	app/operations/gimpoperationdesaturate.c:85
+gimp30		Hue-Saturation	Teinte-Saturation	app/operations/gimpoperationhuesaturation.c:65
+gimp30		Posterize	Postériser	app/operations/gimpoperationposterize.c:84
+gimp30		Semi-Flatten	Semi-aplatir	app/operations/gimpoperationsemiflatten.c:82
+gimp30		Threshold Alpha	Seuil alpha	app/operations/gimpoperationthresholdalpha.c:78
+gimp30		View Zoom	Zoom de la vue	app/paint/gimpmybrushoptions.c:93
+gimp30		View Rotation	Rotation de la vue	app/paint/gimpmybrushoptions.c:100
+gimp30		Expand Layers	Agrandir les calques	app/paint/gimppaintoptions.c:327
+gimp30		Expand active layer as you paint	Agrandit le calque actif pendant que vous peignez	app/paint/gimppaintoptions.c:328
+gimp30		Fill layer with	Remplir le calque avec	app/paint/gimppaintoptions.c:342
+gimp30		Fill Mask With	Remplir le masque avec	app/paint/gimppaintoptions.c:349
+gimp30		Fill layer mask with	Remplir le masque de calque avec	app/paint/gimppaintoptions.c:350
+gimp30		Vector Layer	Calque vectoriel	app/path/gimpvectorlayer.c:184
+gimp30		Rename Vector Layer	Renommer le calque vectoriel	app/path/gimpvectorlayer.c:197
+gimp30		Move Vector Layer	Déplacer le calque vectoriel	app/path/gimpvectorlayer.c:198
+gimp30		Scale Vector Layer	Mettre à l’échelle le calque vectoriel	app/path/gimpvectorlayer.c:199
+gimp30		Resize Vector Layer	Redimensionner le calque vectoriel	app/path/gimpvectorlayer.c:200
+gimp30		Flip Vector Layer	Retourner le calque vectoriel	app/path/gimpvectorlayer.c:201
+gimp30		Rotate Vector Layer	Faire pivoter le calque vectoriel	app/path/gimpvectorlayer.c:202
+gimp30		Transform Vector Layer	Transformer le calque vectoriel	app/path/gimpvectorlayer.c:203
+gimp30		Discard Vector Information	Abandonner les informations vectorielles	app/path/gimpvectorlayer.c:619
+gimp30		Change Vector Layer Path	Modifier le chemin du calque vectoriel	app/path/gimpvectorlayer.c:712
+gimp30		Fill Style	Style de remplissage	app/path/gimpvectorlayeroptions.c:121
+gimp30		Stroke Style	Style de contour	app/path/gimpvectorlayeroptions.c:133
+gimp30		Red Channel	Canal rouge	app/propgui/gimppropgui-channel-mixer.c:63
+gimp30		Green Channel	Canal vert	app/propgui/gimppropgui-channel-mixer.c:84
+gimp30		Blue Channel	Canal bleu	app/propgui/gimppropgui-channel-mixer.c:105
+gimp30		Some fonts failed to load:%s	Certaines polices n’ont pas pu être chargées :%s	app/text/gimpfontfactory.c:498
+gimp30		Reference object targets will be aligned on	Les cibles seront alignées sur cet objet de référence	app/tools/gimpalignoptions.c:151
+gimp30		Selected layers	Calques sélectionnés	app/tools/gimpalignoptions.c:158
+gimp30		Selected paths	Chemins sélectionnés	app/tools/gimpalignoptions.c:164
+gimp30		Use extents of layer contents	Utiliser les limites du contenu des calques	app/tools/gimpalignoptions.c:170
+gimp30		Targets	Cibles	app/tools/gimpalignoptions.c:387
+gimp30		Set anchor point of targets	Définir le point d’ancrage des cibles	app/tools/gimpalignoptions.c:409
+gimp30		Select the reference object	Sélectionner l’objet de référence	app/tools/gimpalignoptions.c:469
+gimp30		Align anchor points of targets on vertical middle of reference	Aligner les points d’ancrage des cibles sur le milieu vertical de la référence	app/tools/gimpalignoptions.c:491
+gimp30		Distribute anchor points of targets evenly in the horizontal	Répartir uniformément les points d’ancrage des cibles à l’horizontale	app/tools/gimpalignoptions.c:530
+gimp30		Distribute horizontally with even horizontal gaps	Répartir horizontalement avec des espaces égaux	app/tools/gimpalignoptions.c:533
+gimp30		Distribute anchor points of targets evenly in the vertical	Répartir uniformément les points d’ancrage des cibles à la verticale	app/tools/gimpalignoptions.c:542
+gimp30		Distribute vertically with even vertical gaps	Répartir verticalement avec des espaces égaux	app/tools/gimpalignoptions.c:545
+gimp30		Reference layer: %s	Calque de référence : %s	app/tools/gimpalignoptions.c:822
+gimp30		Reference channel: %s	Canal de référence : %s	app/tools/gimpalignoptions.c:825
+gimp30		Reference path: %s	Chemin de référence : %s	app/tools/gimpalignoptions.c:828
+gimp30		Reference guide	Guide de référence	app/tools/gimpalignoptions.c:831
+gimp30		Align and Distribute	Aligner et répartir	app/tools/gimpaligntool.c:132
+gimp30		_Align and Distribute	_Aligner et répartir	app/tools/gimpaligntool.c:134
+gimp30		Arrange Objects	Disposer les objets	app/tools/gimpaligntool.c:530
+gimp30		Click on a layer, path or guide, or Click-Drag to pick a reference	Cliquez sur un calque, un chemin ou un guide, ou cliquez-glissez pour choisir une référence	app/tools/gimpaligntool.c:561
+gimp30		Click to pick this layer as reference	Cliquez pour choisir ce calque comme référence	app/tools/gimpaligntool.c:565
+gimp30		Click to pick this guide as reference	Cliquez pour choisir ce guide comme référence	app/tools/gimpaligntool.c:568
+gimp30		Click to pick this path as reference	Cliquez pour choisir ce chemin comme référence	app/tools/gimpaligntool.c:573
+gimp30		Click to select this guide for alignment	Cliquez pour sélectionner ce guide pour l’alignement	app/tools/gimpaligntool.c:584
+gimp30		Click to add this guide to the list of objects to align	Cliquez pour ajouter ce guide à la liste des objets à aligner	app/tools/gimpaligntool.c:589
+gimp30		A selected path's position is locked.	La position d’un chemin sélectionné est verrouillée.	app/tools/gimpeditselectiontool.c:1298
+gimp30		A selected channel's position is locked.	La position d’un canal sélectionné est verrouillée.	app/tools/gimpeditselectiontool.c:1336
+gimp30		Disabled because this filter depends on another image.	Désactivé, car ce filtre dépend d’une autre image.	app/tools/gimpfiltertool.c:458
+gimp30		Edit filter	Modifier le filtre	app/tools/gimpfiltertool.c:1288
+gimp30		Editing '%s'...	Modification de « %s »…	app/tools/gimpfiltertool.c:2247
+gimp30	measurement	Levels	Niveaux	app/tools/gimpforegroundselectoptions.c:132
+gimp30		Fill Layer Mask With	Remplir le masque de calque avec	app/tools/gimpinkoptions-gui.c:147
+gimp30		_Scissors Select	_Ciseaux intelligents	app/tools/gimpiscissorstool.c:294
+gimp30		Enable Fill	Activer le remplissage	app/tools/gimppathoptions.c:138
+gimp30		Enable Stroke	Activer le contour	app/tools/gimppathoptions.c:144
+gimp30		Create New Vector Layer	Créer un nouveau calque vectoriel	app/tools/gimppathoptions.c:625
+gimp30		Create Vector Layer from Path	Créer un calque vectoriel à partir du chemin	app/tools/gimppathtool.c:790
+gimp30		Add Vector Layer	Ajouter un calque vectoriel	app/tools/gimppathtool.c:907
+gimp30		Confirm Path Editing	Confirmer la modification du chemin	app/tools/gimppathtool.c:1140
+gimp30		_Edit Anyway	_Modifier quand même	app/tools/gimppathtool.c:1149
+gimp30		Use editor window	Utiliser la fenêtre d’édition	app/tools/gimptextoptions.c:251
+gimp30		Show on-canvas editor	Afficher l’éditeur sur le canevas	app/tools/gimptextoptions.c:258
+gimp30		Show on-canvas text editor	Afficher l’éditeur de texte sur le canevas	app/tools/gimptextoptions.c:259
+gimp30		Outline width	Épaisseur du contour	app/tools/gimptextoptions.c:301
+gimp30		Adjust outline width	Ajuster l’épaisseur du contour	app/tools/gimptextoptions.c:302
+gimp30		Outline width unit	Unité de l’épaisseur du contour	app/tools/gimptextoptions.c:309
+gimp30		Outline miter limit	Limite de raccord en pointe du contour	app/tools/gimptextoptions.c:329
+gimp30		Style:	Style :	app/tools/gimptextoptions.c:874
+gimp30		Outline Options	Options du contour	app/tools/gimptextoptions.c:878
+gimp30		Outline Direction:	Direction du contour :	app/tools/gimptextoptions.c:895
+gimp30		sRGB+A (%0.3f, %0.3f, %0.3f, %0.3f)	sRVB+A (%0.3f, %0.3f, %0.3f, %0.3f)	app/widgets/gimpactiongroup.c:1200
+gimp30	Color	Profile:	Profil :	app/widgets/gimpcolorframe.c:882
+gimp30		%s	%s	app/widgets/gimpcolorframe.c:889
+gimp30	Color	No Profile	Aucun profil	app/widgets/gimpcolorframe.c:917
+gimp30		The color is used in this indexed image	La couleur est utilisée dans cette image indexée	app/widgets/gimpcolormapeditor.c:473
+gimp30		HTML notation (sRGB):	Notation HTML (sRVB) :	app/widgets/gimpcolormapselection.c:249
+gimp30		Input Controller	Contrôleur d’entrée	app/widgets/gimpcontrollerinfo.c:110
+gimp30		Pad actions	Actions de la tablette	app/widgets/gimpdeviceinfo.c:261
+gimp30		Pressure Curve	Courbe de pression	app/widgets/gimpdeviceinfoeditor.c:307
+gimp30		Pad Actions	Actions de la tablette	app/widgets/gimpdeviceinfoeditor.c:370
+gimp30		Select the next event arriving from the pad	Sélectionner le prochain évènement provenant de la tablette	app/widgets/gimpdeviceinfoeditor.c:457
+gimp30		Button %d	Bouton %d	app/widgets/gimpdeviceinfoeditor.c:577
+gimp30		Strip %d	Bande %d	app/widgets/gimpdeviceinfoeditor.c:583
+gimp30		Select Pad Event Action	Choisir l’action de l’évènement de la tablette	app/widgets/gimpdeviceinfoeditor.c:829
+gimp30		Foreground: %d, %d, %d (in color space of \"%s\")	Premier plan : %d, %d, %d (dans l’espace colorimétrique de « %s »)	app/widgets/gimpdevicestatus.c:632
+gimp30		Foreground: %d, %d, %d (in sRGB)	Premier plan : %d, %d, %d (en sRVB)	app/widgets/gimpdevicestatus.c:636
+gimp30		Background: %d, %d, %d (in color space of \"%s\")	Arrière-plan : %d, %d, %d (dans l’espace colorimétrique de « %s »)	app/widgets/gimpdevicestatus.c:643
+gimp30		Background: %d, %d, %d (in sRGB)	Arrière-plan : %d, %d, %d (en sRVB)	app/widgets/gimpdevicestatus.c:647
+gimp30	singular	New Layer	Nouveau calque	app/widgets/gimpdrawabletreeview.c:651
+gimp30		Toggle the visibility of all filters.	Activer/désactiver la visibilité de tous les filtres.	app/widgets/gimpdrawabletreeview-filters.c:204
+gimp30		Edit the selected filter.	Modifier le filtre sélectionné.	app/widgets/gimpdrawabletreeview-filters.c:220
+gimp30		Raise filter one step up in the stack.	Monter le filtre d’un rang dans la pile.	app/widgets/gimpdrawabletreeview-filters.c:236
+gimp30		Lower filter one step down in the stack.	Descendre le filtre d’un rang dans la pile.	app/widgets/gimpdrawabletreeview-filters.c:251
+gimp30		Merge all active filters down.	Fusionner tous les filtres actifs dans le calque.	app/widgets/gimpdrawabletreeview-filters.c:267
+gimp30		Remove the selected filter.	Supprimer le filtre sélectionné.	app/widgets/gimpdrawabletreeview-filters.c:299
+gimp30	File extension	Extensions	Extensions	app/widgets/gimpfileprocview.c:219
+gimp30		Fill BG Color	Couleur de remplissage AP	app/widgets/gimpfilleditor.c:176
+gimp30		Zoom factor: %f:1	Facteur de zoom : %f:1	app/widgets/gimpgradienteditor.c:952
+gimp30		sRGB (%0.3f, %0.3f, %0.3f)	sRVB (%0.3f, %0.3f, %0.3f)	app/widgets/gimpgradienteditor.c:1336
+gimp30		sRGB (%d, %d, %d)	sRVB (%d, %d, %d)	app/widgets/gimpgradienteditor.c:1375
+gimp30		Mean: 	Moyenne : 	app/widgets/gimphistogrameditor.c:148
+gimp30		Std dev: 	Écart type : 	app/widgets/gimphistogrameditor.c:149
+gimp30		Median: 	Médiane : 	app/widgets/gimphistogrameditor.c:150
+gimp30		Pixels: 	Pixels : 	app/widgets/gimphistogrameditor.c:151
+gimp30		Count: 	Nombre : 	app/widgets/gimphistogrameditor.c:152
+gimp30		Percentile: 	Centile : 	app/widgets/gimphistogrameditor.c:153
+gimp30		Select items by patterns and store item sets	Sélectionner des éléments par motif et enregistrer des ensembles d’éléments	app/widgets/gimpitemtreeview.c:627
+gimp30		%d item selected	%d élément sélectionné | %d éléments sélectionnés	app/widgets/gimpitemtreeview.c:1745
+gimp30	layers-action	Anchor the floating mask	Ancrer le masque flottant	app/widgets/gimplayertreeview.c:1431
+gimp30		Select Action for %s button %d of %s	Choisir l’action du bouton %s %d de %s	app/widgets/gimpmodifierseditor.c:659
+gimp30		Select Action for button %d of %s	Choisir l’action du bouton %d de %s	app/widgets/gimpmodifierseditor.c:671
+gimp30		Rename %s	Renommer %s	app/widgets/gimprow.c:617
+gimp30		shortcut	raccourci	app/widgets/gimpsearchpopup.c:321
+gimp30		%s: %s	%s : %s	app/widgets/gimpsearchpopup.c:325
+gimp30		No shortcut	Aucun raccourci	app/widgets/gimpshortcutbutton.c:142
+gimp30		Set modifier	Définir le modificateur	app/widgets/gimpshortcutbutton.c:431
+gimp30		Set shortcut	Définir le raccourci	app/widgets/gimpshortcutbutton.c:433
+gimp30		No modifier	Aucun modificateur	app/widgets/gimpshortcutbutton.c:438
+gimp30		Choose A Soft-Proofing Color Profile	Choisir un profil colorimétrique d’épreuve écran	app/widgets/gimptemplateeditor.c:453
+gimp30		_Soft-proofing color profile:	Profil colorimétrique d’é_preuve écran :	app/widgets/gimptemplateeditor.c:457
+gimp30		_Soft-proofing rendering intent:	Mode de rendu de l’é_preuve écran :	app/widgets/gimptemplateeditor.c:466
+gimp30		_Use Black Point Compensation	_Utiliser la compensation du point noir	app/widgets/gimptemplateeditor.c:475
+gimp30		Preferred CMYK (%s)	CMJN préféré (%s)	app/widgets/gimptemplateeditor.c:912
+gimp30		Drag to move the text style editor	Glisser pour déplacer l’éditeur de style de texte	app/widgets/gimptextstyleeditor.c:259
+gimp30		Lock path	Verrouiller le chemin	app/widgets/gimppathtreeview.c:112
+gimp30		Lock path visibility	Verrouiller la visibilité du chemin	app/widgets/gimppathtreeview.c:118
+gimp30		Color Tags	Étiquettes de couleur	menus/channels-menu.ui:11
+gimp30	dashboard-action	Groups	Groupes	menus/dashboard-menu.ui:9
+gimp30	palettes-action	Export as	Exporter en tant que	menus/palettes-menu.ui:23
+gimp30	file-action	_Add Tab	_Ajouter un onglet	menus/dockable-menu.ui.in.in:6
+gimp30	file-action	_Preview Size	Taille des _aperçus	menus/dockable-menu.ui.in.in:16
+gimp30	file-action	_Tab Style	_Style des onglets	menus/dockable-menu.ui.in.in:28
+gimp30	file-action	Move to Screen	Déplacer vers l’écran	menus/dockable-menu.ui.in.in:44
+gimp30		_Debug	_Débogage	menus/image-menu.ui.in.in:28
+gimp30	view-action	_Float	_Flottant	menus/image-menu.ui.in.in:159
+gimp30	image-action	Soft-Proofing Re_ndering Intent	Mode de re_ndu de l’épreuve écran	menus/image-menu.ui.in.in:358
+gimp30	filters-action	Recently Used	Utilisés récemment	menus/image-menu.ui.in.in:689
+gimp30	filters-action	Plug-In _Examples	_Exemples de greffons	menus/image-menu.ui.in.in:855
+gimp30	filters-action	_Script-Fu	_Script-Fu	menus/image-menu.ui.in.in:861
+gimp30	help-action	_User Manual	Manuel de l’_utilisateur	menus/image-menu.ui.in.in:909
+gimp30	help-action	_GIMP Online	_GIMP en ligne	menus/image-menu.ui.in.in:928
+po-plug-ins		_Playback...	_Lecture…	plug-ins/common/animation-play.c:336
+po-plug-ins		Farbfeld	Farbfeld	plug-ins/common/file-farbfeld.c:137
+po-plug-ins		Jeff's Image Format	Format d’image de Jeff	plug-ins/common/file-gif-load.c:247
+po-plug-ins		JPEG 2000 encapsulated in HEIF	JPEG 2000 encapsulé dans HEIF	plug-ins/common/file-heif.c:473
+po-plug-ins		AVC-encoded image encapsulated in HEIF	Image encodée en AVC encapsulée dans HEIF	plug-ins/common/file-heif.c:500
+po-plug-ins		Amiga IFF	IFF Amiga	plug-ins/common/file-iff.c:197
+po-plug-ins		Quite OK Image	Image QOI (Quite OK Image)	plug-ins/common/file-qoi.c:139
+po-plug-ins		Seattle FilmWorks Image	Image Seattle FilmWorks	plug-ins/common/file-seattle-filmworks.c:159
+po-plug-ins		Playstation TIM image	Image TIM PlayStation	plug-ins/common/file-tim.c:168
+po-plug-ins		Nokia Over The Air Bitmap image	Image bitmap Nokia OTA	plug-ins/common/file-wbmp.c:151
+po-plug-ins		Icns	Icns	plug-ins/file-icns/file-icns.c:133
+po-plug-ins		_GEGL Filter Browser	Navigateur de filtres _GEGL	plug-ins/filter-browser/filter-browser.c:851
+po-plug-ins		HEIF/AVIF	HEIF/AVIF	plug-ins/common/file-heif.c:352
+po-plug-ins		Windows Shortcut	Raccourci Windows	plug-ins/common/file-lnk.c:123
+po-plug-ins		PAA Image	Image PAA	plug-ins/common/file-paa.c:151
+po-plug-ins		ZSoft DCX image	Image ZSoft DCX	plug-ins/common/file-pcx.c:245
+po-plug-ins		APNG image	Image APNG	plug-ins/common/file-png.c:290
+po-plug-ins		PAM image	Image PAM	plug-ins/common/file-pnm.c:529
+po-plug-ins		Encapsulated PostScript	PostScript encapsulé	plug-ins/common/file-ps.c:388
+po-plug-ins		PVR Image	Image PVR	plug-ins/common/file-pvr.c:215
+po-plug-ins		Scalable Vector Graphic	Graphique vectoriel SVG	plug-ins/common/file-svg.c:322
+po-plug-ins		Wireless BMP image	Image BMP sans fil (WBMP)	plug-ins/common/file-wbmp.c:129
+po-plug-ins		_Wavelet Decompose...	Décomposer en _ondelettes…	plug-ins/common/wavelet-decompose.c:117
+po-plug-ins		Apple Icon Image	Image d’icône Apple	plug-ins/file-icns/file-icns.c:177
+po-plug-ins		Microsoft Windows animated cursor	Curseur animé Microsoft Windows	plug-ins/file-ico/ico.c:230
+po-plug-ins		Photoshop Large image	Image Photoshop grand format (PSB)	plug-ins/file-psd/psd.c:240
+po-python		OpenRaster	OpenRaster	plug-ins/python/file-openraster.py:510
+po-python		Save Gradient as CSS...	Enregistrer le dégradé en CSS…	plug-ins/python/gradients-save-as-css.py:135
+po-python		_Export Histogram...	_Exporter l’histogramme…	plug-ins/python/histogram-export.py:217
+po-python		_Krita palette...	Palette _Krita…	plug-ins/python/palette-export-as-kpl.py:171
+po-script-fu		_Table of Contents	_Table des matières	plug-ins/script-fu/scripts/gimp-online.scm:150
+po-script-fu		_Stain...	_Tache…	plug-ins/script-fu/scripts/coffee.scm:132
+po-script-fu		_Difference Clouds	Nuages par _différence	plug-ins/script-fu/scripts/difference-clouds.scm:82
+po-script-fu		_Using Paths	Utiliser les _chemins	plug-ins/script-fu/scripts/gimp-online.scm:63
+po-script-fu		_Create and Use Selections	Créer et utiliser les _sélections	plug-ins/script-fu/scripts/gimp-online.scm:140
+po-script-fu		_Roadmaps	_Feuilles de route	plug-ins/script-fu/scripts/gimp-online.scm:206
+po-script-fu		Paste as New _Brush...	Coller comme nouvelle _brosse…	plug-ins/script-fu/scripts/paste-as-brush.scm:65
+po-script-fu		Paste as New _Pattern...	Coller comme nouveau _motif…	plug-ins/script-fu/scripts/paste-as-pattern.scm:51
+gegl-0.4		Bevel...	Biseautage…	operations/common/bevel.c:303
+gegl-0.4		Bloom	Éclat lumineux	operations/common/bloom.c:203
+gegl-0.4		Inner Glow	Lueur interne	operations/common/inner-glow.c:176
+gegl-0.4		Inner Glow...	Lueur interne…	operations/common/inner-glow.c:180
+gegl-0.4		Negative Darkroom	Chambre noire (négatif)	operations/common/negative-darkroom.c:437
+gegl-0.4		Pack	Tasser	operations/common/pack.c:181
+gegl-0.4		Text Styling...	Style de texte…	operations/common/styles.c:1273
+gegl-0.4		Vibrance	Vibrance	operations/common/vibrance.c:24
+gegl-0.4		Denoise DCT	Réduction du bruit (DCT)	operations/common-cxx/denoise-dct.cc:486
+gegl-0.4		Band tune	Réglage par bandes	operations/workshop/band-tune.c:217
+gegl-0.4		Paint Select	Sélection par peinture	operations/workshop/external/paint-select.cc:1287
+gegl-0.4		Clip Alpha	Écrêter l’alpha	operations/common/alpha-clip.c:196
+gegl-0.4		Bevel	Biseautage	operations/common/bevel.c:299
+gegl-0.4		Make Gray	Passer en gris	operations/common/grey.c:138
+gegl-0.4		ICC File Loader	Chargeur de fichier ICC	operations/common/icc-load.c:103
+gegl-0.4		Local Threshold	Seuil local	operations/common/local-threshold.c:179
+gegl-0.4		Symmetric Nearest Neighbor	Plus proche voisin symétrique	operations/common/snn-mean.c:383
+gegl-0.4		GEGL Styles	Styles GEGL	operations/common/styles.c:1267
+gegl-0.4		Lens Blur	Flou d’objectif	operations/common-cxx/focus-blur.c:30
+gegl-0.4		Focus Blur	Flou de mise au point	operations/common-cxx/focus-blur.c:317
+gegl-0.4		Piecewise Blend	Mélange par morceaux	operations/common-cxx/piecewise-blend.cc:346
+gegl-0.4		Variable Blur	Flou variable	operations/common-cxx/variable-blur.c:207
+gegl-0.4		SDL3 Display	Affichage SDL3	operations/external/sdl3-display.c:207
+gegl-0.4		Border Align	Alignement sur la bordure	operations/transform/border-align.c:180
+gegl-0.4		Sharpen	Netteté	operations/workshop/sharpen.c:190
+gegl-0.4		Optimize Dither	Optimiser le tramage	operations/workshop/shuffle-search.c:592
+gegl-0.4		Chamfer	Chanfrein	operations/common/bevel.c:49
+gegl-0.4		None (for use with GIMPs blending options)	Aucun (pour les options de fusion de GIMP)	operations/common/bevel.c:61
+gegl-0.4		Multiply	Produit	operations/common/bevel.c:65
+gegl-0.4		Darken	Obscurcir	operations/common/bevel.c:69
+gegl-0.4		Add	Addition	operations/common/bevel.c:73
+gegl-0.4		What blending mode the bevel's emboss will be. Light Map is a special blend mode that allows users to extract the filters output as a light map which should be put on a layer above or be used with Gimp's blending options.	Mode de fusion du relief du biseau. Carte de lumière est un mode spécial qui permet d’extraire le résultat du filtre comme carte de lumière, à placer sur un calque au-dessus ou à utiliser avec les options de fusion de GIMP.	operations/common/bevel.c:79
+gegl-0.4		Distance map setting	Réglage de la carte de distance	operations/common/bevel.c:81
+gegl-0.4		Distance Map is unique to chamfer bevel and has three settings that alter the structure of the chamfer.	La carte de distance est propre au biseau en chanfrein ; ses trois réglages modifient la structure du chanfrein.	operations/common/bevel.c:83
+gegl-0.4		Radius of softening for making bump of the shape.	Rayon d’adoucissement pour créer le relief de la forme.	operations/common/bevel.c:91
+gegl-0.4		Emboss depth - Brings out depth and detail of the bump bevel.	Profondeur du relief : fait ressortir le volume et les détails du biseau en relief.	operations/common/bevel.c:106
+gegl-0.4		Two bevel effects in one place, Chamfer - which simulates lighting of chamfered 3D-edges, and Bump - the second make a 3D inflation effect by an emboss covering a blur. Both bevels benefit from color filled alpha defined shapes.	Deux effets de biseau en un : Chanfrein, qui simule l’éclairage de bords 3D chanfreinés, et Relief, qui donne un effet de gonflement 3D par un estampage sur un flou. Les deux biseaux s’appliquent aux formes définies par l’alpha et remplies de couleur.	operations/common/bevel.c:301
+gegl-0.4		Add glow around bright areas	Ajoute une lueur autour des zones claires	operations/common/bloom.c:206
+gegl-0.4		The shape to expand or contract the shadow in	La forme selon laquelle étendre ou contracter l’ombre	operations/common/dropshadow.c:56
+gegl-0.4		The distance to expand the shadow before blurring; a negative value will contract the shadow instead	La distance d’extension de l’ombre avant le flou ; une valeur négative contracte l’ombre	operations/common/dropshadow.c:65
+gegl-0.4		Median fix for non-affected pixels on edges	Correction médiane des pixels non touchés sur les bords	operations/common/inner-glow.c:85
+gegl-0.4		Median Blur covers unaffected pixels. Making this slider too high will make it outline-like. So only slide it as high as you need to cover thin shape corners.	Le flou médian couvre les pixels non touchés. Une valeur trop élevée donne un effet de contour : ne l’augmentez que pour couvrir les angles fins de la forme.	operations/common/inner-glow.c:87
+gegl-0.4		GEGL does an inner shadow glow effect; for more interesting use different blend mode than the default, Replace.	GEGL crée une lueur d’ombre interne ; pour des effets plus intéressants, utilisez un autre mode de fusion que Remplacer (par défaut).	operations/common/inner-glow.c:178
+gegl-0.4		Hardcoded characteristic curve and color data	Courbe caractéristique et données de couleur intégrées	operations/common/negative-darkroom.c:27
+gegl-0.4		Base enlargement exposure	Exposition de base de l’agrandissement	operations/common/negative-darkroom.c:30
+gegl-0.4		Cyan filter compensation for the negative image	Compensation du filtre cyan pour l’image négative	operations/common/negative-darkroom.c:35
+gegl-0.4		Magenta filter compensation for the negative image	Compensation du filtre magenta pour l’image négative	operations/common/negative-darkroom.c:40
+gegl-0.4		Yellow filter compensation for the negative image	Compensation du filtre jaune pour l’image négative	operations/common/negative-darkroom.c:45
+gegl-0.4		Clip base + fog	Écrêter le voile de base	operations/common/negative-darkroom.c:49
+gegl-0.4		Clip base + fog to have a pure white output value	Écrêter le voile de base pour obtenir un blanc pur en sortie	operations/common/negative-darkroom.c:50
+gegl-0.4		Add base and fog	Ajouter le voile de base	operations/common/negative-darkroom.c:51
+gegl-0.4		Artificially reintroduce base and fog.	Réintroduire artificiellement le voile de base.	operations/common/negative-darkroom.c:52
+gegl-0.4		Cyan density boost	Renfort de densité cyan	operations/common/negative-darkroom.c:57
+gegl-0.4		Boost paper density to take advantage of increased dynamic range of a monitor compared to a photographic paper	Renforce la densité du papier pour profiter de la plage dynamique d’un écran, plus étendue que celle d’un papier photo	operations/common/negative-darkroom.c:58
+gegl-0.4		Density boost	Renfort de densité	operations/common/negative-darkroom.c:62
+gegl-0.4		Increase red contrast for papers with fixed contrast (usually color papers)	Augmente le contraste du rouge pour les papiers à contraste fixe (en général les papiers couleur)	operations/common/negative-darkroom.c:73
+gegl-0.4		Increase contrast for papers with fixed contrast (usually color papers)	Augmente le contraste pour les papiers à contraste fixe (en général les papiers couleur)	operations/common/negative-darkroom.c:78
+gegl-0.4		Increase blue contrast for papers with fixed contrast (usually color papers)	Augmente le contraste du bleu pour les papiers à contraste fixe (en général les papiers couleur)	operations/common/negative-darkroom.c:83
+gegl-0.4		Dodge/burn multiplier	Multiplicateur de maquillage (éclaircir/assombrir)	operations/common/negative-darkroom.c:88
+gegl-0.4		The f-stop of dodge/burn for pure white/black auxiliary input	Le diaphragme du maquillage pour une entrée auxiliaire blanc ou noir pur	operations/common/negative-darkroom.c:89
+gegl-0.4		Enable preflashing	Activer le pré-flashage	operations/common/negative-darkroom.c:93
+gegl-0.4		Show preflash controls	Afficher les réglages de pré-flashage	operations/common/negative-darkroom.c:94
+gegl-0.4		Preflash the negative with red light to reduce contrast of the print	Pré-flasher le négatif en lumière rouge pour réduire le contraste du tirage	operations/common/negative-darkroom.c:97
+gegl-0.4		Preflash the negative with green light to reduce contrast of the print	Pré-flasher le négatif en lumière verte pour réduire le contraste du tirage	operations/common/negative-darkroom.c:102
+gegl-0.4		Preflash the negative with blue light to reduce contrast of the print	Pré-flasher le négatif en lumière bleue pour réduire le contraste du tirage	operations/common/negative-darkroom.c:107
+gegl-0.4		Show illuminant controls	Afficher les réglages de l’illuminant	operations/common/negative-darkroom.c:112
+gegl-0.4		X multiplier	Multiplicateur X	operations/common/negative-darkroom.c:113
+gegl-0.4		Adjust the X tristimulus value for output	Ajuste la valeur trichromatique X en sortie	operations/common/negative-darkroom.c:114
+gegl-0.4		Z multiplier	Multiplicateur Z	operations/common/negative-darkroom.c:117
+gegl-0.4		Adjust the Z tristimulus value for output	Ajuste la valeur trichromatique Z en sortie	operations/common/negative-darkroom.c:118
+gegl-0.4		Simulate a film enlargement in an analog darkroom.	Simule l’agrandissement d’un film dans une chambre noire argentique.	operations/common/negative-darkroom.c:440
+gegl-0.4		Out-of-focus blur radius	Rayon du flou hors mise au point	operations/common-cxx/focus-blur.c:46
+gegl-0.4		Relative highlight strength	Intensité relative des hautes lumières	operations/common-cxx/focus-blur.c:53
+gegl-0.4		Focus-region outer radius	Rayon extérieur de la zone nette	operations/common-cxx/focus-blur.c:86
+gegl-0.4		Focus-region inner limit	Limite intérieure de la zone nette	operations/common-cxx/focus-blur.c:92
+gegl-0.4		Focus-transition midpoint	Milieu de la transition de netteté	operations/common-cxx/focus-blur.c:96
+gegl-0.4		Blur gamma	Gamma du flou	operations/common-cxx/focus-blur.c:114
+gegl-0.4		Gamma factor for blur-level spacing	Facteur gamma de l’espacement des niveaux de flou	operations/common-cxx/focus-blur.c:115
+gegl-0.4		Generate more accurate and consistent output (slower)	Produire un résultat plus précis et plus régulier (plus lent)	operations/common-cxx/focus-blur.c:123
+gegl-0.4		Size of patches used to denoise	Taille des blocs utilisés pour réduire le bruit	operations/common-cxx/denoise-dct.cc:36
+gegl-0.4		Denoising algorithm using a per-patch DCT thresholding	Algorithme de réduction du bruit par seuillage DCT par blocs	operations/common-cxx/denoise-dct.cc:488
+gegl-0.4		Blur the image by a varying amount using a mask	Floute l’image plus ou moins selon un masque	operations/common-cxx/variable-blur.c:210
+gegl-0.4		Bump	Relief	operations/common/bevel.c:51
+gegl-0.4		Bevel type	Type de biseau	operations/common/bevel.c:54
+gegl-0.4		The family of bevel to use	La famille de biseau à utiliser	operations/common/bevel.c:57
+gegl-0.4		Hard Light	Lumière crue	operations/common/bevel.c:63
+gegl-0.4		Color Dodge	Densité couleur -	operations/common/bevel.c:67
+gegl-0.4		Lighten	Éclaircir	operations/common/bevel.c:71
+gegl-0.4		Blend mode	Mode de fusion	operations/common/bevel.c:76
+gegl-0.4		Elevation angle of the Bevel.	Angle d’élévation du biseau.	operations/common/bevel.c:95
+gegl-0.4		Light angle	Angle de la lumière	operations/common/bevel.c:110
+gegl-0.4		Direction of a light source illuminating and shading the bevel.	Direction de la source de lumière qui éclaire et ombre le biseau.	operations/common/bevel.c:111
+gegl-0.4		Glow-area brightness threshold	Seuil de luminosité de la zone de lueur	operations/common/bloom.c:27
+gegl-0.4		Glow-area edge softness	Douceur des bords de la zone de lueur	operations/common/bloom.c:31
+gegl-0.4		Glow strength	Intensité de la lueur	operations/common/bloom.c:43
+gegl-0.4		Limit exposure	Limiter l’exposition	operations/common/bloom.c:47
+gegl-0.4		Don't over-expose highlights	Ne pas surexposer les hautes lumières	operations/common/bloom.c:48
+gegl-0.4		Grow shape	Forme d’extension	operations/common/dropshadow.c:53
+gegl-0.4		Grow radius	Rayon d’extension	operations/common/dropshadow.c:58
+gegl-0.4		Characteristic curve	Courbe caractéristique	operations/common/negative-darkroom.c:25
+gegl-0.4		Cyan filter	Filtre cyan	operations/common/negative-darkroom.c:34
+gegl-0.4		Magenta filter	Filtre magenta	operations/common/negative-darkroom.c:39
+gegl-0.4		Yellow filter	Filtre jaune	operations/common/negative-darkroom.c:44
+gegl-0.4		Yellow density boost	Renfort de densité jaune	operations/common/negative-darkroom.c:67
+gegl-0.4		Contrast boost R	Renfort de contraste R	operations/common/negative-darkroom.c:72
+gegl-0.4		Contrast boost	Renfort de contraste	operations/common/negative-darkroom.c:77
+gegl-0.4		Contrast boost B	Renfort de contraste B	operations/common/negative-darkroom.c:82
+gegl-0.4		Red preflash	Pré-flash rouge	operations/common/negative-darkroom.c:96
+gegl-0.4		Green preflash	Pré-flash vert	operations/common/negative-darkroom.c:101
+gegl-0.4		Blue preflash	Pré-flash bleu	operations/common/negative-darkroom.c:106
+gegl-0.4		Illuminant adjustment	Réglage de l’illuminant	operations/common/negative-darkroom.c:111
+gegl-0.4		Vibrance (chroma) adjustment	Réglage de la vibrance (chroma)	operations/common/vibrance.c:25
+gegl-0.4		Saturation scale factor	Facteur d’échelle de la saturation	operations/common/vibrance.c:31
+gegl-0.4		Adjusts the saturation and vibrance of the image.	Règle la saturation et la vibrance de l’image.	operations/common/vibrance.c:79
+gegl-0.4		Blur type	Type de flou	operations/common-cxx/focus-blur.c:41
+gegl-0.4		Highlight factor	Facteur des hautes lumières	operations/common-cxx/focus-blur.c:52
+gegl-0.4		Highlight threshold (low)	Seuil des hautes lumières (bas)	operations/common-cxx/focus-blur.c:57
+gegl-0.4		Highlight threshold	Seuil des hautes lumières	operations/common-cxx/focus-blur.c:61
+gegl-0.4		Highlight threshold (high)	Seuil des hautes lumières (haut)	operations/common-cxx/focus-blur.c:64
+gegl-0.4		Blur levels	Niveaux de flou	operations/common-cxx/focus-blur.c:109
+gegl-0.4		Number of blur levels	Nombre de niveaux de flou	operations/common-cxx/focus-blur.c:110
+gegl-0.4		High quality	Haute qualité	operations/common-cxx/focus-blur.c:122
+gegl-0.4		Blur the image around a focal point	Floute l’image autour d’un point focal	operations/common-cxx/focus-blur.c:320
+gegl-0.4		Patch size	Taille des blocs	operations/common-cxx/denoise-dct.cc:33
+gegl-0.4		Noise standard deviation	Écart type du bruit	operations/common-cxx/denoise-dct.cc:39
+gegl-0.4		Linear mask	Masque linéaire	operations/common-cxx/lens-blur.cc:53
+gegl-0.4		Use linear mask values	Utiliser les valeurs linéaires du masque	operations/common-cxx/lens-blur.cc:54
+gegl-0.4		Maximal blur radius	Rayon de flou maximal	operations/common-cxx/variable-blur.c:31

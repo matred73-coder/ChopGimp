@@ -143,6 +143,93 @@ IA_MODULES = [
           "sha256": "48b878f9551d465aa79ee94ecaf49a1f6b5d27f2975efa775ded374db14d0af1"}]},
 ]
 
+# ── Performances : options de compilation (make build LTO=… PGO=…)
+#
+# Le SDK GNOME compile en -O2 avec durcissement et pointeurs de pile
+# (-fno-omit-frame-pointer, -D_GLIBCXX_ASSERTIONS). On garde le durcissement
+# (FORTIFY, stack-protector, CET) et les symboles (-g, traceur de plantage),
+# mais :
+#   - babl et GEGL (boucles de calcul par pixel) : -O3, sans pointeur de pile,
+#     -fno-semantic-interposition (appels internes des bibliothèques en
+#     direct), sans assertions de la STL C++ (opérations GEGL en C++) ;
+#   - GIMP : -O2 (code d'interface surtout ; ses modes de fusion profitent de
+#     LTO / PGO plutôt que de -O3).
+#   - architecture de base inchangée (x86-64 générique) : babl et GEGL
+#     compilent déjà leurs variantes x86-64-v2/v3 (v4 pour babl) choisies à
+#     l'exécution selon le processeur (vérifié : /app/lib/babl-0.1/x86-64-v3-*.so,
+#     /app/lib/gegl-0.4/*-x86_64-v3.so).
+#   - LTO (optimisation à l'édition de liens) : CHOPGIMP_LTO=1 (défaut) pour
+#     babl et GEGL, « all » pour GIMP aussi, 0 pour aucun.
+#   - PGO (optimisation guidée par profil) de GIMP : CHOPGIMP_PGO=1, voir
+#     pgo_gimp() ; double le temps de compilation de GIMP.
+LTO = os.environ.get("CHOPGIMP_LTO", "1")
+PGO = os.environ.get("CHOPGIMP_PGO", "0") == "1"
+FAST_LIB_CFLAGS = "-O3 -fomit-frame-pointer -fno-semantic-interposition"
+
+# mimalloc : allocateur plus rapide que celui de la glibc pour les nombreux
+# petits blocs de GEGL/GLib en multi-fil ; préchargé par le lanceur
+# (flatpak/chopgimp-launch.sh, CHOPGIMP_NO_MIMALLOC=1 pour le désactiver).
+MIMALLOC_MODULE = {
+    "name": "mimalloc",
+    "buildsystem": "cmake-ninja",
+    "config-opts": ["-DCMAKE_BUILD_TYPE=Release", "-DMI_BUILD_TESTS=OFF",
+                    "-DMI_BUILD_STATIC=OFF", "-DMI_BUILD_OBJECT=OFF",
+                    "-DMI_OVERRIDE=ON", "-DCMAKE_INSTALL_LIBDIR=lib"],
+    "sources": [{"type": "git", "url": "https://github.com/microsoft/mimalloc.git",
+                 "tag": "v2.5.2", "commit": "2406cc5f3ab6d6e54fe560cdd66fa46eee775312"}],
+    "cleanup": ["/include", "/lib/cmake", "/lib/pkgconfig", "/share"],
+}
+
+
+def add_build_options(mod, cflags, cxxflags=None):
+    bo = mod.setdefault("build-options", {})
+    bo["cflags"] = (bo.get("cflags", "") + " " + cflags).strip()
+    bo["cxxflags"] = (bo.get("cxxflags", "") + " " + (cxxflags or cflags)).strip()
+
+
+def pgo_gimp(gimp):
+    """Compile GIMP deux fois dans le même dossier : instrumentée
+    (-fprofile-generate), entraînée par tools/dev/pgo_train.py dans
+    gimp-console (calques, effets, peinture, rendu, XCF), puis optimisée
+    avec le profil (-fprofile-use). -fprofile-partial-training : le code non
+    exercé par l'entraînement (interface) reste optimisé normalement."""
+    opts = " ".join("'%s'" % o for o in gimp["config-opts"])
+    setup = ("meson setup _pgo --prefix=${FLATPAK_DEST} --libdir=${FLATPAK_DEST}/lib "
+             "-Dwrap_mode=nodownload %s" % opts)
+    gimp["buildsystem"] = "simple"
+    gimp["build-commands"] = [
+        "CFLAGS=\"$CFLAGS -fprofile-update=atomic -fprofile-partial-training -Wno-missing-profile\" "
+        "CXXFLAGS=\"$CXXFLAGS -fprofile-update=atomic -fprofile-partial-training -Wno-missing-profile\" "
+        + setup + " -Db_pgo=generate",
+        "ninja -C _pgo -j${FLATPAK_BUILDER_N_JOBS} install",
+        # entraînement : sans écran, configuration jetable dans le dossier de compilation
+        "mkdir -p _train/home _train/cfg && HOME=$PWD/_train/home GIMP3_DIRECTORY=$PWD/_train/cfg "
+        "PGO_DIR=$PWD/_train timeout 1800 ${FLATPAK_DEST}/bin/gimp-console-3.2 -i --quit "
+        "--batch-interpreter=python-fu-eval -b \"exec(open('pgo_train.py').read())\" "
+        "|| echo 'PGO : entraînement incomplet, profil partiel'",
+        "find _pgo -name '*.gcda' | wc -l",
+        "meson configure _pgo -Db_pgo=use",
+        "ninja -C _pgo -j${FLATPAK_BUILDER_N_JOBS} install",
+    ]
+    gimp.pop("config-opts", None)
+    gimp["sources"].append({"type": "file", "path": "../tools/dev/pgo_train.py"})
+
+
+def tune_build(m, gimp):
+    for name in ("babl", "gegl"):
+        mod = find_module(m["modules"], name)
+        add_build_options(mod, FAST_LIB_CFLAGS, FAST_LIB_CFLAGS + " -Wp,-U_GLIBCXX_ASSERTIONS")
+        if LTO in ("1", "all"):
+            mod["config-opts"] = mod.get("config-opts", []) + ["-Db_lto=true"]
+    if LTO == "all":
+        gimp["config-opts"] = gimp["config-opts"] + ["-Db_lto=true"]
+    if PGO:
+        pgo_gimp(gimp)
+    m["modules"].insert(m["modules"].index(gimp), MIMALLOC_MODULE)
+    # lanceur : environnement de performance puis gimp-3.2 (aussi pour le .desktop)
+    m["command"] = "chopgimp"
+
+
 if not vanilla:
     # en-têtes et fichiers de développement : inutiles à l'exécution
     m["cleanup"] = sorted(set(m.get("cleanup", []) + ["/include", "/lib/pkgconfig"]))
@@ -166,6 +253,8 @@ if not vanilla:
         "sources": [{"type": "git", "url": "https://github.com/bootchk/resynthesizer.git",
                      "tag": "v3.0.1", "commit": "bddb1dfb6bddc2363bf74d79a95a60691bc46279"}],
     })
+    # ── Performances (3.25.0) : options de compilation, PGO, mimalloc
+    tune_build(m, gimp)
     # Données PhotoGIMP Pro, installées après GIMP (voir tools/install_data.sh)
     m["modules"].append({
         "name": "photogimp-data",

@@ -1,0 +1,725 @@
+diff --git a/operations/common/dropshadow.c b/operations/common/dropshadow.c
+index 61054eb..ff5f976 100644
+--- a/operations/common/dropshadow.c
++++ b/operations/common/dropshadow.c
+@@ -29,6 +29,17 @@ enum_start (gegl_dropshadow_grow_shape)
+   enum_value (GEGL_DROPSHADOW_GROW_SHAPE_DIAMOND, "diamond", N_("Diamond"))
+ enum_end (GeglDropshadowGrowShape)
+ 
++/* Should correspond to GeglGlowMapContour in glow-map.c */
++enum_start (gegl_dropshadow_contour)
++  enum_value (GEGL_DROPSHADOW_CONTOUR_LINEAR,        "linear",        N_("Linear"))
++  enum_value (GEGL_DROPSHADOW_CONTOUR_CONE,          "cone",          N_("Cone"))
++  enum_value (GEGL_DROPSHADOW_CONTOUR_CONE_INVERTED, "cone-inverted", N_("Cone - Inverted"))
++  enum_value (GEGL_DROPSHADOW_CONTOUR_GAUSSIAN,      "gaussian",      N_("Gaussian"))
++  enum_value (GEGL_DROPSHADOW_CONTOUR_HALF_ROUND,    "half-round",    N_("Half Round"))
++  enum_value (GEGL_DROPSHADOW_CONTOUR_RING,          "ring",          N_("Ring"))
++  enum_value (GEGL_DROPSHADOW_CONTOUR_RING_DOUBLE,   "ring-double",   N_("Ring - Double"))
++enum_end (GeglDropshadowContour)
++
+ property_double (x, _("X"), 20.0)
+   description   (_("Horizontal shadow offset"))
+   ui_range      (-40.0, 40.0)
+@@ -76,6 +87,31 @@ property_double (opacity, _("Opacity"), 0.5)
+   ui_range      (0.0, 1.0)
+   ui_steps      (0.01, 0.10)
+ 
++/* Layer style options (Photoshop's glows and shadows); their defaults
++ * leave the shadow as it was.
++ */
++property_enum   (contour, _("Contour"),
++                 GeglDropshadowContour, gegl_dropshadow_contour,
++                 GEGL_DROPSHADOW_CONTOUR_LINEAR)
++  description   (_("Curve remapping the shadow's falloff"))
++
++property_double (range, _("Range"), 1.0)
++  description   (_("Part of the shadow's falloff the contour applies to"))
++  value_range   (0.01, 1.0)
++  ui_steps      (0.01, 0.10)
++
++property_double (noise, _("Noise"), 0.0)
++  description   (_("Random dimming of the shadow"))
++  value_range   (0.0, 1.0)
++  ui_steps      (0.01, 0.10)
++
++property_boolean (use_gradient, _("Use gradient"), FALSE)
++  description   (_("Color the shadow with the gradient instead of the color"))
++
++property_string (gradient, _("Gradient"), "")
++  description   (_("Gradient stops: \"pos r g b a;...\", linear RGBA"))
++  ui_meta       ("visible", "use-gradient")
++
+ #else
+ 
+ #define GEGL_OP_META
+@@ -103,6 +139,9 @@ typedef struct
+   GeglNode *grow;
+   GeglNode *alpha;
+   GeglNode *blur;
++  GeglNode *opacity;
++  GeglNode *glow;
++  GeglNode *crop;
+   gint      blur_filter;
+ } State;
+ 
+@@ -129,6 +168,31 @@ update_graph (GeglOperation *operation)
+ 
+   update_blur_filter (o, state);
+ 
++  /* the layer style options are applied to the shadow's alpha before
++   * its opacity; without them the graph is the one of old
++   */
++  if (o->contour != GEGL_DROPSHADOW_CONTOUR_LINEAR ||
++      o->range   <  1.0                            ||
++      o->noise   >  0.0                            ||
++      o->use_gradient)
++    {
++      gegl_node_set (state->glow,
++                     "contour",      (gint) o->contour,
++                     "range",        o->range,
++                     "noise",        o->noise,
++                     "use-gradient", o->use_gradient,
++                     "gradient",     o->gradient,
++                     "opacity",      o->opacity,
++                     NULL);
++      gegl_node_set (state->opacity, "value", 1.0, NULL);
++      gegl_node_link_many (state->opacity, state->glow, state->crop, NULL);
++    }
++  else
++    {
++      gegl_node_set (state->opacity, "value", o->opacity, NULL);
++      gegl_node_link_many (state->opacity, state->crop, NULL);
++    }
++
+   if (fabs (o->grow_radius) > 0.0001)
+   {
+     gegl_node_link_many (state->input, state->grow, state->alpha, NULL);
+@@ -179,7 +243,7 @@ attach (GeglOperation *operation)
+ {
+   GeglProperties *o = GEGL_PROPERTIES (operation);
+   GeglNode  *gegl = operation->node;
+-  GeglNode  *input, *output, *over, *translate, *opacity, *grow, *blur, *alpha, *crop, *color;
++  GeglNode  *input, *output, *over, *translate, *opacity, *grow, *blur, *alpha, *crop, *color, *glow;
+   GeglColor *black_color = gegl_color_new ("rgb(0.0,0.0,0.0)");
+ 
+   input     = gegl_node_get_input_proxy (gegl, "input");
+@@ -203,12 +267,17 @@ attach (GeglOperation *operation)
+   color     = gegl_node_new_child (gegl, "operation", "gegl:color",
+                                    "value", black_color,
+                                    NULL);
++  glow      = gegl_node_new_child (gegl, "operation", "gegl:glow-map",
++                                   NULL);
+   State *state = g_malloc0 (sizeof (State));
+   o->user_data = state;
+   state->input = input;
+   state->grow = grow;
+   state->alpha = alpha;
+   state->blur = blur;
++  state->opacity = opacity;
++  state->glow = glow;
++  state->crop = crop;
+   state->blur_filter = -1;
+ 
+   set_alpha_component (alpha);
+@@ -229,7 +298,11 @@ attach (GeglOperation *operation)
+   gegl_operation_meta_redirect (operation, "x", translate, "x");
+   gegl_operation_meta_redirect (operation, "y", translate, "y");
+   gegl_operation_meta_redirect (operation, "color", color, "value");
+-  gegl_operation_meta_redirect (operation, "opacity", opacity, "value");
++
++  /* the opacity is set by update_graph (): on gegl:glow-map when the
++   * layer style options are used, on gegl:opacity otherwise
++   */
++  update_graph (operation);
+ }
+ 
+ static void
+diff --git a/operations/common/glow-map.c b/operations/common/glow-map.c
+new file mode 100644
+index 0000000..49f7e23
+--- /dev/null
++++ b/operations/common/glow-map.c
+@@ -0,0 +1,350 @@
++/* This file is an image processing operation for GEGL
++ *
++ * GEGL is free software; you can redistribute it and/or
++ * modify it under the terms of the GNU Lesser General Public
++ * License as published by the Free Software Foundation; either
++ * version 3 of the License, or (at your option) any later version.
++ *
++ * GEGL is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
++ * Lesser General Public License for more details.
++ *
++ * You should have received a copy of the GNU Lesser General Public
++ * License along with GEGL; if not, see <https://www.gnu.org/licenses/>.
++ *
++ * Copyright 2026 ChopGimp
++ */
++
++/* Glow map: the layer-style options of Photoshop's glows and shadows,
++ * applied to the alpha of a glow (gegl:dropshadow, gegl:inner-glow):
++ *
++ *  - range: the part of the glow's falloff the contour is applied to
++ *    (1.0: all of it);
++ *  - contour: a curve remapping the falloff (linear, cone, ring...);
++ *  - noise: random dimming of the glow, per pixel;
++ *  - gradient: colors the glow with a gradient along its falloff
++ *    (position 0 where the glow is the strongest).
++ *
++ * The gradient is a list of stops "pos r g b a;pos r g b a;..." with
++ * linear RGBA float colors, sorted by position.
++ */
++
++#include "config.h"
++#include <glib/gi18n-lib.h>
++#include <math.h>
++#include <stdlib.h>
++
++#ifdef GEGL_PROPERTIES
++
++enum_start (gegl_glow_map_contour)
++  enum_value (GEGL_GLOW_MAP_CONTOUR_LINEAR,        "linear",        N_("Linear"))
++  enum_value (GEGL_GLOW_MAP_CONTOUR_CONE,          "cone",          N_("Cone"))
++  enum_value (GEGL_GLOW_MAP_CONTOUR_CONE_INVERTED, "cone-inverted", N_("Cone - Inverted"))
++  enum_value (GEGL_GLOW_MAP_CONTOUR_GAUSSIAN,      "gaussian",      N_("Gaussian"))
++  enum_value (GEGL_GLOW_MAP_CONTOUR_HALF_ROUND,    "half-round",    N_("Half Round"))
++  enum_value (GEGL_GLOW_MAP_CONTOUR_RING,          "ring",          N_("Ring"))
++  enum_value (GEGL_GLOW_MAP_CONTOUR_RING_DOUBLE,   "ring-double",   N_("Ring - Double"))
++enum_end (GeglGlowMapContour)
++
++property_enum   (contour, _("Contour"),
++                 GeglGlowMapContour, gegl_glow_map_contour,
++                 GEGL_GLOW_MAP_CONTOUR_LINEAR)
++  description   (_("Curve remapping the glow's falloff"))
++
++property_double (range, _("Range"), 1.0)
++  description   (_("Part of the glow's falloff the contour applies to"))
++  value_range   (0.01, 1.0)
++
++property_double (noise, _("Noise"), 0.0)
++  description   (_("Random dimming of the glow"))
++  value_range   (0.0, 1.0)
++
++property_boolean (use_gradient, _("Use gradient"), FALSE)
++  description   (_("Color the glow with the gradient"))
++
++property_string (gradient, _("Gradient"), "")
++  description   (_("Gradient stops: \"pos r g b a;...\", linear RGBA"))
++
++property_double (opacity, _("Opacity"), 1.0)
++  value_range   (0.0, 1.0)
++
++#else
++
++#define GEGL_OP_POINT_FILTER
++#define GEGL_OP_NAME     glow_map
++#define GEGL_OP_C_SOURCE glow-map.c
++
++#include "gegl-op.h"
++
++#define GRADIENT_LUT_SIZE 256
++
++typedef struct
++{
++  gchar    *gradient;
++  gboolean  has_lut;
++  gfloat    lut[GRADIENT_LUT_SIZE * 4];
++} Priv;
++
++typedef struct
++{
++  gdouble pos;
++  gfloat  color[4];
++} Stop;
++
++static void
++update_lut (Priv        *priv,
++            const gchar *gradient)
++{
++  GArray  *stops;
++  gchar  **parts;
++  gint     i;
++
++  if (! g_strcmp0 (priv->gradient, gradient))
++    return;
++
++  g_free (priv->gradient);
++  priv->gradient = g_strdup (gradient);
++  priv->has_lut  = FALSE;
++
++  if (! gradient || ! *gradient)
++    return;
++
++  stops = g_array_new (FALSE, FALSE, sizeof (Stop));
++  parts = g_strsplit (gradient, ";", -1);
++
++  for (i = 0; parts[i]; i++)
++    {
++      Stop   stop;
++      gchar *p = parts[i];
++      gchar *end;
++      gint   c;
++
++      stop.pos = g_ascii_strtod (p, &end);
++
++      if (end == p)
++        continue;
++
++      for (c = 0; c < 4; c++)
++        {
++          p = end;
++          stop.color[c] = g_ascii_strtod (p, &end);
++
++          if (end == p)
++            break;
++        }
++
++      if (c == 4)
++        {
++          stop.pos = CLAMP (stop.pos, 0.0, 1.0);
++          g_array_append_val (stops, stop);
++        }
++    }
++
++  g_strfreev (parts);
++
++  if (stops->len > 0)
++    {
++      const Stop *s = (const Stop *) stops->data;
++      guint       k = 0;
++
++      for (i = 0; i < GRADIENT_LUT_SIZE; i++)
++        {
++          gdouble pos = (gdouble) i / (GRADIENT_LUT_SIZE - 1);
++          gfloat *out = priv->lut + 4 * i;
++          gint    c;
++
++          while (k + 1 < stops->len && s[k + 1].pos < pos)
++            k++;
++
++          if (pos <= s[0].pos || stops->len == 1)
++            {
++              for (c = 0; c < 4; c++)
++                out[c] = s[0].color[c];
++            }
++          else if (k + 1 >= stops->len)
++            {
++              for (c = 0; c < 4; c++)
++                out[c] = s[stops->len - 1].color[c];
++            }
++          else
++            {
++              gdouble span = s[k + 1].pos - s[k].pos;
++              gfloat  t    = span > 1e-9 ? (pos - s[k].pos) / span : 0.0;
++
++              for (c = 0; c < 4; c++)
++                out[c] = s[k].color[c] * (1.0f - t) + s[k + 1].color[c] * t;
++            }
++        }
++
++      priv->has_lut = TRUE;
++    }
++
++  g_array_free (stops, TRUE);
++}
++
++static void
++prepare (GeglOperation *operation)
++{
++  GeglProperties *o      = GEGL_PROPERTIES (operation);
++  const Babl     *space  = gegl_operation_get_source_space (operation, "input");
++  const Babl     *format = babl_format_with_space ("RGBA float", space);
++  Priv           *priv   = o->user_data;
++
++  if (! priv)
++    priv = o->user_data = g_new0 (Priv, 1);
++
++  update_lut (priv, o->use_gradient ? o->gradient : NULL);
++
++  gegl_operation_set_format (operation, "input",  format);
++  gegl_operation_set_format (operation, "output", format);
++}
++
++static inline gfloat
++apply_contour (GeglGlowMapContour contour,
++               gfloat             t)
++{
++  switch (contour)
++    {
++    case GEGL_GLOW_MAP_CONTOUR_LINEAR:
++      return t;
++
++    case GEGL_GLOW_MAP_CONTOUR_CONE:
++      return 1.0f - fabsf (2.0f * t - 1.0f);
++
++    case GEGL_GLOW_MAP_CONTOUR_CONE_INVERTED:
++      return fabsf (2.0f * t - 1.0f);
++
++    case GEGL_GLOW_MAP_CONTOUR_GAUSSIAN:
++      return 0.5f - 0.5f * cosf (G_PI * t);
++
++    case GEGL_GLOW_MAP_CONTOUR_HALF_ROUND:
++      return sqrtf (MAX (0.0f, 1.0f - (1.0f - t) * (1.0f - t)));
++
++    case GEGL_GLOW_MAP_CONTOUR_RING:
++      return 0.5f - 0.5f * cosf (2.0f * G_PI * t);
++
++    case GEGL_GLOW_MAP_CONTOUR_RING_DOUBLE:
++      return 0.5f - 0.5f * cosf (4.0f * G_PI * t);
++    }
++
++  return t;
++}
++
++/* a stable random value in [0, 1) for a pixel, the same whatever the
++ * region being processed
++ */
++static inline gfloat
++pixel_noise (gint x,
++             gint y)
++{
++  guint32 h = (guint32) x * 0x9E3779B1u ^ ((guint32) y * 0x85EBCA77u);
++
++  h ^= h >> 16;
++  h *= 0x7FEB352Du;
++  h ^= h >> 15;
++  h *= 0x846CA68Bu;
++  h ^= h >> 16;
++
++  return (h >> 8) * (1.0f / 16777216.0f);
++}
++
++static gboolean
++process (GeglOperation       *operation,
++         void                *in_buf,
++         void                *out_buf,
++         glong                n_pixels,
++         const GeglRectangle *roi,
++         gint                 level)
++{
++  GeglProperties *o       = GEGL_PROPERTIES (operation);
++  Priv           *priv    = o->user_data;
++  const gfloat   *in      = in_buf;
++  gfloat         *out     = out_buf;
++  gfloat          range   = MAX (o->range, 0.01);
++  gfloat          noise   = o->noise;
++  gfloat          opacity = o->opacity;
++  gboolean        lut     = o->use_gradient && priv && priv->has_lut;
++  gint            x       = roi->x;
++  gint            y       = roi->y;
++
++  while (n_pixels--)
++    {
++      gfloat t = MIN (in[3] / range, 1.0f);
++      gfloat f;
++
++      t = MAX (t, 0.0f);
++      f = apply_contour (o->contour, t);
++
++      if (noise > 0.0f)
++        f *= 1.0f - noise * pixel_noise (x, y);
++
++      if (lut)
++        {
++          const gfloat *c = priv->lut +
++                            4 * (gint) ((1.0f - f) * (GRADIENT_LUT_SIZE - 1) + 0.5f);
++
++          out[0] = c[0];
++          out[1] = c[1];
++          out[2] = c[2];
++          f     *= CLAMP (c[3], 0.0f, 1.0f);
++        }
++      else
++        {
++          out[0] = in[0];
++          out[1] = in[1];
++          out[2] = in[2];
++        }
++
++      out[3] = CLAMP (f * opacity, 0.0f, 1.0f);
++
++      in  += 4;
++      out += 4;
++
++      if (++x >= roi->x + roi->width)
++        {
++          x = roi->x;
++          y++;
++        }
++    }
++
++  return TRUE;
++}
++
++static void
++finalize (GObject *object)
++{
++  GeglProperties *o    = GEGL_PROPERTIES (object);
++  Priv           *priv = o->user_data;
++
++  if (priv)
++    {
++      g_free (priv->gradient);
++      g_clear_pointer (&o->user_data, g_free);
++    }
++
++  G_OBJECT_CLASS (gegl_op_parent_class)->finalize (object);
++}
++
++static void
++gegl_op_class_init (GeglOpClass *klass)
++{
++  GObjectClass                  *object_class    = G_OBJECT_CLASS (klass);
++  GeglOperationClass            *operation_class = GEGL_OPERATION_CLASS (klass);
++  GeglOperationPointFilterClass *point_class     = GEGL_OPERATION_POINT_FILTER_CLASS (klass);
++
++  object_class->finalize = finalize;
++  operation_class->prepare = prepare;
++  point_class->process     = process;
++
++  gegl_operation_class_set_keys (operation_class,
++    "name",        "gegl:glow-map",
++    "title",       _("Glow Map"),
++    "categories",  "hidden",
++    "description",
++    _("Contour, range, noise and gradient of a glow's alpha "
++      "(layer styles)"),
++    NULL);
++}
++
++#endif
+diff --git a/operations/common/inner-glow.c b/operations/common/inner-glow.c
+index 24d5097..a01b8f0 100644
+--- a/operations/common/inner-glow.c
++++ b/operations/common/inner-glow.c
+@@ -32,6 +32,17 @@ enum_start (gegl_innerglow_grow_shape)
+   enum_value (GEGL_INNERGLOW_GROW_SHAPE_DIAMOND, "diamondig", N_("Diamond"))
+ enum_end (innerglowshape)
+ 
++/* Should correspond to GeglGlowMapContour in glow-map.c */
++enum_start (gegl_innerglow_contour)
++  enum_value (GEGL_INNERGLOW_CONTOUR_LINEAR,        "linear",        N_("Linear"))
++  enum_value (GEGL_INNERGLOW_CONTOUR_CONE,          "cone",          N_("Cone"))
++  enum_value (GEGL_INNERGLOW_CONTOUR_CONE_INVERTED, "cone-inverted", N_("Cone - Inverted"))
++  enum_value (GEGL_INNERGLOW_CONTOUR_GAUSSIAN,      "gaussian",      N_("Gaussian"))
++  enum_value (GEGL_INNERGLOW_CONTOUR_HALF_ROUND,    "half-round",    N_("Half Round"))
++  enum_value (GEGL_INNERGLOW_CONTOUR_RING,          "ring",          N_("Ring"))
++  enum_value (GEGL_INNERGLOW_CONTOUR_RING_DOUBLE,   "ring-double",   N_("Ring - Double"))
++enum_end (GeglInnerGlowContour)
++
+ 
+ property_enum   (grow_shape, _("Grow shape"),
+                  innerglowshape, gegl_innerglow_grow_shape,
+@@ -87,6 +98,31 @@ property_double  (cover, _("Median fix for non-affected pixels on edges"), 60)
+   description (_("Median Blur covers unaffected pixels. Making this slider too high will make it outline-like. So only slide it as high as you need to cover thin shape corners."))
+  /* This option has to be visible as certain inner shadows will look bad if it is locked at 100. And if it is disabled all the pixels on the text's edges will be unmodified.  */
+ 
++/* Layer style options (Photoshop's inner glow and inner shadow); their
++ * defaults leave the glow as it was.
++ */
++property_enum   (contour, _("Contour"),
++                 GeglInnerGlowContour, gegl_innerglow_contour,
++                 GEGL_INNERGLOW_CONTOUR_LINEAR)
++  description   (_("Curve remapping the glow's falloff"))
++
++property_double (range, _("Range"), 1.0)
++  description   (_("Part of the glow's falloff the contour applies to"))
++  value_range   (0.01, 1.0)
++  ui_steps      (0.01, 0.10)
++
++property_double (noise, _("Noise"), 0.0)
++  description   (_("Random dimming of the glow"))
++  value_range   (0.0, 1.0)
++  ui_steps      (0.01, 0.10)
++
++property_boolean (use_gradient, _("Use gradient"), FALSE)
++  description   (_("Color the glow with the gradient instead of the color"))
++
++property_string (gradient, _("Gradient"), "")
++  description   (_("Gradient stops: \"pos r g b a;...\", linear RGBA"))
++  ui_meta       ("visible", "use-gradient")
++
+ #else
+ 
+ #define GEGL_OP_META
+@@ -95,6 +131,45 @@ property_double  (cover, _("Median fix for non-affected pixels on edges"), 60)
+ 
+ #include "gegl-op.h"
+ 
++typedef struct
++{
++  GeglNode *color;
++  GeglNode *glow;
++  GeglNode *opacity;
++} State;
++
++/* the layer style options are applied to the glow's alpha after its
++ * color and before its opacity; without them the graph is the one of old
++ */
++static void
++update_graph (GeglOperation *operation)
++{
++  GeglProperties *o     = GEGL_PROPERTIES (operation);
++  State          *state = o->user_data;
++
++  if (! state)
++    return;
++
++  if (o->contour != GEGL_INNERGLOW_CONTOUR_LINEAR ||
++      o->range   <  1.0                           ||
++      o->noise   >  0.0                           ||
++      o->use_gradient)
++    {
++      gegl_node_set (state->glow,
++                     "contour",      (gint) o->contour,
++                     "range",        o->range,
++                     "noise",        o->noise,
++                     "use-gradient", o->use_gradient,
++                     "gradient",     o->gradient,
++                     NULL);
++      gegl_node_link_many (state->color, state->glow, state->opacity, NULL);
++    }
++  else
++    {
++      gegl_node_link_many (state->color, state->opacity, NULL);
++    }
++}
++
+ /* gegl:component-extract's enum type is private to its module, set the
+  * component by nick
+  */
+@@ -128,7 +203,9 @@ static void attach (GeglOperation *operation)
+ {
+   GeglNode *gegl = operation->node;
+   GeglNode *input, *color, *translate, *out, *median, *medianfix, *crop, *opacity, *gaussian,  *output;
+-  GeglNode *alpha, *alpha_color, *alpha_mask, *alpha_crop;
++  GeglNode *alpha, *alpha_color, *alpha_mask, *alpha_crop, *glow;
++  GeglProperties *o = GEGL_PROPERTIES (operation);
++  State          *state;
+ 
+   input    = gegl_node_get_input_proxy (gegl, "input");
+   output   = gegl_node_get_output_proxy (gegl, "output");
+@@ -196,6 +273,10 @@ static void attach (GeglOperation *operation)
+  alpha_crop  = gegl_node_new_child (gegl,
+                                     "operation", "gegl:crop",
+                                     NULL);
++
++ glow        = gegl_node_new_child (gegl,
++                                    "operation", "gegl:glow-map",
++                                    NULL);
+  /* This is meant so inner glow to reach pixels in tight corners */
+ 
+ gegl_operation_meta_redirect (operation, "grow_radius", median, "radius");
+@@ -216,17 +297,39 @@ gegl_operation_meta_redirect (operation, "cover", medianfix, "alpha-percentile")
+  gegl_node_connect (out, "aux", input, "output");
+  gegl_node_connect (crop, "aux", input, "output");
+ 
++ state = g_new0 (State, 1);
++ state->color   = color;
++ state->glow    = glow;
++ state->opacity = opacity;
++ o->user_data   = state;
++
++ update_graph (operation);
++}
++
++static void
++dispose (GObject *object)
++{
++  GeglProperties *o = GEGL_PROPERTIES (object);
++
++  g_clear_pointer (&o->user_data, g_free);
+ 
++  G_OBJECT_CLASS (gegl_op_parent_class)->dispose (object);
+ }
+ 
+ static void
+ gegl_op_class_init (GeglOpClass *klass)
+ {
+-  GeglOperationClass *operation_class;
++  GObjectClass           *object_class;
++  GeglOperationClass     *operation_class;
++  GeglOperationMetaClass *operation_meta_class;
+ 
+-  operation_class = GEGL_OPERATION_CLASS (klass);
++  object_class         = G_OBJECT_CLASS (klass);
++  operation_class      = GEGL_OPERATION_CLASS (klass);
++  operation_meta_class = GEGL_OPERATION_META_CLASS (klass);
+ 
+-  operation_class->attach = attach;
++  object_class->dispose        = dispose;
++  operation_class->attach      = attach;
++  operation_meta_class->update = update_graph;
+ 
+   gegl_operation_class_set_keys (operation_class,
+     "name",        "gegl:inner-glow",
+diff --git a/operations/common/meson.build b/operations/common/meson.build
+index 58471ef..56e3488 100644
+--- a/operations/common/meson.build
++++ b/operations/common/meson.build
+@@ -37,6 +37,7 @@ gegl_common_sources = files(
+   'gegl-buffer-load-op.c',
+   'gegl-buffer-save-op.c',
+   'gegl.c',
++  'glow-map.c',
+   'grey.c',
+   'grid.c',
+   'high-pass.c',
+diff --git a/po/fr.po b/po/fr.po
+index 9eaf0e2..51bc2e0 100644
+--- a/po/fr.po
++++ b/po/fr.po
+@@ -9625,3 +9625,51 @@ msgstr "Utiliser les valeurs linéaires du masque"
+ #: operations/common-cxx/variable-blur.c:31
+ msgid "Maximal blur radius"
+ msgstr "Rayon de flou maximal"
++#: operations/common/glow-map.c:42 operations/common/dropshadow.c:35
++#: operations/common/inner-glow.c:38
++msgid "Cone"
++msgstr "Cône"
++
++#: operations/common/glow-map.c:43 operations/common/dropshadow.c:36
++#: operations/common/inner-glow.c:39
++msgid "Cone - Inverted"
++msgstr "Cône inversé"
++
++#: operations/common/glow-map.c:44 operations/common/dropshadow.c:37
++#: operations/common/inner-glow.c:40
++msgid "Gaussian"
++msgstr "Gaussienne"
++
++#: operations/common/glow-map.c:45 operations/common/dropshadow.c:38
++#: operations/common/inner-glow.c:41
++msgid "Half Round"
++msgstr "Demi-cercle"
++
++#: operations/common/glow-map.c:46 operations/common/dropshadow.c:39
++#: operations/common/inner-glow.c:42
++msgid "Ring"
++msgstr "Anneau"
++
++#: operations/common/glow-map.c:47 operations/common/dropshadow.c:40
++#: operations/common/inner-glow.c:43
++msgid "Ring - Double"
++msgstr "Anneau double"
++
++#: operations/common/glow-map.c:50 operations/common/dropshadow.c:88
++#: operations/common/inner-glow.c:104
++msgid "Contour"
++msgstr "Contour"
++
++#: operations/common/glow-map.c:55 operations/common/dropshadow.c:93
++#: operations/common/inner-glow.c:109
++msgid "Range"
++msgstr "Plage"
++
++#: operations/common/glow-map.c:63 operations/common/dropshadow.c:103
++#: operations/common/inner-glow.c:119
++msgid "Use gradient"
++msgstr "Dégradé"
++
++#: operations/common/glow-map.c:227
++msgid "Glow Map"
++msgstr "Carte de lueur"

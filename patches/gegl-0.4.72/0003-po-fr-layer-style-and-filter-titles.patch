@@ -1,0 +1,529 @@
+From: ChopGimp <mathieu.redon@proton.me>
+Subject: [PATCH] po: French translations for filter titles and layer style
+ operations (Bevel, Inner Glow, Bloom, Lens Blur...)
+
+The French GEGL catalog dates from 2019: the titles and menu labels of
+recent operations (gimp:menu-label "Bevel...", "Inner Glow...") showed
+in English in the French ChopGimp menus.
+---
+diff --git a/po/fr.po b/po/fr.po
+index 5889358..9eaf0e2 100644
+--- a/po/fr.po
++++ b/po/fr.po
+@@ -9112,3 +9112,516 @@ msgstr "Diagramme de Voronoï"
+ msgid "Paints each non-seed pixel with the color of the nearest seed pixel."
+ msgstr ""
+ "Peint chaque pixel non-germe avec la couleur du plus proche pixel germe."
++
++
++#: operations/common/bevel.c:303
++msgid "Bevel..."
++msgstr "Biseautage…"
++
++#: operations/common/bloom.c:203
++msgid "Bloom"
++msgstr "Éclat lumineux"
++
++#: operations/common/inner-glow.c:176
++msgid "Inner Glow"
++msgstr "Lueur interne"
++
++#: operations/common/inner-glow.c:180
++msgid "Inner Glow..."
++msgstr "Lueur interne…"
++
++#: operations/common/negative-darkroom.c:437
++msgid "Negative Darkroom"
++msgstr "Chambre noire (négatif)"
++
++#: operations/common/pack.c:181
++msgid "Pack"
++msgstr "Tasser"
++
++#: operations/common/styles.c:1273
++msgid "Text Styling..."
++msgstr "Style de texte…"
++
++#: operations/common/vibrance.c:24
++msgid "Vibrance"
++msgstr "Vibrance"
++
++#: operations/common-cxx/denoise-dct.cc:486
++msgid "Denoise DCT"
++msgstr "Réduction du bruit (DCT)"
++
++#: operations/workshop/band-tune.c:217
++msgid "Band tune"
++msgstr "Réglage par bandes"
++
++#: operations/workshop/external/paint-select.cc:1287
++msgid "Paint Select"
++msgstr "Sélection par peinture"
++
++#: operations/common/alpha-clip.c:196
++msgid "Clip Alpha"
++msgstr "Écrêter l’alpha"
++
++#: operations/common/bevel.c:299
++msgid "Bevel"
++msgstr "Biseautage"
++
++#: operations/common/grey.c:138
++msgid "Make Gray"
++msgstr "Passer en gris"
++
++#: operations/common/icc-load.c:103
++msgid "ICC File Loader"
++msgstr "Chargeur de fichier ICC"
++
++#: operations/common/local-threshold.c:179
++msgid "Local Threshold"
++msgstr "Seuil local"
++
++#: operations/common/snn-mean.c:383
++msgid "Symmetric Nearest Neighbor"
++msgstr "Plus proche voisin symétrique"
++
++#: operations/common/styles.c:1267
++msgid "GEGL Styles"
++msgstr "Styles GEGL"
++
++#: operations/common-cxx/focus-blur.c:30
++msgid "Lens Blur"
++msgstr "Flou d’objectif"
++
++#: operations/common-cxx/focus-blur.c:317
++msgid "Focus Blur"
++msgstr "Flou de mise au point"
++
++#: operations/common-cxx/piecewise-blend.cc:346
++msgid "Piecewise Blend"
++msgstr "Mélange par morceaux"
++
++#: operations/common-cxx/variable-blur.c:207
++msgid "Variable Blur"
++msgstr "Flou variable"
++
++#: operations/external/sdl3-display.c:207
++msgid "SDL3 Display"
++msgstr "Affichage SDL3"
++
++#: operations/transform/border-align.c:180
++msgid "Border Align"
++msgstr "Alignement sur la bordure"
++
++#: operations/workshop/sharpen.c:190
++msgid "Sharpen"
++msgstr "Netteté"
++
++#: operations/workshop/shuffle-search.c:592
++msgid "Optimize Dither"
++msgstr "Optimiser le tramage"
++
++#: operations/common/bevel.c:49
++msgid "Chamfer"
++msgstr "Chanfrein"
++
++#: operations/common/bevel.c:61
++msgid "None (for use with GIMPs blending options)"
++msgstr "Aucun (pour les options de fusion de GIMP)"
++
++#: operations/common/bevel.c:65
++msgid "Multiply"
++msgstr "Produit"
++
++#: operations/common/bevel.c:69
++msgid "Darken"
++msgstr "Obscurcir"
++
++#: operations/common/bevel.c:73
++msgid "Add"
++msgstr "Addition"
++
++#: operations/common/bevel.c:79
++msgid "What blending mode the bevel's emboss will be. Light Map is a special blend mode that allows users to extract the filters output as a light map which should be put on a layer above or be used with Gimp's blending options."
++msgstr "Mode de fusion du relief du biseau. Carte de lumière est un mode spécial qui permet d’extraire le résultat du filtre comme carte de lumière, à placer sur un calque au-dessus ou à utiliser avec les options de fusion de GIMP."
++
++#: operations/common/bevel.c:81
++msgid "Distance map setting"
++msgstr "Réglage de la carte de distance"
++
++#: operations/common/bevel.c:83
++msgid "Distance Map is unique to chamfer bevel and has three settings that alter the structure of the chamfer."
++msgstr "La carte de distance est propre au biseau en chanfrein ; ses trois réglages modifient la structure du chanfrein."
++
++#: operations/common/bevel.c:91
++msgid "Radius of softening for making bump of the shape."
++msgstr "Rayon d’adoucissement pour créer le relief de la forme."
++
++#: operations/common/bevel.c:106
++msgid "Emboss depth - Brings out depth and detail of the bump bevel."
++msgstr "Profondeur du relief : fait ressortir le volume et les détails du biseau en relief."
++
++#: operations/common/bevel.c:301
++msgid "Two bevel effects in one place, Chamfer - which simulates lighting of chamfered 3D-edges, and Bump - the second make a 3D inflation effect by an emboss covering a blur. Both bevels benefit from color filled alpha defined shapes."
++msgstr "Deux effets de biseau en un : Chanfrein, qui simule l’éclairage de bords 3D chanfreinés, et Relief, qui donne un effet de gonflement 3D par un estampage sur un flou. Les deux biseaux s’appliquent aux formes définies par l’alpha et remplies de couleur."
++
++#: operations/common/bloom.c:206
++msgid "Add glow around bright areas"
++msgstr "Ajoute une lueur autour des zones claires"
++
++#: operations/common/dropshadow.c:56
++msgid "The shape to expand or contract the shadow in"
++msgstr "La forme selon laquelle étendre ou contracter l’ombre"
++
++#: operations/common/dropshadow.c:65
++msgid "The distance to expand the shadow before blurring; a negative value will contract the shadow instead"
++msgstr "La distance d’extension de l’ombre avant le flou ; une valeur négative contracte l’ombre"
++
++#: operations/common/inner-glow.c:85
++msgid "Median fix for non-affected pixels on edges"
++msgstr "Correction médiane des pixels non touchés sur les bords"
++
++#: operations/common/inner-glow.c:87
++msgid "Median Blur covers unaffected pixels. Making this slider too high will make it outline-like. So only slide it as high as you need to cover thin shape corners."
++msgstr "Le flou médian couvre les pixels non touchés. Une valeur trop élevée donne un effet de contour : ne l’augmentez que pour couvrir les angles fins de la forme."
++
++#: operations/common/inner-glow.c:178
++msgid "GEGL does an inner shadow glow effect; for more interesting use different blend mode than the default, Replace."
++msgstr "GEGL crée une lueur d’ombre interne ; pour des effets plus intéressants, utilisez un autre mode de fusion que Remplacer (par défaut)."
++
++#: operations/common/negative-darkroom.c:27
++msgid "Hardcoded characteristic curve and color data"
++msgstr "Courbe caractéristique et données de couleur intégrées"
++
++#: operations/common/negative-darkroom.c:30
++msgid "Base enlargement exposure"
++msgstr "Exposition de base de l’agrandissement"
++
++#: operations/common/negative-darkroom.c:35
++msgid "Cyan filter compensation for the negative image"
++msgstr "Compensation du filtre cyan pour l’image négative"
++
++#: operations/common/negative-darkroom.c:40
++msgid "Magenta filter compensation for the negative image"
++msgstr "Compensation du filtre magenta pour l’image négative"
++
++#: operations/common/negative-darkroom.c:45
++msgid "Yellow filter compensation for the negative image"
++msgstr "Compensation du filtre jaune pour l’image négative"
++
++#: operations/common/negative-darkroom.c:49
++msgid "Clip base + fog"
++msgstr "Écrêter le voile de base"
++
++#: operations/common/negative-darkroom.c:50
++msgid "Clip base + fog to have a pure white output value"
++msgstr "Écrêter le voile de base pour obtenir un blanc pur en sortie"
++
++#: operations/common/negative-darkroom.c:51
++msgid "Add base and fog"
++msgstr "Ajouter le voile de base"
++
++#: operations/common/negative-darkroom.c:52
++msgid "Artificially reintroduce base and fog."
++msgstr "Réintroduire artificiellement le voile de base."
++
++#: operations/common/negative-darkroom.c:57
++msgid "Cyan density boost"
++msgstr "Renfort de densité cyan"
++
++#: operations/common/negative-darkroom.c:58
++msgid "Boost paper density to take advantage of increased dynamic range of a monitor compared to a photographic paper"
++msgstr "Renforce la densité du papier pour profiter de la plage dynamique d’un écran, plus étendue que celle d’un papier photo"
++
++#: operations/common/negative-darkroom.c:62
++msgid "Density boost"
++msgstr "Renfort de densité"
++
++#: operations/common/negative-darkroom.c:73
++msgid "Increase red contrast for papers with fixed contrast (usually color papers)"
++msgstr "Augmente le contraste du rouge pour les papiers à contraste fixe (en général les papiers couleur)"
++
++#: operations/common/negative-darkroom.c:78
++msgid "Increase contrast for papers with fixed contrast (usually color papers)"
++msgstr "Augmente le contraste pour les papiers à contraste fixe (en général les papiers couleur)"
++
++#: operations/common/negative-darkroom.c:83
++msgid "Increase blue contrast for papers with fixed contrast (usually color papers)"
++msgstr "Augmente le contraste du bleu pour les papiers à contraste fixe (en général les papiers couleur)"
++
++#: operations/common/negative-darkroom.c:88
++msgid "Dodge/burn multiplier"
++msgstr "Multiplicateur de maquillage (éclaircir/assombrir)"
++
++#: operations/common/negative-darkroom.c:89
++msgid "The f-stop of dodge/burn for pure white/black auxiliary input"
++msgstr "Le diaphragme du maquillage pour une entrée auxiliaire blanc ou noir pur"
++
++#: operations/common/negative-darkroom.c:93
++msgid "Enable preflashing"
++msgstr "Activer le pré-flashage"
++
++#: operations/common/negative-darkroom.c:94
++msgid "Show preflash controls"
++msgstr "Afficher les réglages de pré-flashage"
++
++#: operations/common/negative-darkroom.c:97
++msgid "Preflash the negative with red light to reduce contrast of the print"
++msgstr "Pré-flasher le négatif en lumière rouge pour réduire le contraste du tirage"
++
++#: operations/common/negative-darkroom.c:102
++msgid "Preflash the negative with green light to reduce contrast of the print"
++msgstr "Pré-flasher le négatif en lumière verte pour réduire le contraste du tirage"
++
++#: operations/common/negative-darkroom.c:107
++msgid "Preflash the negative with blue light to reduce contrast of the print"
++msgstr "Pré-flasher le négatif en lumière bleue pour réduire le contraste du tirage"
++
++#: operations/common/negative-darkroom.c:112
++msgid "Show illuminant controls"
++msgstr "Afficher les réglages de l’illuminant"
++
++#: operations/common/negative-darkroom.c:113
++msgid "X multiplier"
++msgstr "Multiplicateur X"
++
++#: operations/common/negative-darkroom.c:114
++msgid "Adjust the X tristimulus value for output"
++msgstr "Ajuste la valeur trichromatique X en sortie"
++
++#: operations/common/negative-darkroom.c:117
++msgid "Z multiplier"
++msgstr "Multiplicateur Z"
++
++#: operations/common/negative-darkroom.c:118
++msgid "Adjust the Z tristimulus value for output"
++msgstr "Ajuste la valeur trichromatique Z en sortie"
++
++#: operations/common/negative-darkroom.c:440
++msgid "Simulate a film enlargement in an analog darkroom."
++msgstr "Simule l’agrandissement d’un film dans une chambre noire argentique."
++
++#: operations/common-cxx/focus-blur.c:46
++msgid "Out-of-focus blur radius"
++msgstr "Rayon du flou hors mise au point"
++
++#: operations/common-cxx/focus-blur.c:53
++msgid "Relative highlight strength"
++msgstr "Intensité relative des hautes lumières"
++
++#: operations/common-cxx/focus-blur.c:86
++msgid "Focus-region outer radius"
++msgstr "Rayon extérieur de la zone nette"
++
++#: operations/common-cxx/focus-blur.c:92
++msgid "Focus-region inner limit"
++msgstr "Limite intérieure de la zone nette"
++
++#: operations/common-cxx/focus-blur.c:96
++msgid "Focus-transition midpoint"
++msgstr "Milieu de la transition de netteté"
++
++#: operations/common-cxx/focus-blur.c:114
++msgid "Blur gamma"
++msgstr "Gamma du flou"
++
++#: operations/common-cxx/focus-blur.c:115
++msgid "Gamma factor for blur-level spacing"
++msgstr "Facteur gamma de l’espacement des niveaux de flou"
++
++#: operations/common-cxx/focus-blur.c:123
++msgid "Generate more accurate and consistent output (slower)"
++msgstr "Produire un résultat plus précis et plus régulier (plus lent)"
++
++#: operations/common-cxx/denoise-dct.cc:36
++msgid "Size of patches used to denoise"
++msgstr "Taille des blocs utilisés pour réduire le bruit"
++
++#: operations/common-cxx/denoise-dct.cc:488
++msgid "Denoising algorithm using a per-patch DCT thresholding"
++msgstr "Algorithme de réduction du bruit par seuillage DCT par blocs"
++
++#: operations/common-cxx/variable-blur.c:210
++msgid "Blur the image by a varying amount using a mask"
++msgstr "Floute l’image plus ou moins selon un masque"
++
++#: operations/common/bevel.c:51
++msgid "Bump"
++msgstr "Relief"
++
++#: operations/common/bevel.c:54
++msgid "Bevel type"
++msgstr "Type de biseau"
++
++#: operations/common/bevel.c:57
++msgid "The family of bevel to use"
++msgstr "La famille de biseau à utiliser"
++
++#: operations/common/bevel.c:63
++msgid "Hard Light"
++msgstr "Lumière crue"
++
++#: operations/common/bevel.c:67
++msgid "Color Dodge"
++msgstr "Densité couleur -"
++
++#: operations/common/bevel.c:71
++msgid "Lighten"
++msgstr "Éclaircir"
++
++#: operations/common/bevel.c:76
++msgid "Blend mode"
++msgstr "Mode de fusion"
++
++#: operations/common/bevel.c:95
++msgid "Elevation angle of the Bevel."
++msgstr "Angle d’élévation du biseau."
++
++#: operations/common/bevel.c:110
++msgid "Light angle"
++msgstr "Angle de la lumière"
++
++#: operations/common/bevel.c:111
++msgid "Direction of a light source illuminating and shading the bevel."
++msgstr "Direction de la source de lumière qui éclaire et ombre le biseau."
++
++#: operations/common/bloom.c:27
++msgid "Glow-area brightness threshold"
++msgstr "Seuil de luminosité de la zone de lueur"
++
++#: operations/common/bloom.c:31
++msgid "Glow-area edge softness"
++msgstr "Douceur des bords de la zone de lueur"
++
++#: operations/common/bloom.c:43
++msgid "Glow strength"
++msgstr "Intensité de la lueur"
++
++#: operations/common/bloom.c:47
++msgid "Limit exposure"
++msgstr "Limiter l’exposition"
++
++#: operations/common/bloom.c:48
++msgid "Don't over-expose highlights"
++msgstr "Ne pas surexposer les hautes lumières"
++
++#: operations/common/dropshadow.c:53
++msgid "Grow shape"
++msgstr "Forme d’extension"
++
++#: operations/common/dropshadow.c:58
++msgid "Grow radius"
++msgstr "Rayon d’extension"
++
++#: operations/common/negative-darkroom.c:25
++msgid "Characteristic curve"
++msgstr "Courbe caractéristique"
++
++#: operations/common/negative-darkroom.c:34
++msgid "Cyan filter"
++msgstr "Filtre cyan"
++
++#: operations/common/negative-darkroom.c:39
++msgid "Magenta filter"
++msgstr "Filtre magenta"
++
++#: operations/common/negative-darkroom.c:44
++msgid "Yellow filter"
++msgstr "Filtre jaune"
++
++#: operations/common/negative-darkroom.c:67
++msgid "Yellow density boost"
++msgstr "Renfort de densité jaune"
++
++#: operations/common/negative-darkroom.c:72
++msgid "Contrast boost R"
++msgstr "Renfort de contraste R"
++
++#: operations/common/negative-darkroom.c:77
++msgid "Contrast boost"
++msgstr "Renfort de contraste"
++
++#: operations/common/negative-darkroom.c:82
++msgid "Contrast boost B"
++msgstr "Renfort de contraste B"
++
++#: operations/common/negative-darkroom.c:96
++msgid "Red preflash"
++msgstr "Pré-flash rouge"
++
++#: operations/common/negative-darkroom.c:101
++msgid "Green preflash"
++msgstr "Pré-flash vert"
++
++#: operations/common/negative-darkroom.c:106
++msgid "Blue preflash"
++msgstr "Pré-flash bleu"
++
++#: operations/common/negative-darkroom.c:111
++msgid "Illuminant adjustment"
++msgstr "Réglage de l’illuminant"
++
++#: operations/common/vibrance.c:25
++msgid "Vibrance (chroma) adjustment"
++msgstr "Réglage de la vibrance (chroma)"
++
++#: operations/common/vibrance.c:31
++msgid "Saturation scale factor"
++msgstr "Facteur d’échelle de la saturation"
++
++#: operations/common/vibrance.c:79
++msgid "Adjusts the saturation and vibrance of the image."
++msgstr "Règle la saturation et la vibrance de l’image."
++
++#: operations/common-cxx/focus-blur.c:41
++msgid "Blur type"
++msgstr "Type de flou"
++
++#: operations/common-cxx/focus-blur.c:52
++msgid "Highlight factor"
++msgstr "Facteur des hautes lumières"
++
++#: operations/common-cxx/focus-blur.c:57
++msgid "Highlight threshold (low)"
++msgstr "Seuil des hautes lumières (bas)"
++
++#: operations/common-cxx/focus-blur.c:61
++msgid "Highlight threshold"
++msgstr "Seuil des hautes lumières"
++
++#: operations/common-cxx/focus-blur.c:64
++msgid "Highlight threshold (high)"
++msgstr "Seuil des hautes lumières (haut)"
++
++#: operations/common-cxx/focus-blur.c:109
++msgid "Blur levels"
++msgstr "Niveaux de flou"
++
++#: operations/common-cxx/focus-blur.c:110
++msgid "Number of blur levels"
++msgstr "Nombre de niveaux de flou"
++
++#: operations/common-cxx/focus-blur.c:122
++msgid "High quality"
++msgstr "Haute qualité"
++
++#: operations/common-cxx/focus-blur.c:320
++msgid "Blur the image around a focal point"
++msgstr "Floute l’image autour d’un point focal"
++
++#: operations/common-cxx/denoise-dct.cc:33
++msgid "Patch size"
++msgstr "Taille des blocs"
++
++#: operations/common-cxx/denoise-dct.cc:39
++msgid "Noise standard deviation"
++msgstr "Écart type du bruit"
++
++#: operations/common-cxx/lens-blur.cc:53
++msgid "Linear mask"
++msgstr "Masque linéaire"
++
++#: operations/common-cxx/lens-blur.cc:54
++msgid "Use linear mask values"
++msgstr "Utiliser les valeurs linéaires du masque"
++
++#: operations/common-cxx/variable-blur.c:31
++msgid "Maximal blur radius"
++msgstr "Rayon de flou maximal"
