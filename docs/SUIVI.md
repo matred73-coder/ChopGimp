@@ -527,3 +527,13 @@ Constat de l'utilisateur : peindre ou gommer sur un calque avec effets est lent,
   - Espace + Maj / Ctrl (rotation, zoom) fonctionnent au glisser ; le bouton du milieu marche comme avant ; Espace se tape toujours dans un texte.
 - **Petites brosses** : sous 10 px à l'écran, une croix de visée (11 px, contrastée) s'affiche au centre du cercle de la brosse.
 - Vérifié au banc : main dès l'appui sur Espace, vue déplacée par Espace + glisser sans trace, cercle rétabli au relâchement, croix sur une brosse de 4 px. 103 tests.
+
+## 3.24.11 — Copier / coller le style de calque
+
+- **Calque > Style de calque** (et menu clic droit du panneau Calques) :
+  - **Copier le style de calque** : mémorise tous les effets du calque actif, avec leurs réglages, opacité, mode, région et visibilité. C'est un instantané : modifier ou supprimer le calque source ensuite ne change rien. Il marche d'une image à l'autre.
+  - **Coller le style de calque** : remplace les effets de tous les calques sélectionnés par ceux copiés, en une seule étape d'annulation (comme Photoshop).
+  - **Coller le style de calque (en ajoutant)** : garde les effets existants et ajoute les copiés par-dessus.
+- **Liste des effets (icône fx)** : un bouton **Copier** ne met que l'effet choisi dans le presse-papiers.
+- Repose sur le mécanisme de GIMP qui recopie les effets lors de la duplication d'un calque. La création des effets collés suit la duplication et le chargement XCF.
+- Vérifié au banc : style copié de « Haut », collé sur « Milieu » (ombre portée visible), annulé en une fois ; entrées du menu présentes. 103 tests.

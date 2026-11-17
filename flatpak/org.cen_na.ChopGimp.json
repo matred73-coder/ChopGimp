@@ -1048,7 +1048,8 @@
                         "../patches/gimp-3.2.8/0097-ChopGimp-cache-filtered-drawables-paint-strokes-defe.patch",
                         "../patches/gimp-3.2.8/0098-ChopGimp-paint-tools-never-snap-steps-in-strokes-at-.patch",
                         "../patches/gimp-3.2.8/0099-ChopGimp-clicking-a-check-radio-menu-item-keeps-the-.patch",
-                        "../patches/gimp-3.2.8/0100-ChopGimp-Space-drag-pans-like-Photoshop-hand-cursor-.patch"
+                        "../patches/gimp-3.2.8/0100-ChopGimp-Space-drag-pans-like-Photoshop-hand-cursor-.patch",
+                        "../patches/gimp-3.2.8/0101-ChopGimp-copy-paste-layer-style-all-effects-or-a-sin.patch"
                     ]
                 }
             ],
