@@ -1,0 +1,596 @@
+From: ChopGimp <mathieu.redon@proton.me>
+Subject: [PATCH] graph access hook, gegl_node_blit_level(), level-aware caches
+
+1. gegl_set_graph_access_func(): a function called, in the calling thread,
+   on entry of the functions which change a graph (properties, links,
+   children, operation, passthrough, proxies) or evaluate it
+   (blit, blit_buffer, process, processors, bounding box, detect).  GIMP
+   renders its projection in a thread of its own and uses it to keep the
+   main thread away from the graph while a chunk is being rendered.
+
+2. gegl_node_blit_level(): renders a rectangle at a given mipmap level,
+   whether or not mipmap rendering is enabled in the configuration.
+
+3. Node caches at a level greater than 0: results were written into the
+   cache (gegl:cache copied level-0 tiles into it, in level coordinates),
+   which polluted the full-resolution cache.  Now reduced-resolution
+   results are never stored in a cache (gegl:cache passes its input
+   through), and a cache whose level-0 contents cover the request is read
+   downscaled, which is exact.
+
+4. tile-backend-buffer: a damaged level-0 tile (an uninitialized empty
+   tile, when the source was only rendered at a level > 0) is not shared
+   (gegl_tile_dup() warned thousands of times per reduced-resolution
+   render); the copy provides its own empty tile.
+
+5. gegl:median-blur at a level greater than 0: it read and wrote level-0
+   pixels at the coordinates of the level.  It now reads and writes at the
+   level, with the radius scaled (used by drop shadow, glows).
+
+---
+diff --git a/gegl/buffer/gegl-tile-backend-buffer.c b/gegl/buffer/gegl-tile-backend-buffer.c
+index 67e33a2..3bb221b 100644
+--- a/gegl/buffer/gegl-tile-backend-buffer.c
++++ b/gegl/buffer/gegl-tile-backend-buffer.c
+@@ -245,6 +245,17 @@ gegl_tile_backend_buffer_get_tile (GeglTileBackendBuffer *tile_backend_buffer,
+           return NULL;
+         }
+ 
++      /* ChopGimp: a damaged level-0 tile is an empty tile whose data was
++       * never initialized (the source was rendered at a mipmap level > 0
++       * only, see gegl_tile_handler_empty): let our own empty handler
++       * provide it, rather than sharing it (and warning about it).
++       */
++      if (z == 0 && src_tile->damage)
++        {
++          gegl_tile_unref (src_tile);
++          return NULL;
++        }
++
+       tile = gegl_tile_dup (src_tile);
+ 
+       gegl_tile_unref (src_tile);
+diff --git a/gegl/gegl-generic.def b/gegl/gegl-generic.def
+index affa4be..808428a 100644
+--- a/gegl/gegl-generic.def
++++ b/gegl/gegl-generic.def
+@@ -459,6 +459,7 @@ EXPORTS
+   gegl_node_add_pad
+   gegl_node_blit
+   gegl_node_blit_buffer
++  gegl_node_blit_level
+   gegl_node_connect
+   gegl_node_connect_from
+   gegl_node_connect_to
+@@ -799,6 +800,7 @@ EXPORTS
+   gegl_scratch_free
+   gegl_scratch_get_total
+   gegl_serialize
++  gegl_set_graph_access_func
+   gegl_stats
+   gegl_stats_get_type
+   gegl_stats_reset
+diff --git a/gegl/graph/gegl-node-private.h b/gegl/graph/gegl-node-private.h
+index 9c2c2e1..7eb2e25 100644
+--- a/gegl/graph/gegl-node-private.h
++++ b/gegl/graph/gegl-node-private.h
+@@ -150,6 +150,16 @@ gegl_node_emit_computed (GeglNode *node,
+                          const GeglRectangle *rect);
+ 
+ 
++/*  ChopGimp: see gegl_set_graph_access_func()  */
++extern GeglGraphAccessFunc _gegl_graph_access_func;
++extern gpointer            _gegl_graph_access_data;
++
++#define GEGL_GRAPH_ACCESS() \
++  G_STMT_START { \
++    if (G_UNLIKELY (_gegl_graph_access_func)) \
++      _gegl_graph_access_func (_gegl_graph_access_data); \
++  } G_STMT_END
++
+ G_END_DECLS
+ 
+ #endif /* __GEGL_NODE_PRIVATE_H__ */
+diff --git a/gegl/graph/gegl-node.c b/gegl/graph/gegl-node.c
+index c28619d..fdf246c 100644
+--- a/gegl/graph/gegl-node.c
++++ b/gegl/graph/gegl-node.c
+@@ -129,6 +129,22 @@ G_DEFINE_TYPE_WITH_CODE (GeglNode, gegl_node, G_TYPE_OBJECT,
+                                                 gegl_node_visitable_iface_init))
+ 
+ 
++/*  ChopGimp: graph access hook.  An application rendering a graph in a
++ *  thread of its own installs a function which is called on entry of the
++ *  functions changing or evaluating a graph, so that it can keep its
++ *  other threads away from the graph meanwhile.
++ */
++GeglGraphAccessFunc _gegl_graph_access_func = NULL;
++gpointer            _gegl_graph_access_data = NULL;
++
++void
++gegl_set_graph_access_func (GeglGraphAccessFunc func,
++                            gpointer            user_data)
++{
++  _gegl_graph_access_data = user_data;
++  _gegl_graph_access_func = func;
++}
++
+ static void
+ gegl_node_class_init (GeglNodeClass *klass)
+ {
+@@ -258,6 +274,7 @@ gegl_node_visitable_iface_init (gpointer ginterface,
+ static void
+ gegl_node_dispose (GObject *gobject)
+ {
++  GEGL_GRAPH_ACCESS ();  /* ChopGimp */
+   GeglNode *self = GEGL_NODE (gobject);
+   self->inert = TRUE;
+   if (self->priv->parent != NULL)
+@@ -302,6 +319,7 @@ gegl_node_local_set_property (GObject      *gobject,
+                               const GValue *value,
+                               GParamSpec   *pspec)
+ {
++  GEGL_GRAPH_ACCESS ();  /* ChopGimp */
+   GeglNode *node = GEGL_NODE (gobject);
+ 
+   switch (property_id)
+@@ -729,6 +747,10 @@ gegl_node_invalidated (GeglNode            *node,
+                        const GeglRectangle *rect,
+                        gboolean             clear_cache)
+ {
++  /* ChopGimp: no graph access hook here: invalidation is emitted by
++   * buffer "changed" signals, possibly with buffer mutexes held, and only
++   * touches caches (which have their own locks) and signal handlers.
++   */
+   GHashTable  *regions;
+   GeglVisitor *visitor;
+ 
+@@ -811,6 +833,10 @@ gegl_node_invalidated (GeglNode            *node,
+                        const GeglRectangle *rect,
+                        gboolean             clear_cache)
+ {
++  /* ChopGimp: no graph access hook here: invalidation is emitted by
++   * buffer "changed" signals, possibly with buffer mutexes held, and only
++   * touches caches (which have their own locks) and signal handlers.
++   */
+   GHashTable  *rects;
+   GeglVisitor *visitor;
+ 
+@@ -909,6 +935,7 @@ gegl_node_connect (GeglNode    *source,
+                    GeglNode    *sink,
+                    const gchar *sink_pad_name)
+ {
++  GEGL_GRAPH_ACCESS ();  /* ChopGimp */
+   if ((!GEGL_IS_NODE (sink))   ||
+       (sink_pad_name == NULL) ||
+       (!GEGL_IS_NODE (source))  ||
+@@ -997,6 +1024,7 @@ gboolean
+ gegl_node_disconnect (GeglNode    *sink,
+                       const gchar *sink_pad_name)
+ {
++  GEGL_GRAPH_ACCESS ();  /* ChopGimp */
+   GeglNode    *real_sink          = sink;
+   const gchar *real_sink_pad_name = sink_pad_name;
+ 
+@@ -1186,6 +1214,7 @@ gegl_node_blit_buffer (GeglNode            *self,
+                        gint                 level,
+                        GeglAbyssPolicy      abyss_policy) 
+ {
++  GEGL_GRAPH_ACCESS ();  /* ChopGimp */
+   // XXX: make use of abyss_policy
+ 
+   GeglEvalManager *eval_manager;
+@@ -1225,6 +1254,7 @@ gegl_node_blit (GeglNode            *self,
+                 gint                 rowstride,
+                 GeglBlitFlags        flags)
+ {
++  GEGL_GRAPH_ACCESS ();  /* ChopGimp */
+   gint interpolation = flags & (GEGL_BUFFER_FILTER_ALL);
+   flags &= 0xf;
+ 
+@@ -1291,6 +1321,52 @@ gegl_node_blit (GeglNode            *self,
+     }
+ }
+ 
++void
++gegl_node_blit_level (GeglNode            *self,
++                      const GeglRectangle *roi,
++                      gint                 level,
++                      const Babl          *format,
++                      gpointer             destination_buf,
++                      gint                 rowstride)
++{
++  GeglRectangle  request;
++  GeglBuffer    *buffer;
++
++  GEGL_GRAPH_ACCESS ();  /* ChopGimp */
++
++  g_return_if_fail (GEGL_IS_NODE (self));
++  g_return_if_fail (roi != NULL);
++  g_return_if_fail (level >= 0 && level < GEGL_CACHE_VALID_MIPMAPS);
++
++  if (level == 0)
++    {
++      gegl_node_blit (self, 1.0, roi, format, destination_buf, rowstride,
++                      GEGL_BLIT_DEFAULT);
++      return;
++    }
++
++  if (rowstride == GEGL_AUTO_ROWSTRIDE && format)
++    rowstride = babl_format_get_bytes_per_pixel (format) * roi->width;
++
++  /*  the graph is processed in level-0 coordinates  */
++  request.x      = roi->x      * (1 << level);
++  request.y      = roi->y      * (1 << level);
++  request.width  = roi->width  * (1 << level);
++  request.height = roi->height * (1 << level);
++
++  buffer = gegl_node_apply_roi (self, &request, level);
++
++  if (buffer && destination_buf)
++    {
++      /*  an exact power of two: the level is read as is  */
++      gegl_buffer_get (buffer, roi, 1.0 / (1 << level), format,
++                       destination_buf, rowstride,
++                       GEGL_ABYSS_NONE | GEGL_BUFFER_FILTER_NEAREST);
++    }
++
++  g_clear_object (&buffer);
++}
++
+ static GSList *
+ gegl_node_get_depends_on (GeglNode *self)
+ {
+@@ -1405,6 +1481,7 @@ gegl_node_property_changed (GObject    *gobject,
+                             GParamSpec *arg1,
+                             gpointer    user_data)
+ {
++  GEGL_GRAPH_ACCESS ();  /* ChopGimp */
+   GeglNode *self = GEGL_NODE (user_data);
+ 
+   if (arg1 != user_data &&
+@@ -1456,6 +1533,7 @@ static void
+ gegl_node_set_operation_object (GeglNode      *self,
+                                 GeglOperation *operation)
+ {
++  GEGL_GRAPH_ACCESS ();  /* ChopGimp */
+   GeglNode    **consumer_nodes = NULL;
+   const gchar **consumer_names = NULL;
+   GeglNode    *input           = NULL;
+@@ -1554,6 +1632,7 @@ gegl_node_set_valist (GeglNode    *self,
+                       const gchar *first_property_name,
+                       va_list      var_args)
+ {
++  GEGL_GRAPH_ACCESS ();  /* ChopGimp */
+   const gchar *property_name;
+ 
+   g_return_if_fail (GEGL_IS_NODE (self));
+@@ -1678,6 +1757,7 @@ gegl_node_set_property (GeglNode     *self,
+                         const gchar  *property_name,
+                         const GValue *value)
+ {
++  GEGL_GRAPH_ACCESS ();  /* ChopGimp */
+   GParamSpec *pspec;
+ 
+   g_return_if_fail (GEGL_IS_NODE (self));
+@@ -1806,6 +1886,7 @@ gegl_node_get_operation (const GeglNode *node)
+ GeglOperation *
+ gegl_node_get_gegl_operation (GeglNode *node)
+ {
++  GEGL_GRAPH_ACCESS ();  /* ChopGimp */
+   if (node == NULL)
+     return NULL;
+ 
+@@ -1896,6 +1977,7 @@ gegl_node_get_producer (GeglNode     *node,
+ GeglRectangle
+ gegl_node_get_bounding_box (GeglNode *self)
+ {
++  GEGL_GRAPH_ACCESS ();  /* ChopGimp */
+   if (!self->valid_have_rect)
+     {
+       /* We need to construct an evaluation here because we need
+@@ -1917,6 +1999,7 @@ gegl_node_get_bounding_box (GeglNode *self)
+ void
+ gegl_node_process (GeglNode *self) /* XXX: add level argument?  */
+ {
++  GEGL_GRAPH_ACCESS ();  /* ChopGimp */
+   GeglProcessor *processor;
+ 
+   g_return_if_fail (GEGL_IS_NODE (self));
+@@ -1932,6 +2015,7 @@ gegl_node_detect (GeglNode *root,
+                   gint      x,
+                   gint      y)
+ {
++  GEGL_GRAPH_ACCESS ();  /* ChopGimp */
+   if (root)
+     {
+       /* make sure the have rects are computed */
+@@ -1960,6 +2044,7 @@ void
+ gegl_node_insert_before (GeglNode *self,
+                          GeglNode *to_be_inserted)
+ {
++  GEGL_GRAPH_ACCESS ();  /* ChopGimp */
+   GeglNode     *other;
+   GeglRectangle rectangle;
+ 
+@@ -2211,6 +2296,7 @@ GeglNode *
+ gegl_node_add_child (GeglNode *self,
+                      GeglNode *child)
+ {
++  GEGL_GRAPH_ACCESS ();  /* ChopGimp */
+   g_return_val_if_fail (GEGL_IS_NODE (self), NULL);
+   g_return_val_if_fail (GEGL_IS_NODE (child), NULL);
+   g_return_val_if_fail (child->priv->parent == NULL, NULL);
+@@ -2231,6 +2317,7 @@ GeglNode *
+ gegl_node_remove_child (GeglNode *self,
+                         GeglNode *child)
+ {
++  GEGL_GRAPH_ACCESS ();  /* ChopGimp */
+   g_return_val_if_fail (GEGL_IS_NODE (self), NULL);
+   if (!GEGL_IS_NODE (child))
+     {
+@@ -2361,6 +2448,7 @@ gegl_node_get_pad_proxy (GeglNode    *node,
+                          const gchar *name,
+                          gboolean     is_graph_input)
+ {
++  GEGL_GRAPH_ACCESS ();  /* ChopGimp */
+   GeglPad *pad = gegl_node_get_pad (node, name);
+ 
+   if (!pad)
+@@ -2438,6 +2526,7 @@ void
+ gegl_node_set_passthrough (GeglNode *node,
+                            gboolean  passthrough)
+ {
++  GEGL_GRAPH_ACCESS ();  /* ChopGimp */
+   g_return_if_fail (GEGL_IS_NODE (node));
+ 
+   if (node->passthrough == passthrough)
+diff --git a/gegl/graph/gegl-node.h b/gegl/graph/gegl-node.h
+index 3d285e2..8916e1c 100644
+--- a/gegl/graph/gegl-node.h
++++ b/gegl/graph/gegl-node.h
+@@ -320,6 +320,47 @@ void          gegl_node_blit_buffer      (GeglNode            *node,
+                                           int                  level,
+                                           GeglAbyssPolicy      abyss_policy);
+ 
++/**
++ * gegl_node_blit_level: (skip) (attributes skip-reason=chopgimp_private)
++ * @node: a #GeglNode
++ * @roi: the rectangle to render, in the coordinates of @level
++ * @level: the mipmap level to render at
++ * @format: the #BablFormat desired.
++ * @destination_buf: a memory buffer large enough to contain the data.
++ * @rowstride: rowstride in bytes, or GEGL_AUTO_ROWSTRIDE
++ *
++ * ChopGimp: renders @roi of @node at the mipmap @level (a reduced
++ * resolution, each pixel standing for 2^@level x 2^@level pixels), whether
++ * or not mipmap rendering is enabled in the configuration.  Nodes caches
++ * are only read, never written, at a level greater than 0.
++ */
++void          gegl_node_blit_level       (GeglNode            *node,
++                                          const GeglRectangle *roi,
++                                          gint                 level,
++                                          const Babl          *format,
++                                          gpointer             destination_buf,
++                                          gint                 rowstride);
++
++/**
++ * GeglGraphAccessFunc: (skip)
++ */
++typedef void (* GeglGraphAccessFunc) (gpointer user_data);
++
++/**
++ * gegl_set_graph_access_func: (skip) (attributes skip-reason=chopgimp_private)
++ * @func: (allow-none): a function, or NULL
++ * @user_data: data passed to @func
++ *
++ * ChopGimp: @func is called, in the calling thread, on entry of the
++ * functions which change a graph (setting properties, connecting,
++ * adding or removing children...) or evaluate it (blitting, processing,
++ * computing bounding boxes).  An application rendering a graph in a
++ * thread of its own uses it to keep its other threads away from the
++ * graph meanwhile.
++ */
++void          gegl_set_graph_access_func (GeglGraphAccessFunc  func,
++                                          gpointer             user_data);
++
+ /**
+  * gegl_node_process:
+  * @sink_node: a #GeglNode without outputs.
+diff --git a/gegl/operation/gegl-operation-context.c b/gegl/operation/gegl-operation-context.c
+index c3d9af5..6bb95c8 100644
+--- a/gegl/operation/gegl-operation-context.c
++++ b/gegl/operation/gegl-operation-context.c
+@@ -334,7 +334,12 @@ gegl_operation_context_get_target (GeglOperationContext *context,
+       else
+         output = gegl_buffer_new (GEGL_RECTANGLE (0, 0, 0, 0), format);
+     }
+-  else if (gegl_node_use_cache (node))
++  /*  ChopGimp: reduced-resolution results (level > 0) are not stored in
++   *  the node's cache: its level-0 contents could later be downscaled
++   *  over them, and they would make the cache look valid for full
++   *  resolution rendering.
++   */
++  else if (context->level == 0 && gegl_node_use_cache (node))
+     {
+       GeglBuffer    *cache;
+       cache = GEGL_BUFFER (gegl_node_get_cache (node));
+diff --git a/gegl/process/gegl-graph-traversal.c b/gegl/process/gegl-graph-traversal.c
+index 38e1a75..a314c55 100644
+--- a/gegl/process/gegl-graph-traversal.c
++++ b/gegl/process/gegl-graph-traversal.c
+@@ -312,16 +312,18 @@ gegl_graph_prepare_request (GeglGraphTraversal  *path,
+       
+       if (node->cache)
+         {
+-          gint i;
+-          for (i = level; i >=0 && !context->cached; i--)
+-          {
+-            if (gegl_region_rect_in (node->cache->valid_region[level], request) == GEGL_OVERLAP_RECTANGLE_IN)
++          /*  ChopGimp: the need rects are in level-0 coordinates, and only
++           *  level-0 results are stored in the cache (see
++           *  gegl_operation_context_get_target()).  At a greater level,
++           *  the cache is read downscaled, which is exact where the level-0
++           *  contents are valid.
++           */
++          if (gegl_region_rect_in (node->cache->valid_region[0], request) == GEGL_OVERLAP_RECTANGLE_IN)
+             {
+               /* This node is cached and the cache fulfills our need rect */
+               context->cached = TRUE;
+               gegl_operation_context_set_result_rect (context, &empty_rect);
+             }
+-          }
+           if (context->cached)
+             continue;
+         }
+diff --git a/gegl/process/gegl-processor.c b/gegl/process/gegl-processor.c
+index 4471ede..53fa631 100644
+--- a/gegl/process/gegl-processor.c
++++ b/gegl/process/gegl-processor.c
+@@ -761,6 +761,8 @@ gegl_processor_work (GeglProcessor *processor,
+ {
+   gboolean   more_work = FALSE;
+ 
++  GEGL_GRAPH_ACCESS ();  /* ChopGimp */
++
+   if (gegl_config()->use_opencl)
+     {
+       if (gegl_cl_is_accelerated ()
+@@ -809,6 +811,8 @@ GeglProcessor *
+ gegl_node_new_processor (GeglNode            *node,
+                          const GeglRectangle *rectangle)
+ {
++  GEGL_GRAPH_ACCESS ();  /* ChopGimp */
++
+   g_return_val_if_fail (GEGL_IS_NODE (node), NULL);
+ 
+   return g_object_new (GEGL_TYPE_PROCESSOR,
+diff --git a/operations/common/median-blur.c b/operations/common/median-blur.c
+index 5cbc39f..e61f0c2 100644
+--- a/operations/common/median-blur.c
++++ b/operations/common/median-blur.c
+@@ -798,6 +798,12 @@ process (GeglOperation       *operation,
+   gint            i;
+   gint            c;
+ 
++  /* ChopGimp: at a mipmap level > 0 (reduced resolution rendering), @roi
++   * is in the coordinates of the level: the input is read, the output
++   * written, at that level, with a radius scaled accordingly.
++   */
++  gint           *level_outline        = NULL;
++
+   if (o->radius < 0)
+     {
+       percentile       = 1.0 - percentile;
+@@ -836,12 +842,33 @@ process (GeglOperation       *operation,
+ 
+   g_return_val_if_fail (n_color_components == 1 || n_color_components == 3, FALSE);
+ 
++  if (level > 0)
++    {
++      radius = (radius + (1 << (level - 1))) >> level;
++
++      level_outline = g_new (gint, radius + 1);
++      init_neighborhood_outline (o->neighborhood, radius, level_outline);
++
++      neighborhood_outline = level_outline;
++    }
++
+   hist = g_slice_new0 (Histogram);
+ 
+   hist->n_components       = n_components;
+   hist->n_color_components = n_color_components;
+ 
+-  src_rect     = gegl_operation_get_required_for_output (operation, "input", roi);
++  if (level > 0)
++    {
++      src_rect.x      = roi->x - radius;
++      src_rect.y      = roi->y - radius;
++      src_rect.width  = roi->width  + 2 * radius;
++      src_rect.height = roi->height + 2 * radius;
++    }
++  else
++    {
++      src_rect = gegl_operation_get_required_for_output (operation, "input", roi);
++    }
++
+   src_stride   = src_rect.width * n_components;
+   dst_stride   = roi->width * n_components;
+   n_src_pixels = src_rect.width * src_rect.height;
+@@ -849,7 +876,7 @@ process (GeglOperation       *operation,
+   src_buf = g_new (gint32, n_src_pixels * n_components);
+   dst_buf = g_new (gfloat, n_dst_pixels * n_components);
+ 
+-  gegl_buffer_get (input, &src_rect, 1.0, format, src_buf,
++  gegl_buffer_get (input, &src_rect, 1.0 / (1 << level), format, src_buf,
+                    GEGL_AUTO_ROWSTRIDE, get_abyss_policy (operation, "input"));
+   convert_values_to_bins (hist, src_buf, n_src_pixels, data->quantize);
+ 
+@@ -939,7 +966,7 @@ process (GeglOperation       *operation,
+         dst[c] = histogram_get_median (hist, c, alpha_percentile);
+     }
+ 
+-  gegl_buffer_set (output, roi, 0, format, dst_buf, GEGL_AUTO_ROWSTRIDE);
++  gegl_buffer_set (output, roi, level, format, dst_buf, GEGL_AUTO_ROWSTRIDE);
+ 
+   for (c = 0; c < n_components; c++)
+     {
+@@ -955,6 +982,7 @@ process (GeglOperation       *operation,
+   g_slice_free (Histogram, hist);
+   g_free (dst_buf);
+   g_free (src_buf);
++  g_free (level_outline);
+ 
+   return TRUE;
+ }
+diff --git a/operations/core/cache.c b/operations/core/cache.c
+index 438c018..95f907e 100644
+--- a/operations/core/cache.c
++++ b/operations/core/cache.c
+@@ -66,6 +66,38 @@ process (GeglOperation       *operation,
+   return TRUE;
+ }
+ 
++/*  ChopGimp: at a mipmap level greater than 0 (reduced-resolution
++ *  rendering), the node's cache is neither used as the output nor
++ *  written to (see gegl_operation_context_get_target()), and
++ *  gegl_buffer_copy() only copies level-0 tiles: pass the input through.
++ */
++static gboolean
++operation_process (GeglOperation        *operation,
++                   GeglOperationContext *context,
++                   const gchar          *output_prop,
++                   const GeglRectangle  *result,
++                   gint                  level)
++{
++  if (level > 0)
++    {
++      GObject *input = gegl_operation_context_get_object (context, "input");
++
++      if (! input)
++        return FALSE;
++
++      gegl_operation_context_take_object (context, "output",
++                                          g_object_ref (input));
++
++      return TRUE;
++    }
++
++  return GEGL_OPERATION_CLASS (gegl_op_parent_class)->process (operation,
++                                                               context,
++                                                               output_prop,
++                                                               result,
++                                                               level);
++}
++
+ static void
+ gegl_op_class_init (GeglOpClass *klass)
+ {
+@@ -78,6 +110,7 @@ gegl_op_class_init (GeglOpClass *klass)
+   operation_class->cache_policy  = GEGL_CACHE_POLICY_ALWAYS;
+   operation_class->threaded      = FALSE;
+   operation_class->prepare       = prepare;
++  operation_class->process       = operation_process;
+   filter_class->process          = process;
+ 
+   gegl_operation_class_set_keys (operation_class,

@@ -12,26 +12,39 @@
 # portée, contour, flou), modes de fusion, peinture (pinceau, gomme,
 # aérographe, doigt), transformations, sélection d'après l'alpha, rendu
 # complet de l'image (aplatissement), enregistrement et ouverture XCF.
+#
+# gimp-console n'a pas d'affichage : le code de l'interface n'est pas
+# entraîné, mais ce qui le fait ramer l'est par des appels équivalents :
+#   - projection (rendu de l'image affichée) : copie du visible, vignettes,
+#     pipette sur l'image fusionnée ; modes de fusion un par un, groupes ;
+#   - contour de sélection (gimpboundary, fourmis) : tracé de la sélection,
+#     sélection vers chemin, bordure, agrandir / réduire ;
+#   - réglages (courbes, niveaux, teinte…) et filtres fusionnés
+#     (gimp-drawable-merge-filters), masques, texte, remplissages.
+#
+# Banc de mesure : chaque étape écrit sa durée dans $PGO_DIR/pgo_train.log
+# (« Δ s ») ; PGO_SIZE change la taille de l'image (défaut 3000).
 import os
 import time
 
 from gi.repository import Gimp, Gio, Gegl
 
-W = H = 3000
+W = H = int(os.environ.get("PGO_SIZE", "3000"))
 DIR = os.environ.get("PGO_DIR", "/tmp")
 LOG = open(os.path.join(DIR, "pgo_train.log"), "w")
 T0 = time.time()
 
 
-def log(msg):
-    LOG.write("%6.1f s  %s\n" % (time.time() - T0, msg))
+def log(msg, dt=None):
+    LOG.write("%6.1f s  %s%s\n" % (time.time() - T0, msg, "" if dt is None else "  Δ %.3f s" % dt))
     LOG.flush()
 
 
 def step(name, fn, *args):
+    t = time.time()
     try:
         fn(*args)
-        log(name)
+        log(name, time.time() - t)
     except Exception as e:          # une étape ratée ne doit pas arrêter l'entraînement
         log("%s : ÉCHEC %s" % (name, e))
 
@@ -140,17 +153,192 @@ def float_pass(img):
     dup.delete()
 
 
+ALL_MODES = [getattr(Gimp.LayerMode, n) for n in (
+    "NORMAL", "DISSOLVE", "MULTIPLY", "SCREEN", "OVERLAY", "SOFTLIGHT", "HARDLIGHT", "DODGE",
+    "BURN", "DIFFERENCE", "ADDITION", "SUBTRACT", "DARKEN_ONLY", "LIGHTEN_ONLY",
+    "LINEAR_LIGHT", "VIVID_LIGHT", "PIN_LIGHT", "HARD_MIX", "EXCLUSION", "LINEAR_BURN",
+    "DIVIDE", "HSV_HUE", "HSV_SATURATION", "HSL_COLOR", "HSV_VALUE", "LCH_HUE", "LCH_COLOR",
+    "LCH_LIGHTNESS", "LUMINANCE", "GRAIN_MERGE", "GRAIN_EXTRACT", "DARKER_COLOR",
+    "LIGHTER_COLOR",)
+             if hasattr(Gimp.LayerMode, n)]
+
+
+def projection(img):
+    """Rendu de la projection (ce que l'affichage demande) : copie du
+    visible, vignettes de l'image et des calques, pipette fusionnée."""
+    Gimp.edit_copy_visible(img)
+    img.get_thumbnail(256, 256, Gimp.PixbufTransparency.KEEP_ALPHA)
+    for l in img.get_layers():
+        l.get_thumbnail(128, 128, Gimp.PixbufTransparency.KEEP_ALPHA)
+    for i in range(20):
+        img.pick_color([img.get_layers()[0]], 100 + i * 130, 200 + i * 120, True, True, 8.0)
+
+
+def modes(img, layers):
+    """Tous les modes de fusion, l'image étant recomposée à chaque fois."""
+    l = layers[1]
+    old = l.get_mode()
+    for mode in ALL_MODES:
+        try:
+            l.set_mode(mode)
+        except Exception:
+            continue
+        Gimp.edit_copy_visible(img)
+    l.set_mode(old)
+
+
+def groups(img, layers):
+    """Groupe en passage (pass-through) et groupe isolé avec effet."""
+    g = Gimp.GroupLayer.new(img, "groupe")
+    img.insert_layer(g, None, 0)
+    for i, src in enumerate(layers[1:3]):
+        c = src.copy()
+        img.insert_layer(c, g, 0)
+        c.set_offsets(300 * i, 200 * i)
+    g.set_mode(Gimp.LayerMode.PASS_THROUGH)
+    Gimp.edit_copy_visible(img)
+    g.set_mode(Gimp.LayerMode.NORMAL)
+    filt(g, "gegl:dropshadow", x=15.0, y=15.0, radius=12.0)
+    Gimp.edit_copy_visible(img)
+    g.set_opacity(60.0)
+    render(img)
+    img.remove_layer(g)
+
+
+def adjust(img):
+    """Réglages appliqués aux pixels (opérations gimp:*)."""
+    l = Gimp.Layer.new_from_visible(img, img, "réglages")
+    img.insert_layer(l, None, 0)
+    l.curves_spline(Gimp.HistogramChannel.VALUE, [0.0, 0.0, 0.3, 0.2, 0.7, 0.85, 1.0, 1.0])
+    l.levels(Gimp.HistogramChannel.VALUE, 0.05, 0.95, True, 1.2, 0.0, 1.0, True)
+    l.hue_saturation(Gimp.HueRange.ALL, 15.0, 0.0, 20.0, 0.0)
+    l.brightness_contrast(0.1, 0.2)
+    l.color_balance(Gimp.TransferMode.MIDTONES, True, 10.0, -5.0, 5.0)
+    l.desaturate(Gimp.DesaturateMode.LUMINANCE)
+    l.invert(False)
+    l.posterize(8)
+    l.histogram(Gimp.HistogramChannel.VALUE, 0.0, 1.0)
+    l.threshold(Gimp.HistogramChannel.VALUE, 0.4, 1.0)
+    img.remove_layer(l)
+
+
+def merged_filters(img, layers):
+    """Filtres non destructifs puis fusionnés (gimp-drawable-merge-filters),
+    comme « Pixelliser le style de calque »."""
+    l = layers[4].copy()
+    img.insert_layer(l, None, 0)
+    filt(l, "gegl:dropshadow", x=10.0, y=10.0, radius=20.0)
+    filt(l, "chopgimp:stroke")
+    filt(l, "gegl:inner-glow")
+    filt(l, "gegl:bevel")
+    filt(l, "gegl:unsharp-mask")
+    filt(l, "gimp:curves")
+    Gimp.edit_copy_visible(img)
+    l.merge_filters()
+    img.remove_layer(l)
+
+
+def masks(img, layers):
+    l = layers[2]
+    m = l.create_mask(Gimp.AddMaskType.WHITE)
+    l.add_mask(m)
+    Gimp.context_set_foreground(color(0, 0, 0))
+    Gimp.context_set_brush_size(150)
+    Gimp.paintbrush_default(m, zigzag(200, 200, 2400, 2400, 20))
+    m.edit_gradient_fill(Gimp.GradientType.RADIAL, 0, False, 1, 0, True, W / 2, H / 2, W, H)
+    Gimp.edit_copy_visible(img)
+    l.remove_mask(Gimp.MaskApplyMode.APPLY)
+
+
+def selection(img, layers):
+    """Sélections et leur contour (gimpboundary)."""
+    l = layers[0]
+    img.select_ellipse(Gimp.ChannelOps.REPLACE, 200, 200, W - 600, H - 700)
+    img.select_rectangle(Gimp.ChannelOps.SUBTRACT, W / 3, H / 3, W / 4, H / 5)
+    img.select_round_rectangle(Gimp.ChannelOps.ADD, 100, H / 2, W / 2, H / 3, 80, 80)
+    img.select_polygon(Gimp.ChannelOps.INTERSECT, zigzag(0, 0, W, H, 25) + [W, H, 0, H])
+    Gimp.context_set_brush_size(5)
+    l.edit_stroke_selection()
+    Gimp.Selection.border(img, 15)
+    Gimp.Selection.grow(img, 10)
+    Gimp.Selection.shrink(img, 5)
+    Gimp.Selection.sharpen(img)
+    Gimp.Selection.invert(img)
+    Gimp.Selection.invert(img)
+    proc = Gimp.get_pdb().lookup_procedure("plug-in-sel2path")
+    if proc is not None:
+        cfg = proc.create_config()
+        cfg.set_property("image", img)
+        proc.run(cfg)
+    Gimp.Selection.none(img)
+    for i, lay in enumerate(layers[1:]):
+        img.select_item(Gimp.ChannelOps.REPLACE, lay)
+        img.select_contiguous_color(Gimp.ChannelOps.ADD, l, 50 + 400 * i, 60 + 300 * i)
+        Gimp.Selection.feather(img, 5.0)
+        Gimp.Selection.bounds(img)
+    img.select_color(Gimp.ChannelOps.REPLACE, l, color(0.5, 0.3, 0.4))
+    Gimp.context_set_feather(False)
+    Gimp.Selection.none(img)
+
+
+def text(img):
+    font = Gimp.Font.get_by_name("Sans-serif")
+    t = Gimp.TextLayer.new(img, "ChopGimp — entraînement du profil " * 4, font, 140.0, Gimp.Unit.pixel())
+    img.insert_layer(t, None, 0)
+    t.set_offsets(100, 1200)
+    filt(t, "gegl:dropshadow", x=8.0, y=8.0, radius=6.0)
+    Gimp.edit_copy_visible(img)
+    t.set_text("Autre texte, plus court")
+    Gimp.edit_copy_visible(img)
+    img.remove_layer(t)
+
+
+def fills(img, layers):
+    l = layers[0]
+    for g in (Gimp.GradientType.RADIAL, Gimp.GradientType.CONICAL_SYMMETRIC, Gimp.GradientType.SPIRAL_CLOCKWISE,
+              Gimp.GradientType.SHAPEBURST_DIMPLED):
+        img.select_ellipse(Gimp.ChannelOps.REPLACE, 500, 500, 1500, 1200)
+        l.edit_gradient_fill(g, 0, True, 3, 0.2, True, 800, 800, 1800, 1500)
+    Gimp.Selection.none(img)
+    l.edit_bucket_fill(Gimp.FillType.FOREGROUND, 1500, 1500)
+    l.edit_fill(Gimp.FillType.PATTERN)
+
+
+def scale(img):
+    dup = img.duplicate()
+    for interp in (Gimp.InterpolationType.CUBIC, Gimp.InterpolationType.LOHALO, Gimp.InterpolationType.NOHALO):
+        Gimp.context_set_interpolation(interp)
+        d = dup.duplicate()
+        d.scale(W * 2 // 3, H * 2 // 3)
+        d.delete()
+    dup.get_layers()[0].transform_perspective(0, 0, W, 100, 50, H, W - 200, H - 50)
+    dup.rotate(Gimp.RotationType.DEGREES90)
+    dup.convert_precision(Gimp.Precision.U16_NON_LINEAR)
+    dup.merge_visible_layers(Gimp.MergeType.CLIP_TO_IMAGE)
+    dup.delete()
+
+
 img = Gimp.Image.new(W, H, Gimp.ImageBaseType.RGB)
 img.undo_disable()              # comme un script : l'historique n'est pas entraîné
 layers = build(img)
 log("construction")
 step("effets", effects, layers)
 step("rendu 1", render, img)
+step("projection", projection, img)
+step("modes de fusion", modes, img, layers)
+step("groupes", groups, img, layers)
+step("réglages", adjust, img)
+step("filtres fusionnés", merged_filters, img, layers)
+step("masques", masks, img, layers)
+step("sélections", selection, img, layers)
+step("texte", text, img)
+step("remplissages", fills, img, layers)
 step("peinture", paint, img, layers)
 step("rendu 2", render, img)
 step("transformations", transform, img, layers)
 step("rendu 3", render, img)
 step("xcf", xcf, img)
+step("échelle", scale, img)
 step("flottant", float_pass, img)
 img.delete()
 log("fin")

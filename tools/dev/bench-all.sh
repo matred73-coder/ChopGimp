@@ -25,6 +25,7 @@
 #   BENCH_SHOTS=1 (captures après chaque geste dans $CHOPGIMP_DEV/bench-shots),
 #   BENCH_EYE="x y", BENCH_THUMB="x y" (œil / vignette du calque actif dans
 #   le panneau Calques, défaut : disposition d'usine 1600×900, user.xcf),
+#   BENCH_GIMPRC (lignes de gimprc, ex. "(background-render yes)"),
 #   CHOPGIMP_GUITEST_FLATPAK_ARGS (ex. "--env=CHOPGIMP_NO_MIMALLOC=1").
 # Le banc a son propre dossier ($CHOPGIMP_GUITEST, défaut /tmp/claude-1000/cgb)
 # et n'arrête que ses propres processus : d'autres bancs peuvent tourner.
@@ -101,6 +102,10 @@ measure() {
 for FILE in "${FILES[@]}"; do
     echo "== $FILE" >&2
     bench_stop
+    # BENCH_GIMPRC="(background-render yes)" : lignes ajoutées au gimprc du banc
+    if [ -n "${BENCH_GIMPRC:-}" ]; then
+        mkdir -p "$D/cfg"; printf '%s\n' "$BENCH_GIMPRC" > "$D/cfg/gimprc"
+    fi
     "$G" start > /dev/null 2>&1
     PID=$(find_pid)
     [ -n "$PID" ] || { echo "ChopGimp n'a pas démarré (voir $D/gimp.log)"; exit 1; }

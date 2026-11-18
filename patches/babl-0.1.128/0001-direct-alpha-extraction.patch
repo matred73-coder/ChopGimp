@@ -1,0 +1,369 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: ChopGimp <mathieu.redon@proton.me>
+Date: Tue, 17 Nov 2026 19:30:46 +0100
+Subject: [PATCH 1/2] ChopGimp: direct conversions extracting the alpha
+ component
+
+Formats holding only the alpha component ("A u8" ... "A double", model
+RGBA, as GIMP registers them for channels and selections) had no
+conversion leading to them: every <color+alpha> -> "A <type>"
+conversion (alpha to selection, channel from alpha, layer masks...)
+fell back to the reference fish, linearising the color components that
+are then dropped, serialised on the global reference mutex (~1 s for
+Ctrl+click on a layer thumbnail).
+
+- babl/base/alpha-extract.c: RGBA, R'G'B'A, R~G~B~A, YA, Y'A, Y~A in u8,
+  u16, u32, half, float, double -> "A <same type>" (copy of the alpha
+  component; half NaNs become 0xFE00 as through the reference), and
+  u8/u16 -> "A float" (same expression as the type conversions);
+  results bit-identical to the reference conversion.
+- babl-fish-path.c: alpha-only destination in another RGB space than
+  the source: search the path to the same format in the source space
+  (alpha does not depend on the space; identical bytes).
+- babl-cache.c: distinct cache header, so that "[reference]" entries
+  cached by an unpatched babl are discarded.
+---
+ babl/babl-cache.c         |  10 +-
+ babl/babl-fish-path.c     |  21 ++++
+ babl/base/alpha-extract.c | 228 ++++++++++++++++++++++++++++++++++++++
+ babl/base/babl-base.c     |   5 +
+ babl/base/babl-base.h     |   2 +
+ babl/base/meson.build     |   1 +
+ 6 files changed, 265 insertions(+), 2 deletions(-)
+ create mode 100644 babl/base/alpha-extract.c
+
+diff --git a/babl/babl-cache.c b/babl/babl-cache.c
+index 7a22299..fdbdc4a 100644
+--- a/babl/babl-cache.c
++++ b/babl/babl-cache.c
+@@ -221,17 +221,23 @@ compare_fish_pixels (const void *a, const void *b)
+   return ((*fb)->fish.pixels - (*fa)->fish.pixels);
+ }
+ 
++/* ChopGimp: conversions added to babl (direct alpha extraction) make
++ * cached "[reference]" entries of an unpatched babl wrong; a distinct
++ * header discards such caches.
++ */
++#define CHOPGIMP_CACHE_TAG " chopgimp-alpha-1"
++
+ static const char *
+ cache_header (void)
+ {
+   static char buf[2048];
+   if (strchr (BABL_GIT_VERSION, ' ')) // we must be building from tarball
+     snprintf (buf, sizeof (buf),
+-             "#%i.%i.%i BABL_PATH_LENGTH=%d BABL_TOLERANCE=%f",
++             "#%i.%i.%i BABL_PATH_LENGTH=%d BABL_TOLERANCE=%f" CHOPGIMP_CACHE_TAG,
+              BABL_MAJOR_VERSION, BABL_MINOR_VERSION, BABL_MICRO_VERSION,
+              _babl_max_path_len (), _babl_legal_error ());
+   else
+-    snprintf (buf, sizeof (buf), "#%s BABL_PATH_LENGTH=%d BABL_TOLERANCE=%f",
++    snprintf (buf, sizeof (buf), "#%s BABL_PATH_LENGTH=%d BABL_TOLERANCE=%f" CHOPGIMP_CACHE_TAG,
+              BABL_GIT_VERSION, _babl_max_path_len (), _babl_legal_error ());
+   return buf;
+ }
+diff --git a/babl/babl-fish-path.c b/babl/babl-fish-path.c
+index f436c9a..cab7330 100644
+--- a/babl/babl-fish-path.c
++++ b/babl/babl-fish-path.c
+@@ -1280,6 +1280,27 @@ babl_fish_path2 (const Babl *source,
+     pc.fish_path = babl;
+     pc.to_format = (Babl *) destination;
+ 
++    /* ChopGimp: a format holding only the alpha component does not depend
++     * on the RGB space (the reference conversion leaves alpha untouched
++     * by the space matrix), search the path to the same format in the
++     * space of the source, it gives identical bytes.
++     */
++    if (destination->format.space != source->format.space &&
++        destination->format.components == 1 &&
++        destination->format.component[0]->instance.id == BABL_ALPHA &&
++        !babl_format_is_palette (source) &&
++        !babl_format_is_palette (destination))
++      {
++        const Babl *same_space =
++          babl_format_with_space ((const char *) destination,
++                                  source->format.space);
++
++        if (same_space &&
++            same_space->format.bytes_per_pixel ==
++            destination->format.bytes_per_pixel)
++          pc.to_format = (Babl *) same_space;
++      }
++
+     /* we hold a global lock whilerunning get_conversion_path since
+      * it depends on keeping the various format.visited members in
+      * a consistent state, this code path is not performance critical
+diff --git a/babl/base/alpha-extract.c b/babl/base/alpha-extract.c
+new file mode 100644
+index 0000000..82612f0
+--- /dev/null
++++ b/babl/base/alpha-extract.c
+@@ -0,0 +1,228 @@
++/* babl - dynamically extendable universal pixel conversion library.
++ *
++ * ChopGimp: direct conversions extracting the alpha component.
++ *
++ * Formats holding only the alpha component ("A u8", "A float", ... model
++ * RGBA, as GIMP defines them for channel and selection operations) had no
++ * conversion leading to them, so every <color+alpha> -> "A <type>"
++ * conversion fell back to the reference fish: per pixel linearisation of
++ * the color components that are then thrown away, serialised on the global
++ * reference mutex.  Alpha is linear in every model listed here, so the
++ * result is the plain alpha component, copied for the same type, or
++ * scaled exactly like the u8/u16 -> float type conversions of babl
++ * (type-u8.c, type-u16.c) for "A float": results are bit-identical to the
++ * reference conversion.
++ *
++ * This library is free software; you can redistribute it and/or
++ * modify it under the terms of the GNU Lesser General Public
++ * License as published by the Free Software Foundation; either
++ * version 3 of the License, or (at your option) any later version.
++ *
++ * This library is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
++ * Lesser General Public License for more details.
++ *
++ * You should have received a copy of the GNU Lesser General
++ * Public License along with this library; if not, see
++ * <https://www.gnu.org/licenses/>.
++ */
++
++#include "config.h"
++#include <stdint.h>
++#include <string.h>
++
++#include "babl-internal.h"
++#include "babl-base.h"
++
++#define ALPHA_COPY(name, ctype, ncomp)                                  \
++static void                                                             \
++name (const Babl *conversion,                                           \
++      const char *src_char,                                             \
++      char       *dst_char,                                             \
++      long        samples,                                              \
++      void       *user_data)                                            \
++{                                                                       \
++  const ctype *src = (const ctype *) src_char;                          \
++  ctype       *dst = (ctype *) dst_char;                                \
++  long         i;                                                       \
++                                                                        \
++  for (i = 0; i < samples; i++)                                         \
++    dst[i] = src[i * ncomp + ncomp - 1];                                \
++}
++
++ALPHA_COPY (alpha_copy_8_4,  uint8_t,  4)
++ALPHA_COPY (alpha_copy_8_2,  uint8_t,  2)
++ALPHA_COPY (alpha_copy_16_4, uint16_t, 4)
++ALPHA_COPY (alpha_copy_16_2, uint16_t, 2)
++ALPHA_COPY (alpha_copy_32_4, uint32_t, 4)
++ALPHA_COPY (alpha_copy_32_2, uint32_t, 2)
++ALPHA_COPY (alpha_copy_64_4, uint64_t, 4)
++ALPHA_COPY (alpha_copy_64_2, uint64_t, 2)
++
++/* half: the reference conversion goes through float, where every NaN
++ * becomes the NaN 0xFE00 (_babl_float_to_half (), babl-shared-util.c)
++ */
++#define ALPHA_COPY_HALF(name, ncomp)                                    \
++static void                                                             \
++name (const Babl *conversion,                                           \
++      const char *src_char,                                             \
++      char       *dst_char,                                             \
++      long        samples,                                              \
++      void       *user_data)                                            \
++{                                                                       \
++  const uint16_t *src = (const uint16_t *) src_char;                    \
++  uint16_t       *dst = (uint16_t *) dst_char;                          \
++  long            i;                                                    \
++                                                                        \
++  for (i = 0; i < samples; i++)                                         \
++    {                                                                   \
++      uint16_t h = src[i * ncomp + ncomp - 1];                          \
++      dst[i] = (h & 0x7FFFu) > 0x7C00u ? 0xFE00u : h;                   \
++    }                                                                   \
++}
++
++ALPHA_COPY_HALF (alpha_copy_half_4, 4)
++ALPHA_COPY_HALF (alpha_copy_half_2, 2)
++
++/* same expression as convert_u8_float_scaled () (type-u8.c) with
++ * min = 0, max = 255, min_val = 0.0, max_val = 1.0
++ */
++static float u8_to_float_table[256];
++
++#define ALPHA_U8_FLOAT(name, ncomp)                                     \
++static void                                                             \
++name (const Babl *conversion,                                           \
++      const char *src_char,                                             \
++      char       *dst_char,                                             \
++      long        samples,                                              \
++      void       *user_data)                                            \
++{                                                                       \
++  const uint8_t *src = (const uint8_t *) src_char;                      \
++  float         *dst = (float *) dst_char;                              \
++  long           i;                                                     \
++                                                                        \
++  for (i = 0; i < samples; i++)                                         \
++    dst[i] = u8_to_float_table[src[i * ncomp + ncomp - 1]];             \
++}
++
++ALPHA_U8_FLOAT (alpha_u8_float_4, 4)
++ALPHA_U8_FLOAT (alpha_u8_float_2, 2)
++
++/* same expression as convert_u16_float_scaled () (type-u16.c) */
++#define ALPHA_U16_FLOAT(name, ncomp)                                    \
++static void                                                             \
++name (const Babl *conversion,                                           \
++      const char *src_char,                                             \
++      char       *dst_char,                                             \
++      long        samples,                                              \
++      void       *user_data)                                            \
++{                                                                       \
++  const uint16_t *src = (const uint16_t *) src_char;                    \
++  float          *dst = (float *) dst_char;                             \
++  long            i;                                                    \
++                                                                        \
++  for (i = 0; i < samples; i++)                                         \
++    {                                                                   \
++      int u16val = src[i * ncomp + ncomp - 1];                          \
++      dst[i] = (u16val - 0) / (float) (UINT16_MAX - 0) * (1.0 - 0.0) + 0.0; \
++    }                                                                   \
++}
++
++ALPHA_U16_FLOAT (alpha_u16_float_4, 4)
++ALPHA_U16_FLOAT (alpha_u16_float_2, 2)
++
++typedef BablFuncLinear AlphaFunc;
++
++static const Babl *
++alpha_only_format (const Babl *type)
++{
++  char name[64];
++
++  snprintf (name, sizeof (name), "A %s", babl_get_name (type));
++  /* identical to the formats GIMP registers (app/gegl/gimp-babl.c), which
++   * then get these instances back from babl_format_new ()
++   */
++  return babl_format_new ("name", name,
++                          babl_model_from_id (BABL_RGBA),
++                          type,
++                          babl_component_from_id (BABL_ALPHA),
++                          NULL);
++}
++
++void
++BABL_SIMD_SUFFIX (babl_base_alpha_extract) (void)
++{
++  static const struct
++  {
++    const char *model;
++    const char *color[3];
++  } models[] =
++  {
++    { "RGBA",    { "R",  "G",  "B"  } },
++    { "R'G'B'A", { "R'", "G'", "B'" } },
++    { "R~G~B~A", { "R~", "G~", "B~" } },
++    { "YA",      { "Y",  NULL, NULL } },
++    { "Y'A",     { "Y'", NULL, NULL } },
++    { "Y~A",     { "Y~", NULL, NULL } },
++  };
++  static const struct
++  {
++    int       type_id;
++    AlphaFunc copy4;
++    AlphaFunc copy2;
++    AlphaFunc to_float4;
++    AlphaFunc to_float2;
++  } types[] =
++  {
++    { BABL_U8,     alpha_copy_8_4,  alpha_copy_8_2,
++                   alpha_u8_float_4,  alpha_u8_float_2 },
++    { BABL_U16,    alpha_copy_16_4, alpha_copy_16_2,
++                   alpha_u16_float_4, alpha_u16_float_2 },
++    { BABL_U32,    alpha_copy_32_4, alpha_copy_32_2, NULL, NULL },
++    { BABL_HALF,   alpha_copy_half_4, alpha_copy_half_2, NULL, NULL },
++    { BABL_FLOAT,  alpha_copy_32_4, alpha_copy_32_2, NULL, NULL },
++    { BABL_DOUBLE, alpha_copy_64_4, alpha_copy_64_2, NULL, NULL },
++  };
++  const Babl *a_float = alpha_only_format (babl_type_from_id (BABL_FLOAT));
++  size_t      m, t;
++  int         i;
++
++  for (i = 0; i < 256; i++)
++    u8_to_float_table[i] = (i - 0) / (float) (UINT8_MAX - 0) * (1.0 - 0.0) + 0.0;
++
++  for (t = 0; t < sizeof (types) / sizeof (types[0]); t++)
++    {
++      const Babl *type    = babl_type_from_id (types[t].type_id);
++      const Babl *a_dest  = alpha_only_format (type);
++
++      for (m = 0; m < sizeof (models) / sizeof (models[0]); m++)
++        {
++          const Babl *model = babl_model (models[m].model);
++          const Babl *src;
++          int         rgb   = models[m].color[1] != NULL;
++
++          if (rgb)
++            src = babl_format_new (model, type,
++                                   babl_component (models[m].color[0]),
++                                   babl_component (models[m].color[1]),
++                                   babl_component (models[m].color[2]),
++                                   babl_component ("A"),
++                                   NULL);
++          else
++            src = babl_format_new (model, type,
++                                   babl_component (models[m].color[0]),
++                                   babl_component ("A"),
++                                   NULL);
++
++          babl_conversion_new (src, a_dest, "linear",
++                               rgb ? types[t].copy4 : types[t].copy2,
++                               NULL);
++
++          if (types[t].to_float4)
++            babl_conversion_new (src, a_float, "linear",
++                                 rgb ? types[t].to_float4 : types[t].to_float2,
++                                 NULL);
++        }
++    }
++}
+diff --git a/babl/base/babl-base.c b/babl/base/babl-base.c
+index 8b9cdde..c645aa3 100644
+--- a/babl/base/babl-base.c
++++ b/babl/base/babl-base.c
+@@ -33,6 +33,11 @@ BABL_SIMD_SUFFIX(babl_base_init) (void)
+   models ();
+   BABL_SIMD_SUFFIX (babl_formats_init) ();
+ 
++  /* ChopGimp: direct <color+alpha> -> "A <type>" conversions */
++  babl_hmpf_on_name_lookups--;
++  BABL_SIMD_SUFFIX (babl_base_alpha_extract) ();
++  babl_hmpf_on_name_lookups++;
++
+   babl_hmpf_on_name_lookups--;
+ }
+ 
+diff --git a/babl/base/babl-base.h b/babl/base/babl-base.h
+index 291697b..0352ad3 100644
+--- a/babl/base/babl-base.h
++++ b/babl/base/babl-base.h
+@@ -51,4 +51,6 @@ void BABL_SIMD_SUFFIX(babl_base_model_cmyk)  (void);
+ void BABL_SIMD_SUFFIX(babl_base_model_gray)  (void);
+ void BABL_SIMD_SUFFIX(babl_base_model_ycbcr) (void);
+ 
++void BABL_SIMD_SUFFIX(babl_base_alpha_extract) (void);
++
+ #endif
+diff --git a/babl/base/meson.build b/babl/base/meson.build
+index c0e0683..65c741e 100644
+--- a/babl/base/meson.build
++++ b/babl/base/meson.build
+@@ -1,6 +1,7 @@
+ bablBaseInclude = include_directories('.')
+ 
+ babl_base_sources = [
++  'alpha-extract.c',
+   'babl-base.c',
+   'formats.c',
+   'model-cmyk.c',

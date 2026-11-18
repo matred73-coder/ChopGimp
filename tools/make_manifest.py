@@ -162,9 +162,13 @@ IA_MODULES = [
 #     babl et GEGL, « all » pour GIMP aussi, 0 pour aucun.
 #   - PGO (optimisation guidée par profil) de GIMP : CHOPGIMP_PGO=1, voir
 #     pgo_gimp() ; double le temps de compilation de GIMP.
+#   - GIMP : -fno-semantic-interposition (libgimp*, appels internes en
+#     direct) ; CHOPGIMP_GIMP_O=3 pour le compiler en -O3 (défaut -O2).
 LTO = os.environ.get("CHOPGIMP_LTO", "1")
 PGO = os.environ.get("CHOPGIMP_PGO", "0") == "1"
+GIMP_O = os.environ.get("CHOPGIMP_GIMP_O", "2")
 FAST_LIB_CFLAGS = "-O3 -fomit-frame-pointer -fno-semantic-interposition"
+GIMP_CFLAGS = ("-O3 " if GIMP_O == "3" else "") + "-fno-semantic-interposition"
 
 # mimalloc : allocateur plus rapide que celui de la glibc pour les nombreux
 # petits blocs de GEGL/GLib en multi-fil ; préchargé par le lanceur
@@ -190,26 +194,42 @@ def add_build_options(mod, cflags, cxxflags=None):
 def pgo_gimp(gimp):
     """Compile GIMP deux fois dans le même dossier : instrumentée
     (-fprofile-generate), entraînée par tools/dev/pgo_train.py dans
-    gimp-console (calques, effets, peinture, rendu, XCF), puis optimisée
-    avec le profil (-fprofile-use). -fprofile-partial-training : le code non
-    exercé par l'entraînement (interface) reste optimisé normalement."""
+    gimp-console (calques, effets, modes de fusion, projection, sélections,
+    peinture, réglages, XCF), puis optimisée avec le profil (-fprofile-use).
+    -fprofile-partial-training : le code non exercé par l'entraînement
+    (interface) reste optimisé normalement au lieu d'être traité comme froid.
+    Les mêmes options meson que le module d'origine (buildsystem meson de
+    flatpak-builder : --prefix, --libdir, wrap_mode=nodownload)."""
     opts = " ".join("'%s'" % o for o in gimp["config-opts"])
     setup = ("meson setup _pgo --prefix=${FLATPAK_DEST} --libdir=${FLATPAK_DEST}/lib "
              "-Dwrap_mode=nodownload %s" % opts)
+    # options de profil passées à C / C++ directement : -Db_pgo de meson
+    # échoue sur les extensions en Vala (goat-exercises). libgcov n'est pas
+    # réexportée par libgimp* (sinon tools/defcheck.py échoue : mangle_path).
+    gen = "-fprofile-generate -fprofile-update=atomic"
+    use = "-fprofile-use -fprofile-partial-training -Wno-missing-profile"
+    train_env = ("HOME=$PWD/_train/home GIMP3_DIRECTORY=$PWD/_train/cfg PGO_DIR=$PWD/_train PGO_SIZE=2000 "
+                 "XDG_CONFIG_HOME=$PWD/_train/home/.config XDG_CACHE_HOME=$PWD/_train/home/.cache "
+                 "GI_TYPELIB_PATH=${FLATPAK_DEST}/lib/girepository-1.0${GI_TYPELIB_PATH:+:$GI_TYPELIB_PATH} ")
     gimp["buildsystem"] = "simple"
     gimp["build-commands"] = [
-        "CFLAGS=\"$CFLAGS -fprofile-update=atomic -fprofile-partial-training -Wno-missing-profile\" "
-        "CXXFLAGS=\"$CXXFLAGS -fprofile-update=atomic -fprofile-partial-training -Wno-missing-profile\" "
-        + setup + " -Db_pgo=generate",
+        "CFLAGS=\"$CFLAGS %s\" CXXFLAGS=\"$CXXFLAGS %s\" LDFLAGS=\"$LDFLAGS %s\" %s"
+        % (gen, gen, gen + " -Wl,--exclude-libs,libgcov.a", setup),
         "ninja -C _pgo -j${FLATPAK_BUILDER_N_JOBS} install",
-        # entraînement : sans écran, configuration jetable dans le dossier de compilation
-        "mkdir -p _train/home _train/cfg && HOME=$PWD/_train/home GIMP3_DIRECTORY=$PWD/_train/cfg "
-        "PGO_DIR=$PWD/_train timeout 1800 ${FLATPAK_DEST}/bin/gimp-console-3.2 -i --quit "
+        # entraînement : sans écran, configuration jetable dans le dossier de
+        # compilation ; deux passes (la première initialise la configuration,
+        # interroge les greffons et charge polices et données)
+        "mkdir -p _train/home _train/cfg && for pass in 1 2; do " + train_env +
+        "timeout 1800 ${FLATPAK_DEST}/bin/gimp-console-3.2 -i --quit "
         "--batch-interpreter=python-fu-eval -b \"exec(open('pgo_train.py').read())\" "
-        "|| echo 'PGO : entraînement incomplet, profil partiel'",
-        "find _pgo -name '*.gcda' | wc -l",
-        "meson configure _pgo -Db_pgo=use",
+        "> _train/console-$pass.log 2>&1 || { echo \"PGO : passe $pass incomplète\"; "
+        "tail -30 _train/console-$pass.log; }; "
+        "cat _train/pgo_train.log || true; done",
+        "echo \"PGO : $(find _pgo -name '*.gcda' | wc -l) profils\"",
+        "meson configure _pgo -Dc_args=\"$CFLAGS %s\" -Dcpp_args=\"$CXXFLAGS %s\" "
+        "-Dc_link_args=\"$LDFLAGS %s\" -Dcpp_link_args=\"$LDFLAGS %s\"" % (use, use, use, use),
         "ninja -C _pgo -j${FLATPAK_BUILDER_N_JOBS} install",
+        "rm -rf _train",
     ]
     gimp.pop("config-opts", None)
     gimp["sources"].append({"type": "file", "path": "../tools/dev/pgo_train.py"})
@@ -221,6 +241,7 @@ def tune_build(m, gimp):
         add_build_options(mod, FAST_LIB_CFLAGS, FAST_LIB_CFLAGS + " -Wp,-U_GLIBCXX_ASSERTIONS")
         if LTO in ("1", "all"):
             mod["config-opts"] = mod.get("config-opts", []) + ["-Db_lto=true"]
+    add_build_options(gimp, GIMP_CFLAGS)
     if LTO == "all":
         gimp["config-opts"] = gimp["config-opts"] + ["-Db_lto=true"]
     if PGO:
@@ -239,6 +260,11 @@ if not vanilla:
     gegl = next(x for x in m["modules"] if isinstance(x, dict) and x["name"] == "gegl")
     for p in sorted(glob.glob(os.path.join(ROOT, "patches", "gegl-0.4.72", "*.patch"))):
         gegl["sources"].append({"type": "patch", "path": os.path.relpath(p, FP)})
+    # Correctifs babl (extraction directe de l'alpha, verrou de la conversion
+    # de référence, cf. patches/babl-0.1.128)
+    babl = next(x for x in m["modules"] if isinstance(x, dict) and x["name"] == "babl")
+    for p in sorted(glob.glob(os.path.join(ROOT, "patches", "babl-0.1.128", "*.patch"))):
+        babl["sources"].append({"type": "patch", "path": os.path.relpath(p, FP)})
     patches = sorted(glob.glob(os.path.join(ROOT, "patches", "gimp-3.2.8", "*.patch")))
     if patches:
         # gimp-data est un sous-module : « git am » ne peut pas y appliquer

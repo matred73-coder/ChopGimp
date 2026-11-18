@@ -1,0 +1,116 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: ChopGimp <mathieu.redon@proton.me>
+Date: Tue, 17 Nov 2026 19:30:46 +0100
+Subject: [PATCH 2/2] ChopGimp: reference fish, global lock only around format
+ lookup
+
+babl_fish_reference_process_float () ran the whole conversion under the
+global babl_reference_mutex, serialising every thread on conversions
+without a fast path (component formats, previews...).  The lock now only
+guards babl_format_with_model_as_type () (format lookup or creation);
+the conversions are the reentrant functions fish paths already run
+concurrently.  babl_image_destruct () gives image templates back with an
+atomic compare-and-swap, matching the atomic exchange that takes them.
+BABL_REFERENCE_FULL_LOCK=1 restores the former locking.  The double
+reference path (model conversions created on the fly, CMYK/lcms) keeps
+its lock.
+---
+ babl/babl-fish-reference.c | 40 ++++++++++++++++++++++++--------------
+ babl/babl-image.c          | 13 +++++++++++++
+ 2 files changed, 38 insertions(+), 15 deletions(-)
+
+diff --git a/babl/babl-fish-reference.c b/babl/babl-fish-reference.c
+index 1427c8a..e2fd967 100644
+--- a/babl/babl-fish-reference.c
++++ b/babl/babl-fish-reference.c
+@@ -1247,18 +1247,28 @@ babl_fish_reference_process_float (const Babl *babl,
+       return;
+     }
+ 
+-    babl_mutex_lock (babl_reference_mutex);
+-    if (babl->fish.source->format.type[0] == type_float &&
+-        BABL(babl->fish.source)->format.components ==
+-        BABL(babl->fish.source)->format.model->components && 0)
++    /* ChopGimp: the global reference lock only guards the lookup (and
++     * possible creation) of the float format of the source model; the
++     * conversions themselves are the reentrant functions fish paths run
++     * concurrently, and image templates are taken and given back
++     * atomically (babl-image.c).  The whole conversion used to run under
++     * the lock, serialising every thread on reference conversions.
++     * BABL_REFERENCE_FULL_LOCK=1 restores the former behaviour.
++     */
+     {
+-      source_float_buf = (void*)source;
+-      source_image = babl_image_from_linear (
+-         source_float_buf,
+-         babl_format_with_model_as_type ((void*)((babl->fish.source))->format.model,
+-         type_float));
+-    }
+-    else
++    static int full_lock = -1;
++    const Babl *source_float_format;
++    if (full_lock < 0)
++      full_lock = getenv ("BABL_REFERENCE_FULL_LOCK") &&
++                  strcmp (getenv ("BABL_REFERENCE_FULL_LOCK"), "0");
++
++    babl_mutex_lock (babl_reference_mutex);
++    source_float_format =
++      babl_format_with_model_as_type (BABL(BABL ((babl->fish.source))->format.model),
++                                      type_float);
++    if (!full_lock)
++      babl_mutex_unlock (babl_reference_mutex);
++
+     {
+       /* the +1 is to mask a valgrind 'invalid read of size 16' false positive  */
+       source_float_buf_alloc = babl_malloc (sizeof (float) * (n+1) *
+@@ -1266,9 +1276,7 @@ babl_fish_reference_process_float (const Babl *babl,
+ 
+       source_float_buf = source_float_buf_alloc;
+       source_image = babl_image_from_linear (
+-        source_float_buf,
+-      babl_format_with_model_as_type (BABL(BABL ((babl->fish.source))->format.model),
+-         type_float));
++        source_float_buf, source_float_format);
+       convert_to_float (
+         (BablFormat *) BABL (babl->fish.source),
+         source,
+@@ -1310,7 +1318,9 @@ babl_fish_reference_process_float (const Babl *babl,
+           n);
+       }
+     }
+-    babl_mutex_unlock (babl_reference_mutex);
++    if (full_lock)
++      babl_mutex_unlock (babl_reference_mutex);
++    }
+ 
+     if (((babl->fish.source)->format.space !=
+         ((babl->fish.destination)->format.space)))
+diff --git a/babl/babl-image.c b/babl/babl-image.c
+index 9e4a1b5..01c1447 100644
+--- a/babl/babl-image.c
++++ b/babl/babl-image.c
+@@ -26,11 +26,24 @@ static int
+ babl_image_destruct (void *babl)
+ {
+   BablFormat *format = BABL (babl)->image.format;
++#if defined(__GNUC__) || defined(__clang__)
++  /* ChopGimp: give the image back atomically, it is taken back with an
++   * atomic exchange in babl_image_from_linear (); two threads giving back
++   * an image at once lost one of them.
++   */
++  void *expected = NULL;
++  if (format &&
++      __atomic_compare_exchange_n (&format->image_template, &expected,
++                                   babl, 0,
++                                   __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE))
++    return -1; /* this should avoid freeing images created for formats,. */
++#else
+   if (format && format->image_template == NULL)
+     {
+       format->image_template = babl;
+       return -1; /* this should avoid freeing images created for formats,. */
+     }
++#endif
+   return 0;
+ }
+ 

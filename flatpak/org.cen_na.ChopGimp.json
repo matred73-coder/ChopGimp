@@ -753,6 +753,14 @@
                     "url": "https://gitlab.gnome.org/GNOME/babl.git",
                     "tag": "BABL_0_1_128",
                     "commit": "4abcea43550699e0c93e6f154c44d68822e62753"
+                },
+                {
+                    "type": "patch",
+                    "path": "../patches/babl-0.1.128/0001-direct-alpha-extraction.patch"
+                },
+                {
+                    "type": "patch",
+                    "path": "../patches/babl-0.1.128/0002-reference-fish-narrow-lock.patch"
                 }
             ],
             "buildsystem": "meson",
@@ -797,6 +805,10 @@
                 {
                     "type": "patch",
                     "path": "../patches/gegl-0.4.72/0005-layer-styles-glow-options.patch"
+                },
+                {
+                    "type": "patch",
+                    "path": "../patches/gegl-0.4.72/0006-threaded-rendering-hook-and-level-aware-cache.patch"
                 }
             ],
             "buildsystem": "meson",
@@ -1098,7 +1110,12 @@
                         "../patches/gimp-3.2.8/0099-ChopGimp-clicking-a-check-radio-menu-item-keeps-the-.patch",
                         "../patches/gimp-3.2.8/0100-ChopGimp-Space-drag-pans-like-Photoshop-hand-cursor-.patch",
                         "../patches/gimp-3.2.8/0101-ChopGimp-copy-paste-layer-style-all-effects-or-a-sin.patch",
-                        "../patches/gimp-3.2.8/0102-ChopGimp-3.25.0-performance-pass-projection-time-sli.patch"
+                        "../patches/gimp-3.2.8/0102-ChopGimp-3.25.0-performance-pass-projection-time-sli.patch",
+                        "../patches/gimp-3.2.8/0103-ChopGimp-store-rendered-layer-effects-in-XCF-private.patch",
+                        "../patches/gimp-3.2.8/0104-ChopGimp-no-more-UI-stalls-on-move-hide-Ctrl-click-a.patch",
+                        "../patches/gimp-3.2.8/0105-ChopGimp-background-projection-rendering-rendering-t.patch",
+                        "../patches/gimp-3.2.8/0106-ChopGimp-fused-layer-styles-chopgimp-layer-style-fus.patch",
+                        "../patches/gimp-3.2.8/0107-ChopGimp-drafts-only-during-user-input-on-the-canvas.patch"
                     ]
                 }
             ],
@@ -1112,7 +1129,11 @@
             ],
             "post-install": [
                 "for gimp_api_version in ${FLATPAK_DEST}/share/gimp/*; do install -d $gimp_api_version/help; done"
-            ]
+            ],
+            "build-options": {
+                "cflags": "-fno-semantic-interposition",
+                "cxxflags": "-fno-semantic-interposition"
+            }
         },
         {
             "name": "resynthesizer",

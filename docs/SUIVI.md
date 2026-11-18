@@ -559,3 +559,25 @@ Restent à traiter (identiques avec ou sans effets) : blocages au déplacement, 
 - **Styles de calque façon Photoshop** : Contour avec remplissage Couleur / Dégradé (6 styles dont éclat de forme) / Motif, mode de fusion, surimpression ; glisser sur l'image pour déplacer ombre, ombre interne, lueurs, dégradé ou motif ; lueurs : bruit, source dégradé, courbes de contour, plage (patch GEGL 0005, `gegl:glow-map`) ; « Ajouter un autre contour » et numérotation dans la liste fx ; « Définir par défaut » / « Rétablir ». Non fait : mode de fusion de l'ombre portée et de la lueur externe (demande le fond sous le calque), « Aligner sur le calque », technique précise.
 - **Traduction** : ~650 libellés de menus et de filtres (gimp, plug-ins, GEGL : patch 0003) ; liste dans `docs/dev/traductions-3.25.0.tsv`. **Pixelliser le style de calque** (Calque > Style de calque).
 - Vérifié : 103 tests ; fenêtre Contour au banc (dégradé linéaire et éclat de forme).
+
+## 3.25.1 — Fin de la passe de performance (blocages, cache XCF, rendu en arrière-plan, styles fusionnés, babl)
+
+**Mesures** (`tools/dev/bench-all.sh`, copie de l'affiche avec effets, médiane de 3 ; machine parfois chargée, comparaisons faites en alternance) :
+
+| Geste | Blocage 3.24.11 | 3.25.0 | 3.25.1 |
+|---|---|---|---|
+| Déplacer un calque | ~300 ms | ~285 ms | 11–22 ms |
+| Masquer un calque | ~310 ms | ~285 ms | 7–13 ms |
+| Ctrl+clic vignette | ~970 ms | ~960 ms | 18–60 ms |
+| Trait | 41 ms | 25 ms | 6–12 ms |
+| Ouverture (CPU total) | 3,58 s | 2,15 s | 2,1–2,4 s ; **0,78 s** si le fichier a été enregistré par la 3.25.1 (cache des effets) |
+
+- **Blocages** (cause : l'outil Déplacement recalculait les bords du calque à chaque étape d'annulation, via une conversion babl lente ; et le Ctrl+clic attendait un verrou global de babl) : bords du calque en cache, lecture directe de l'alpha (`chopgimp-alpha-bounds.c`), extraction directe dans `gimp_channel_new_from_alpha`.
+- **babl** (patchs `patches/babl-0.1.128/`, nouveau mécanisme dans `make_manifest.py`) : 48 conversions directes vers « A <type> » (×30 à ×300, identiques au bit près), verrou de la conversion de référence restreint (`BABL_REFERENCE_FULL_LOCK=1` pour revenir).
+- **Cache des effets dans le XCF** (`chopgimp-fx-cache.c`, propriété privée « CHOP », ignorée par GIMP standard) : les effets déjà calculés sont enregistrés et réutilisés à l'ouverture si rien n'a changé (clé SHA-256). Coupure : `[xcf] fx-cache=false` dans chopgimprc ou `CHOPGIMP_NO_XCF_FX_CACHE=1`. Fichier +2 Mo sur l'affiche.
+- **Styles de calque fusionnés** (`chopgimp:layer-style-fused`) : ombre, contour, lueurs et ombre interne consécutifs calculés en une passe (−30 à −40 % sur 4 effets). Coupure : `CHOPGIMP_NO_FUSED_STYLES=1`.
+- **Rendu en arrière-plan** (fil de rendu + verrou du graphe, patch GEGL 0006) : case « Rendu en arrière-plan », **désactivée par défaut** (ouverture plus légère pour l'interface, mais trait 2× plus coûteux pour le fil principal) ; aucun gel sur 24 essais par geste. Coupure : `CHOPGIMP_NO_THREADED_RENDER=1`.
+- **Brouillons** : pendant une action à la souris/stylet, zones modifiées rendues en résolution réduite puis affinées (cache GEGL rendu compatible avec les niveaux). Les brouillons au repos quand on dézoome ont été retirés : ils doublaient le travail à l'ouverture (+80 % mesuré). Coupure : `CHOPGIMP_NO_DRAFT=1`.
+- **Banc** : `BENCH_GIMPRC` pour régler une préférence du banc.
+- **Reporté en 3.25.2** : GIMP compilé avec LTO + PGO (version compilée et 103 tests réussis, pas encore mesurée).
+- Vérifié : 103 tests.
