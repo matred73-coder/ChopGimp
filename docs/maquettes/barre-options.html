@@ -1,0 +1,238 @@
+<title>Barre d'options ChopGimp</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<style>
+/* Maquette d'interface sombre, fidèle au thème ChopGimp actuel : une seule ambiance, volontairement */
+:root{
+  --bg:#1b1c1f; --chrome:#26272b; --bar:#2d2e33; --field:#1e1f23; --line:#3a3b41;
+  --fg:#d9dade; --dim:#8d8f97; --accent:#3d8ef0; --accent-soft:#2b4f7d; --bad:#e2685c;
+  --ui:"Inter",system-ui,sans-serif; --head:"Space Grotesk","Inter",system-ui,sans-serif;
+  color-scheme:dark;
+}
+body{background:var(--bg);color:var(--fg);font:13px/1.45 var(--ui);
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:20px 48px}
+.wrap{max-width:1180px;margin:0 auto;display:grid;gap:28px}
+h1{font:600 22px/1.2 var(--head);margin:0}
+h2{font:600 15px/1.3 var(--head);margin:0 0 6px}
+p{margin:0;color:var(--dim);max-width:70ch}
+.note{font-size:12px;color:var(--dim)}
+section{display:grid;gap:10px}
+.tag{display:inline-block;font-size:11px;letter-spacing:.06em;text-transform:uppercase;padding:2px 8px;border-radius:3px;margin-right:6px}
+.tag.old{background:#4a2b28;color:#f0b2aa}.tag.new{background:var(--accent-soft);color:#cfe3ff}
+
+/* fenêtre simulée */
+.win{background:var(--chrome);border:1px solid var(--line);border-radius:6px;overflow:hidden}
+.menubar{display:flex;gap:18px;padding:5px 12px;font-size:12px;color:var(--fg);border-bottom:1px solid var(--line);flex-wrap:wrap}
+.canvas{height:46px;background:#1a1a1d;display:flex;align-items:center;justify-content:center;color:#55575e;font-size:12px}
+
+/* barre actuelle */
+.oldbar{display:flex;align-items:center;gap:8px;padding:6px 10px;background:var(--bar);overflow-x:auto;white-space:nowrap;scrollbar-width:thin}
+.oldbar .tool{font-weight:600;display:flex;gap:6px;align-items:center}
+.ss{display:flex;align-items:center;background:var(--field);border:1px solid var(--line);border-radius:3px;height:24px;min-width:150px;position:relative;overflow:hidden}
+.ss .fill{position:absolute;inset:0 auto 0 0;background:#3b3d44}
+.ss span{position:relative;padding:0 6px;flex:1;display:flex;justify-content:space-between;gap:6px}
+.ss b{font-weight:400}
+.pm{position:relative;display:flex}
+.pm i{width:22px;height:24px;display:grid;place-items:center;font-style:normal;border-left:1px solid var(--line);color:var(--fg)}
+.box{background:var(--field);border:1px solid var(--line);border-radius:3px;height:24px;display:flex;align-items:center;padding:0 8px;gap:6px}
+.trunc{max-width:34px;overflow:hidden;text-overflow:ellipsis}
+.scrollhint{display:flex;justify-content:flex-end;padding:2px 10px 4px;background:var(--bar)}
+.scrollhint div{height:4px;width:55%;background:#55575e;border-radius:2px}
+
+/* nouvelle barre */
+.bar{display:flex;align-items:center;gap:6px;padding:5px 8px;background:var(--bar);min-height:34px;position:relative}
+.bar .tool{display:flex;align-items:center;gap:6px;font-weight:600;padding-right:4px}
+.sep{width:1px;align-self:stretch;margin:4px 4px;background:var(--line)}
+.grp{display:flex;align-items:center;gap:6px}
+.lbl{color:var(--dim);cursor:ew-resize;user-select:none;padding:3px 2px;border-radius:3px}
+.lbl:hover{color:var(--fg);background:#35363c}
+.vf{display:flex;align-items:center;height:24px;background:var(--field);border:1px solid var(--line);border-radius:3px;overflow:hidden}
+.vf:focus-within{border-color:var(--accent)}
+.vf input{width:38px;background:transparent;border:0;color:var(--fg);font:inherit;text-align:right;padding:0 2px 0 6px;font-variant-numeric:tabular-nums}
+.vf input:focus{outline:none}
+.vf .u{color:var(--dim);padding-right:4px;font-size:12px}
+.vf button,.btn{background:transparent;border:0;color:var(--dim);height:24px;cursor:pointer;font:inherit}
+.vf button{width:18px;border-left:1px solid var(--line);font-size:10px}
+.vf button:hover,.btn:hover{color:var(--fg);background:#3a3b42}
+.combo{display:flex;align-items:center;gap:8px;height:24px;padding:0 8px;background:var(--field);border:1px solid var(--line);border-radius:3px;color:var(--fg);cursor:pointer;white-space:nowrap}
+.combo::after{content:"▾";color:var(--dim);font-size:10px}
+.brush{width:20px;height:20px;border-radius:50%;background:radial-gradient(#fff,#fff 35%,#0000 70%);border:1px solid var(--line)}
+.ic{width:26px;height:24px;display:grid;place-items:center;border-radius:3px;color:var(--fg);cursor:pointer;border:1px solid transparent}
+.ic:hover{background:#3a3b42}.ic.on{background:var(--accent-soft);border-color:var(--accent)}
+.swatch{width:24px;height:24px;border-radius:3px;border:1px solid var(--line);background:#111}
+.push{margin-left:auto;display:flex;gap:4px}
+.btn{padding:0 8px;border-radius:3px;font-size:15px}
+.btn.on{color:var(--accent)}
+
+/* popovers */
+.pop{position:absolute;z-index:5;background:#33343a;border:1px solid #4a4b52;border-radius:6px;box-shadow:0 8px 24px #0008;padding:10px 12px;min-width:200px}
+.pop input[type=range]{width:180px;accent-color:var(--accent)}
+.pop .row{display:flex;align-items:center;gap:8px;margin:4px 0}
+.pop .title{font-size:11px;color:var(--dim);text-transform:uppercase;letter-spacing:.06em;margin-bottom:6px}
+.pop label{display:flex;gap:8px;align-items:center;cursor:pointer;padding:3px 0}
+
+.narrow{max-width:760px}
+.legend{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:12px}
+.legend div{background:var(--chrome);border:1px solid var(--line);border-radius:6px;padding:10px 12px}
+.legend b{display:block;margin-bottom:3px;font-weight:600}
+kbd{font:11px var(--ui);background:#3a3b42;border:1px solid #4a4b52;border-radius:3px;padding:0 4px}
+.scroller{overflow-x:auto}
+@media (prefers-reduced-motion:reduce){*{transition:none!important}}
+</style>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600&family=Space+Grotesk:wght@600&display=swap">
+
+<div class="wrap">
+  <header>
+    <h1>Barre d'options : avant / après</h1>
+    <p>Maquette interactive. Clique sur <b>▾</b>, fais glisser un libellé (« Dureté », « Opacité »…) vers la gauche ou la droite, ouvre <b>⋯</b> et <b>⚡</b>.</p>
+  </header>
+
+  <section>
+    <h2><span class="tag old">Aujourd'hui</span>Outil Texte : la barre déborde, il faut défiler</h2>
+    <div class="win scroller">
+      <div class="menubar"><span>Fichier</span><span>Édition</span><span>Image</span><span>Couleurs</span><span>Calque</span><span>Texte</span><span>Sélection</span><span>Filtres</span></div>
+      <div class="oldbar">
+        <span class="tool">T Texte</span>
+        <span class="box">Aa</span><span class="box trunc">Sans</span>
+        <span class="ss"><span class="fill" style="width:30%"></span><span>Taille <b>24</b></span><span class="pm"><i>−</i><i>+</i></span></span>
+        <span class="note">Couleur</span><span class="swatch"></span>
+        <span class="box">G</span><span class="box"><i>I</i></span><span class="box">S</span><span class="box">B</span>
+        <span class="box">≡</span><span class="box">≡</span><span class="box">≡</span><span class="box">≡</span>
+        <span class="ss"><span class="fill" style="width:50%"></span><span>Approche <b>0</b></span><span class="pm"><i>−</i><i>+</i></span></span>
+        <span class="ss"><span class="fill" style="width:45%"></span><span>Interlign… <b>0</b></span><span class="pm"><i>−</i><i>+</i></span></span>
+        <span class="note">Cadre</span><span class="box">Dynamique ▾</span>
+        <span class="note">☐ Rendu en arrière-plan</span><span class="note">☑ Aperçu rapide</span>
+      </div>
+      <div class="scrollhint"><div></div></div>
+    </div>
+    <p class="note">Gros curseurs de 150 px avec − / +, police tronquée en « Sans », « Interlign… » coupé, barre de défilement horizontale.</p>
+  </section>
+
+  <section>
+    <h2><span class="tag new">Proposé</span>Pinceau</h2>
+    <div class="win">
+      <div class="bar" id="bar-brush">
+        <span class="tool">✎ Pinceau</span><span class="sep"></span>
+        <div class="grp"><span class="brush"></span>
+          <div class="vf" data-min="1" data-max="1000" data-unit="px"><input value="51" aria-label="Taille"><span class="u">px</span><button aria-label="Ouvrir le curseur Taille">▾</button></div></div>
+        <div class="grp"><span class="lbl">Dureté</span>
+          <div class="vf" data-min="0" data-max="100" data-unit="%"><input value="50" aria-label="Dureté"><span class="u">%</span><button aria-label="Ouvrir le curseur Dureté">▾</button></div></div>
+        <div class="grp"><span class="lbl">Angle</span>
+          <div class="vf" data-min="-180" data-max="180" data-unit="°"><input value="0" aria-label="Angle"><span class="u">°</span><button aria-label="Ouvrir le curseur Angle">▾</button></div></div>
+        <span class="sep"></span>
+        <div class="grp"><span class="lbl">Mode</span><span class="combo">Normal</span></div>
+        <div class="grp"><span class="lbl">Opacité</span>
+          <div class="vf" data-min="0" data-max="100" data-unit="%"><input value="100" aria-label="Opacité"><span class="u">%</span><button aria-label="Ouvrir le curseur Opacité">▾</button></div>
+          <span class="ic" title="Pression pour l'opacité">◎</span></div>
+        <div class="grp"><span class="lbl">Flux</span>
+          <div class="vf" data-min="0" data-max="100" data-unit="%"><input value="100" aria-label="Flux"><span class="u">%</span><button aria-label="Ouvrir le curseur Flux">▾</button></div></div>
+        <div class="push"><button class="btn more" title="Autres réglages">⋯</button><button class="btn bolt on" title="Rendu">⚡</button></div>
+      </div>
+      <div class="canvas">canevas</div>
+    </div>
+  </section>
+
+  <section>
+    <h2><span class="tag new">Proposé</span>Texte : tout tient sur une ligne</h2>
+    <div class="win">
+      <div class="bar" id="bar-text">
+        <span class="tool">T Texte</span><span class="sep"></span>
+        <span class="combo" style="min-width:150px;justify-content:space-between"><span style="font-family:'Space Grotesk'">Aa</span> Inter Regular</span>
+        <div class="vf" data-min="1" data-max="400" data-unit="pt"><input value="24" aria-label="Taille de police"><span class="u">pt</span><button aria-label="Ouvrir le curseur Taille de police">▾</button></div>
+        <span class="swatch" title="Couleur"></span>
+        <span class="sep"></span>
+        <div class="grp"><span class="ic"><b>G</b></span><span class="ic"><i>I</i></span><span class="ic"><u>S</u></span><span class="ic"><s>B</s></span></div>
+        <span class="sep"></span>
+        <div class="grp"><span class="ic on">≡</span><span class="ic">≡</span><span class="ic">≡</span><span class="ic">≡</span></div>
+        <span class="sep"></span>
+        <div class="grp"><span class="lbl" title="Approche">VA</span>
+          <div class="vf" data-min="-200" data-max="200" data-unit=""><input value="0" aria-label="Approche"><span class="u"></span><button aria-label="Ouvrir le curseur Approche">▾</button></div></div>
+        <div class="grp"><span class="lbl" title="Interlignage">↕</span>
+          <div class="vf" data-min="-50" data-max="200" data-unit="pt"><input value="0" aria-label="Interlignage"><span class="u">pt</span><button aria-label="Ouvrir le curseur Interlignage">▾</button></div></div>
+        <span class="sep"></span>
+        <div class="grp"><span class="lbl">Cadre</span><span class="combo">Dynamique</span></div>
+        <div class="push"><button class="btn more" title="Autres réglages">⋯</button><button class="btn bolt on" title="Rendu">⚡</button></div>
+      </div>
+      <div class="canvas">canevas</div>
+    </div>
+  </section>
+
+  <section>
+    <h2><span class="tag new">Proposé</span>Fenêtre étroite (portable) : ce qui ne tient pas passe dans ⋯</h2>
+    <div class="win narrow">
+      <div class="bar" id="bar-narrow">
+        <span class="tool">⬚ Sélection</span><span class="sep"></span>
+        <div class="grp"><span class="ic on" title="Remplacer">▢</span><span class="ic" title="Ajouter">⊞</span><span class="ic" title="Soustraire">⊟</span><span class="ic" title="Intersection">⧈</span></div>
+        <span class="sep"></span>
+        <div class="grp"><span class="lbl">Contour progressif</span>
+          <div class="vf" data-min="0" data-max="250" data-unit="px"><input value="0" aria-label="Contour progressif"><span class="u">px</span><button aria-label="Ouvrir le curseur Contour progressif">▾</button></div></div>
+        <div class="push"><button class="btn more" data-extra="1" title="Autres réglages : Lissage, Arrondir les coins, Rayon, Taille fixe">⋯ <span class="note">3</span></button><button class="btn bolt on" title="Rendu">⚡</button></div>
+      </div>
+      <div class="canvas">canevas</div>
+    </div>
+    <p class="note">Le chiffre à côté de ⋯ indique combien de réglages y sont rangés. Quand la fenêtre s'élargit, ils reviennent tout seuls dans la barre.</p>
+  </section>
+
+  <section class="legend">
+    <div><b>▾ ouvre un curseur fin</b>Il apparaît sous la valeur ; on le fait glisser, la valeur et l'image suivent en direct. <kbd>Échap</kbd> ferme.</div>
+    <div><b>Glisser sur le libellé</b>Le pointeur devient ↔ ; glisser à droite augmente, à gauche diminue. <kbd>Maj</kbd> pour un réglage fin.</div>
+    <div><b>Taper la valeur</b>Clic dans le chiffre, on tape, <kbd>Entrée</kbd>. Molette et flèches <kbd>↑</kbd> <kbd>↓</kbd> marchent aussi.</div>
+    <div><b>⋯ et ⚡</b>⋯ : réglages qui ne tiennent pas. ⚡ : Aperçu rapide et Rendu en arrière-plan, qui ne prennent plus de place.</div>
+  </section>
+</div>
+
+<script>
+(function(){
+  let open=null;
+  function close(){ if(open){open.remove();open=null;} }
+  document.addEventListener('keydown',e=>{ if(e.key==='Escape') close(); });
+  document.addEventListener('mousedown',e=>{ if(open && !open.contains(e.target) && !e.target.closest('button')) close(); });
+  function place(pop,anchor){
+    const bar=anchor.closest('.bar'); bar.appendChild(pop);
+    const a=anchor.getBoundingClientRect(), b=bar.getBoundingClientRect();
+    let left=a.left-b.left; const max=bar.clientWidth-pop.offsetWidth-4;
+    pop.style.left=Math.max(4,Math.min(left,max))+'px'; pop.style.top=(a.bottom-b.top+6)+'px';
+    open=pop;
+  }
+  function clamp(v,f){ return Math.max(+f.dataset.min,Math.min(+f.dataset.max,v)); }
+  document.querySelectorAll('.vf').forEach(f=>{
+    const inp=f.querySelector('input');
+    f.querySelector('button').addEventListener('click',e=>{
+      e.stopPropagation(); const was=open&&open._f===f; close(); if(was) return;
+      const pop=document.createElement('div'); pop.className='pop'; pop._f=f;
+      const name=inp.getAttribute('aria-label');
+      pop.innerHTML='<div class="title">'+name+'</div><div class="row"><input type="range" min="'+f.dataset.min+'" max="'+f.dataset.max+'" value="'+inp.value+'" aria-label="'+name+'"><span class="note"></span></div>';
+      const r=pop.querySelector('input'), out=pop.querySelector('.note');
+      const sync=()=>{ inp.value=r.value; out.textContent=r.value+' '+f.dataset.unit; };
+      r.addEventListener('input',sync); sync(); place(pop,f); r.focus();
+    });
+    inp.addEventListener('wheel',e=>{ e.preventDefault(); inp.value=clamp((+inp.value||0)+(e.deltaY<0?1:-1),f); },{passive:false});
+    inp.addEventListener('keydown',e=>{
+      if(e.key==='ArrowUp'||e.key==='ArrowDown'){ e.preventDefault(); inp.value=clamp((+inp.value||0)+(e.key==='ArrowUp'?1:-1)*(e.shiftKey?10:1),f); }
+    });
+    const lbl=f.parentElement.querySelector('.lbl');
+    if(lbl){
+      lbl.addEventListener('pointerdown',e=>{
+        lbl.setPointerCapture(e.pointerId); const x0=e.clientX, v0=+inp.value||0;
+        const span=(+f.dataset.max)-(+f.dataset.min);
+        const mv=ev=>{ const k=ev.shiftKey?0.1:1; inp.value=clamp(Math.round(v0+(ev.clientX-x0)*span/300*k),f); };
+        const up=()=>{ lbl.removeEventListener('pointermove',mv); lbl.removeEventListener('pointerup',up); };
+        lbl.addEventListener('pointermove',mv); lbl.addEventListener('pointerup',up);
+      });
+    }
+  });
+  document.querySelectorAll('.more').forEach(b=>b.addEventListener('click',e=>{
+    e.stopPropagation(); const was=open&&open._b===b; close(); if(was) return;
+    const pop=document.createElement('div'); pop.className='pop'; pop._b=b;
+    pop.innerHTML = b.dataset.extra
+      ? '<div class="title">Autres réglages</div><label><input type="checkbox" checked> Lissage</label><label><input type="checkbox"> Arrondir les coins</label><div class="row"><span class="note" style="width:90px">Rayon</span><input type="range" min="0" max="100" value="10" aria-label="Rayon"></div><label><input type="checkbox"> Taille fixe</label>'
+      : '<div class="title">Autres réglages</div><label><input type="checkbox"> Appliquer la gigue</label><label><input type="checkbox"> Aérographe</label><label><input type="checkbox"> Incrémental</label><div class="row"><span class="note" style="width:90px">Lissage</span><input type="range" min="0" max="100" value="10" aria-label="Lissage"></div>';
+    place(pop,b); pop.style.left=''; pop.style.right='8px';
+  }));
+  document.querySelectorAll('.bolt').forEach(b=>b.addEventListener('click',e=>{
+    e.stopPropagation(); const was=open&&open._z===b; close(); if(was) return;
+    const pop=document.createElement('div'); pop.className='pop'; pop._z=b;
+    pop.innerHTML='<div class="title">Rendu</div><label><input type="checkbox" checked> Aperçu rapide</label><label><input type="checkbox"> Rendu en arrière-plan</label>';
+    place(pop,b); pop.style.left=''; pop.style.right='8px';
+  }));
+})();
+</script>

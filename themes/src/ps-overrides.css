@@ -805,3 +805,140 @@ button.chopgimp-swatch:hover {
 #photogimp-options-bar button.popup {
   padding: 1px 4px;
 }
+
+/* ── Barre d'options 3.26 : champs compacts, « ⋯ », « ⚡ » ──────────
+ * Champ « Dureté [50 % ▾] » (app/widgets/chopgimp-value-field.c) ;
+ * hors du sélecteur #photogimp-options-bar car il passe aussi dans le
+ * menu « ⋯ » (un popover n'hérite pas du style de la barre). */
+.chopgimp-scrub-label {
+  background-color: transparent;
+  border-radius: 3px;
+  padding: 2px 2px;
+}
+
+.chopgimp-scrub-label:hover,
+.chopgimp-scrub-label.scrubbing {
+  background-color: @hover-color;
+}
+
+/* libellés lisibles (le gris « dim-label » faisait croire à un réglage
+   désactivé) */
+#photogimp-options-bar .chopgimp-scrub-label label,
+.chopgimp-scrub-label label {
+  color: alpha(@fg-color, 0.85);
+  opacity: 1;   /* « dim-label » estompe aussi par l'opacité */
+}
+
+.chopgimp-scrub-label:hover label,
+.chopgimp-scrub-label.scrubbing label {
+  color: @fg-color;
+}
+
+.chopgimp-field {
+  background-color: @ps-field;
+  border: 1px solid @edge-border-color;
+  border-radius: 3px;
+  min-height: 22px;
+}
+
+.chopgimp-field entry,
+.chopgimp-field entry.flat {
+  background-color: transparent;
+  background-image: none;
+  border: none;
+  border-radius: 3px 0 0 3px;
+  box-shadow: none;
+  outline: none;
+  min-height: 0;
+  min-width: 0;
+  padding: 0 2px 0 6px;
+  font-feature-settings: "tnum";
+}
+
+/* GTK 3 n'a pas :focus-within : on souligne la valeur en cours de saisie */
+.chopgimp-field entry:focus {
+  box-shadow: inset 0 -2px @ps-accent;
+}
+
+.chopgimp-field .chopgimp-unit {
+  color: @dimmed-fg-color;
+  font-size: 0.92em;
+  padding-right: 4px;
+}
+
+.chopgimp-field button.chopgimp-field-arrow,
+#photogimp-options-bar .chopgimp-field button.chopgimp-field-arrow {
+  background-color: transparent;
+  background-image: none;
+  border: none;
+  border-left: 1px solid @edge-border-color;
+  border-radius: 0 3px 3px 0;
+  box-shadow: none;
+  color: @dimmed-fg-color;
+  min-height: 0;
+  min-width: 16px;
+  padding: 0 2px;
+  font-size: 0.77em;
+}
+
+.chopgimp-field button.chopgimp-field-arrow:hover {
+  background-color: @hover-color;
+  color: @fg-color;
+}
+
+/* Popovers de la barre : curseur fin, « ⋯ », « ⚡ » */
+.chopgimp-popover-title {
+  color: @dimmed-fg-color;
+  font-size: 0.85em;
+  font-weight: bold;
+  margin-bottom: 2px;
+}
+
+popover.chopgimp-value-popover {
+  border-radius: 6px;
+  padding: 4px 6px;
+}
+
+scale.chopgimp-thin-scale trough {
+  min-height: 2px;
+}
+
+scale.chopgimp-thin-scale slider {
+  min-height: 12px;
+  min-width: 12px;
+  margin: -6px;
+}
+
+popover.chopgimp-more-popover {
+  border-radius: 6px;
+}
+
+#photogimp-options-bar button.chopgimp-bar-menu {
+  color: @dimmed-fg-color;
+  min-height: 22px;
+  min-width: 22px;
+  padding: 0 6px;
+  border-radius: 3px;
+}
+
+#photogimp-options-bar button.chopgimp-bar-menu:hover,
+#photogimp-options-bar button.chopgimp-bar-menu:checked {
+  background-color: @hover-color;
+  color: @fg-color;
+}
+
+#photogimp-options-bar button.chopgimp-bar-menu.chopgimp-active {
+  color: @ps-accent;
+}
+
+#photogimp-options-bar .chopgimp-more-count {
+  color: @dimmed-fg-color;
+  font-size: 0.85em;
+}
+
+/* Séparateurs de groupes de la barre (pinceau | fusion | …) */
+#photogimp-options-bar box > separator.vertical {
+  background-color: @stronger-border-color;
+  min-width: 1px;
+  margin: 5px 4px;
+}

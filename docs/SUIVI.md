@@ -581,3 +581,15 @@ Restent à traiter (identiques avec ou sans effets) : blocages au déplacement, 
 - **Banc** : `BENCH_GIMPRC` pour régler une préférence du banc.
 - **Reporté en 3.25.2** : GIMP compilé avec LTO + PGO (version compilée et 103 tests réussis, pas encore mesurée).
 - Vérifié : 103 tests.
+
+## 3.26.0 — Barre d'options compacte
+
+- Maquette validée par l'utilisateur : `docs/maquettes/barre-options.html`.
+- **Champ compact** (`app/widgets/chopgimp-value-field.c`) pour tous les réglages chiffrés de la barre : « 51 px ▾ », « Dureté 50 % ▾ ». ▾ ouvre un petit curseur (même courbe que l'ancien curseur, gamma 1,7 pour la taille) ; glisser sur le libellé change la valeur (Maj = fin) ; saisie (virgule acceptée, Entrée / Échap) ; molette ; ↑/↓ (Maj ×10).
+- **Plus de défilement** : la barre n'est plus dans une fenêtre défilante. Ce qui ne tient pas passe dans « ⋯ N » (priorité par réglage : taille, police, mode, opacité gardés en dernier), et revient quand la fenêtre s'élargit. Dernière ligne de ⋯ : « Toutes les options de l'outil… ».
+- **⚡** : Aperçu rapide et Rendu en arrière-plan dans un menu (en bleu si l'un est actif).
+- Séparateurs entre groupes (« | » dans `bar_specs[]`), sélecteur de police élargi, liste Mode réduite (12 caractères), libellés lisibles.
+- Correctif : le Flux de l'aérographe (déjà 0–100) était affiché ×100.
+- Banc : `CHOPGIMP_GUITEST_SIZE=1280x800` pour tester une largeur de portable.
+- Vérifié au banc : Pinceau et Texte à 1600 et 1280 px (aucun défilement, ⋯ 5 / ⋯ 7), curseur de Dureté, menu ⋯ ; 103 tests.
+- Restes connus : pas de calcul dans la saisie (« 2*5 ») ; unités de l'approche et de l'interlignage non affichées ; le reste de la modernisation (curseurs des fenêtres, styles de calque unifiés, panneaux, icônes, styles d'interface) est gardé pour plus tard (plan).

@@ -31,7 +31,7 @@ start_shell() {
     setsid $CLEAN XDG_RUNTIME_DIR="$D/run" XDG_CONFIG_HOME="$D/config" \
         XDG_CACHE_HOME="$D/cache" XDG_DATA_HOME="$D/data" GSETTINGS_BACKEND=memory \
         dbus-run-session -- bash -c "echo \"\$DBUS_SESSION_BUS_ADDRESS\" > '$D/bus'; \
-            exec gnome-shell --headless --virtual-monitor 1600x900 --wayland-display wl-chop \
+            exec gnome-shell --headless --virtual-monitor ${CHOPGIMP_GUITEST_SIZE:-1600x900} --wayland-display wl-chop \
                  --unsafe-mode --no-x11 > '$D/shell.log' 2>&1" < /dev/null > /dev/null 2>&1 &
     for _ in $(seq 30); do [ -S "$D/run/wl-chop" ] && break; sleep 0.5; done
     [ -S "$D/run/wl-chop" ] || { echo "le compositeur n'a pas démarré, voir $D/shell.log"; exit 1; }
@@ -79,7 +79,7 @@ case "${1:-}" in
     ui)    shift; exec $CLEAN python3 -I "$HERE/ui.py" "$D" "$@" ;;
     nooverview) no_overview ;;
     stop)  stop_gimp
-           pkill -f "[g]nome-shell --headless --virtual-monitor 1600x900 --wayland-display wl-chop"
+           pkill -f "[g]nome-shell --headless --virtual-monitor ${CHOPGIMP_GUITEST_SIZE:-1600x900} --wayland-display wl-chop"
            sleep 1
            # services lancés dans la session privée (bus D-Bus, gvfs, portails,
            # accessibilité…) : sans cela ils s'accumulent à chaque essai et

@@ -1,0 +1,63 @@
+From c30fc439d1f4ecb4dfc9689f9bad11843053a9fe Mon Sep 17 00:00:00 2001
+From: ChopGimp <mathieu.redon@proton.me>
+Date: Wed, 18 Nov 2026 14:59:02 +0100
+Subject: [PATCH] ChopGimp: options bar: narrower blend mode box
+
+---
+ app/display/gimpoptionsbar.c | 33 +++++++++++++++++++++++++++++++++
+ 1 file changed, 33 insertions(+)
+
+diff --git a/app/display/gimpoptionsbar.c b/app/display/gimpoptionsbar.c
+index 3ab1989..12dfed8 100644
+--- a/app/display/gimpoptionsbar.c
++++ b/app/display/gimpoptionsbar.c
+@@ -1235,6 +1235,34 @@ gimp_options_bar_widen_entry (GtkWidget *widget,
+     }
+ }
+ 
++/*  Cap the natural width of a combo box's text cells (the layer mode
++ *  box asked for the width of its longest mode name)
++ */
++static void
++gimp_options_bar_cap_combo_width (GtkWidget *widget,
++                                  gpointer   data)
++{
++  if (GTK_IS_COMBO_BOX (widget))
++    {
++      GList *cells = gtk_cell_layout_get_cells (GTK_CELL_LAYOUT (widget));
++      GList *list;
++
++      for (list = cells; list; list = g_list_next (list))
++        if (GTK_IS_CELL_RENDERER_TEXT (list->data))
++          g_object_set (list->data,
++                        "ellipsize",       PANGO_ELLIPSIZE_END,
++                        "max-width-chars", 12,
++                        NULL);
++
++      g_list_free (cells);
++    }
++  else if (GTK_IS_CONTAINER (widget))
++    {
++      gtk_container_foreach (GTK_CONTAINER (widget),
++                             gimp_options_bar_cap_combo_width, NULL);
++    }
++}
++
+ /*  Build the bar item (widget, with its label if any) for @prop of
+  *  @options, or NULL. *title is set to the name shown in front of the
+  *  item in the « ⋯ » menu, for items without a label of their own.
+@@ -1376,6 +1404,11 @@ gimp_options_bar_widget (GObject      *options,
+       w = gimp_prop_layer_mode_box_new (options, prop,
+                                         GIMP_LAYER_MODE_CONTEXT_PAINT);
+       gimp_layer_mode_box_set_label (GIMP_LAYER_MODE_BOX (w), _("Mode"));
++      /*  the longest mode name made the box ~240 px wide  */
++      gimp_layer_mode_box_set_ellipsize (GIMP_LAYER_MODE_BOX (w),
++                                         PANGO_ELLIPSIZE_END);
++      gtk_container_foreach (GTK_CONTAINER (w),
++                             gimp_options_bar_cap_combo_width, NULL);
+       return w;
+     }
+ 
+-- 
+2.53.0
+

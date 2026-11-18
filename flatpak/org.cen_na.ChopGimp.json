@@ -1115,7 +1115,9 @@
                         "../patches/gimp-3.2.8/0104-ChopGimp-no-more-UI-stalls-on-move-hide-Ctrl-click-a.patch",
                         "../patches/gimp-3.2.8/0105-ChopGimp-background-projection-rendering-rendering-t.patch",
                         "../patches/gimp-3.2.8/0106-ChopGimp-fused-layer-styles-chopgimp-layer-style-fus.patch",
-                        "../patches/gimp-3.2.8/0107-ChopGimp-drafts-only-during-user-input-on-the-canvas.patch"
+                        "../patches/gimp-3.2.8/0107-ChopGimp-drafts-only-during-user-input-on-the-canvas.patch",
+                        "../patches/gimp-3.2.8/0108-ChopGimp-options-bar-without-scrolling-compact-value.patch",
+                        "../patches/gimp-3.2.8/0109-ChopGimp-options-bar-narrower-blend-mode-box.patch"
                     ]
                 }
             ],
