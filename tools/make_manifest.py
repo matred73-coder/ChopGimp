@@ -117,6 +117,18 @@ LQR_MODULES = [
                   "sha256": "64b0c4ac76d39cca79501b3f53544af3fc5f72b536ac0f28d2928319bfab6def"}]},
 ]
 
+# ── libpotrace 1.16 : Calque > Vectoriser… (3.27.3, lot V5), moteur des
+#    contours remplis (app/path/chopgimp-trace.cc). Seule la bibliothèque
+#    partagée reste dans le paquet (pas l'outil potrace ni mkbitmap).
+POTRACE_MODULES = [
+    {"name": "potrace",
+     "config-opts": ["--with-libpotrace", "--disable-static"],
+     "cleanup": ["/bin", "/include", "/share", "*.la"],
+     "sources": [{"type": "archive",
+                  "url": "https://potrace.sourceforge.net/download/1.16/potrace-1.16.tar.gz",
+                  "sha256": "be8248a17dedd6ccbaab2fcc45835bb0502d062e40fbded3bc56028ce5eb7acc"}]},
+]
+
 # ── IA locale (plug-in chopgimp_ia) : numpy + onnxruntime, paquets
 #    précompilés pour le Python du runtime (3.14). Les modèles ne sont pas
 #    dans le paquet : téléchargés à la première utilisation, après accord.
@@ -255,7 +267,7 @@ if not vanilla:
     # en-têtes et fichiers de développement : inutiles à l'exécution
     m["cleanup"] = sorted(set(m.get("cleanup", []) + ["/include", "/lib/pkgconfig"]))
     gi = m["modules"].index(gimp)
-    m["modules"][gi:gi] = GEOM_MODULES + LQR_MODULES + IA_MODULES
+    m["modules"][gi:gi] = GEOM_MODULES + LQR_MODULES + POTRACE_MODULES + IA_MODULES
     # Correctifs GEGL (plantage multi-thread des tuiles mipmap, cf. patches/gegl-0.4.72)
     gegl = next(x for x in m["modules"] if isinstance(x, dict) and x["name"] == "gegl")
     for p in sorted(glob.glob(os.path.join(ROOT, "patches", "gegl-0.4.72", "*.patch"))):
