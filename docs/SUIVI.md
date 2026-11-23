@@ -620,3 +620,10 @@ Restent à traiter (identiques avec ou sans effets) : blocages au déplacement, 
 - Vérifié : 103 tests ; tests gimp-console (booléens, masque d'écrêtage + XCF, alignements, groupes, verrous) ; banc : 3 formes dans un calque, sélection et déplacement d'une seule.
 - Limites connues : Plume = 2 étapes d'annulation pour un nouvel objet ; redimensionner met aussi à l'échelle l'épaisseur du contour ; la sélection d'objets n'est pas enregistrée ; pour déplacer tout un calque multi-objets, passer par le panneau Calques ; modes de fusion rares approchés.
 - Suite du plan : 3.27.1 (panneaux Objets / Aspect / Contour, import-export par objet, couleurs globales, Redéfinir les couleurs), 3.27.2 (Vectoriser), 3.27.3 (Largeur, Peinture dynamique, Symboles, Distorsion).
+
+## 3.27.1 — Correctif : mode objets sur tout calque vectoriel
+
+- Signalé par l'utilisateur : formes dessinées, « Créer un calque vectoriel » (barre de la Plume), puis V ne manipulait pas les formes séparément.
+- Causes : le mode objets de V exigeait ≥ 2 objets ; « Créer un calque vectoriel » mettait tous les sous-tracés dans un seul objet ; l'option « Ajouter au calque vectoriel actif » de la Plume ne se déclenchait jamais (clic dans le vide vu comme « ajout de point »).
+- Corrections : V passe en mode objets sur **tout** calque vectoriel (une forme seule a son cadre) ; « Créer un calque vectoriel » crée **un objet par forme séparée** (trous conservés) ; la Plume crée bien un nouvel objet sur un clic dans le vide. Sélectionner ne change pas le rendu (tant qu'on ne modifie pas). PDB `gimp-vector-layer-new` inchangé pour les scripts.
+- Vérifié : 103 tests ; tests console (2 rectangles → 2 objets, carré troué + rectangle → 2 objets, rendu inchangé après sélection) ; banc : une forme seule sélectionnée avec poignées.

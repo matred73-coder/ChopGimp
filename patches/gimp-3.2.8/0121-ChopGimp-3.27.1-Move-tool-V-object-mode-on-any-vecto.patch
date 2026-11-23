@@ -1,0 +1,403 @@
+From c6fddd3955330d11aa840e4f7b18b6864e931c0a Mon Sep 17 00:00:00 2001
+From: ChopGimp <mathieu.redon@proton.me>
+Date: Mon, 23 Nov 2026 13:30:31 +0100
+Subject: [PATCH] =?UTF-8?q?ChopGimp=203.27.1:=20Move=20tool=20(V)=20object?=
+ =?UTF-8?q?=20mode=20on=20any=20vector=20layer=20(a=20single,=20never=20ed?=
+ =?UTF-8?q?ited=20object=20too:=20selecting=20keeps=20GIMP's=20rendering,?=
+ =?UTF-8?q?=20the=20first=20edit=20switches=20to=20objects),=20=C2=AB=20Cr?=
+ =?UTF-8?q?=C3=A9er=20un=20calque=20vectoriel=20=C2=BB=20from=20a=20path?=
+ =?UTF-8?q?=20makes=20one=20object=20per=20island=20(outer=20sub-path=20an?=
+ =?UTF-8?q?d=20its=20holes)=20with=20the=20chosen=20fill=20/=20stroke,=20n?=
+ =?UTF-8?q?o=20extra=20undo=20step;=20Pen=20=C2=AB=20Ajouter=20au=20calque?=
+ =?UTF-8?q?=20vectoriel=20actif=20=C2=BB:=20a=20click=20in=20the=20void=20?=
+ =?UTF-8?q?really=20starts=20a=20new=20object;=20PDB=20command=20split-new?=
+ =?UTF-8?q?,=20select-all=20/=20select-none=20on=20any=20vector=20layer?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+---
+ app/actions/paths-commands.c      |  3 +++
+ app/display/chopgimp-vobjectbar.c |  5 ++++-
+ app/display/gimptoolpath.c        | 15 +++++++++++++++
+ app/display/gimptoolpath.h        |  4 ++++
+ app/path/chopgimp-vobject-ops.c   | 16 +++++++++++++++-
+ app/path/chopgimp-vobject-ops.h   |  7 ++++++-
+ app/path/chopgimp-vobject.c       | 30 ++++++++++++++++++++++++++++++
+ app/path/chopgimp-vobject.h       |  7 +++++++
+ app/pdb/chopgimp-cmds.c           | 23 +++++++++++++++++------
+ app/tools/chopgimp-vobjecttool.c  | 29 ++++++++++++++++++-----------
+ app/tools/gimppathtool.c          | 10 +++++++++-
+ 11 files changed, 128 insertions(+), 21 deletions(-)
+
+diff --git a/app/actions/paths-commands.c b/app/actions/paths-commands.c
+index c9cfc95..6cc7172 100644
+--- a/app/actions/paths-commands.c
++++ b/app/actions/paths-commands.c
+@@ -48,6 +48,7 @@
+ #include "path/gimppath-export.h"
+ #include "path/gimppath-import.h"
+ #include "path/gimpvectorlayer.h"
++#include "path/chopgimp-vobject.h"
+ 
+ #include "tools/gimptools-utils.h"
+ 
+@@ -568,6 +569,8 @@ path_to_vector_layer_cmd_callback (GimpAction *action,
+                         GIMP_IMAGE_ACTIVE_PARENT,
+                         -1,
+                         TRUE);
++  /*  ChopGimp 3.27.1: one object per separate shape  */
++  chopgimp_vlayer_split_new (layer);
+   gimp_vector_layer_refresh (layer);
+ 
+   gimp_image_flush (image);
+diff --git a/app/display/chopgimp-vobjectbar.c b/app/display/chopgimp-vobjectbar.c
+index 2d8eb8a..f9b2469 100644
+--- a/app/display/chopgimp-vobjectbar.c
++++ b/app/display/chopgimp-vobjectbar.c
+@@ -309,7 +309,10 @@ props_set_layer (ChopGimpVObjectProps *p,
+ static void
+ props_watch_layer (ChopGimpVObjectProps *p)
+ {
+-  props_set_layer (p, p->image ? chopgimp_vobjects_get_active_layer (p->image) : NULL);
++  /*  3.27.1: any vector layer, its objects may get selected with the
++   *  Move tool even when it has a single one
++   */
++  props_set_layer (p, p->image ? chopgimp_vobjects_get_target_layer (p->image) : NULL);
+   props_queue_load (p);
+ }
+ 
+diff --git a/app/display/gimptoolpath.c b/app/display/gimptoolpath.c
+index 2fb1ca7..b58a2e8 100644
+--- a/app/display/gimptoolpath.c
++++ b/app/display/gimptoolpath.c
+@@ -1207,6 +1207,21 @@ gimp_tool_path_hit (GimpToolWidget   *widget,
+   return GIMP_HIT_NONE;
+ }
+ 
++/*  ChopGimp 3.27.1: TRUE when a press at @coords starts a new stroke (an
++ *  empty area, no extendable anchor selected), the « void » of the Pen
++ */
++gboolean
++gimp_tool_path_creates_stroke (GimpToolPath     *tool_path,
++                               const GimpCoords *coords,
++                               GdkModifierType   state)
++{
++  g_return_val_if_fail (GIMP_IS_TOOL_PATH (tool_path), FALSE);
++  g_return_val_if_fail (coords != NULL, FALSE);
++
++  return gimp_tool_path_get_function (tool_path, coords, state) ==
++         VECTORS_CREATE_STROKE;
++}
++
+ void
+ gimp_tool_path_hover (GimpToolWidget   *widget,
+                       const GimpCoords *coords,
+diff --git a/app/display/gimptoolpath.h b/app/display/gimptoolpath.h
+index 7c44e23..2f3001a 100644
+--- a/app/display/gimptoolpath.h
++++ b/app/display/gimptoolpath.h
+@@ -66,6 +66,10 @@ void             gimp_tool_path_get_popup_state (GimpToolPath     *tool_path,
+                                                  gboolean         *on_handle,
+                                                  gboolean         *on_curve);
+ 
++/*  ChopGimp 3.27.1  */
++gboolean         gimp_tool_path_creates_stroke  (GimpToolPath     *tool_path,
++                                                 const GimpCoords *coords,
++                                                 GdkModifierType   state);
+ void             gimp_tool_path_delete_anchor   (GimpToolPath     *tool_path);
+ void             gimp_tool_path_shift_start     (GimpToolPath     *tool_path);
+ void             gimp_tool_path_insert_anchor   (GimpToolPath     *tool_path);
+diff --git a/app/path/chopgimp-vobject-ops.c b/app/path/chopgimp-vobject-ops.c
+index a0a0b64..ab77fa6 100644
+--- a/app/path/chopgimp-vobject-ops.c
++++ b/app/path/chopgimp-vobject-ops.c
+@@ -60,8 +60,22 @@ chopgimp_vobjects_layer_is_multi (GimpVectorLayer *layer)
+       ! chopgimp_vlayer_get_root (layer))
+     return FALSE;
+ 
++  /*  3.27.1: also a layer whose (single, legacy) object was selected
++   *  with the Move tool: the selection is not an edit, the rendering
++   *  stays GIMP's until the first change
++   */
+   return (chopgimp_vlayer_count_leaves (layer) >= 2 ||
+-          ! chopgimp_vlayer_is_legacy (layer));
++          ! chopgimp_vlayer_is_legacy (layer)       ||
++          chopgimp_vobjects_n_selected (layer) > 0);
++}
++
++gboolean
++chopgimp_vobjects_layer_is_target (GimpVectorLayer *layer)
++{
++  return (chopgimp_vobjects_enabled () && GIMP_IS_VECTOR_LAYER (layer) &&
++          gimp_item_is_attached (GIMP_ITEM (layer)) &&
++          gimp_item_is_vector_layer (GIMP_ITEM (layer)) &&
++          chopgimp_vlayer_get_root (layer) != NULL);
+ }
+ 
+ GimpVectorLayer *
+diff --git a/app/path/chopgimp-vobject-ops.h b/app/path/chopgimp-vobject-ops.h
+index aef5c86..97a30d5 100644
+--- a/app/path/chopgimp-vobject-ops.h
++++ b/app/path/chopgimp-vobject-ops.h
+@@ -50,9 +50,14 @@ typedef enum
+ 
+ 
+ /*  a vector layer worked on as objects: not rasterized, objects enabled,
+- *  and several objects or already edited as objects
++ *  and several objects, already edited as objects, or with selected
++ *  objects (3.27.1)
+  */
+ gboolean          chopgimp_vobjects_layer_is_multi   (GimpVectorLayer *layer);
++/*  3.27.1: any vector layer the Move tool works on as objects (one legacy
++ *  object or more): attached, not rasterized, objects enabled
++ */
++gboolean          chopgimp_vobjects_layer_is_target  (GimpVectorLayer *layer);
+ /*  the only selected layer of @image when it is such a layer, else NULL
+  *  (always NULL with CHOPGIMP_NO_VOBJECTS=1)
+  */
+diff --git a/app/path/chopgimp-vobject.c b/app/path/chopgimp-vobject.c
+index dc77229..6df33d9 100644
+--- a/app/path/chopgimp-vobject.c
++++ b/app/path/chopgimp-vobject.c
+@@ -4960,6 +4960,36 @@ chopgimp_vlayer_decompose (GimpVectorLayer *layer,
+ }
+ 
+ 
++gint
++chopgimp_vlayer_split_new (GimpVectorLayer *layer)
++{
++  gint n;
++
++  if (! chopgimp_vobjects_enabled () || ! layer_usable (layer) ||
++      ! layer->options || ! layer->options->path ||
++      gimp_path_get_n_strokes (layer->options->path) < 2)
++    return 0;
++
++  /*  never edited as objects: object #1 is the layer itself  */
++  if (layer->vobjects && ! layer->vobjects->legacy)
++    return 0;
++
++  if (! vlayer_ensure (layer))
++    return 0;
++
++  /*  the fill / stroke set just after the creation  */
++  vlayer_style_from_options (layer);
++  g_array_set_size (layer->vobjects->selection, 0);
++
++  n = chopgimp_vlayer_decompose (layer, FALSE);
++
++  if (n > 0)
++    chopgimp_vlayer_set_selection (layer, NULL, 0);
++
++  return n;
++}
++
++
+ /*  ─── gimpvectorlayer.c and XCF hooks ───────────────────────────────── */
+ 
+ gint64
+diff --git a/app/path/chopgimp-vobject.h b/app/path/chopgimp-vobject.h
+index df15429..69c2676 100644
+--- a/app/path/chopgimp-vobject.h
++++ b/app/path/chopgimp-vobject.h
+@@ -423,6 +423,13 @@ gboolean          chopgimp_vlayer_can_decompose    (GimpVectorLayer  *layer);
+  */
+ gint              chopgimp_vlayer_decompose        (GimpVectorLayer  *layer,
+                                                     gboolean          push_undo);
++/*  3.27.1: a vector layer just made from a path (« Créer un calque
++ *  vectoriel »): one object per island (an outer sub-path and its holes),
++ *  each with the layer's fill / stroke; nothing when there is a single
++ *  island (the layer stays « legacy »). No undo step: part of the
++ *  creation. Returns the number of objects made.
++ */
++gint              chopgimp_vlayer_split_new        (GimpVectorLayer  *layer);
+ 
+ 
+ /*  ─── internal: gimpvectorlayer.c, xcf ──────────────────────────────── */
+diff --git a/app/pdb/chopgimp-cmds.c b/app/pdb/chopgimp-cmds.c
+index d715b60..f5b5e55 100644
+--- a/app/pdb/chopgimp-cmds.c
++++ b/app/pdb/chopgimp-cmds.c
+@@ -100,7 +100,8 @@ vobjects_pathfinder_invoker (GimpProcedure         *procedure,
+ }
+ 
+ /*  ChopGimp lot V2: the « Objet » commands for scripts and plug-ins, on
+- *  the active vector layer: « decompose », « select-all », « select-none »,
++ *  the active vector layer: « decompose », « split-new », « select-all »,
++ *  « select-none »,
+  *  « group », « ungroup », « front », « forward », « backward », « back »,
+  *  « lock », « unlock-all », « hide », « show-all », « align-left »…
+  *  « align-bottom », « distribute-h », « distribute-v », « clip-make »,
+@@ -133,15 +134,25 @@ vobjects_command_invoker (GimpProcedure         *procedure,
+     {
+       if (! strcmp (cmd, "decompose"))
+         done = chopgimp_vlayer_decompose (layer, TRUE) > 0;
+-      else if (! chopgimp_vobjects_layer_is_multi (layer))
+-        done = FALSE;
+-      else if (! strcmp (cmd, "select-all"))
++      /*  3.27.1: one object per island, no undo step, as « Créer un
++       *  calque vectoriel » does on a layer just made from a path
++       */
++      else if (! strcmp (cmd, "split-new"))
++        done = chopgimp_vlayer_split_new (layer) > 0;
++      /*  3.27.1: selecting is not an edit: any vector layer, as the
++       *  Move tool
++       */
++      else if (! strcmp (cmd, "select-all") &&
++               chopgimp_vobjects_layer_is_target (layer))
+         done = chopgimp_vobjects_select_all (layer);
+-      else if (! strcmp (cmd, "select-none"))
++      else if (! strcmp (cmd, "select-none") &&
++               chopgimp_vobjects_layer_is_target (layer))
+         {
+           chopgimp_vlayer_set_selection (layer, NULL, 0);
+           done = TRUE;
+         }
++      else if (! chopgimp_vobjects_layer_is_multi (layer))
++        done = FALSE;
+       else if (! strcmp (cmd, "group"))
+         done = chopgimp_vobjects_group_selection (layer);
+       else if (! strcmp (cmd, "ungroup"))
+@@ -522,7 +533,7 @@ register_chopgimp_procs (GimpPDB *pdb)
+ 
+   p = chopgimp_procedure (pdb, vobjects_command_invoker, "chopgimp-vobjects-command",
+                           "« Objet » command on the objects of the selected vector layer: "
+-                          "decompose, select-all, select-none, group, ungroup, front, forward, "
++                          "decompose, split-new, select-all, select-none, group, ungroup, front, forward, "
+                           "backward, back, lock, unlock-all, hide, show-all, align-left, "
+                           "align-hcenter, align-right, align-top, align-vcenter, align-bottom, "
+                           "distribute-h, distribute-v, clip-make, clip-release, delete, "
+diff --git a/app/tools/chopgimp-vobjecttool.c b/app/tools/chopgimp-vobjecttool.c
+index 282ef42..132e3eb 100644
+--- a/app/tools/chopgimp-vobjecttool.c
++++ b/app/tools/chopgimp-vobjecttool.c
+@@ -3,7 +3,9 @@
+  *
+  * chopgimp-vobjecttool.c — ChopGimp 3.27 (lot V2): object mode of the
+  * Move tool (V), like Illustrator's Selection tool (black arrow), on the
+- * vector layers with several objects (path/chopgimp-vobject.h):
++ * vector layers (path/chopgimp-vobject.h; 3.27.1: also a layer with a
++ * single, never edited object: selecting does not change its rendering,
++ * the first edit makes it a layer of objects):
+  *
+  *  - click: the topmost object (its group, outside of an entered group),
+  *    Shift+click adds / removes it, drag in an empty area: rectangle
+@@ -266,7 +268,7 @@ vsel_target (ChopGimpVSel     *vsel,
+              gdouble           tolerance,
+              gboolean          auto_select)
+ {
+-  GimpVectorLayer *active = chopgimp_vobjects_get_active_layer (image);
++  GimpVectorLayer *active = chopgimp_vobjects_get_target_layer (image);
+   GimpLayer       *picked;
+ 
+   if (! chopgimp_vobjects_enabled () || ! auto_select)
+@@ -291,15 +293,20 @@ vsel_target (ChopGimpVSel     *vsel,
+                                     CHOPGIMP_HIT_SELECTABLE))
+         return active;
+ 
+-      if (coords->x >= ox && coords->x < ox + gimp_item_get_width (item) &&
++      /*  3.27.1: not for a layer with a single, never edited object (a
++       *  click beside its shape picks the layer below, as in 3.26)
++       */
++      if ((chopgimp_vlayer_count_leaves (active) >= 2 ||
++           ! chopgimp_vlayer_is_legacy (active))                        &&
++          coords->x >= ox && coords->x < ox + gimp_item_get_width (item) &&
+           coords->y >= oy && coords->y < oy + gimp_item_get_height (item) &&
+           ! (GIMP_IS_VECTOR_LAYER (picked) &&
+-             chopgimp_vobjects_layer_is_multi (GIMP_VECTOR_LAYER (picked))))
++             chopgimp_vobjects_layer_is_target (GIMP_VECTOR_LAYER (picked))))
+         return active;
+     }
+ 
+   if (GIMP_IS_VECTOR_LAYER (picked) &&
+-      chopgimp_vobjects_layer_is_multi (GIMP_VECTOR_LAYER (picked)))
++      chopgimp_vobjects_layer_is_target (GIMP_VECTOR_LAYER (picked)))
+     {
+       GList *list = g_list_prepend (NULL, picked);
+ 
+@@ -416,7 +423,7 @@ gboolean
+ chopgimp_vsel_is_active (ChopGimpVSel *vsel,
+                          GimpImage    *image)
+ {
+-  return vsel && image && chopgimp_vobjects_get_active_layer (image) != NULL;
++  return vsel && image && chopgimp_vobjects_get_target_layer (image) != NULL;
+ }
+ 
+ void
+@@ -467,7 +474,7 @@ chopgimp_vsel_button_press (ChopGimpVSel        *vsel,
+   if (style_picker_armed)
+     {
+       style_picker_armed = FALSE;
+-      layer = chopgimp_vobjects_get_active_layer (image);
++      layer = chopgimp_vobjects_get_target_layer (image);
+ 
+       if (layer &&
+           (hit = chopgimp_vlayer_hit_test (layer, coords->x, coords->y, tol,
+@@ -862,7 +869,7 @@ chopgimp_vsel_key_press (ChopGimpVSel *vsel,
+                          GimpDisplay  *display)
+ {
+   GimpImage       *image = gimp_display_get_image (display);
+-  GimpVectorLayer *layer = chopgimp_vobjects_get_active_layer (image);
++  GimpVectorLayer *layer = chopgimp_vobjects_get_target_layer (image);
+   gint             n     = chopgimp_vobjects_n_selected (layer);
+   gdouble          step  = (kevent->state & gimp_get_extend_selection_mask ()) ? 10.0 : 1.0;
+   gdouble          dx    = 0.0, dy = 0.0;
+@@ -948,7 +955,7 @@ chopgimp_vsel_oper_update (ChopGimpVSel     *vsel,
+                            GimpDisplay      *display)
+ {
+   GimpImage        *image = gimp_display_get_image (display);
+-  GimpVectorLayer  *layer = chopgimp_vobjects_get_active_layer (image);
++  GimpVectorLayer  *layer = chopgimp_vobjects_get_target_layer (image);
+   GimpDisplayShell *shell = gimp_display_get_shell (display);
+   ChopGimpVObject  *hit   = NULL;
+   guint             hover;
+@@ -1005,7 +1012,7 @@ chopgimp_vsel_cursor_update (ChopGimpVSel     *vsel,
+   };
+   GimpTool           *tool  = GIMP_TOOL (vsel->tool);
+   GimpImage          *image = gimp_display_get_image (display);
+-  GimpVectorLayer    *layer = chopgimp_vobjects_get_active_layer (image);
++  GimpVectorLayer    *layer = chopgimp_vobjects_get_target_layer (image);
+   GimpCursorType      cursor      = GIMP_CURSOR_MOUSE;
+   GimpToolCursorType  tool_cursor = GIMP_TOOL_CURSOR_MOVE;
+   GimpCursorModifier  modifier    = GIMP_CURSOR_MODIFIER_NONE;
+@@ -1084,7 +1091,7 @@ chopgimp_vsel_draw (ChopGimpVSel *vsel)
+ 
+   if (! vsel->layer || ! image ||
+       gimp_item_get_image (GIMP_ITEM (vsel->layer)) != image ||
+-      chopgimp_vobjects_get_active_layer (image) != vsel->layer)
++      chopgimp_vobjects_get_target_layer (image) != vsel->layer)
+     return FALSE;
+ 
+   /*  outlines of the selected objects, and of the one under the pointer  */
+diff --git a/app/tools/gimppathtool.c b/app/tools/gimppathtool.c
+index faeada2..304152d 100644
+--- a/app/tools/gimppathtool.c
++++ b/app/tools/gimppathtool.c
+@@ -490,7 +490,12 @@ gimp_path_tool_button_press (GimpTool            *tool,
+       ! (state & gimp_get_all_modifiers_mask ())                       &&
+       chopgimp_vobjects_get_target_layer (gimp_display_get_image (display)) ==
+         path_tool->current_vector_layer                                &&
+-      gimp_tool_widget_hit (path_tool->widget, coords, state, TRUE) == GIMP_HIT_NONE)
++      /*  3.27.1: an empty area is not GIMP_HIT_NONE for the path widget
++       *  in Design mode (it would create a stroke): ask it
++       */
++      GIMP_IS_TOOL_PATH (path_tool->widget)                            &&
++      gimp_tool_path_creates_stroke (GIMP_TOOL_PATH (path_tool->widget),
++                                     coords, state))
+     {
+       GimpPathOptions *popts = GIMP_PATH_TOOL_GET_OPTIONS (tool);
+       ChopGimpVStyle   style;
+@@ -1165,6 +1170,9 @@ gimp_path_tool_create_vector_layer (GimpPathTool *path_tool)
+                         -1,
+                         TRUE);
+ 
++  /*  ChopGimp 3.27.1: one object per separate shape  */
++  chopgimp_vlayer_split_new (layer);
++
+   if (needs_new_path)
+     gimp_image_undo_group_end (image);
+ 
+-- 
+2.53.0
+
