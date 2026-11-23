@@ -1164,7 +1164,8 @@
                         "../patches/gimp-3.2.8/0129-ChopGimp-3.27.3-lot-V5-Vectoriser-keep-the-palette-c.patch",
                         "../patches/gimp-3.2.8/0130-ChopGimp-3.27.3-lot-V5-Vectoriser-engines-chopgimp-t.patch",
                         "../patches/gimp-3.2.8/0131-ChopGimp-3.27.3-lot-V5-Vectoriser-dialog-palette-col.patch",
-                        "../patches/gimp-3.2.8/0132-ChopGimp-3.27.3-lot-V5-Vectoriser-preview-Contours-s.patch"
+                        "../patches/gimp-3.2.8/0132-ChopGimp-3.27.3-lot-V5-Vectoriser-preview-Contours-s.patch",
+                        "../patches/gimp-3.2.8/0133-ChopGimp-3.27.3-lot-V5-Angles-maps-quadratically-to-.patch"
                     ]
                 }
             ],

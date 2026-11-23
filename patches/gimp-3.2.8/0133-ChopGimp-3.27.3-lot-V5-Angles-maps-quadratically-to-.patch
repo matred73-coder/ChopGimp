@@ -1,0 +1,61 @@
+From bf7ab713497fd0193c6390526fdfaa78db381d63 Mon Sep 17 00:00:00 2001
+From: ChopGimp <mathieu.redon@proton.me>
+Date: Mon, 23 Nov 2026 22:04:25 +0100
+Subject: [PATCH] =?UTF-8?q?ChopGimp=203.27.3=20(lot=20V5):=20=C2=AB=20Angl?=
+ =?UTF-8?q?es=20=C2=BB=20maps=20quadratically=20to=20potrace=20alphamax=20?=
+ =?UTF-8?q?(50=20%=20=3D=20potrace=20default,=2075=20%=20keeps=20circles?=
+ =?UTF-8?q?=20round=20instead=20of=20polygons);=20singular=20/=20plural=20?=
+ =?UTF-8?q?in=20the=20trace=20stats=20line?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+---
+ app/dialogs/chopgimp-trace-dialog.c | 11 ++++++++---
+ app/path/chopgimp-trace.cc          |  8 +++++++-
+ 2 files changed, 15 insertions(+), 4 deletions(-)
+
+diff --git a/app/dialogs/chopgimp-trace-dialog.c b/app/dialogs/chopgimp-trace-dialog.c
+index f790965..afe8c79 100644
+--- a/app/dialogs/chopgimp-trace-dialog.c
++++ b/app/dialogs/chopgimp-trace-dialog.c
+@@ -504,9 +504,14 @@ stats_update (Dialog *d)
+   if (! d->result)
+     text = g_strdup (d->running ? _("Vectorisation…") : "");
+   else
+-    text = g_strdup_printf (_("%d chemins · %d couleurs · %d points d'ancrage"),
+-                            d->result->n_paths, d->result->n_colors,
+-                            d->result->n_anchors);
++    text = g_strdup_printf ("%d %s · %d %s · %d %s",
++                            d->result->n_paths,
++                            d->result->n_paths > 1 ? _("chemins") : _("chemin"),
++                            d->result->n_colors,
++                            d->result->n_colors > 1 ? _("couleurs") : _("couleur"),
++                            d->result->n_anchors,
++                            d->result->n_anchors > 1 ? _("points d'ancrage")
++                                                     : _("point d'ancrage"));
+ 
+   gtk_label_set_text (GTK_LABEL (d->stats), text);
+ 
+diff --git a/app/path/chopgimp-trace.cc b/app/path/chopgimp-trace.cc
+index 13ddd8b..cf6af3d 100644
+--- a/app/path/chopgimp-trace.cc
++++ b/app/path/chopgimp-trace.cc
+@@ -989,7 +989,13 @@ potrace_shapes (Job &job, const std::vector<guint8> &mask, const guint8 rgb[3],
+   potrace_param_t *param = potrace_param_default ();
+ 
+   param->turdsize     = MAX (0, o->noise);
+-  param->alphamax     = 1.3334 * (1.0 - CLAMP (o->corners, 0.0, 100.0) / 100.0);
++  /*  quadratic: 50 % is potrace's own default (1.0), 75 % (« Par défaut »)
++   *  still gives smooth circles (0.58), 90–100 % sharp technical corners
++   */
++  {
++    gdouble c = CLAMP (o->corners, 0.0, 100.0) / 100.0;
++    param->alphamax = 1.3334 * (1.0 - c * c);
++  }
+   param->opticurve    = 1;
+   param->opttolerance = 1.0 - 0.95 * CLAMP (o->paths, 0.0, 100.0) / 100.0;
+ 
+-- 
+2.53.0
+
