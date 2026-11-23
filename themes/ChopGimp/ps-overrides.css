@@ -1237,6 +1237,30 @@ box.chopgimp-fx-row button.chopgimp-fx-edit:hover {
   opacity: 1;
 }
 
+/* Calques : objets du calque vectoriel actif (3.27.2), sous la liste */
+box.chopgimp-objects-strip {
+  padding: 2px 4px;
+  border-top: 1px solid @edge-border-color;
+  background-color: @ps-list;
+}
+
+box.chopgimp-objects-strip > box > button {
+  min-height: 20px;
+  padding: 1px 4px;
+  border: none;
+  background-image: none;
+  background-color: transparent;
+  box-shadow: none;
+}
+
+box.chopgimp-objects-strip > box > button:hover {
+  background-color: @hover-color;
+}
+
+treeview.chopgimp-objects-list {
+  background-color: @ps-list;
+}
+
 /* Couleur : grand carré TSV + bande de teinte, rangée hex + menu des
  * sélecteurs, couleurs récentes ; canal (H S V / R G B / L C h) dans
  * un menu compact « H ▾ » */

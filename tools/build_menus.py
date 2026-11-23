@@ -83,7 +83,8 @@ image = get["_Image"][:2] + reglages + get["_Image"][2:]
 # Les panneaux courants directement dans le menu, comme Photoshop : c'est là
 # qu'on rouvre un panneau fermé. La liste complète reste dans le sous-menu
 # « Fenêtres ancrables ».
-PANNEAUX = [["dialogs-layers", "dialogs-channels", "dialogs-paths"],
+PANNEAUX = [["dialogs-layers", "dialogs-channels", "dialogs-paths",
+             "dialogs-appearance", "dialogs-stroke", "dialogs-global-colors"],
             ["dialogs-colors", "dialogs-palettes", "dialogs-gradients", "dialogs-patterns",
              "dialogs-brushes", "dialogs-fonts"],
             ["dialogs-character", "dialogs-paragraph", "dialogs-glyphs", "dialogs-text-styles",
@@ -222,9 +223,11 @@ OBJET_MENU = [
      ("_Pathfinder", ["layers-vobjects-pathfinder-union", "layers-vobjects-pathfinder-minus",
                       "layers-vobjects-pathfinder-intersect", "layers-vobjects-pathfinder-exclude",
                       "layers-vobjects-pathfinder-divide"])],
-    [(None, ["layers-vobjects-style-picker", "layers-vobjects-select-all",
-             "layers-vobjects-delete"])],
+    [(None, ["layers-vobjects-style-picker", "layers-vobjects-recolor",
+             "layers-vobjects-select-all", "layers-vobjects-delete"])],
     [(None, ["layers-vobjects-merge", "layers-vobjects-split", "layers-vobjects-decompose"])],
+    # 3.27.2 (lot V3) : panneaux Aspect et Contour ; (lot V6.2) Couleurs globales
+    [(None, ["dialogs-appearance", "dialogs-stroke", "dialogs-global-colors"])],
 ]
 
 

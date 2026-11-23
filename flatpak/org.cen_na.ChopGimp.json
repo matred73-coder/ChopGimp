@@ -1133,7 +1133,11 @@
                         "../patches/gimp-3.2.8/0118-ChopGimp-vector-layers-with-several-objects-lot-V1-o.patch",
                         "../patches/gimp-3.2.8/0119-ChopGimp-smart-guides-for-vector-objects-lot-V6.1-ch.patch",
                         "../patches/gimp-3.2.8/0120-ChopGimp-Illustrator-like-tools-on-vector-objects-lo.patch",
-                        "../patches/gimp-3.2.8/0121-ChopGimp-3.27.1-Move-tool-V-object-mode-on-any-vecto.patch"
+                        "../patches/gimp-3.2.8/0121-ChopGimp-3.27.1-Move-tool-V-object-mode-on-any-vecto.patch",
+                        "../patches/gimp-3.2.8/0122-ChopGimp-3.27.2-lot-V4-objects-of-vector-layers-in-a.patch",
+                        "../patches/gimp-3.2.8/0123-ChopGimp-3.27.2-lot-V3-Aspect-stack-of-fills-and-str.patch",
+                        "../patches/gimp-3.2.8/0124-ChopGimp-3.27.2-lot-V6-point-2-Couleurs-globales-doc.patch",
+                        "../patches/gimp-3.2.8/0125-ChopGimp-3.27.2-lot-V4-SVG-export-of-the-objects-in-.patch"
                     ]
                 }
             ],

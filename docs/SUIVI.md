@@ -627,3 +627,16 @@ Restent à traiter (identiques avec ou sans effets) : blocages au déplacement, 
 - Causes : le mode objets de V exigeait ≥ 2 objets ; « Créer un calque vectoriel » mettait tous les sous-tracés dans un seul objet ; l'option « Ajouter au calque vectoriel actif » de la Plume ne se déclenchait jamais (clic dans le vide vu comme « ajout de point »).
 - Corrections : V passe en mode objets sur **tout** calque vectoriel (une forme seule a son cadre) ; « Créer un calque vectoriel » crée **un objet par forme séparée** (trous conservés) ; la Plume crée bien un nouvel objet sur un clic dans le vide. Sélectionner ne change pas le rendu (tant qu'on ne modifie pas). PDB `gimp-vector-layer-new` inchangé pour les scripts.
 - Vérifié : 103 tests ; tests console (2 rectangles → 2 objets, carré troué + rectangle → 2 objets, rendu inchangé après sélection) ; banc : une forme seule sélectionnée avec poignées.
+
+## 3.27.2 — Panneaux Objets / Aspect / Contour, couleurs globales, import-export par objet
+
+- **Liste « Objets »** sous les calques : sélection synchronisée avec le canevas, œil, verrou, renommer (double-clic), glisser-déposer (ordre, groupes), « (vide) » / « (masque d'écrêtage) ».
+- **Aspect** : plusieurs fonds et contours par objet (couleur, dégradé, motif, opacité, mode, visibilité, ordre). Format XML des objets **version 2** (la version 1 reste lue).
+- **Contour** : épaisseur, alignement, extrémités, angles, limite, tirets, flèches (triangle, flèche, cercle, carré, barre), profils d'épaisseur.
+- **Couleurs globales** (`app/path/chopgimp-vcolors.c`, parasite d'image `chopgimp-global-colors`) : panneau « Couleurs globales » (nouvelle, modifier en direct, renommer, supprimer, appliquer au fond / contour, délier), section dans les listes de couleurs de la barre d'options et d'Aspect (◆ = couleur liée).
+- **Objet > Redéfinir les couleurs…** : couleurs groupées par teinte, actuelle → nouvelle, harmonies, Réduire à N (k-means Lab), Assigner les couleurs globales, curseurs TSL, aperçu, une seule annulation.
+- **Import SVG** (lecture XML directe) : un calque vectoriel par calque Inkscape, un objet par forme, groupes, noms, transformations, dégradés vectoriels, masques d'écrêtage, opacités, flèches reconnues. **PDF / AI / EPS** : un objet par élément, masques et dégradés vectoriels. Plus de plafond à 1 500 objets (sécurité 50 000). Option « Fusionner les objets de même style ».
+- **Export SVG** : un `<path>` par objet, groupes, `<clipPath>`, dégradés, piles Aspect, marqueurs (flèches), profils en contour plein, couleurs globales en nuances Inkscape.
+- **Correctifs** : dupliquer un calque ou une image ne remplace plus le dégradé du premier objet par sa couleur ; décalage d'un demi-pixel à l'aller-retour SVG.
+- Vérifié : 106 tests (dont aller-retour SVG dans GIMP) ; tests console t4–t7 ; banc : liste Objets, panneau Aspect, Redéfinir les couleurs.
+- Limites : panneau Aspect tassé dans son emplacement par défaut ; boutons de la fenêtre Redéfinir en haut ; glisser une couleur globale sur le canevas et réordonner les couleurs : non faits ; masques SVG, filtres et motifs SVG non importés ; les profils d'épaisseur ignorent l'alignement et les tirets.

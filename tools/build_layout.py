@@ -113,8 +113,10 @@ def workspace_books(name):
                            dockable("gimp-path-list", tab="name", preview=32)]))
     if name == "illustration":
         return (book(None, [dockable("gimp-color-editor"), dockable("gimp-palette-editor"),
-                            dockable("gimp-gradient-list")]),
-                book(250, [dockable("gimp-path-list", tab="name", preview=32),
+                            dockable("chopgimp-global-colors"), dockable("gimp-gradient-list")]),
+                # 3.27.2 : Aspect et Contour des objets vectoriels en tête
+                book(250, [dockable("chopgimp-appearance"), dockable("chopgimp-stroke"),
+                           dockable("gimp-path-list", tab="name", preview=32),
                            dockable("gimp-undo-history"), dockable("gimp-symmetry-editor")]),
                 book(330, [dockable("gimp-layer-list", tab="name", preview=32),
                            dockable("gimp-channel-list", tab="name", preview=32)]))
@@ -130,6 +132,8 @@ def sessionrc(workspace="essentiel"):
     # v3 : les options d'outil sont dans la barre d'options horizontale ;
     # le panneau complet reste accessible (bouton à droite de la barre).
     props = book(250, [dockable("gimp-undo-history"),
+                       dockable("chopgimp-appearance"),
+                       dockable("chopgimp-stroke"),
                        dockable("chopgimp-character"),
                        dockable("chopgimp-paragraph"),
                        dockable("chopgimp-glyphs"),

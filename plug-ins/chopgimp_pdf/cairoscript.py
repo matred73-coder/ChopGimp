@@ -11,12 +11,16 @@ dégradés, images). On la rejoue ici pour en tirer des objets :
     path      : liste de sous-chemins [(fermé, [(entrée, ancre, sortie), …])]
                 en coordonnées de la surface (pixels)
     fill      : (r, g, b, a) ou None       fill_kind : "solid", "gradient"
-    stroke    : dict (couleur, épaisseur, extrémités, angles) ou None
+    gradient  : Pattern du dégradé (kind, coords, stops, matrix) ou None
+    fill_rule : "nonzero" ou "evenodd"
+    stroke    : dict (couleur, épaisseur, extrémités, angles, gradient) ou None
     image     : (largeur, hauteur, octets RGBA, 4 coins en pixels)
+    clips     : découpes en cours ((clé, sous-chemins, nonzero), …), de la
+                plus externe à la plus interne (3.27.2 : groupes de masque)
 
 Le texte (glyphes) est ignoré : il est repris à part avec l'API texte de
 poppler, comme calques de texte modifiables. Les découpes (clip) sont
-notées mais pas appliquées ; ce qui n'est pas reconnu est compté.
+relevées sur chaque objet (clips) ; ce qui n'est pas reconnu est compté.
 """
 import base64
 import math
@@ -63,6 +67,7 @@ class Matrix:
 class Pattern:
     def __init__(self, kind):
         self.kind = kind            # "linear", "radial", "image"
+        self.coords = None          # linear : x1 y1 x2 y2 ; radial : cx0 cy0 r0 cx1 cy1 r1
         self.stops = []
         self.matrix = Matrix()
         self.image = None
@@ -77,6 +82,9 @@ class Obj:
         self.stroke = None
         self.image = None
         self.clipped = False
+        self.clips = ()
+        self.gradient = None
+        self.fill_rule = "nonzero"
         self.emitted = False        # ajouté à la liste des objets
 
 
@@ -127,7 +135,8 @@ def parse(text):
     ctm = Matrix()
     ctm_stack = []
     state = {"source": (0.0, 0.0, 0.0, 1.0), "width": 2.0, "cap": "butt", "join": "miter",
-             "dash": [], "clip": False}
+             "dash": [], "dash_offset": 0.0, "miter": 10.0, "fill_rule": "nonzero", "clip": False,
+             "clips": ()}
     state_stack = []
     path = []            # [(fermé, [ (cin, anchor, cout) ])]
     cur = None
@@ -174,6 +183,50 @@ def parse(text):
     def finished_path():
         return [(c, [tuple(p) for p in pts]) for c, pts in path if len(pts) > 1]
 
+    def rect_of(subs):
+        """Rectangle droit (x1, y1, x2, y2) ou None."""
+        if len(subs) != 1 or not subs[0][0] or len(subs[0][1]) != 4:
+            return None
+        pts = [k[1] for k in subs[0][1]]
+        if any(k[0] != k[1] or k[2] != k[1] for k in subs[0][1]):
+            return None
+        xs, ys = sorted({round(p[0], 6) for p in pts}), sorted({round(p[1], 6) for p in pts})
+        if len(xs) != 2 or len(ys) != 2:
+            return None
+        return xs[0], ys[0], xs[1], ys[1]
+
+    def extent(subs):
+        pts = [p for _, k in subs for kn in k for p in kn]
+        if not pts:
+            return None
+        return (min(p[0] for p in pts), min(p[1] for p in pts),
+                max(p[0] for p in pts), max(p[1] for p in pts))
+
+    def contains(r, e, tol=0.5):
+        return r and e and r[0] - tol <= e[0] and r[1] - tol <= e[1] and \
+            r[2] + tol >= e[2] and r[3] + tol >= e[3]
+
+    page = [0.0, 0.0, 0.0, 0.0]
+    clip_ids = [0]
+
+    def add_clip(subs):
+        """Découpe en plus des précédentes ; les rectangles qui ne découpent
+        rien (page entière, boîte d'une découpe plus fine) sont omis."""
+        if not subs:
+            return
+        chain = list(state["clips"])
+        r, e = rect_of(subs), extent(subs)
+        if r and contains(r, page) and page[2] > 0:
+            return
+        if chain and r and contains(r, extent(chain[-1][1])):
+            return
+        if chain and rect_of(chain[-1][1]) and contains(rect_of(chain[-1][1]), e):
+            chain.pop()
+        sig = (round(e[0], 2), round(e[1], 2), round(e[2], 2), round(e[3], 2), len(subs),
+               sum(len(k) for _, k in subs), state["fill_rule"])
+        chain.append((sig, subs, state["fill_rule"] != "evenodd"))
+        state["clips"] = tuple(chain)
+
     def color_of(src):
         if isinstance(src, tuple):
             return src, "solid"
@@ -199,7 +252,10 @@ def parse(text):
         o.path = finished_path()
         o.fill, o.fill_kind = color_of(state["source"])
         o.clipped = state["clip"]
+        o.clips = state["clips"]
+        o.fill_rule = state["fill_rule"]
         if o.fill_kind == "gradient":
+            o.gradient = state["source"]
             stats["gradients"] += 1
         if o.path and o.fill is not None:
             objs.append(o)
@@ -211,7 +267,9 @@ def parse(text):
         if col is None:
             return
         stroke = {"color": col, "width": state["width"] * ctm.scale_factor(),
-                  "cap": state["cap"], "join": state["join"], "dash": list(state["dash"])}
+                  "cap": state["cap"], "join": state["join"], "dash": list(state["dash"]),
+                  "dash_offset": state["dash_offset"], "miter": state["miter"],
+                  "gradient": state["source"] if kind == "gradient" else None}
         p = finished_path()
         # remplissage + contour du même tracé : un seul objet
         if prev_fill is not None and prev_fill.path == p and prev_fill.stroke is None and prev_fill.emitted:
@@ -221,6 +279,7 @@ def parse(text):
         o.path = p
         o.stroke = stroke
         o.clipped = state["clip"]
+        o.clips = state["clips"]
         if o.path:
             objs.append(o)
 
@@ -303,6 +362,7 @@ def parse(text):
         elif w in ("clip", "clip+"):
             state["clip"] = True
             state["clip_path"] = finished_path()
+            add_clip(state["clip_path"])
             stats["clips"] += 1
             if w == "clip":
                 path.clear()
@@ -310,6 +370,7 @@ def parse(text):
         elif w == "reset-clip":
             state["clip"] = False
             state["clip_path"] = None
+            state["clips"] = ()
         elif w == "rgb":
             r, g, b = pop_nums(3)
             stack.append((r, g, b, 1.0))
@@ -322,11 +383,13 @@ def parse(text):
             v, a = pop_nums(2)
             stack.append((v, v, v, a))
         elif w == "linear":
-            pop_nums(4)
-            stack.append(Pattern("linear"))
+            p = Pattern("linear")
+            p.coords = tuple(pop_nums(4))
+            stack.append(p)
         elif w == "radial":
-            pop_nums(6)
-            stack.append(Pattern("radial"))
+            p = Pattern("radial")
+            p.coords = tuple(pop_nums(6))
+            stack.append(p)
         elif w == "add-color-stop":
             vals = pop_nums(5)
             if stack and isinstance(stack[-1], Pattern):
@@ -381,6 +444,12 @@ def parse(text):
             off = stack.pop() if stack else 0
             d = stack.pop() if stack else []
             state["dash"] = [num(v) * ctm.scale_factor() for v in d] if isinstance(d, list) else []
+            state["dash_offset"] = num(off) * ctm.scale_factor()
+        elif w == "set-fill-rule":
+            v = stack.pop() if stack else ""
+            state["fill_rule"] = "evenodd" if v == "//FILL_RULE_EVEN_ODD" else "nonzero"
+        elif w == "set-miter-limit":
+            state["miter"], = pop_nums(1)
         elif w in ("paint", "paint-with-alpha"):
             alpha = pop_nums(1)[0] if w == "paint-with-alpha" else 1.0
             src = state["source"]
@@ -389,6 +458,9 @@ def parse(text):
                 o = Obj("path")
                 o.path = list(state["clip_path"])
                 o.fill, o.fill_kind = color_of(src)
+                o.gradient = src
+                # la forme est la découpe elle-même : pas de masque en plus
+                o.clips = state["clips"][:-1]
                 if o.fill is not None:
                     stats["gradients"] += 1
                     objs.append(o)
@@ -425,13 +497,16 @@ def parse(text):
                 del stack[-3:]
             elif stack:
                 stack.pop()
-        elif w in ("surface", "context", "set-font-face", "font", "set-font-matrix", "set-font-options",
-                   "set-tolerance", "set-antialias", "set-fill-rule", "set-miter-limit", "set-operator",
+        elif w == "surface":
+            d = stack[-1] if stack and isinstance(stack[-1], dict) else {}
+            page[2], page[3] = num(d.get("width", 0)), num(d.get("height", 0))
+        elif w in ("context", "set-font-face", "font", "set-font-matrix", "set-font-options",
+                   "set-tolerance", "set-antialias", "set-operator",
                    "set-extend", "set-filter", "push-group", "pop-group", "pop", "copy-page", "show-page",
                    "set-scaled-font", "scaled-font", "set-device-offset", "set-device-scale"):
             # arguments éventuels : on les retire sans les interpréter
             if w in ("set-font-face", "set-font-matrix", "set-font-options", "set-tolerance",
-                     "set-antialias", "set-fill-rule", "set-miter-limit", "set-operator", "set-extend",
+                     "set-antialias", "set-operator", "set-extend",
                      "set-filter", "pop") and stack:
                 stack.pop()
         else:

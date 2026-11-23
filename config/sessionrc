@@ -39,6 +39,14 @@
                 (tab-style automatic)
                 (aux-info
                     (show-button-bar "true")))
+            (dockable "chopgimp-appearance"
+                (tab-style automatic)
+                (aux-info
+                    (show-button-bar "true")))
+            (dockable "chopgimp-stroke"
+                (tab-style automatic)
+                (aux-info
+                    (show-button-bar "true")))
             (dockable "chopgimp-character"
                 (tab-style automatic)
                 (aux-info

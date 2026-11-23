@@ -11,20 +11,24 @@ Prioritaire sur l'import PDF de GIMP (qui donne une image par page) :
 - chaque calque du PDF (OCG — les calques d'Illustrator) devient un
   groupe : la page est rendue une fois par calque, les objets propres à
   chaque calque sont séparés de ceux de la base ;
-- tracés → calques vectoriels (fond, contour) ; les objets consécutifs
-  de même style sont réunis dans un seul calque ;
+- tracés → 3.27.2 (lot V4) : UN calque vectoriel à plusieurs objets par
+  page / calque PDF (un objet par élément dessiné, découpes en groupes de
+  masque d'écrêtage, dégradés vectoriels ; module vobjects), entre deux
+  images ; option « Fusionner les objets de même style (plus léger) » ;
+  sans les objets (CHOPGIMP_NO_VOBJECTS=1), un calque vectoriel par suite
+  d'objets de même style, comme en 3.26 ;
 - images → calques d'image placés sur leurs 4 coins ;
 - texte (API texte de poppler) → calques de texte modifiables, ligne par
   ligne, police / taille / couleur reprises ; ou contours vectoriels ;
-- dégradés : couleur moyenne (rapport) ; un rendu de référence de la
-  page est ajouté, masqué, pour comparer.
+- un rendu de référence de la page est ajouté, masqué, pour comparer.
+
+SVG : lecture directe du XML (vobjects.SvgImport) : calques Inkscape,
+groupes <g> avec leurs noms, transformations, découpes, dégradés.
 
 Le mode « image (comme avant) » appelle l'import PDF de GIMP.
 """
-import io
 import math
 import os
-import re
 import sys
 import tempfile
 
@@ -41,6 +45,7 @@ gi.require_foreign("cairo")
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 import cairoscript  # noqa: E402
+import vobjects  # noqa: E402
 from chopgimp_common import (pdb_run, srgb, set_parasite_text, dialog_box, vbox,  # noqa: E402
                              spin_scale, form_grid, frame)
 
@@ -51,6 +56,7 @@ PROC_SVG = "file-chopgimp-svg-load"
 PROC_PS_THUMB = "file-chopgimp-eps-load-thumb"
 PROC_SVG_THUMB = "file-chopgimp-svg-load-thumb"
 MAX_SIDE = 16384          # côté maximal d'un rendu en pixels (la résolution est réduite)
+MAX_OBJECTS = 50000       # au-delà, la page est importée en image
 
 
 # ─── outils ─────────────────────────────────────────────────────────────
@@ -238,6 +244,100 @@ def build_path_layer(image, o, parent, n):
     vl.set_opacity(max(0.0, min(100.0, alpha * 100.0)))
     vl.refresh()
     return vl
+
+
+# ─── 3.27.2 (lot V4) : calques vectoriels à plusieurs objets ────────────
+
+_VOBJ = [None]
+
+
+def vobjects_available():
+    """La procédure chopgimp-vobjects-set-xml existe et les objets sont actifs."""
+    if _VOBJ[0] is None:
+        env = os.environ.get("CHOPGIMP_NO_VOBJECTS", "")
+        _VOBJ[0] = (not (env and env != "0") and
+                    Gimp.get_pdb().lookup_procedure("chopgimp-vobjects-set-xml") is not None)
+    return _VOBJ[0]
+
+
+def world_leaves(nodes, m=None, out=None):
+    """[(objet tracé, matrice monde)] du bas vers le haut, formes de découpe
+    exclues (pour le repli sans objets)."""
+    out = [] if out is None else out
+    for n in nodes:
+        wm = vobjects.compose(n.transform, m)
+        if n.kind == "group":
+            kids = n.children[:-1] if n.clip else n.children
+            world_leaves(kids, wm, out)
+        elif n.visible:
+            out.append((n, wm))
+    return out
+
+
+class _Shape:
+    """Objet au format de cairoscript pour build_path_layer (repli)."""
+    kind = "path"
+    fill_kind = "solid"
+
+    def __init__(self, node, m):
+        self.path = vobjects.tf_subpaths(node.subpaths, m)
+        k = m.scale_factor() if m is not None else 1.0
+
+        def color(p):
+            # format 2 : opacité du fond / contour, fond / contour masqué
+            if not p.get("visible", True):
+                return None
+            op = p.get("opacity", 1.0)
+            if p.get("type") == "color":
+                c = p["rgba"]
+            elif p.get("stops"):
+                c = p["stops"][0][1]
+            else:
+                return None
+            return (c[0], c[1], c[2], c[3] * op)
+        self.fill = color(node.fill)
+        st = node.stroke
+        c = color(st)
+        self.stroke = None
+        if c is not None:
+            w = st.get("width", 1.0)
+            self.stroke = {"color": c, "width": w * k, "cap": st.get("cap", "butt"),
+                           "join": st.get("join", "miter"),
+                           "dash": [v * w * k for v in st.get("dash") or []]}
+
+
+def build_vector_objects(image, name, nodes, parent, report, merge=False):
+    """Un calque vectoriel avec les objets (chopgimp-vobjects-set-xml) ; sans
+    les objets, un calque par objet comme avant. → nombre de calques créés."""
+    if merge:
+        nodes = vobjects.merge_similar(nodes)
+    leaves = world_leaves(nodes)
+    if not leaves:
+        return 0
+    if vobjects_available():
+        path = Gimp.Path.new(image, name)
+        first, m = leaves[0]
+        for closed, knots in vobjects.tf_subpaths(first.subpaths, m):
+            flat = [v for cin, a, cout in knots for v in (cin[0], cin[1], a[0], a[1], cout[0], cout[1])]
+            if len(flat) >= 6:
+                path.stroke_new_from_points(Gimp.PathStrokeType.BEZIER, flat, closed)
+        image.insert_path(path, None, -1)
+        vl = Gimp.VectorLayer.new(image, path)
+        vl.set_name(name)
+        image.insert_layer(vl, parent, 0)
+        res = pdb_run("chopgimp-vobjects-set-xml", layer=vl, xml=vobjects.to_xml(nodes))
+        if res is not None and res.index(0) == Gimp.PDBStatusType.SUCCESS and res.index(1):
+            return 1
+        report.add("Objets refusés par GIMP (%s) : un calque par objet." % name)
+        image.remove_layer(vl)
+        try:
+            image.remove_path(path)
+        except Exception:
+            pass
+        _VOBJ[0] = False
+    for i, (n, m) in enumerate(leaves):
+        build_path_layer(image, _Shape(n, m), parent, i + 1).set_name(n.name or "Forme %d" % (i + 1))
+    return len(leaves)
 
 
 def path_bounds(o):
@@ -430,8 +530,13 @@ def import_page(image, doc, page_no, opts, report, fonts):
         passes.append(("", True, objs))
 
     total = sum(len(p[2]) for p in passes)
-    merged = [(t, v, merge_runs(objs, 400)) for t, v, objs in passes]
-    n_layers = sum(len(m[2]) for m in merged)
+    if vobjects_available():
+        # 3.27.2 : un objet par élément, tout dans un calque vectoriel
+        merged = passes
+        n_layers = total
+    else:
+        merged = [(t, v, merge_runs(objs, 400)) for t, v, objs in passes]
+        n_layers = sum(len(m[2]) for m in merged)
     if n_layers > opts["max_objects"]:
         report.add("Page %d : %d objets (plafond %d) : importée en image." %
                    (page_no + 1, n_layers, opts["max_objects"]))
@@ -460,14 +565,24 @@ def import_page(image, doc, page_no, opts, report, fonts):
                     pass
         raise
 
-    report.add("Page %d : %d formes vectorielles (%d objets réunis), %d images, %d lignes de texte, "
-               "%d calques PDF." % (page_no + 1, counts["path"], total, counts["image"], n_text, len(layers)))
-    if stats["gradients"]:
-        report.add("  %d dégradé(s) repris en pixels (rendu exact, masqué par la forme)."
-                   % stats["gradients"])
-    if stats["clips"]:
-        report.add("  %d découpe(s) non appliquée(s) aux vecteurs : voir le rendu de référence."
-                   % stats["clips"])
+    if counts.get("objects"):
+        report.add("Page %d : %d objets vectoriels en %d calque(s), %d images, %d lignes de texte, "
+                   "%d calques PDF." % (page_no + 1, counts["objects"], counts["path"], counts["image"],
+                                       n_text, len(layers)))
+        if counts.get("gradients_vector"):
+            report.add("  %d dégradé(s) vectoriel(s)%s." % (counts["gradients_vector"],
+                       " (%d approché(s))" % counts["gradients_approx"] if counts.get("gradients_approx") else ""))
+        if counts.get("clips_vector"):
+            report.add("  %d masque(s) d'écrêtage." % counts["clips_vector"])
+    else:
+        report.add("Page %d : %d formes vectorielles (%d objets réunis), %d images, %d lignes de texte, "
+                   "%d calques PDF." % (page_no + 1, counts["path"], total, counts["image"], n_text, len(layers)))
+        if stats["gradients"]:
+            report.add("  %d dégradé(s) repris en pixels (rendu exact, masqué par la forme)."
+                       % stats["gradients"])
+        if stats["clips"]:
+            report.add("  %d découpe(s) non appliquée(s) aux vecteurs : voir le rendu de référence."
+                       % stats["clips"])
     unknown = stats["unknown"]
     if unknown:
         report.add("  Opérations non reconnues : " + ", ".join("%s×%d" % kv for kv in sorted(unknown.items())))
@@ -492,6 +607,9 @@ def build_page(image, page, page_no, scale, w, h, merged, opts, report, fonts, c
     image.insert_layer(page_group, None, 0)
     created.append(page_group)
     counts = {"path": 0, "image": 0}
+    if vobjects_available():
+        build_page_objects(image, page_group, merged, opts, report, counts)
+        merged = []
     for title, visible, objs in merged:
         parent = page_group
         if title:
@@ -521,6 +639,52 @@ def build_page(image, page, page_no, scale, w, h, merged, opts, report, fonts, c
         if not n_text:
             image.remove_layer(tg)
     return counts, n_text
+
+
+def build_page_objects(image, page_group, passes, opts, report, counts):
+    """3.27.2 : chaque passe (la page, puis chaque calque PDF) → un calque
+    vectoriel à plusieurs objets ; une image coupe la suite d'objets (ordre
+    de superposition gardé) : la passe devient alors un groupe."""
+    stats = counts
+    n_obj = 0
+    total = max(1, sum(len(p[2]) for p in passes))
+    for title, visible, objs in passes:
+        if title and not visible and not opts["hidden_layers"]:
+            continue
+        # suites d'objets entre les images
+        chunks, run = [], []
+        for o in objs:
+            if o.kind == "image":
+                if run:
+                    chunks.append(("vector", run))
+                    run = []
+                chunks.append(("image", o))
+            else:
+                run.append(o)
+        if run:
+            chunks.append(("vector", run))
+        if not chunks:
+            continue
+        name = title or "Formes"
+        parent = page_group
+        if len(chunks) > 1:
+            parent = Gimp.GroupLayer.new(image, name)
+            image.insert_layer(parent, page_group, 0)
+            parent.set_visible(visible)
+        for kind, c in chunks:
+            if kind == "image":
+                counts["image"] += 1
+                build_image_layer(image, c, parent, counts["image"])
+                continue
+            nodes = vobjects.pdf_nodes(c, stats, n_obj + 1)
+            n_obj += len(c)
+            counts["objects"] = counts.get("objects", 0) + len(c)
+            made = build_vector_objects(image, name, nodes, parent, report, opts.get("merge", False))
+            counts["path"] += made
+            if made and parent is page_group and not visible:
+                for layer in page_group.get_children()[:made]:
+                    layer.set_visible(False)
+            Gimp.progress_update(min(1.0, n_obj / float(total)))
 
 
 def import_page_image(image, doc, page_no, opts):
@@ -566,9 +730,18 @@ def options_dialog(n_pages, n_layers):
     dpi = spin_scale(Gtk.Adjustment(value=150, lower=36, upper=1200, step_increment=1, page_increment=50),
                      "Résolution (ppp)", limits=(36, 600), unit="ppp")
     opt_box.pack_start(dpi, False, False, 0)
-    mx = spin_scale(Gtk.Adjustment(value=1500, lower=50, upper=50000, step_increment=50, page_increment=500),
-                    "Nombre maximal d'objets", limits=(50, 10000), gamma=2.0)
+    # 3.27.2 : tout reste dans un calque vectoriel par page / calque : le
+    # plafond n'est plus qu'une garde contre les fichiers démesurés
+    mx = spin_scale(Gtk.Adjustment(value=MAX_OBJECTS, lower=50, upper=500000, step_increment=100,
+                                   page_increment=5000),
+                    "Nombre maximal d'objets", limits=(50, 200000), gamma=2.0)
     opt_box.pack_start(mx, False, False, 0)
+    merge = Gtk.CheckButton(label="Fusionner les objets de même style (plus léger)")
+    merge.set_tooltip_text("Les objets voisins de même fond et contour deviennent un seul objet "
+                           "à plusieurs sous-tracés : moins d'objets, mais on ne les modifie plus "
+                           "séparément.")
+    merge.set_active(False)
+    opt_box.pack_start(merge, False, False, 0)
     hidden = Gtk.CheckButton(label="Importer aussi les calques masqués (%d calque(s) PDF)" % n_layers)
     hidden.set_active(True)
     opt_box.pack_start(hidden, False, False, 0)
@@ -579,7 +752,7 @@ def options_dialog(n_pages, n_layers):
     if resp == Gtk.ResponseType.OK:
         opts = {"mode": mode.get_active_id(), "pages": pages.get_text(), "text": text.get_active_id(),
                 "dpi": dpi.get_value(), "max_objects": int(mx.get_value()),
-                "hidden_layers": hidden.get_active()}
+                "hidden_layers": hidden.get_active(), "merge": merge.get_active()}
     dialog.destroy()
     return opts
 
@@ -653,108 +826,110 @@ def load_ps(procedure, run_mode, file, metadata, flags, config, data):
             pass
 
 
-# ─── SVG : librsvg sur la surface « script », calques Inkscape, textes ───
+# ─── SVG : lecture directe (vobjects.SvgImport), rendu librsvg de référence ─
 
-SVG_NS = "{http://www.w3.org/2000/svg}"
-INK_NS = "{http://www.inkscape.org/namespaces/inkscape}"
-
-
-def svg_matrix(transform):
-    """Attribut transform → cairoscript.Matrix (translate, scale, rotate, skewX/Y, matrix)."""
-    m = cairoscript.Matrix()
-    for op, args in re.findall(r"(\w+)\s*\(([^)]*)\)", transform or ""):
-        v = [float(x) for x in re.split(r"[\s,]+", args.strip()) if x]
-        if op == "translate" and v:
-            t = cairoscript.Matrix(1, 0, 0, 1, v[0], v[1] if len(v) > 1 else 0)
-        elif op == "scale" and v:
-            t = cairoscript.Matrix(v[0], 0, 0, v[1] if len(v) > 1 else v[0], 0, 0)
-        elif op == "rotate" and v:
-            a = math.radians(v[0])
-            t = cairoscript.Matrix(math.cos(a), math.sin(a), -math.sin(a), math.cos(a), 0, 0)
-            if len(v) >= 3:
-                # rotate(a, cx, cy) : rotation autour de (cx, cy)
-                cx, cy = v[1], v[2]
-                t = cairoscript.Matrix(1, 0, 0, 1, -cx, -cy).mul(t).mul(
-                    cairoscript.Matrix(1, 0, 0, 1, cx, cy))
-        elif op == "skewX" and v:
-            t = cairoscript.Matrix(1, 0, math.tan(math.radians(v[0])), 1, 0, 0)
-        elif op == "skewY" and v:
-            t = cairoscript.Matrix(1, math.tan(math.radians(v[0])), 0, 1, 0, 0)
-        elif op == "matrix" and len(v) == 6:
-            t = cairoscript.Matrix(*v)
-        else:
-            continue
-        m = t.mul(m)
-    return m
+def outline_text_layer(image, tl, parent):
+    """Calque de texte → calque vectoriel de ses contours (option « Contours »)."""
+    path = Gimp.Path.new_from_text_layer(image, tl)
+    image.insert_path(path, None, -1)
+    vl = Gimp.VectorLayer.new(image, path)
+    vl.set_name(tl.get_name())
+    vl.set_enable_fill(True)
+    vl.set_fill_color(tl.get_color())
+    vl.set_enable_stroke(False)
+    image.insert_layer(vl, parent, image.get_item_position(tl))
+    vl.refresh()
+    image.remove_layer(tl)
+    return vl
 
 
-def svg_style(el):
-    st = {}
-    for item in (el.get("style") or "").split(";"):
-        if ":" in item:
-            k, v = item.split(":", 1)
-            st[k.strip()] = v.strip()
-    for k in ("font-size", "font-family", "font-weight", "font-style", "fill", "display"):
-        if el.get(k) is not None and k not in st:
-            st[k] = el.get(k)
-    return st
+def svg_text_layer(image, it, parent, fonts, text_mode):
+    name = it["family"]
+    bold, italic = it["bold"], it["italic"]
+    fname, found = (fonts.lookup(name.replace(" ", "") + ("-Bold" if bold else ""))
+                    if fonts else (name, False))
+    font = (Gimp.Font.get_by_name(fname if found else name) or Gimp.Font.get_by_name("Sans-serif"))
+    size = max(1.0, it["size"])
+    tl = Gimp.TextLayer.new(image, it["text"], font, size, Gimp.Unit.pixel())
+    tl.set_name(it["text"][:40])
+    image.insert_layer(tl, parent, 0)
+    tl.set_color(srgb(*it["rgba"][:3]))
+    if bold or italic:
+        tl.set_markup("<markup>%s%s%s</markup>" % ("<b>" * bold + "<i>" * italic,
+                                                   GLib.markup_escape_text(it["text"], -1),
+                                                   "</i>" * italic + "</b>" * bold))
+    tl.set_offsets(int(round(it["x"])), int(round(it["y"] - size * 0.92)))
+    if text_mode == "outline":
+        return outline_text_layer(image, tl, parent)
+    return tl
 
 
-def parse_len(v, default):
-    m = re.match(r"\s*([-\d.eE]+)", v or "")
-    return float(m.group(1)) if m else default
+def svg_image_layer(image, it, parent, n, base_dir, report):
+    gi.require_version("GdkPixbuf", "2.0")
+    from gi.repository import GdkPixbuf
+    data = vobjects.image_bytes(it["href"], base_dir)
+    pb = None
+    if data:
+        try:
+            loader = GdkPixbuf.PixbufLoader()
+            loader.write(data)
+            loader.close()
+            pb = loader.get_pixbuf()
+        except GLib.Error:
+            pb = None
+    if pb is None:
+        report.add("Image illisible : %s" % it["href"][:60])
+        return None
+    if not pb.get_has_alpha():
+        pb = pb.add_alpha(False, 0, 0, 0)
+    iw, ih, rs = pb.get_width(), pb.get_height(), pb.get_rowstride()
+    px = pb.get_pixels()
+    raw = b"".join(px[y * rs:y * rs + iw * 4] for y in range(ih))
+
+    class _Img:
+        image = (iw, ih, raw, vobjects.image_corners(it)(iw, ih), it["opacity"])
+    layer = build_image_layer(image, _Img, parent, n)
+    layer.set_name(it["name"])
+    return layer
 
 
-def parse_color(v):
-    v = (v or "").strip()
-    if re.fullmatch(r"#[0-9a-fA-F]{6}", v):
-        return tuple(int(v[i:i + 2], 16) / 255.0 for i in (1, 3, 5)) + (1.0,)
-    if re.fullmatch(r"#[0-9a-fA-F]{3}", v):
-        return tuple(int(c * 2, 16) / 255.0 for c in v[1:]) + (1.0,)
-    named = {"black": (0, 0, 0), "white": (1, 1, 1), "red": (1, 0, 0), "green": (0, 0.5, 0),
-             "blue": (0, 0, 1)}
-    return tuple(named.get(v, (0, 0, 0))) + (1.0,)
+def build_svg_items(image, items, parent, ctx):
+    """Plan d'import (vobjects.SvgImport.plan) → calques, du bas vers le haut."""
+    def children():
+        return parent.get_children() if parent is not None else image.get_layers()
 
-
-def svg_texts(root, base):
-    """[(texte, x, y (ligne de base), taille, famille, gras, italique, couleur, id calque)]"""
-    out = []
-
-    def walk(el, m, style, layer):
-        tag = el.tag
-        if tag.startswith(SVG_NS):
-            tag = tag[len(SVG_NS):]
-        m = svg_matrix(el.get("transform")).mul(m)
-        st = dict(style)
-        st.update(svg_style(el))
-        if st.get("display") == "none":
-            return
-        if el.get(INK_NS + "groupmode") == "layer":
-            layer = el.get("id")
-        if tag == "text":
-            # une ligne par <tspan> positionné, sinon le texte entier
-            spans = [c for c in el if c.tag.endswith("tspan") and c.get("y") is not None]
-            items = spans or [el]
-            for it in items:
-                txt = "".join(it.itertext()).strip()
-                if not txt:
-                    continue
-                ist = dict(st)
-                ist.update(svg_style(it))
-                x = parse_len((it.get("x") or el.get("x") or "0").split()[0], 0.0)
-                y = parse_len((it.get("y") or el.get("y") or "0").split()[0], 0.0)
-                px, py = m.apply(x, y)
-                size = parse_len(ist.get("font-size"), 16.0) * m.scale_factor()
-                out.append((txt, px, py, size, (ist.get("font-family") or "Sans").strip("'\" "),
-                            ist.get("font-weight") in ("bold", "700", "800", "900"),
-                            ist.get("font-style") in ("italic", "oblique"),
-                            parse_color(ist.get("fill", "#000000")), layer))
-            return
-        for c in el:
-            walk(c, m, st, layer)
-
-    walk(root, base, {}, None)
-    return out
+    for it in items:
+        k = it["kind"]
+        if k == "group":
+            g = Gimp.GroupLayer.new(image, it["name"] or "Groupe")
+            image.insert_layer(g, parent, 0)
+            build_svg_items(image, it["items"], g, ctx)
+            if not g.get_children():
+                image.remove_layer(g)
+                continue
+            g.set_visible(it["visible"])
+            g.set_opacity(it["opacity"] * 100.0)
+            ctx["counts"]["groups"] += 1
+        elif k == "vector":
+            n_obj = sum(n.count() for n in it["nodes"])
+            made = build_vector_objects(image, it["name"] or "Formes", it["nodes"], parent,
+                                        ctx["report"], ctx["merge"])
+            for layer in children()[:made]:
+                layer.set_visible(it["visible"])
+                if it["opacity"] < 1.0:
+                    layer.set_opacity(it["opacity"] * 100.0)
+            ctx["counts"]["vector"] += made
+            ctx["counts"]["objects"] += n_obj
+            ctx["done"] += n_obj
+            Gimp.progress_update(min(1.0, ctx["done"] / float(ctx["total"])))
+        elif k == "image":
+            ctx["counts"]["image"] += 1
+            layer = svg_image_layer(image, it, parent, ctx["counts"]["image"], ctx["dir"], ctx["report"])
+            if layer is not None:
+                layer.set_visible(it["visible"])
+        elif k == "text":
+            svg_text_layer(image, it, parent, ctx["fonts"], ctx["text"])
+            ctx["counts"]["text"] += 1
 
 
 def import_svg(image, path, opts, report, fonts):
@@ -767,7 +942,8 @@ def import_svg(image, path, opts, report, fonts):
     if not ok_ or w <= 0 or h <= 0:
         dim = handle.get_dimensions()
         w, h = dim.width, dim.height
-    w0, h0 = int(math.ceil(w)), int(math.ceil(h))
+    # 400.0003 px (largeur « 4.16667in » écrite par file-svg) : 400, pas 401
+    w0, h0 = vobjects.image_size(w, h)
     # rendu limité à MAX_SIDE px de côté : le document est réduit d'un facteur zoom
     zoom = min(1.0, MAX_SIDE / float(max(w0, h0, 1)))
     w, h = max(1, int(math.ceil(w0 * zoom))), max(1, int(math.ceil(h0 * zoom)))
@@ -777,77 +953,19 @@ def import_svg(image, path, opts, report, fonts):
     vp.x, vp.y, vp.width, vp.height = 0, 0, w0, h0
     root = ET.parse(path).getroot()
 
-    # les formes sont rendues depuis une copie sans <text> : librsvg dessine
-    # le texte en tracés, qui feraient doublon avec les calques de texte.
-    # La copie est lue en mémoire avec le fichier d'origine comme base, pour
-    # que les liens relatifs (images, feuilles de style) restent valides.
-    shapes = handle
-    if opts["text"] != "none":
-        stripped = ET.parse(path)
-        for parent in stripped.getroot().iter():
-            for child in list(parent):
-                if child.tag in (SVG_NS + "text", "text"):
-                    parent.remove(child)
-        out = io.BytesIO()
-        stripped.write(out, encoding="utf-8", xml_declaration=True)
-        stream = Gio.MemoryInputStream.new_from_bytes(GLib.Bytes.new(out.getvalue()))
-        shapes = Rsvg.Handle.new_from_stream_sync(stream, Gio.File.new_for_path(path),
-                                                  Rsvg.HandleFlags.FLAGS_NONE, None)
-        shapes.set_dpi(opts["dpi"])
-
-    def script(layer_id=None):
-        fd, tmp = tempfile.mkstemp(suffix=".cs", prefix="chopgimp-svg-")
-        os.close(fd)
-        try:
-            dev = cairo.ScriptDevice(tmp)
-            surf = cairo.ScriptSurface(dev, cairo.Content.COLOR_ALPHA, w, h)
-            cr = cairo.Context(surf)
-            cr.scale(zoom, zoom)
-            if layer_id:
-                shapes.render_layer(cr, "#" + layer_id, vp)
-            else:
-                shapes.render_document(cr, vp)
-            surf.finish()
-            dev.finish()
-            with open(tmp, "rb") as f:
-                return f.read()
-        finally:
-            os.unlink(tmp)
-
-    layers = []
-    for el in root.iter():
-        if el.get(INK_NS + "groupmode") == "layer" and el.get("id"):
-            st = svg_style(el)
-            layers.append((el.get("id"), el.get(INK_NS + "label") or el.get("id"),
-                           st.get("display") != "none"))
-
-    all_objs, stats = cairoscript.parse(script())
-    passes = []
-    sigs_layers = {}
-    for lid, label, visible in layers:
-        objs, _ = cairoscript.parse(script(lid))
-        passes.append((label, visible, objs))
-        for o in objs:
-            k = signature(o)
-            sigs_layers[k] = sigs_layers.get(k, 0) + 1
-    base = subtract(all_objs, sigs_layers)
-    passes.insert(0, ("", True, base))
-    merged = [(t, v, merge_runs(o, 400)) for t, v, o in passes]
-    n_objs = sum(len(m[2]) for m in merged)
+    # 3.27.2 (lot V4) : structure lue dans le XML : un calque vectoriel à
+    # plusieurs objets par calque Inkscape (ou suite d'objets), groupes <g>,
+    # découpes, dégradés et transformations conservés
+    imp = vobjects.SvgImport(root, vobjects.svg_base_matrix(root, w0, h0, zoom),
+                             os.path.basename(path), opts["hidden_layers"], opts["text"] != "none")
+    items = imp.plan()
+    n_objs = vobjects.count_plan(items)
     if n_objs > opts["max_objects"]:
         report.add("SVG : %d objets (plafond %d) : importé en image." % (n_objs, opts["max_objects"]))
         return False
     image.resize(max(w, image.get_width()), max(h, image.get_height()), 0, 0)
 
-    # viewBox → pixels pour les textes
-    vb = [float(v) for v in re.split(r"[\s,]+", (root.get("viewBox") or "").strip()) if v]
-    base_m = cairoscript.Matrix()
-    if len(vb) == 4 and vb[2] > 0 and vb[3] > 0:
-        base_m = cairoscript.Matrix(w0 / vb[2], 0, 0, h0 / vb[3], -vb[0] * w0 / vb[2], -vb[1] * h0 / vb[3])
-    if zoom < 1.0:
-        base_m = base_m.mul(cairoscript.Matrix(zoom, 0, 0, zoom, 0, 0))
-
-    # rendu de référence (masqué) : comparaison et pixels des dégradés
+    # rendu de référence (masqué), pour comparer
     ref = Gimp.Layer.new(image, os.path.basename(path) + " — rendu de référence", w, h,
                          Gimp.ImageType.RGBA_IMAGE, 100, Gimp.LayerMode.NORMAL)
     image.insert_layer(ref, None, len(image.get_layers()))
@@ -861,64 +979,37 @@ def import_svg(image, path, opts, report, fonts):
     rbuf.flush()
     ref.set_visible(False)
 
-    doc_group = Gimp.GroupLayer.new(image, os.path.basename(path))
-    image.insert_layer(doc_group, None, 0)
-    groups = {}
-    counts = {"path": 0, "image": 0}
-    for title, visible, objs in merged:
-        parent = doc_group
-        if title:
-            parent = Gimp.GroupLayer.new(image, title)
-            image.insert_layer(parent, doc_group, 0)
-            parent.set_visible(visible)
-            groups[title] = parent
-        for o in objs:
-            counts[o.kind] += 1
-            if o.kind == "path" and o.fill_kind == "gradient" and \
-                    build_raster_part(image, o, parent, counts["path"], ref):
-                if o.stroke:
-                    o.fill = None
-                    build_path_layer(image, o, parent, counts["path"])
-                continue
-            if o.kind == "path":
-                build_path_layer(image, o, parent, counts["path"])
-            else:
-                build_image_layer(image, o, parent, counts["image"])
+    ctx = {"report": report, "merge": opts.get("merge", False), "fonts": fonts, "text": opts["text"],
+           "dir": os.path.dirname(path), "total": max(1, n_objs), "done": 0,
+           "counts": {"vector": 0, "objects": 0, "groups": 0, "image": 0, "text": 0}}
+    build_svg_items(image, items, None, ctx)
 
-    n_text = 0
-    if opts["text"] != "none":
-        label_of = {lid: label for lid, label, _ in layers}
-        for txt, x, y, size, family, bold, italic, color, lid in svg_texts(root, base_m):
-            parent = groups.get(label_of.get(lid), doc_group)
-            name = family.split(",")[0].strip()
-            fname, found = (fonts.lookup(name.replace(" ", "") + ("-Bold" if bold else ""))
-                            if fonts else (name, False))
-            font = (Gimp.Font.get_by_name(fname if found else name) or
-                    Gimp.Font.get_by_name("Sans-serif"))
-            tl = Gimp.TextLayer.new(image, txt, font, max(1.0, size), Gimp.Unit.pixel())
-            tl.set_name(txt[:40])
-            image.insert_layer(tl, parent, 0)
-            tl.set_color(srgb(*color))
-            if bold or italic:
-                tl.set_markup("<markup>%s%s%s</markup>" % ("<b>" * bold + "<i>" * italic,
-                                                           GLib.markup_escape_text(txt, -1),
-                                                           "</i>" * italic + "</b>" * bold))
-            tl.set_offsets(int(round(x)), int(round(y - size * 0.92)))
-            n_text += 1
-
-    report.add("SVG : %d formes vectorielles, %d images, %d textes, %d calques Inkscape."
-               % (counts["path"], counts["image"], n_text, len(layers)))
-    if stats["gradients"]:
-        report.add("  %d dégradé(s) repris en pixels (rendu exact, masqué par la forme)." % stats["gradients"])
-    if stats["clips"]:
-        report.add("  %d découpe(s) non appliquée(s) aux vecteurs." % stats["clips"])
+    c, st = ctx["counts"], imp.stats
+    report.add("SVG : %d objets vectoriels (%d groupes) en %d calque(s) vectoriel(s), %d images, "
+               "%d textes, %d calques de groupe." % (c["objects"], st["groups"], c["vector"], c["image"],
+                                                     c["text"], c["groups"]))
+    if st["gradients"]:
+        report.add("  %d dégradé(s) vectoriel(s)%s." % (st["gradients"], " (%d approché(s) : répétition "
+                   "ou déformation)" % st["gradients_approx"] if st["gradients_approx"] else ""))
+    if st["clips"]:
+        report.add("  %d masque(s) d'écrêtage." % st["clips"])
+    lost = []
+    for key, label in (("masks", "masques de fusion"), ("filters", "filtres"), ("patterns", "motifs"),
+                       ("lost_clips", "découpes de calques"),
+                       ("markers", "marqueurs (pointes de flèche non reconnues ou marker-mid)")):
+        if st[key]:
+            lost.append("%d %s" % (st[key], label))
+    if lost:
+        report.add("  Non repris (voir le rendu de référence) : " + ", ".join(lost) + ".")
+    if st["unknown"]:
+        report.add("  Éléments ignorés : " + ", ".join("%s×%d" % kv for kv in sorted(st["unknown"].items())))
     return True
 
 
 def load_svg(procedure, run_mode, file, metadata, flags, config, data):
     path = file.get_path()
-    opts = {"mode": "layers", "pages": "1", "text": "editable", "dpi": 96.0, "max_objects": 3000,
-            "hidden_layers": True}
+    opts = {"mode": "layers", "pages": "1", "text": "editable", "dpi": 96.0, "max_objects": MAX_OBJECTS,
+            "hidden_layers": True, "merge": False}
     if run_mode == Gimp.RunMode.INTERACTIVE:
         chosen = options_dialog(1, 0)
         if chosen is None:
@@ -971,8 +1062,8 @@ def load(procedure, run_mode, file, metadata, flags, config, data, classic_file=
     if doc is None or not path:
         return or_error(procedure, classic(classic_file, run_mode), "Import d'origine absent"), flags
 
-    opts = {"mode": "layers", "pages": "1", "text": "editable", "dpi": 150.0, "max_objects": 1500,
-            "hidden_layers": True}
+    opts = {"mode": "layers", "pages": "1", "text": "editable", "dpi": 150.0, "max_objects": MAX_OBJECTS,
+            "hidden_layers": True, "merge": False}
     if os.environ.get("CHOPGIMP_PDF_PAGES"):
         opts["pages"] = os.environ["CHOPGIMP_PDF_PAGES"]
     if run_mode == Gimp.RunMode.INTERACTIVE:
@@ -1085,8 +1176,8 @@ class ChopGimpPDF(Gimp.PlugIn):
             p = Gimp.LoadProcedure.new(self, name, Gimp.PDBProcType.PLUGIN, load_svg, None)
             p.set_menu_label("SVG (calques modifiables)")
             p.set_documentation("Ouvre un SVG en calques modifiables",
-                                "Formes en calques vectoriels, calques Inkscape en groupes, textes "
-                                "modifiables.", name)
+                                "Un calque vectoriel à plusieurs objets par calque Inkscape (groupes, "
+                                "découpes, dégradés conservés), textes modifiables.", name)
             p.set_attribution("ChopGimp", "ChopGimp", "2026")
             p.set_mime_types("image/svg+xml")
             p.set_extensions("svg")

@@ -24,6 +24,10 @@
                 (tab-style automatic)
                 (aux-info
                     (show-button-bar "true")))
+            (dockable "chopgimp-global-colors"
+                (tab-style automatic)
+                (aux-info
+                    (show-button-bar "true")))
             (dockable "gimp-gradient-list"
                 (tab-style automatic)
                 (aux-info
@@ -31,6 +35,14 @@
         (book
             (position 250)
             (current-page 0)
+            (dockable "chopgimp-appearance"
+                (tab-style automatic)
+                (aux-info
+                    (show-button-bar "true")))
+            (dockable "chopgimp-stroke"
+                (tab-style automatic)
+                (aux-info
+                    (show-button-bar "true")))
             (dockable "gimp-path-list"
                 (tab-style name)
                 (preview-size 32)

@@ -552,15 +552,25 @@ try:
             im = Gimp.file_load(Gimp.RunMode.NONINTERACTIVE, Gio.File.new_for_path(os.path.join(vdir, name)))
             return im, list(flat(im.get_layers()))
 
+        def vxml(layer):
+            # 3.27.2 (lot V4) : objets d'un calque vectoriel (XML du modèle)
+            r = run("chopgimp-vobjects-get-xml", layer=layer)
+            return r.index(1) if r is not None and r.index(0) == Gimp.PDBStatusType.SUCCESS else ""
+
+        def n_objects(layers):
+            return sum(vxml(l).count("<path ") for l in layers if isinstance(l, Gimp.VectorLayer))
+
         im, ls = load_v("test.pdf")
         by = {l.get_name(): l for l in ls}
         vec = [l for l in ls if isinstance(l, Gimp.VectorLayer)]
-        report(len(vec) >= 3 and "Bleu" in by and by["Bleu"].get_visible() and
+        report(n_objects(vec) >= 3 and "Bleu" in by and by["Bleu"].get_visible() and
                "Vert" in by and not by["Vert"].get_visible(),
-               "PDF : calques OCG en groupes, formes vectorielles", "%d formes" % len(vec))
+               "PDF : calques OCG, un calque vectoriel à objets par calque",
+               "%d calques, %d objets" % (len(vec), n_objects(vec)))
         report(isinstance(by.get("Bonjour PDF"), Gimp.TextLayer), "PDF : texte modifiable")
-        report(any(n.startswith("Image ") for n in by) and any(n.startswith("Dégradé") for n in by),
-               "PDF : image placée et dégradé en pixels")
+        report(any(n.startswith("Image ") for n in by) and
+               any('type="linear"' in vxml(l) for l in vec),
+               "PDF : image placée et dégradé vectoriel")
         im, ls = load_v("test.svg")
         by = {l.get_name(): l for l in ls}
         report("Fond" in by and "Dessin" in by and "Caché" in by and not by["Caché"].get_visible() and
@@ -568,8 +578,7 @@ try:
                "SVG : calques Inkscape et texte modifiable")
         im, ls = load_v("test.eps")
         by = {l.get_name(): l for l in ls}
-        report(isinstance(by.get("Bonjour EPS"), Gimp.TextLayer) and
-               len([l for l in ls if isinstance(l, Gimp.VectorLayer)]) >= 2,
+        report(isinstance(by.get("Bonjour EPS"), Gimp.TextLayer) and n_objects(ls) >= 2,
                "EPS : formes vectorielles et texte (Ghostscript)")
         # aller-retour SVG : export (calques Inkscape, noms, masqués) puis réimport
         im, ls = load_v("test.svg")
@@ -587,6 +596,37 @@ try:
         report("Fond" in by2 and "Caché" in by2 and not by2["Caché"].get_visible() and
                any(isinstance(l, Gimp.TextLayer) for l in by2.values()),
                "SVG : aller-retour (groupes, visibilité, texte)")
+        # 3.27.2 (lot V4) : aller-retour des objets (groupes, découpes,
+        # dégradés, transformations) : même arbre d'objets après réimport
+        import sys as _sys
+        _sys.path.insert(0, os.path.join(repo, "tools", "dev"))
+        tsv = runpy.run_path(os.path.join(repo, "tools", "dev", "test_svg_vobjects.py"))
+        with open(os.path.join(vdir, "objets.svg"), "w", encoding="utf-8") as f:
+            f.write(tsv["TEST_SVG"])
+        V = tsv["V"]
+
+        def obj_sig(layers):
+            out = []
+            for l in layers:
+                if isinstance(l, Gimp.VectorLayer):
+                    out.append((l.get_name(), tuple(tsv["node_sig"](n) for n in V.from_xml(vxml(l)))))
+            return out
+
+        im, ls = load_v("objets.svg")
+        sig1 = obj_sig(ls)
+        dessin = dict(sig1).get("Dessin") or ()
+        report(len(sig1) >= 2 and len(dessin) == 3 and dessin[0][0] == "G" and dessin[0][2],
+               "SVG : objets, groupes et masque d'écrêtage dans un calque", "%d calques" % len(sig1))
+        out2 = os.path.join(vdir, "objets-export.svg")
+        Gimp.file_save(Gimp.RunMode.NONINTERACTIVE, im, Gio.File.new_for_path(out2), None)
+        txt2 = open(out2, encoding="utf-8").read()
+        report("<linearGradient" in txt2 and "<radialGradient" in txt2 and "clip-path=" in txt2 and
+               'inkscape:label="Soleil"' in txt2,
+               "SVG : export des objets (dégradés, découpes, noms)")
+        im2, ls2 = load_v("objets-export.svg")
+        sig2 = obj_sig(ls2)
+        d = tsv["diff"](sig1, sig2)
+        report(not d, "SVG : aller-retour des objets, même structure", "; ".join(d[:3]))
         res = run("file-chopgimp-svg-load-thumb", file=Gio.File.new_for_path(os.path.join(vdir, "test.svg")),
                   **{"thumb-size": 128})
         report(res is not None and res.index(0) == Gimp.PDBStatusType.SUCCESS and res.index(2) == 400,
