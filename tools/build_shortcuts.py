@@ -152,6 +152,20 @@ PS_MAP = [
     ("Calque", "layers-mask-add",          [P + A + "m"],    "Ajouter un masque de fusion"),
     ("Calque", "layers-anchor",            [P + A + "h"],    "Ancrer la sélection flottante"),
 
+    # ── Objet (objets des calques vectoriels, ChopGimp 3.27 lot V2) ────
+    # Ctrl+G et Ctrl+[ ] / Maj+Ctrl+[ ] restent aux calques (Photoshop) :
+    # quand des objets d'un calque vectoriel sont sélectionnés, ces mêmes
+    # commandes les groupent et les disposent (vector-objects-commands.c).
+    # Suppr supprime les objets sélectionnés (edit-clear). Les autres
+    # touches sont celles d'Illustrator, libres dans ChopGimp.
+    ("Objet", "layers-vobjects-ungroup",      [P + S + "g"],   "Dissocier (Illustrator)"),
+    ("Objet", "layers-vobjects-lock",         [P + "2"],       "Verrouiller la sélection"),
+    ("Objet", "layers-vobjects-unlock-all",   [P + A + "2"],   "Tout déverrouiller"),
+    ("Objet", "layers-vobjects-hide",         [P + "3"],       "Masquer la sélection"),
+    ("Objet", "layers-vobjects-show-all",     [P + A + "3"],   "Tout afficher"),
+    ("Objet", "layers-vobjects-clip-make",    [P + "7"],       "Créer un masque d'écrêtage"),
+    ("Objet", "layers-vobjects-clip-release", [P + A + "7"],   "Libérer le masque d'écrêtage"),
+
     # ── Sélection ──────────────────────────────────────────────────────
     ("Sélection", "select-all",            [P + "a"],        "Tout sélectionner"),
     ("Sélection", "select-none",           [P + "d"],        "Désélectionner"),
@@ -206,7 +220,7 @@ def main():
 
     # 1. actions valides
     for _, act, _, _ in PS_MAP:
-        if act not in defaults and not act.startswith(("photogimp-", "chopgimp-", "tools-opacity-ps-", "tools-hand", "tools-rotate-view", "tools-shape", "tools-spot-heal", "windows-hide-right-docks", "tools-shape-builder", "tools-direct-select")):
+        if act not in defaults and not act.startswith(("photogimp-", "chopgimp-", "tools-opacity-ps-", "tools-hand", "tools-rotate-view", "tools-shape", "tools-spot-heal", "windows-hide-right-docks", "tools-shape-builder", "tools-direct-select", "layers-vobjects-")):
             errors.append("action inconnue de GIMP 3.2.8 : %s" % act)
 
     # 2. aucune touche attribuée deux fois dans PS_MAP

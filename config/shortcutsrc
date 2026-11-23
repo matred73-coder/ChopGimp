@@ -259,6 +259,22 @@
 # Ancrer la sélection flottante
 (action "layers-anchor" "<Primary><Alt>h")
 
+# ── Objet ───────────────────────────────────────────────────────
+# Dissocier (Illustrator)
+(action "layers-vobjects-ungroup" "<Primary><Shift>g")
+# Verrouiller la sélection
+(action "layers-vobjects-lock" "<Primary>2")
+# Tout déverrouiller
+(action "layers-vobjects-unlock-all" "<Primary><Alt>2")
+# Masquer la sélection
+(action "layers-vobjects-hide" "<Primary>3")
+# Tout afficher
+(action "layers-vobjects-show-all" "<Primary><Alt>3")
+# Créer un masque d'écrêtage
+(action "layers-vobjects-clip-make" "<Primary>7")
+# Libérer le masque d'écrêtage
+(action "layers-vobjects-clip-release" "<Primary><Alt>7")
+
 # ── Sélection ───────────────────────────────────────────────────
 # Tout sélectionner
 (action "select-all" "<Primary>a")

@@ -1129,7 +1129,10 @@
                         "../patches/gimp-3.2.8/0114-ChopGimp-expressions-in-the-compact-value-fields-beh.patch",
                         "../patches/gimp-3.2.8/0115-ChopGimp-filter-dialogs-as-Photoshop-s-unified-Style.patch",
                         "../patches/gimp-3.2.8/0116-ChopGimp-modernised-panels-lot-C-dock-tabs-icon-name.patch",
-                        "../patches/gimp-3.2.8/0117-ChopGimp-dock-tab-names-no-longer-shrink-to-layer-st.patch"
+                        "../patches/gimp-3.2.8/0117-ChopGimp-dock-tab-names-no-longer-shrink-to-layer-st.patch",
+                        "../patches/gimp-3.2.8/0118-ChopGimp-vector-layers-with-several-objects-lot-V1-o.patch",
+                        "../patches/gimp-3.2.8/0119-ChopGimp-smart-guides-for-vector-objects-lot-V6.1-ch.patch",
+                        "../patches/gimp-3.2.8/0120-ChopGimp-Illustrator-like-tools-on-vector-objects-lo.patch"
                     ]
                 }
             ],

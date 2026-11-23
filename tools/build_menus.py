@@ -4,7 +4,7 @@ ChopGimp — génère la barre de menus « Photoshop » à partir des menus
 de GIMP installé (aucun élément GIMP n'est supprimé, seulement réorganisé).
 
 Ordre Photoshop :
-  Fichier · Édition · Image · Couleurs · Calque · Texte · Sélection ·
+  Fichier · Édition · Image · Couleurs · Calque · Objet · Texte · Sélection ·
   Filtres · Affichage · Fenêtres · Aide
 - Nouveau sous-menu « Image > Réglages » (réglages essentiels, comme Photoshop).
 - Le menu « Outils » de GIMP passe dans « Fenêtres > Outils ».
@@ -198,6 +198,71 @@ def style_submenu(indent):
 calque_head = ["      <section>"] + style_submenu(8) + adjustment_submenu(8) + ["      </section>"]
 calque = get["_Layer"][:2] + calque_head + get["_Layer"][2:]
 
+# Objets vectoriels (ChopGimp 3.27, docs/PLAN-VECTEURS.md lots V1 et V2) :
+# les commandes sur les objets des calques vectoriels. Les trois commandes
+# du lot V1 restent en fin de menu Calque ; le menu de premier niveau
+# « Objet » est INSÉRÉ juste après « Calque » (lot V2) : aucun menu n'est
+# renommé, les plug-ins (« <Image>/Layer/… ») s'accrochent toujours à leur
+# menu par son libellé d'origine.
+CALQUE_OBJETS = [["layers-vobjects-merge", "layers-vobjects-split",
+                  "layers-vobjects-decompose"]]
+
+# (libellé du sous-menu ou None, [actions])
+OBJET_MENU = [
+    [(None, ["layers-vobjects-group", "layers-vobjects-ungroup"])],
+    [("_Disposition", ["layers-vobjects-raise-to-top", "layers-vobjects-raise",
+                       "layers-vobjects-lower", "layers-vobjects-lower-to-bottom"]),
+     ("_Aligner", ["layers-vobjects-align-left", "layers-vobjects-align-hcenter",
+                   "layers-vobjects-align-right", "layers-vobjects-align-top",
+                   "layers-vobjects-align-vcenter", "layers-vobjects-align-bottom",
+                   "layers-vobjects-distribute-h", "layers-vobjects-distribute-v"])],
+    [(None, ["layers-vobjects-lock", "layers-vobjects-unlock-all",
+             "layers-vobjects-hide", "layers-vobjects-show-all"])],
+    [("_Masque d'écrêtage", ["layers-vobjects-clip-make", "layers-vobjects-clip-release"]),
+     ("_Pathfinder", ["layers-vobjects-pathfinder-union", "layers-vobjects-pathfinder-minus",
+                      "layers-vobjects-pathfinder-intersect", "layers-vobjects-pathfinder-exclude",
+                      "layers-vobjects-pathfinder-divide"])],
+    [(None, ["layers-vobjects-style-picker", "layers-vobjects-select-all",
+             "layers-vobjects-delete"])],
+    [(None, ["layers-vobjects-merge", "layers-vobjects-split", "layers-vobjects-decompose"])],
+]
+
+
+def objet_sections(indent, sections):
+    i = " " * indent
+    l = []
+    for sec in sections:
+        l.append(i + "<section>")
+        l += [i + '  <item><attribute name="action">app.%s</attribute></item>' % a for a in sec]
+        l.append(i + "</section>")
+    return l
+
+
+def objet_menu(indent):
+    i = " " * indent
+    l = []
+    for sec in OBJET_MENU:
+        l.append(i + "<section>")
+        for label, actions in sec:
+            if label is None:
+                l += [i + '  <item><attribute name="action">app.%s</attribute></item>' % a
+                      for a in actions]
+            else:
+                l += [i + "  <submenu>",
+                      i + '    <attribute name="label" translatable="no">%s</attribute>' % label,
+                      i + "    <section>"]
+                l += [i + '      <item><attribute name="action">app.%s</attribute></item>' % a
+                      for a in actions]
+                l += [i + "    </section>", i + "  </submenu>"]
+        l.append(i + "</section>")
+    return l
+
+
+calque = insert_before_close(calque, objet_sections(6, CALQUE_OBJETS))
+objet = (["    <submenu>",
+          '      <attribute name="label" translatable="no">_Objet</attribute>'] +
+         objet_menu(6) + ["    </submenu>"])
+
 # Affichage > Apparence (ChopGimp) : variantes, accent, densité, police, taille
 def radio_sub(label, prefix, keys):
     return ["      <submenu>",
@@ -241,6 +306,7 @@ order = [
     image,
     get["_Colors"],
     calque,
+    objet,
     texte,
     get["_Select"],
     get["Filte_rs"],

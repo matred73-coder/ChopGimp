@@ -100,6 +100,12 @@ PF_OPS = {"chopgimp-pathfinder-union": 0, "chopgimp-pathfinder-minus": 1,
 
 
 def pathfinder(image, drawables, op):
+    # ChopGimp 3.27 (lot V2) : sur les objets sélectionnés d'un calque
+    # vectoriel à plusieurs objets (procédure de GIMP, une étape d'annulation)
+    res = call("chopgimp-vobjects-pathfinder", image=image, operation=op)
+    if res is not None and res.index(1):
+        return None
+
     layers = stack_order(image, vector_layers(drawables))
     temp = []
     if not layers:

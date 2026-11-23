@@ -1,0 +1,1831 @@
+From 3c5656ab5523946125d2e0f4a7d4fc90fa308993 Mon Sep 17 00:00:00 2001
+From: ChopGimp <mathieu.redon@proton.me>
+Date: Mon, 23 Nov 2026 12:18:28 +0100
+Subject: [PATCH 119/120] =?UTF-8?q?ChopGimp:=20smart=20guides=20for=20vect?=
+ =?UTF-8?q?or=20objects=20(lot=20V6.1):=20chopgimp-vsnap=20module=20(snap?=
+ =?UTF-8?q?=20a=20moving=20box=20or=20a=20point=20to=20edges,=20centres=20?=
+ =?UTF-8?q?and=20nodes=20of=20the=20other=20objects,=20other=20layers,=20c?=
+ =?UTF-8?q?anvas,=20guides,=20grid;=20equal=20spacing;=20magenta=20lines,?=
+ =?UTF-8?q?=20=C3=97=20and=20px=20distance=20labels),=20View=20=C2=AB=20Al?=
+ =?UTF-8?q?igner=20sur=20les=20pixels=20=C2=BB=20(snap-to-pixels=20display?=
+ =?UTF-8?q?=20option)?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ app/actions/view-actions.c                |   10 +
+ app/actions/view-commands.c               |   15 +
+ app/actions/view-commands.h               |    3 +
+ app/config/gimpdisplayoptions.c           |   28 +
+ app/config/gimpdisplayoptions.h           |    1 +
+ app/config/gimprc-blurbs.h                |    3 +
+ app/dialogs/preferences-dialog.c          |    3 +
+ app/display/gimpdisplayshell-appearance.c |   22 +
+ app/display/gimpdisplayshell-appearance.h |    4 +
+ app/tools/chopgimp-vsnap.c                | 1422 +++++++++++++++++++++
+ app/tools/chopgimp-vsnap.h                |   93 ++
+ app/tools/meson.build                     |    1 +
+ app/widgets/gimphelp-ids.h                |    1 +
+ menus/image-menu.ui.in.in                 |    1 +
+ 14 files changed, 1607 insertions(+)
+ create mode 100644 app/tools/chopgimp-vsnap.c
+ create mode 100644 app/tools/chopgimp-vsnap.h
+
+diff --git a/app/actions/view-actions.c b/app/actions/view-actions.c
+index 7335774..b9710b2 100644
+--- a/app/actions/view-actions.c
++++ b/app/actions/view-actions.c
+@@ -306,6 +306,14 @@ static const GimpToggleActionEntry view_toggle_actions[] =
+     FALSE,
+     GIMP_HELP_VIEW_SNAP_TO_EQUIDISTANCE },
+ 
++  { "view-snap-to-pixels", NULL,
++    NC_("view-action", "Aligner sur les _pixels"), NULL, { NULL },
++    NC_("view-action", "Les objets vectoriels déplacés ou transformés tombent sur des "
++                       "pixels entiers (« Aligner sur la grille de pixels » d'Illustrator)"),
++    view_snap_to_pixels_cmd_callback,
++    FALSE,
++    GIMP_HELP_VIEW_SNAP_TO_PIXELS },
++
+   { "view-show-menubar", NULL,
+     NC_("view-action", "Show _Menubar"), NULL, { NULL },
+     NC_("view-action", "Show this window's menubar"),
+@@ -964,6 +972,8 @@ view_actions_update (GimpActionGroup *group,
+   SET_ACTIVE    ("view-snap-to-bbox",         display && options->snap_to_bbox);
+   SET_SENSITIVE ("view-snap-to-equidistance", image);
+   SET_ACTIVE    ("view-snap-to-equidistance", display && options->snap_to_equidistance);
++  SET_SENSITIVE ("view-snap-to-pixels",       image);
++  SET_ACTIVE    ("view-snap-to-pixels",       display && options->snap_to_pixels);
+ 
+   SET_SENSITIVE ("view-padding-color-theme",       image);
+   SET_SENSITIVE ("view-padding-color-light-check", image);
+diff --git a/app/actions/view-commands.c b/app/actions/view-commands.c
+index 3dbbbf9..3c64c51 100644
+--- a/app/actions/view-commands.c
++++ b/app/actions/view-commands.c
+@@ -1035,6 +1035,21 @@ view_snap_to_equidistance_cmd_callback (GimpAction *action,
+     gimp_display_shell_set_snap_to_equidistance (shell, active);
+ }
+ 
++void
++view_snap_to_pixels_cmd_callback (GimpAction *action,
++                                  GVariant   *value,
++                                  gpointer    data)
++{
++  GimpDisplayShell *shell;
++  gboolean          active;
++  return_if_no_shell (shell, data);
++
++  active = g_variant_get_boolean (value);
++
++  if (active != gimp_display_shell_get_snap_to_pixels (shell))
++    gimp_display_shell_set_snap_to_pixels (shell, active);
++}
++
+ void
+ view_padding_color_cmd_callback (GimpAction *action,
+                                  GVariant   *value,
+diff --git a/app/actions/view-commands.h b/app/actions/view-commands.h
+index e86e990..c6ef959 100644
+--- a/app/actions/view-commands.h
++++ b/app/actions/view-commands.h
+@@ -168,6 +168,9 @@ void   view_snap_to_bbox_cmd_callback               (GimpAction *action,
+ void   view_snap_to_equidistance_cmd_callback       (GimpAction *action,
+                                                      GVariant   *value,
+                                                      gpointer    data);
++void   view_snap_to_pixels_cmd_callback             (GimpAction *action,
++                                                     GVariant   *value,
++                                                     gpointer    data);
+ void   view_padding_color_cmd_callback              (GimpAction *action,
+                                                      GVariant   *value,
+                                                      gpointer    data);
+diff --git a/app/config/gimpdisplayoptions.c b/app/config/gimpdisplayoptions.c
+index 02cffdf..8c2fd66 100644
+--- a/app/config/gimpdisplayoptions.c
++++ b/app/config/gimpdisplayoptions.c
+@@ -57,6 +57,7 @@ enum
+   PROP_SNAP_TO_PATH,
+   PROP_SNAP_TO_BBOX,
+   PROP_SNAP_TO_EQUIDISTANCE,
++  PROP_SNAP_TO_PIXELS,
+   PROP_PADDING_MODE,
+   PROP_PADDING_COLOR,
+   PROP_PADDING_IN_SHOW_ALL
+@@ -222,6 +223,13 @@ gimp_display_options_class_init (GimpDisplayOptionsClass *klass)
+                             FALSE,
+                             GIMP_PARAM_STATIC_STRINGS);
+ 
++  GIMP_CONFIG_PROP_BOOLEAN (object_class, PROP_SNAP_TO_PIXELS,
++                            "snap-to-pixels",
++                            "Snap to pixels",
++                            SNAP_TO_PIXELS_BLURB,
++                            FALSE,
++                            GIMP_PARAM_STATIC_STRINGS);
++
+   GIMP_CONFIG_PROP_ENUM (object_class, PROP_PADDING_MODE,
+                          "padding-mode",
+                          "Padding mode",
+@@ -369,6 +377,13 @@ gimp_display_options_fullscreen_class_init (GimpDisplayOptionsFullscreenClass *k
+                             FALSE,
+                             GIMP_PARAM_STATIC_STRINGS);
+ 
++  GIMP_CONFIG_PROP_BOOLEAN (object_class, PROP_SNAP_TO_PIXELS,
++                            "snap-to-pixels",
++                            "Snap to pixels",
++                            SNAP_TO_PIXELS_BLURB,
++                            FALSE,
++                            GIMP_PARAM_STATIC_STRINGS);
++
+   GIMP_CONFIG_PROP_ENUM (object_class, PROP_PADDING_MODE,
+                          "padding-mode",
+                          "Padding mode",
+@@ -499,6 +514,13 @@ gimp_display_options_no_image_class_init (GimpDisplayOptionsNoImageClass *klass)
+                             SNAP_TO_EQUIDISTANCE_BLURB,
+                             FALSE,
+                             GIMP_PARAM_STATIC_STRINGS);
++
++  GIMP_CONFIG_PROP_BOOLEAN (object_class, PROP_SNAP_TO_PIXELS,
++                            "snap-to-pixels",
++                            "Snap to pixels",
++                            SNAP_TO_PIXELS_BLURB,
++                            FALSE,
++                            GIMP_PARAM_STATIC_STRINGS);
+ }
+ 
+ static void
+@@ -589,6 +611,9 @@ gimp_display_options_set_property (GObject      *object,
+     case PROP_SNAP_TO_EQUIDISTANCE:
+       options->snap_to_equidistance = g_value_get_boolean (value);
+       break;
++    case PROP_SNAP_TO_PIXELS:
++      options->snap_to_pixels = g_value_get_boolean (value);
++      break;
+     case PROP_PADDING_MODE:
+       options->padding_mode = g_value_get_enum (value);
+       break;
+@@ -664,6 +689,9 @@ gimp_display_options_get_property (GObject    *object,
+     case PROP_SNAP_TO_EQUIDISTANCE:
+       g_value_set_boolean (value, options->snap_to_equidistance);
+       break;
++    case PROP_SNAP_TO_PIXELS:
++      g_value_set_boolean (value, options->snap_to_pixels);
++      break;
+     case PROP_PADDING_MODE:
+       g_value_set_enum (value, options->padding_mode);
+       break;
+diff --git a/app/config/gimpdisplayoptions.h b/app/config/gimpdisplayoptions.h
+index d171252..93cf0d4 100644
+--- a/app/config/gimpdisplayoptions.h
++++ b/app/config/gimpdisplayoptions.h
+@@ -57,6 +57,7 @@ struct _GimpDisplayOptions
+   gboolean               snap_to_path;
+   gboolean               snap_to_bbox;
+   gboolean               snap_to_equidistance;
++  gboolean               snap_to_pixels;        /* ChopGimp */
+ 
+   GimpCanvasPaddingMode  padding_mode;
+   GeglColor             *padding_color;
+diff --git a/app/config/gimprc-blurbs.h b/app/config/gimprc-blurbs.h
+index cb308bd..e689847 100644
+--- a/app/config/gimprc-blurbs.h
++++ b/app/config/gimprc-blurbs.h
+@@ -137,6 +137,9 @@ _("Snap to the layers bounding boxes by default in new image windows.")
+ #define SNAP_TO_EQUIDISTANCE_BLURB \
+ _("Snap to the equidistance between three bounding boxes by default in new image windows.")
+ 
++#define SNAP_TO_PIXELS_BLURB \
++_("Objects moved or transformed land on whole pixels by default in new image windows.")
++
+ #define DEFAULT_THRESHOLD_BLURB \
+ _("Tools such as fuzzy-select and bucket fill find regions based on a " \
+   "seed-fill algorithm.  The seed fill starts at the initially selected " \
+diff --git a/app/dialogs/preferences-dialog.c b/app/dialogs/preferences-dialog.c
+index fb2b5f8..8a2eeb4 100644
+--- a/app/dialogs/preferences-dialog.c
++++ b/app/dialogs/preferences-dialog.c
+@@ -1117,6 +1117,9 @@ prefs_behavior_options_frame_add (Gimp         *gimp,
+   prefs_check_button_add (object, "snap-to-equidistance",
+                           _("Snap to _Equidistance"),
+                           GTK_BOX (checks_vbox));
++  prefs_check_button_add (object, "snap-to-pixels",
++                          _("Aligner sur les pixels"),
++                          GTK_BOX (checks_vbox));
+ }
+ 
+ static void
+diff --git a/app/display/gimpdisplayshell-appearance.c b/app/display/gimpdisplayshell-appearance.c
+index 7d80b01..22829bf 100644
+--- a/app/display/gimpdisplayshell-appearance.c
++++ b/app/display/gimpdisplayshell-appearance.c
+@@ -507,6 +507,28 @@ gimp_display_shell_get_snap_to_equidistance (GimpDisplayShell *shell)
+   return appearance_get_options (shell)->snap_to_equidistance;
+ }
+ 
++/*  ChopGimp: « Aligner sur les pixels » (vector objects, chopgimp-vsnap.c)  */
++void
++gimp_display_shell_set_snap_to_pixels (GimpDisplayShell *shell,
++                                       gboolean          snap)
++{
++  GimpDisplayOptions *options;
++
++  g_return_if_fail (GIMP_IS_DISPLAY_SHELL (shell));
++
++  options = appearance_get_options (shell);
++
++  g_object_set (options, "snap-to-pixels", snap, NULL);
++}
++
++gboolean
++gimp_display_shell_get_snap_to_pixels (GimpDisplayShell *shell)
++{
++  g_return_val_if_fail (GIMP_IS_DISPLAY_SHELL (shell), FALSE);
++
++  return appearance_get_options (shell)->snap_to_pixels;
++}
++
+ void
+ gimp_display_shell_set_padding (GimpDisplayShell      *shell,
+                                 GimpCanvasPaddingMode  padding_mode,
+diff --git a/app/display/gimpdisplayshell-appearance.h b/app/display/gimpdisplayshell-appearance.h
+index 435c4ae..d75716c 100644
+--- a/app/display/gimpdisplayshell-appearance.h
++++ b/app/display/gimpdisplayshell-appearance.h
+@@ -85,6 +85,10 @@ void       gimp_display_shell_set_snap_to_equidistance (GimpDisplayShell       *
+                                                         gboolean                snap);
+ gboolean   gimp_display_shell_get_snap_to_equidistance (GimpDisplayShell       *shell);
+ 
++void       gimp_display_shell_set_snap_to_pixels       (GimpDisplayShell       *shell,
++                                                        gboolean                snap);
++gboolean   gimp_display_shell_get_snap_to_pixels       (GimpDisplayShell       *shell);
++
+ void       gimp_display_shell_set_padding              (GimpDisplayShell       *shell,
+                                                         GimpCanvasPaddingMode   mode,
+                                                         GeglColor              *color);
+diff --git a/app/tools/chopgimp-vsnap.c b/app/tools/chopgimp-vsnap.c
+new file mode 100644
+index 0000000..4417dae
+--- /dev/null
++++ b/app/tools/chopgimp-vsnap.c
+@@ -0,0 +1,1422 @@
++/* GIMP - The GNU Image Manipulation Program
++ * chopgimp-vsnap.c — ChopGimp 3.27: smart guides and snapping for the
++ * objects of a vector layer (see chopgimp-vsnap.h)
++ *
++ * It extends the « repères intelligents » of the 3.21.0 (GIMP's
++ * snap-to-bbox / snap-to-equidistance of the Move tool, same View menu
++ * switches) to the objects of a vector layer, their nodes, and adds the
++ * annotated feedback of Illustrator / Figma: magenta lines spanning the
++ * aligned boxes, × on snapped points, distances in px.
++ *
++ * Candidates are collected once in chopgimp_vsnap_new() into two arrays
++ * (x and y) sorted by position; a snap is a binary search in each, plus a
++ * linear pass over the neighbour boxes (objects of the selectable level
++ * and other layers) for equal spacing and distances. Nothing is allocated
++ * per motion event: the last match is kept in a fixed-size structure,
++ * copied into one canvas item by chopgimp_vsnap_draw().
++ *
++ * This program is free software: you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation; either version 3 of the License, or
++ * (at your option) any later version.
++ */
++
++#include "config.h"
++
++#include <string.h>
++
++#include <gegl.h>
++#include <gtk/gtk.h>
++
++#include "libgimpmath/gimpmath.h"
++
++#include "tools-types.h"
++
++#include "core/gimp.h"
++#include "core/gimpcontext.h"
++#include "core/gimpgrid.h"
++#include "core/gimpguide.h"
++#include "core/gimpimage.h"
++#include "core/gimpimage-grid.h"
++#include "core/gimpimage-guides.h"
++#include "core/gimplayer.h"
++
++#include "path/gimpanchor.h"
++#include "path/gimppath.h"
++#include "path/gimpstroke.h"
++#include "path/gimpvectorlayer.h"
++#include "path/chopgimp-vobject.h"
++
++#include "display/gimpcanvasitem.h"
++#include "display/gimpdisplay.h"
++#include "display/gimpdisplayshell.h"
++#include "display/gimpdisplayshell-appearance.h"
++
++#include "gimpdrawtool.h"
++#include "chopgimp-vsnap.h"
++
++
++/*  ─── data ─────────────────────────────────────────────────────────── */
++
++typedef enum
++{
++  SRC_EDGE,
++  SRC_CENTER,
++  SRC_NODE,
++  SRC_CANVAS,
++  SRC_GUIDE
++} SrcKind;
++
++typedef struct
++{
++  gdouble v;        /* position on the axis                             */
++  gdouble lo, hi;   /* extent of the source on the other axis           */
++  gint    kind;     /* SrcKind                                          */
++} Cand;
++
++typedef struct
++{
++  gdouble a[2];     /* low  x, y */
++  gdouble b[2];     /* high x, y */
++} Box;
++
++#define MAX_CROSSES 24
++#define MAX_GAPS     4
++
++typedef struct
++{
++  gdouble a, b;     /* along the axis */
++  gdouble at;       /* on the other axis */
++} Gap;
++
++typedef struct
++{
++  gboolean snapped;            /* an alignment line                  */
++  gdouble  v;                  /* its position on the axis           */
++  gdouble  lo, hi;             /* its span on the other axis         */
++  gint     n_crosses;
++  gdouble  crosses[MAX_CROSSES]; /* other-axis positions of × on it  */
++
++  gint     n_gaps;             /* equal spacing                      */
++  Gap      gaps[MAX_GAPS];
++
++  gboolean has_dist;           /* distance to the nearest neighbour  */
++  Gap      dist;
++} AxisFeedback;
++
++typedef struct
++{
++  gboolean     active;
++  gboolean     has_box;
++  Box          box;            /* the moving box, corrected          */
++  gboolean     has_point;
++  gdouble      px, py;         /* the snapped point                  */
++  AxisFeedback axis[2];        /* 0: x (vertical lines), 1: y        */
++} Feedback;
++
++typedef enum
++{
++  EQ_NONE,
++  EQ_BETWEEN,       /* centred between the two neighbours             */
++  EQ_AFTER_LOW,     /* same gap as the low neighbour and its own one  */
++  EQ_BEFORE_HIGH    /* same gap as the high neighbour and its own one */
++} EqKind;
++
++struct _ChopGimpVSnap
++{
++  GimpImage *image;
++
++  gboolean   use_guides;
++  gboolean   use_grid;
++  gboolean   use_canvas;
++  gboolean   use_bbox;
++  gboolean   use_equidistance;
++  gboolean   use_pixels;
++
++  gdouble    grid_spacing[2];
++  gdouble    grid_offset[2];
++
++  GArray    *cands[2];      /* Cand, sorted by v */
++  GArray    *boxes;         /* Box: neighbours (spacing, distances) */
++
++  Feedback   fb;
++};
++
++
++/*  ─── the canvas item drawing the feedback ─────────────────────────── */
++
++#define CHOPGIMP_TYPE_VSNAP_ITEM (chopgimp_vsnap_item_get_type ())
++
++typedef struct
++{
++  GimpCanvasItem parent_instance;
++  Feedback       fb;
++} ChopGimpVSnapItem;
++
++typedef struct
++{
++  GimpCanvasItemClass parent_class;
++} ChopGimpVSnapItemClass;
++
++static GType chopgimp_vsnap_item_get_type (void) G_GNUC_CONST;
++
++G_DEFINE_TYPE (ChopGimpVSnapItem, chopgimp_vsnap_item, GIMP_TYPE_CANVAS_ITEM)
++
++#define FONT_SIZE    10.5
++#define LABEL_PAD_X   5.0
++#define LABEL_H      15.0
++#define CROSS         3.5
++#define TICK          4.0
++
++static void
++vsnap_magenta (cairo_t *cr)
++{
++  /*  Illustrator's smart guides  */
++  cairo_set_source_rgb (cr, 1.0, 0.0, 0.78);
++}
++
++static void
++vsnap_xy (GimpCanvasItem *item,
++          gint            axis,
++          gdouble         along,
++          gdouble         other,
++          gdouble        *sx,
++          gdouble        *sy)
++{
++  if (axis == 0)
++    gimp_canvas_item_transform_xy_f (item, along, other, sx, sy);
++  else
++    gimp_canvas_item_transform_xy_f (item, other, along, sx, sy);
++}
++
++static void
++vsnap_format (gchar   *buf,
++              gsize    size,
++              gdouble  value)
++{
++  value = fabs (value);
++
++  if (fabs (value - RINT (value)) < 0.05)
++    g_snprintf (buf, size, "%.0f px", RINT (value));
++  else
++    g_snprintf (buf, size, "%.1f px", value);
++}
++
++/*  a magenta pill with white text, centred on (sx, sy) (screen)  */
++static void
++vsnap_label (cairo_t     *cr,
++             gdouble      sx,
++             gdouble      sy,
++             const gchar *text)
++{
++  cairo_text_extents_t ext;
++  gdouble              w, x, y, r = 3.0;
++
++  cairo_select_font_face (cr, "sans-serif",
++                          CAIRO_FONT_SLANT_NORMAL, CAIRO_FONT_WEIGHT_BOLD);
++  cairo_set_font_size (cr, FONT_SIZE);
++  cairo_text_extents (cr, text, &ext);
++
++  w = ext.width + 2 * LABEL_PAD_X;
++  x = floor (sx - w / 2.0);
++  y = floor (sy - LABEL_H / 2.0);
++
++  cairo_new_sub_path (cr);
++  cairo_arc (cr, x + w - r, y + r,           r, -G_PI / 2, 0);
++  cairo_arc (cr, x + w - r, y + LABEL_H - r, r, 0, G_PI / 2);
++  cairo_arc (cr, x + r,     y + LABEL_H - r, r, G_PI / 2, G_PI);
++  cairo_arc (cr, x + r,     y + r,           r, G_PI, 3 * G_PI / 2);
++  cairo_close_path (cr);
++  vsnap_magenta (cr);
++  cairo_fill (cr);
++
++  cairo_set_source_rgb (cr, 1.0, 1.0, 1.0);
++  cairo_move_to (cr,
++                 x + LABEL_PAD_X - ext.x_bearing,
++                 y + (LABEL_H - ext.height) / 2.0 - ext.y_bearing);
++  cairo_show_text (cr, text);
++}
++
++static void
++vsnap_segment (cairo_t *cr,
++               gdouble  x1,
++               gdouble  y1,
++               gdouble  x2,
++               gdouble  y2)
++{
++  cairo_move_to (cr, floor (x1) + 0.5, floor (y1) + 0.5);
++  cairo_line_to (cr, floor (x2) + 0.5, floor (y2) + 0.5);
++}
++
++static void
++vsnap_cross (cairo_t *cr,
++             gdouble  sx,
++             gdouble  sy)
++{
++  sx = floor (sx) + 0.5;
++  sy = floor (sy) + 0.5;
++
++  cairo_move_to (cr, sx - CROSS, sy - CROSS);
++  cairo_line_to (cr, sx + CROSS, sy + CROSS);
++  cairo_move_to (cr, sx - CROSS, sy + CROSS);
++  cairo_line_to (cr, sx + CROSS, sy - CROSS);
++}
++
++/*  a measured gap: a line with ticks at both ends (+ its label)  */
++static void
++vsnap_gap (GimpCanvasItem *item,
++           cairo_t        *cr,
++           gint            axis,
++           const Gap      *gap,
++           gboolean        label)
++{
++  gdouble ax, ay, bx, by;
++
++  vsnap_xy (item, axis, gap->a, gap->at, &ax, &ay);
++  vsnap_xy (item, axis, gap->b, gap->at, &bx, &by);
++
++  vsnap_magenta (cr);
++  cairo_set_line_width (cr, 1.0);
++  vsnap_segment (cr, ax, ay, bx, by);
++
++  if (axis == 0)
++    {
++      vsnap_segment (cr, ax, ay - TICK, ax, ay + TICK);
++      vsnap_segment (cr, bx, by - TICK, bx, by + TICK);
++    }
++  else
++    {
++      vsnap_segment (cr, ax - TICK, ay, ax + TICK, ay);
++      vsnap_segment (cr, bx - TICK, by, bx + TICK, by);
++    }
++
++  cairo_stroke (cr);
++
++  if (label)
++    {
++      gchar buf[32];
++
++      vsnap_format (buf, sizeof (buf), gap->b - gap->a);
++
++      if (axis == 0)
++        vsnap_label (cr, (ax + bx) / 2.0, ay + LABEL_H / 2.0 + 3.0, buf);
++      else
++        vsnap_label (cr, ax + 6.0 + strlen (buf) * 3.5, (ay + by) / 2.0, buf);
++    }
++}
++
++static void
++chopgimp_vsnap_item_draw (GimpCanvasItem *item,
++                          cairo_t        *cr)
++{
++  ChopGimpVSnapItem *self = (ChopGimpVSnapItem *) item;
++  const Feedback    *fb   = &self->fb;
++  gint               axis;
++
++  cairo_save (cr);
++  cairo_set_line_cap (cr, CAIRO_LINE_CAP_BUTT);
++  cairo_set_line_width (cr, 1.0);
++
++  /*  alignment lines and × on the matched points  */
++  for (axis = 0; axis < 2; axis++)
++    {
++      const AxisFeedback *af = &fb->axis[axis];
++      gdouble             x1, y1, x2, y2;
++      gint                i;
++
++      if (! af->snapped)
++        continue;
++
++      vsnap_xy (item, axis, af->v, af->lo, &x1, &y1);
++      vsnap_xy (item, axis, af->v, af->hi, &x2, &y2);
++
++      vsnap_magenta (cr);
++      vsnap_segment (cr, x1, y1, x2, y2);
++
++      for (i = 0; i < af->n_crosses; i++)
++        {
++          vsnap_xy (item, axis, af->v, af->crosses[i], &x1, &y1);
++          vsnap_cross (cr, x1, y1);
++        }
++
++      cairo_stroke (cr);
++    }
++
++  if (fb->has_point)
++    {
++      gdouble sx, sy;
++
++      gimp_canvas_item_transform_xy_f (item, fb->px, fb->py, &sx, &sy);
++      vsnap_magenta (cr);
++      cairo_set_line_width (cr, 1.5);
++      vsnap_cross (cr, sx, sy);
++      cairo_stroke (cr);
++      cairo_set_line_width (cr, 1.0);
++    }
++
++  /*  equal spacing, then the distances  */
++  for (axis = 0; axis < 2; axis++)
++    {
++      const AxisFeedback *af = &fb->axis[axis];
++      gint                i;
++
++      for (i = 0; i < af->n_gaps; i++)
++        vsnap_gap (item, cr, axis, &af->gaps[i], TRUE);
++
++      if (af->has_dist)
++        vsnap_gap (item, cr, axis, &af->dist, TRUE);
++    }
++
++  cairo_restore (cr);
++}
++
++static void
++vsnap_extents_add (cairo_rectangle_int_t *r,
++                   gboolean              *empty,
++                   gdouble                x,
++                   gdouble                y,
++                   gdouble                mx,
++                   gdouble                my)
++{
++  gint x1 = floor (x - mx), y1 = floor (y - my);
++  gint x2 = ceil  (x + mx), y2 = ceil  (y + my);
++
++  if (*empty)
++    {
++      r->x = x1; r->y = y1; r->width = x2 - x1; r->height = y2 - y1;
++      *empty = FALSE;
++      return;
++    }
++
++  x1 = MIN (x1, r->x);
++  y1 = MIN (y1, r->y);
++  x2 = MAX (x2, r->x + r->width);
++  y2 = MAX (y2, r->y + r->height);
++
++  r->x = x1; r->y = y1; r->width = x2 - x1; r->height = y2 - y1;
++}
++
++static cairo_region_t *
++chopgimp_vsnap_item_get_extents (GimpCanvasItem *item)
++{
++  ChopGimpVSnapItem     *self  = (ChopGimpVSnapItem *) item;
++  const Feedback        *fb    = &self->fb;
++  cairo_rectangle_int_t  r     = { 0, };
++  gboolean               empty = TRUE;
++  gint                   axis;
++
++  /*  generous margins: × and ticks, labels (up to ~90 px wide)  */
++  for (axis = 0; axis < 2; axis++)
++    {
++      const AxisFeedback *af = &fb->axis[axis];
++      gdouble             sx, sy;
++      gint                i;
++
++      if (af->snapped)
++        {
++          vsnap_xy (item, axis, af->v, af->lo, &sx, &sy);
++          vsnap_extents_add (&r, &empty, sx, sy, CROSS + 2, CROSS + 2);
++          vsnap_xy (item, axis, af->v, af->hi, &sx, &sy);
++          vsnap_extents_add (&r, &empty, sx, sy, CROSS + 2, CROSS + 2);
++        }
++
++      for (i = 0; i < af->n_gaps + (af->has_dist ? 1 : 0); i++)
++        {
++          const Gap *gap = i < af->n_gaps ? &af->gaps[i] : &af->dist;
++
++          vsnap_xy (item, axis, gap->a, gap->at, &sx, &sy);
++          vsnap_extents_add (&r, &empty, sx, sy, 100, LABEL_H + 8);
++          vsnap_xy (item, axis, gap->b, gap->at, &sx, &sy);
++          vsnap_extents_add (&r, &empty, sx, sy, 100, LABEL_H + 8);
++        }
++    }
++
++  if (fb->has_point)
++    {
++      gdouble sx, sy;
++
++      gimp_canvas_item_transform_xy_f (item, fb->px, fb->py, &sx, &sy);
++      vsnap_extents_add (&r, &empty, sx, sy, CROSS + 3, CROSS + 3);
++    }
++
++  if (empty)
++    return cairo_region_create ();
++
++  return cairo_region_create_rectangle (&r);
++}
++
++static void
++chopgimp_vsnap_item_class_init (ChopGimpVSnapItemClass *klass)
++{
++  GimpCanvasItemClass *item_class = GIMP_CANVAS_ITEM_CLASS (klass);
++
++  item_class->draw        = chopgimp_vsnap_item_draw;
++  item_class->get_extents = chopgimp_vsnap_item_get_extents;
++}
++
++static void
++chopgimp_vsnap_item_init (ChopGimpVSnapItem *item)
++{
++}
++
++
++/*  ─── collecting the candidates ────────────────────────────────────── */
++
++static gint
++cand_compare (gconstpointer a,
++              gconstpointer b)
++{
++  gdouble va = ((const Cand *) a)->v;
++  gdouble vb = ((const Cand *) b)->v;
++
++  return va < vb ? -1 : va > vb ? 1 : 0;
++}
++
++static void
++add_cand (ChopGimpVSnap *snap,
++          gint           axis,
++          gdouble        v,
++          gdouble        lo,
++          gdouble        hi,
++          SrcKind        kind)
++{
++  Cand c = { v, MIN (lo, hi), MAX (lo, hi), kind };
++
++  g_array_append_val (snap->cands[axis], c);
++}
++
++static void
++add_box_cands (ChopGimpVSnap *snap,
++               gdouble        x1,
++               gdouble        y1,
++               gdouble        x2,
++               gdouble        y2,
++               gboolean       neighbour)
++{
++  add_cand (snap, 0, x1,              y1, y2, SRC_EDGE);
++  add_cand (snap, 0, (x1 + x2) / 2.0, y1, y2, SRC_CENTER);
++  add_cand (snap, 0, x2,              y1, y2, SRC_EDGE);
++  add_cand (snap, 1, y1,              x1, x2, SRC_EDGE);
++  add_cand (snap, 1, (y1 + y2) / 2.0, x1, x2, SRC_CENTER);
++  add_cand (snap, 1, y2,              x1, x2, SRC_EDGE);
++
++  if (neighbour)
++    {
++      Box box = { { x1, y1 }, { x2, y2 } };
++
++      g_array_append_val (snap->boxes, box);
++    }
++}
++
++static gboolean
++is_excluded (ChopGimpVObject *object,
++             GPtrArray       *excluded,
++             gboolean        *ancestor_of_excluded)
++{
++  guint i;
++
++  *ancestor_of_excluded = FALSE;
++
++  for (i = 0; i < excluded->len; i++)
++    {
++      ChopGimpVObject *ex = excluded->pdata[i];
++
++      if (ex == object || chopgimp_vobject_is_ancestor (ex, object))
++        return TRUE;
++
++      if (chopgimp_vobject_is_ancestor (object, ex))
++        *ancestor_of_excluded = TRUE;
++    }
++
++  return FALSE;
++}
++
++static void
++add_nodes (ChopGimpVSnap   *snap,
++           ChopGimpVObject *object,
++           gint            *n_nodes)
++{
++  GimpMatrix3  matrix;
++  GimpStroke  *stroke = NULL;
++
++  if (! object->path)
++    return;
++
++  chopgimp_vobject_get_world_matrix (object, &matrix);
++
++  while ((stroke = gimp_path_stroke_get_next (object->path, stroke)))
++    {
++      GList *list;
++
++      for (list = stroke->anchors->head; list; list = list->next)
++        {
++          GimpAnchor *anchor = list->data;
++          gdouble     x, y;
++
++          if (anchor->type != GIMP_ANCHOR_ANCHOR)
++            continue;
++
++          if (*n_nodes >= CHOPGIMP_VSNAP_MAX_NODES)
++            return;
++
++          gimp_matrix3_transform_point (&matrix,
++                                        anchor->position.x,
++                                        anchor->position.y,
++                                        &x, &y);
++
++          add_cand (snap, 0, x, y, y, SRC_NODE);
++          add_cand (snap, 1, y, x, x, SRC_NODE);
++          (*n_nodes)++;
++        }
++    }
++}
++
++static void
++collect_objects (ChopGimpVSnap   *snap,
++                 GimpVectorLayer *layer,
++                 ChopGimpVObject *object,
++                 GPtrArray       *excluded,
++                 ChopGimpVObject *level,
++                 gint            *n_nodes)
++{
++  gboolean ancestor = FALSE;
++  guint    i;
++
++  if (! object->visible)
++    return;
++
++  if (object->parent)  /* not the root */
++    {
++      gdouble x1, y1, x2, y2;
++
++      if (is_excluded (object, excluded, &ancestor))
++        return;
++
++      /*  a group holding a moving object moves with it: its bounds are
++       *  not a target, its other children are
++       */
++      if (! ancestor &&
++          chopgimp_vobject_get_bounds (layer, object, TRUE,
++                                       &x1, &y1, &x2, &y2))
++        {
++          add_box_cands (snap, x1, y1, x2, y2, object->parent == level);
++        }
++
++      if (object->kind == CHOPGIMP_VOBJECT_PATH)
++        add_nodes (snap, object, n_nodes);
++    }
++
++  if (object->kind == CHOPGIMP_VOBJECT_GROUP && object->children)
++    for (i = 0; i < object->children->len; i++)
++      collect_objects (snap, layer, object->children->pdata[i],
++                       excluded, level, n_nodes);
++}
++
++static GimpDisplayShell *
++find_shell (GimpImage *image)
++{
++  GimpDisplay *display;
++  GList       *list;
++
++  display = gimp_context_get_display (gimp_get_user_context (image->gimp));
++
++  if (display && gimp_display_get_image (display) == image)
++    return gimp_display_get_shell (display);
++
++  for (list = gimp_get_display_iter (image->gimp); list; list = list->next)
++    if (gimp_display_get_image (list->data) == image)
++      return gimp_display_get_shell (list->data);
++
++  return NULL;
++}
++
++ChopGimpVSnap *
++chopgimp_vsnap_new (GimpImage       *image,
++                    GimpVectorLayer *layer,
++                    const guint     *exclude_ids,
++                    gint             n_exclude)
++{
++  ChopGimpVSnap    *snap;
++  GimpDisplayShell *shell;
++  gint              width, height;
++  gint              axis;
++
++  g_return_val_if_fail (GIMP_IS_IMAGE (image), NULL);
++  g_return_val_if_fail (layer == NULL || GIMP_IS_VECTOR_LAYER (layer), NULL);
++
++  snap = g_slice_new0 (ChopGimpVSnap);
++
++  snap->image    = image;
++  snap->cands[0] = g_array_sized_new (FALSE, FALSE, sizeof (Cand), 256);
++  snap->cands[1] = g_array_sized_new (FALSE, FALSE, sizeof (Cand), 256);
++  snap->boxes    = g_array_sized_new (FALSE, FALSE, sizeof (Box), 32);
++
++  shell = find_shell (image);
++
++  if (shell)
++    {
++      snap->use_guides       = gimp_display_shell_get_snap_to_guides (shell);
++      snap->use_grid         = gimp_display_shell_get_snap_to_grid (shell);
++      snap->use_canvas       = gimp_display_shell_get_snap_to_canvas (shell);
++      snap->use_bbox         = gimp_display_shell_get_snap_to_bbox (shell);
++      snap->use_equidistance = gimp_display_shell_get_snap_to_equidistance (shell);
++      snap->use_pixels       = gimp_display_shell_get_snap_to_pixels (shell);
++    }
++  else
++    {
++      /*  ChopGimp's defaults  */
++      snap->use_guides       = TRUE;
++      snap->use_canvas       = TRUE;
++      snap->use_bbox         = TRUE;
++      snap->use_equidistance = TRUE;
++    }
++
++  width  = gimp_image_get_width  (image);
++  height = gimp_image_get_height (image);
++
++  /*  the objects of the layer, their nodes  */
++  if (layer && (snap->use_bbox || snap->use_equidistance))
++    {
++      ChopGimpVObject *root = chopgimp_vlayer_get_root (layer);
++
++      if (root)
++        {
++          GPtrArray       *excluded = g_ptr_array_new ();
++          ChopGimpVObject *level    = root;
++          guint            entered;
++          gint             n_nodes  = 0;
++          gint             i;
++
++          for (i = 0; i < n_exclude; i++)
++            {
++              ChopGimpVObject *obj = chopgimp_vlayer_get_object (layer,
++                                                                 exclude_ids[i]);
++              if (obj)
++                g_ptr_array_add (excluded, obj);
++            }
++
++          entered = chopgimp_vlayer_get_entered_group (layer);
++          if (entered)
++            {
++              ChopGimpVObject *group = chopgimp_vlayer_get_object (layer,
++                                                                   entered);
++              if (group)
++                level = group;
++            }
++
++          /*  nodes are targets of the smart guides only  */
++          if (! snap->use_bbox)
++            n_nodes = CHOPGIMP_VSNAP_MAX_NODES;
++
++          collect_objects (snap, layer, root, excluded, level, &n_nodes);
++
++          g_ptr_array_free (excluded, TRUE);
++        }
++    }
++
++  /*  the other visible layers  */
++  if (snap->use_bbox || snap->use_equidistance)
++    {
++      GList *selected = layer ? NULL : gimp_image_get_selected_layers (image);
++      GList *layers   = gimp_image_get_layer_list (image);
++      GList *list;
++
++      for (list = layers; list; list = list->next)
++        {
++          GimpItem *item = list->data;
++          gint      x, y, w, h;
++
++          if (item == GIMP_ITEM (layer)           ||
++              g_list_find (selected, item)        ||
++              ! gimp_item_is_visible (item)       ||
++              gimp_viewable_get_children (GIMP_VIEWABLE (item)))
++            continue;
++
++          gimp_item_bounds (item, &x, &y, &w, &h);
++          gimp_item_get_offset (item, &x, &y);
++
++          if (w <= 0 || h <= 0)
++            continue;
++
++          /*  a layer covering the canvas is not a neighbour  */
++          add_box_cands (snap, x, y, x + w, y + h,
++                         ! (x <= 0 && y <= 0 && x + w >= width && y + h >= height));
++        }
++
++      g_list_free (layers);
++    }
++
++  /*  without bbox, the boxes only serve equal spacing  */
++  if (! snap->use_bbox)
++    {
++      g_array_set_size (snap->cands[0], 0);
++      g_array_set_size (snap->cands[1], 0);
++    }
++
++  if (snap->use_canvas)
++    {
++      add_cand (snap, 0, 0,             0, height, SRC_CANVAS);
++      add_cand (snap, 0, width / 2.0,   0, height, SRC_CANVAS);
++      add_cand (snap, 0, width,         0, height, SRC_CANVAS);
++      add_cand (snap, 1, 0,             0, width,  SRC_CANVAS);
++      add_cand (snap, 1, height / 2.0,  0, width,  SRC_CANVAS);
++      add_cand (snap, 1, height,        0, width,  SRC_CANVAS);
++    }
++
++  if (snap->use_guides)
++    {
++      GList *list;
++
++      for (list = gimp_image_get_guides (image); list; list = list->next)
++        {
++          GimpGuide *guide = list->data;
++          gint       pos   = gimp_guide_get_position (guide);
++
++          if (gimp_guide_is_custom (guide) || pos < 0)
++            continue;
++
++          if (gimp_guide_get_orientation (guide) == GIMP_ORIENTATION_VERTICAL)
++            add_cand (snap, 0, pos, 0, height, SRC_GUIDE);
++          else
++            add_cand (snap, 1, pos, 0, width, SRC_GUIDE);
++        }
++    }
++
++  if (snap->use_grid)
++    {
++      GimpGrid *grid = gimp_image_get_grid (image);
++
++      if (grid)
++        {
++          gimp_grid_get_spacing (grid, &snap->grid_spacing[0],
++                                 &snap->grid_spacing[1]);
++          gimp_grid_get_offset  (grid, &snap->grid_offset[0],
++                                 &snap->grid_offset[1]);
++        }
++      else
++        {
++          snap->use_grid = FALSE;
++        }
++    }
++
++  for (axis = 0; axis < 2; axis++)
++    g_array_sort (snap->cands[axis], cand_compare);
++
++  return snap;
++}
++
++void
++chopgimp_vsnap_free (ChopGimpVSnap *snap)
++{
++  if (! snap)
++    return;
++
++  g_array_free (snap->cands[0], TRUE);
++  g_array_free (snap->cands[1], TRUE);
++  g_array_free (snap->boxes, TRUE);
++
++  g_slice_free (ChopGimpVSnap, snap);
++}
++
++void
++chopgimp_vsnap_reset (ChopGimpVSnap *snap)
++{
++  g_return_if_fail (snap != NULL);
++
++  memset (&snap->fb, 0, sizeof (snap->fb));
++}
++
++
++/*  ─── searching ────────────────────────────────────────────────────── */
++
++/*  index of the first candidate with v >= @value  */
++static guint
++lower_bound (GArray  *cands,
++             gdouble  value)
++{
++  const Cand *c  = (const Cand *) cands->data;
++  guint       lo = 0;
++  guint       hi = cands->len;
++
++  while (lo < hi)
++    {
++      guint mid = (lo + hi) / 2;
++
++      if (c[mid].v < value)
++        lo = mid + 1;
++      else
++        hi = mid;
++    }
++
++  return lo;
++}
++
++/*  the nearest target of @m on @axis within @tol: candidates, then the
++ *  grid; nodes and the grid weigh a little less than edges, so that an
++ *  edge wins a tie
++ */
++static gboolean
++nearest_target (ChopGimpVSnap *snap,
++                gint           axis,
++                gdouble        m,
++                gdouble        tol,
++                gdouble       *target,
++                gdouble       *score)
++{
++  GArray     *cands = snap->cands[axis];
++  const Cand *c     = (const Cand *) cands->data;
++  gboolean    found = FALSE;
++  gdouble     best  = tol + 1e-9;
++  guint       i;
++
++  for (i = lower_bound (cands, m - tol); i < cands->len && c[i].v <= m + tol; i++)
++    {
++      gdouble d = fabs (c[i].v - m) + (c[i].kind == SRC_NODE ? 0.01 : 0.0);
++
++      if (d < best)
++        {
++          best    = d;
++          *target = c[i].v;
++          found   = TRUE;
++        }
++    }
++
++  if (snap->use_grid && snap->grid_spacing[axis] > 0.0)
++    {
++      gdouble sp = snap->grid_spacing[axis];
++      gdouble of = snap->grid_offset[axis];
++      gdouble g  = of + RINT ((m - of) / sp) * sp;
++      gdouble d  = fabs (g - m) + 0.01;
++
++      if (d < best)
++        {
++          best    = d;
++          *target = g;
++          found   = TRUE;
++        }
++    }
++
++  *score = best;
++
++  return found;
++}
++
++static gboolean
++overlaps (gdouble a1,
++          gdouble a2,
++          gdouble b1,
++          gdouble b2)
++{
++  return a1 < b2 && b1 < a2;
++}
++
++/*  the nearest neighbour box on the low (@high FALSE) or high side of
++ *  [lo, hi] on @axis, among those overlapping [olo, ohi] on the other
++ *  axis; @slack lets a box cross a little (snapping on its way)
++ */
++static gint
++find_neighbour (ChopGimpVSnap *snap,
++                gint           axis,
++                gdouble        lo,
++                gdouble        hi,
++                gdouble        olo,
++                gdouble        ohi,
++                gboolean       high,
++                gdouble        slack,
++                gint           skip)
++{
++  const Box *boxes = (const Box *) snap->boxes->data;
++  gint       other = 1 - axis;
++  gint       found = -1;
++  gdouble    best  = G_MAXDOUBLE;
++  guint      i;
++
++  for (i = 0; i < snap->boxes->len; i++)
++    {
++      const Box *b = &boxes[i];
++      gdouble    gap;
++
++      if ((gint) i == skip ||
++          ! overlaps (b->a[other], b->b[other], olo, ohi))
++        continue;
++
++      gap = high ? b->a[axis] - hi : lo - b->b[axis];
++
++      if (gap < -slack)
++        continue;
++
++      /*  the box must really be on that side (not around the mover)  */
++      if (high ? b->b[axis] <= hi : b->a[axis] >= lo)
++        continue;
++
++      if (gap < best)
++        {
++          best  = gap;
++          found = i;
++        }
++    }
++
++  return found;
++}
++
++/*  equal spacing on @axis for the box [lo, hi] × [olo, ohi]: the best
++ *  correction within @tol and how it was found
++ */
++static EqKind
++equal_spacing (ChopGimpVSnap *snap,
++               gint           axis,
++               gdouble        lo,
++               gdouble        hi,
++               gdouble        olo,
++               gdouble        ohi,
++               gdouble        tol,
++               gdouble       *corr,
++               gdouble       *score)
++{
++  const Box *boxes = (const Box *) snap->boxes->data;
++  gint       other = 1 - axis;
++  EqKind     kind  = EQ_NONE;
++  gdouble    best  = tol + 1e-9;
++  gint       l, r;
++
++  l = find_neighbour (snap, axis, lo, hi, olo, ohi, FALSE, tol, -1);
++  r = find_neighbour (snap, axis, lo, hi, olo, ohi, TRUE,  tol, -1);
++
++  if (l >= 0 && r >= 0)
++    {
++      gdouble space = boxes[r].a[axis] - boxes[l].b[axis] - (hi - lo);
++
++      if (space >= 0)
++        {
++          gdouble c = boxes[l].b[axis] + space / 2.0 - lo;
++
++          if (fabs (c) < best)
++            {
++              best = fabs (c); *corr = c; kind = EQ_BETWEEN;
++            }
++        }
++    }
++
++  if (l >= 0)
++    {
++      const Box *L  = &boxes[l];
++      gint       ll = find_neighbour (snap, axis, L->a[axis], L->b[axis],
++                                      L->a[other], L->b[other],
++                                      FALSE, 0.0, l);
++
++      if (ll >= 0)
++        {
++          gdouble g = L->a[axis] - boxes[ll].b[axis];
++          gdouble c = L->b[axis] + g - lo;
++
++          if (g >= 0 && fabs (c) < best)
++            {
++              best = fabs (c); *corr = c; kind = EQ_AFTER_LOW;
++            }
++        }
++    }
++
++  if (r >= 0)
++    {
++      const Box *R  = &boxes[r];
++      gint       rr = find_neighbour (snap, axis, R->a[axis], R->b[axis],
++                                      R->a[other], R->b[other],
++                                      TRUE, 0.0, r);
++
++      if (rr >= 0)
++        {
++          gdouble g = boxes[rr].a[axis] - R->b[axis];
++          gdouble c = R->a[axis] - g - hi;
++
++          if (g >= 0 && fabs (c) < best)
++            {
++              best = fabs (c); *corr = c; kind = EQ_BEFORE_HIGH;
++            }
++        }
++    }
++
++  *score = best;
++
++  return kind;
++}
++
++static gdouble
++mid_overlap (gdouble a1,
++             gdouble a2,
++             gdouble b1,
++             gdouble b2)
++{
++  gdouble lo = MAX (a1, b1);
++  gdouble hi = MIN (a2, b2);
++
++  return lo <= hi ? (lo + hi) / 2.0 : (a1 + a2) / 2.0;
++}
++
++static void
++add_gap (AxisFeedback *af,
++         gdouble       a,
++         gdouble       b,
++         gdouble       at)
++{
++  if (af->n_gaps < MAX_GAPS)
++    {
++      Gap *g = &af->gaps[af->n_gaps++];
++
++      g->a = a; g->b = b; g->at = at;
++    }
++}
++
++/*  the gaps to draw for an equal spacing found on the corrected box  */
++static void
++feedback_gaps (ChopGimpVSnap *snap,
++               gint           axis,
++               EqKind         kind,
++               const Box     *box)
++{
++  AxisFeedback *af    = &snap->fb.axis[axis];
++  const Box    *boxes = (const Box *) snap->boxes->data;
++  gint          other = 1 - axis;
++  gdouble       lo    = box->a[axis], hi    = box->b[axis];
++  gdouble       olo   = box->a[other], ohi  = box->b[other];
++  gint          l, r;
++
++  l = find_neighbour (snap, axis, lo, hi, olo, ohi, FALSE, 0.5, -1);
++  r = find_neighbour (snap, axis, lo, hi, olo, ohi, TRUE,  0.5, -1);
++
++  switch (kind)
++    {
++    case EQ_BETWEEN:
++      if (l >= 0 && r >= 0)
++        {
++          add_gap (af, boxes[l].b[axis], lo,
++                   mid_overlap (olo, ohi, boxes[l].a[other], boxes[l].b[other]));
++          add_gap (af, hi, boxes[r].a[axis],
++                   mid_overlap (olo, ohi, boxes[r].a[other], boxes[r].b[other]));
++        }
++      break;
++
++    case EQ_AFTER_LOW:
++      if (l >= 0)
++        {
++          const Box *L  = &boxes[l];
++          gint       ll = find_neighbour (snap, axis, L->a[axis], L->b[axis],
++                                          L->a[other], L->b[other],
++                                          FALSE, 0.0, l);
++
++          if (ll >= 0)
++            add_gap (af, boxes[ll].b[axis], L->a[axis],
++                     mid_overlap (L->a[other], L->b[other],
++                                  boxes[ll].a[other], boxes[ll].b[other]));
++
++          add_gap (af, L->b[axis], lo,
++                   mid_overlap (olo, ohi, L->a[other], L->b[other]));
++        }
++      break;
++
++    case EQ_BEFORE_HIGH:
++      if (r >= 0)
++        {
++          const Box *R  = &boxes[r];
++          gint       rr = find_neighbour (snap, axis, R->a[axis], R->b[axis],
++                                          R->a[other], R->b[other],
++                                          TRUE, 0.0, r);
++
++          add_gap (af, hi, R->a[axis],
++                   mid_overlap (olo, ohi, R->a[other], R->b[other]));
++
++          if (rr >= 0)
++            add_gap (af, R->b[axis], boxes[rr].a[axis],
++                     mid_overlap (R->a[other], R->b[other],
++                                  boxes[rr].a[other], boxes[rr].b[other]));
++        }
++      break;
++
++    case EQ_NONE:
++      break;
++    }
++}
++
++/*  the alignment line through @v on @axis: spans the candidates there
++ *  (and [lo, hi] of the mover), × on the nodes
++ */
++static void
++feedback_line (ChopGimpVSnap *snap,
++               gint           axis,
++               gdouble        v,
++               gdouble        lo,
++               gdouble        hi,
++               gboolean       cross_mover)
++{
++  AxisFeedback *af    = &snap->fb.axis[axis];
++  GArray       *cands = snap->cands[axis];
++  const Cand   *c     = (const Cand *) cands->data;
++  gdouble       span_lo = lo, span_hi = hi;
++  gboolean      canvas_only = TRUE;
++  guint         i;
++
++  for (i = lower_bound (cands, v - 0.01); i < cands->len && c[i].v <= v + 0.01; i++)
++    {
++      if (c[i].kind == SRC_CANVAS || c[i].kind == SRC_GUIDE)
++        continue;
++
++      canvas_only = FALSE;
++      span_lo = MIN (span_lo, c[i].lo);
++      span_hi = MAX (span_hi, c[i].hi);
++
++      if (c[i].kind == SRC_NODE && af->n_crosses < MAX_CROSSES)
++        af->crosses[af->n_crosses++] = c[i].lo;
++    }
++
++  /*  a canvas edge, a guide or the grid: the line crosses the canvas  */
++  if (canvas_only)
++    {
++      gint size = axis == 0 ? gimp_image_get_height (snap->image)
++                            : gimp_image_get_width  (snap->image);
++
++      span_lo = MIN (span_lo, 0);
++      span_hi = MAX (span_hi, size);
++    }
++
++  if (cross_mover && af->n_crosses < MAX_CROSSES)
++    af->crosses[af->n_crosses++] = lo;
++
++  af->snapped = TRUE;
++  af->v       = v;
++  af->lo      = span_lo;
++  af->hi      = span_hi;
++}
++
++/*  the distance from the box to its nearest neighbour on @axis  */
++static void
++feedback_distance (ChopGimpVSnap *snap,
++                   gint           axis,
++                   const Box     *box)
++{
++  AxisFeedback *af    = &snap->fb.axis[axis];
++  const Box    *boxes = (const Box *) snap->boxes->data;
++  gint          other = 1 - axis;
++  gint          l, r, n;
++  gdouble       gl = G_MAXDOUBLE, gr = G_MAXDOUBLE;
++
++  l = find_neighbour (snap, axis, box->a[axis], box->b[axis],
++                      box->a[other], box->b[other], FALSE, 0.0, -1);
++  r = find_neighbour (snap, axis, box->a[axis], box->b[axis],
++                      box->a[other], box->b[other], TRUE, 0.0, -1);
++
++  if (l >= 0) gl = box->a[axis] - boxes[l].b[axis];
++  if (r >= 0) gr = boxes[r].a[axis] - box->b[axis];
++
++  if (l < 0 && r < 0)
++    return;
++
++  n = gl <= gr ? l : r;
++
++  af->has_dist = TRUE;
++  af->dist.at  = mid_overlap (box->a[other], box->b[other],
++                              boxes[n].a[other], boxes[n].b[other]);
++
++  if (n == l)
++    {
++      af->dist.a = boxes[l].b[axis];
++      af->dist.b = box->a[axis];
++    }
++  else
++    {
++      af->dist.a = box->b[axis];
++      af->dist.b = boxes[r].a[axis];
++    }
++
++  if (af->dist.b - af->dist.a < 0.5)
++    af->has_dist = FALSE;
++}
++
++
++/*  ─── public ───────────────────────────────────────────────────────── */
++
++gboolean
++chopgimp_vsnap_bounds (ChopGimpVSnap *snap,
++                       gdouble        x1,
++                       gdouble        y1,
++                       gdouble        x2,
++                       gdouble        y2,
++                       gdouble        tolerance,
++                       gdouble       *dx,
++                       gdouble       *dy)
++{
++  Box      in   = { { MIN (x1, x2), MIN (y1, y2) }, { MAX (x1, x2), MAX (y1, y2) } };
++  Box      out;
++  gdouble  corr[2]    = { 0.0, 0.0 };
++  gdouble  aligned[2] = { 0.0, 0.0 };  /* line position, if any */
++  gboolean align[2]   = { FALSE, FALSE };
++  EqKind   eq[2]      = { EQ_NONE, EQ_NONE };
++  gboolean matched    = FALSE;
++  gint     axis;
++
++  g_return_val_if_fail (snap != NULL, FALSE);
++
++  memset (&snap->fb, 0, sizeof (snap->fb));
++  tolerance = MAX (tolerance, 0.0);
++
++  for (axis = 0; axis < 2; axis++)
++    {
++      gdouble lo    = in.a[axis];
++      gdouble hi    = in.b[axis];
++      gdouble m[3]  = { lo, (lo + hi) / 2.0, hi };
++      gdouble best  = G_MAXDOUBLE;
++      gint    i;
++
++      for (i = 0; i < 3; i++)
++        {
++          gdouble target, score;
++
++          if (nearest_target (snap, axis, m[i], tolerance, &target, &score) &&
++              score < best)
++            {
++              best          = score;
++              corr[axis]    = target - m[i];
++              aligned[axis] = target;
++              align[axis]   = TRUE;
++            }
++        }
++
++      if (snap->use_equidistance && snap->boxes->len >= 1)
++        {
++          gdouble c, score;
++          EqKind  k = equal_spacing (snap, axis, lo, hi,
++                                     in.a[1 - axis], in.b[1 - axis],
++                                     tolerance, &c, &score);
++
++          if (k != EQ_NONE)
++            {
++              if (! align[axis] || score < best - 0.01)
++                {
++                  corr[axis]  = c;
++                  align[axis] = FALSE;
++                  eq[axis]    = k;
++                }
++              else if (fabs (c - corr[axis]) < 0.5)
++                {
++                  /*  aligned and equally spaced at once: show both  */
++                  eq[axis] = k;
++                }
++            }
++        }
++
++      if (align[axis] || eq[axis] != EQ_NONE)
++        {
++          matched = TRUE;
++        }
++      else if (snap->use_pixels)
++        {
++          corr[axis] = RINT (lo) - lo;
++        }
++    }
++
++  out.a[0] = in.a[0] + corr[0];  out.b[0] = in.b[0] + corr[0];
++  out.a[1] = in.a[1] + corr[1];  out.b[1] = in.b[1] + corr[1];
++
++  /*  the feedback, on the corrected box  */
++  snap->fb.active  = TRUE;
++  snap->fb.has_box = TRUE;
++  snap->fb.box     = out;
++
++  for (axis = 0; axis < 2; axis++)
++    {
++      gint other = 1 - axis;
++
++      if (align[axis])
++        feedback_line (snap, axis, aligned[axis],
++                       out.a[other], out.b[other], FALSE);
++
++      if (eq[axis] != EQ_NONE)
++        feedback_gaps (snap, axis, eq[axis], &out);
++      else if (snap->boxes->len && (snap->use_bbox || snap->use_equidistance))
++        feedback_distance (snap, axis, &out);
++    }
++
++  *dx = corr[0];
++  *dy = corr[1];
++
++  return matched || corr[0] != 0.0 || corr[1] != 0.0;
++}
++
++gboolean
++chopgimp_vsnap_point (ChopGimpVSnap *snap,
++                      gdouble        x,
++                      gdouble        y,
++                      gdouble        tolerance,
++                      gdouble       *sx,
++                      gdouble       *sy)
++{
++  gdouble  p[2]    = { x, y };
++  gboolean hit[2]  = { FALSE, FALSE };
++  gint     axis;
++
++  g_return_val_if_fail (snap != NULL, FALSE);
++
++  memset (&snap->fb, 0, sizeof (snap->fb));
++  tolerance = MAX (tolerance, 0.0);
++
++  for (axis = 0; axis < 2; axis++)
++    {
++      gdouble target, score;
++
++      if (nearest_target (snap, axis, p[axis], tolerance, &target, &score))
++        {
++          p[axis]   = target;
++          hit[axis] = TRUE;
++        }
++      else if (snap->use_pixels)
++        {
++          p[axis] = RINT (p[axis]);
++        }
++    }
++
++  snap->fb.active = TRUE;
++
++  for (axis = 0; axis < 2; axis++)
++    if (hit[axis])
++      feedback_line (snap, axis, p[axis], p[1 - axis], p[1 - axis], FALSE);
++
++  if (hit[0] || hit[1])
++    {
++      snap->fb.has_point = TRUE;
++      snap->fb.px        = p[0];
++      snap->fb.py        = p[1];
++    }
++
++  *sx = p[0];
++  *sy = p[1];
++
++  return hit[0] || hit[1] || p[0] != x || p[1] != y;
++}
++
++void
++chopgimp_vsnap_draw (ChopGimpVSnap *snap,
++                     GimpDrawTool  *draw_tool)
++{
++  ChopGimpVSnapItem *item;
++  const Feedback    *fb;
++
++  g_return_if_fail (snap != NULL);
++  g_return_if_fail (GIMP_IS_DRAW_TOOL (draw_tool));
++
++  fb = &snap->fb;
++
++  if (! fb->active || ! draw_tool->display)
++    return;
++
++  if (! fb->axis[0].snapped && ! fb->axis[1].snapped &&
++      ! fb->axis[0].n_gaps  && ! fb->axis[1].n_gaps  &&
++      ! fb->axis[0].has_dist && ! fb->axis[1].has_dist &&
++      ! fb->has_point)
++    return;
++
++  item = g_object_new (CHOPGIMP_TYPE_VSNAP_ITEM,
++                       "shell", gimp_display_get_shell (draw_tool->display),
++                       NULL);
++  item->fb = *fb;
++
++  gimp_draw_tool_add_item (draw_tool, GIMP_CANVAS_ITEM (item));
++  g_object_unref (item);
++}
+diff --git a/app/tools/chopgimp-vsnap.h b/app/tools/chopgimp-vsnap.h
+new file mode 100644
+index 0000000..d7b1d94
+--- /dev/null
++++ b/app/tools/chopgimp-vsnap.h
+@@ -0,0 +1,93 @@
++/* GIMP - The GNU Image Manipulation Program
++ * chopgimp-vsnap.h — ChopGimp 3.27: smart guides and snapping for the
++ * objects of a vector layer (Illustrator / Figma « repères commentés »)
++ *
++ * A ChopGimpVSnap is made when a move or a transformation starts: it
++ * collects once the things a moving object can snap to, then answers the
++ * motion events without allocating:
++ *
++ *  - with « Repères intelligents : bords et centres » (snap-to-bbox):
++ *    the edges and centres of the bounds (stroke included) of the other
++ *    visible objects of the layer, their nodes (anchor points of their
++ *    world paths, at most CHOPGIMP_VSNAP_MAX_NODES), and the edges and
++ *    centres of the other visible layers;
++ *  - with « Aligner sur les bords du canevas » (snap-to-canvas): the
++ *    canvas edges and centre;
++ *  - with « Aligner sur les guides » (snap-to-guides): the image guides;
++ *  - with « Aligner sur la grille » (snap-to-grid): the image grid;
++ *  - with « Repères intelligents : espacements égaux »
++ *    (snap-to-equidistance): equal gaps between the moving box and its
++ *    neighbours on the same row / column;
++ *  - with « Aligner sur les pixels » (snap-to-pixels, new): what did not
++ *    snap to anything lands on whole pixels.
++ *
++ * The options are those of the image's display (View menu). All the
++ * coordinates are image pixels, @tolerance too (convert the screen
++ * tolerance with the zoom: tolerance_screen / shell->scale_x).
++ *
++ * chopgimp_vsnap_draw() draws what the LAST snap call matched, in
++ * magenta: alignment lines spanning the boxes involved, × on matched
++ * points, distance labels to the nearest neighbours and equal-spacing
++ * markers.
++ *
++ * This program is free software: you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation; either version 3 of the License, or
++ * (at your option) any later version.
++ */
++
++#pragma once
++
++G_BEGIN_DECLS
++
++
++#define CHOPGIMP_VSNAP_MAX_NODES 5000
++
++
++typedef struct _ChopGimpVSnap ChopGimpVSnap;
++
++
++/*  @layer may be NULL (only layers, canvas, guides, grid); @exclude_ids:
++ *  the moving objects of @layer (their descendants and their groups are
++ *  left out too)
++ */
++ChopGimpVSnap * chopgimp_vsnap_new    (GimpImage       *image,
++                                       GimpVectorLayer *layer,
++                                       const guint     *exclude_ids,
++                                       gint             n_exclude);
++
++/*  snaps a moving rectangle: its left / centre / right against the x
++ *  candidates, its top / middle / bottom against the y candidates, each
++ *  axis on its own, and equal spacing; *dx, *dy: the correction to add
++ *  (0 when nothing snapped). TRUE when something snapped.
++ */
++gboolean        chopgimp_vsnap_bounds (ChopGimpVSnap   *snap,
++                                       gdouble          x1,
++                                       gdouble          y1,
++                                       gdouble          x2,
++                                       gdouble          y2,
++                                       gdouble          tolerance,
++                                       gdouble         *dx,
++                                       gdouble         *dy);
++
++/*  snaps a point (a node, a handle of the transformation box…); *sx,
++ *  *sy: the snapped point (x, y when nothing snapped)
++ */
++gboolean        chopgimp_vsnap_point  (ChopGimpVSnap   *snap,
++                                       gdouble          x,
++                                       gdouble          y,
++                                       gdouble          tolerance,
++                                       gdouble         *sx,
++                                       gdouble         *sy);
++
++/*  call from the tool's GimpDrawTool::draw()  */
++void            chopgimp_vsnap_draw   (ChopGimpVSnap   *snap,
++                                       GimpDrawTool    *draw_tool);
++
++/*  forgets the last match (nothing is drawn until the next snap)  */
++void            chopgimp_vsnap_reset  (ChopGimpVSnap   *snap);
++
++void            chopgimp_vsnap_free   (ChopGimpVSnap   *snap);
++
++
++G_END_DECLS
+diff --git a/app/tools/meson.build b/app/tools/meson.build
+index c6a6df4..c1e68b2 100644
+--- a/app/tools/meson.build
++++ b/app/tools/meson.build
+@@ -84,6 +84,7 @@ libapptools_sources = [
+   'chopgimp-shapetool.c',
+   'chopgimp-spothealtool.c',
+   'chopgimp-shapebuildertool.c',
++  'chopgimp-vsnap.c',
+   'gimpmybrushoptions-gui.c',
+   'gimpmybrushtool.c',
+   'gimpnpointdeformationoptions.c',
+diff --git a/app/widgets/gimphelp-ids.h b/app/widgets/gimphelp-ids.h
+index 0164c30..171a70d 100644
+--- a/app/widgets/gimphelp-ids.h
++++ b/app/widgets/gimphelp-ids.h
+@@ -124,6 +124,7 @@
+ #define GIMP_HELP_VIEW_SNAP_TO_PATH               "gimp-view-snap-to-path"
+ #define GIMP_HELP_VIEW_SNAP_TO_BBOX               "gimp-view-snap-to-bbox"
+ #define GIMP_HELP_VIEW_SNAP_TO_EQUIDISTANCE       "gimp-view-snap-to-equidistance"
++#define GIMP_HELP_VIEW_SNAP_TO_PIXELS             "gimp-view-snap-to-pixels"
+ #define GIMP_HELP_VIEW_SHOW_MENUBAR               "gimp-view-show-menubar"
+ #define GIMP_HELP_VIEW_SHOW_RULERS                "gimp-view-show-rulers"
+ #define GIMP_HELP_VIEW_SHOW_SCROLLBARS            "gimp-view-show-scrollbars"
+diff --git a/menus/image-menu.ui.in.in b/menus/image-menu.ui.in.in
+index 367d024..6ab8b50 100644
+--- a/menus/image-menu.ui.in.in
++++ b/menus/image-menu.ui.in.in
+@@ -282,6 +282,7 @@
+         <item><attribute name="action">app.view-snap-to-path</attribute></item>
+         <item><attribute name="action">app.view-snap-to-bbox</attribute></item>
+         <item><attribute name="action">app.view-snap-to-equidistance</attribute></item>
++        <item><attribute name="action">app.view-snap-to-pixels</attribute></item>
+       </section>
+       <section>
+         <submenu>
+-- 
+2.53.0
+
