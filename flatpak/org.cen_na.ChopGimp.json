@@ -933,6 +933,26 @@
             ]
         },
         {
+            "name": "potrace",
+            "config-opts": [
+                "--with-libpotrace",
+                "--disable-static"
+            ],
+            "cleanup": [
+                "/bin",
+                "/include",
+                "/share",
+                "*.la"
+            ],
+            "sources": [
+                {
+                    "type": "archive",
+                    "url": "https://potrace.sourceforge.net/download/1.16/potrace-1.16.tar.gz",
+                    "sha256": "be8248a17dedd6ccbaab2fcc45835bb0502d062e40fbded3bc56028ce5eb7acc"
+                }
+            ]
+        },
+        {
             "name": "python-ia",
             "buildsystem": "simple",
             "build-commands": [
@@ -1137,7 +1157,14 @@
                         "../patches/gimp-3.2.8/0122-ChopGimp-3.27.2-lot-V4-objects-of-vector-layers-in-a.patch",
                         "../patches/gimp-3.2.8/0123-ChopGimp-3.27.2-lot-V3-Aspect-stack-of-fills-and-str.patch",
                         "../patches/gimp-3.2.8/0124-ChopGimp-3.27.2-lot-V6-point-2-Couleurs-globales-doc.patch",
-                        "../patches/gimp-3.2.8/0125-ChopGimp-3.27.2-lot-V4-SVG-export-of-the-objects-in-.patch"
+                        "../patches/gimp-3.2.8/0125-ChopGimp-3.27.2-lot-V4-SVG-export-of-the-objects-in-.patch",
+                        "../patches/gimp-3.2.8/0126-ChopGimp-3.27.3-Red-finir-les-couleurs-keeps-its-but.patch",
+                        "../patches/gimp-3.2.8/0127-ChopGimp-3.27.3-lot-V5-chopgimp-trace.h-the-Vectoris.patch",
+                        "../patches/gimp-3.2.8/0128-ChopGimp-3.27.3-lot-V5-Vectoriser-Calque-and-Objet-V.patch",
+                        "../patches/gimp-3.2.8/0129-ChopGimp-3.27.3-lot-V5-Vectoriser-keep-the-palette-c.patch",
+                        "../patches/gimp-3.2.8/0130-ChopGimp-3.27.3-lot-V5-Vectoriser-engines-chopgimp-t.patch",
+                        "../patches/gimp-3.2.8/0131-ChopGimp-3.27.3-lot-V5-Vectoriser-dialog-palette-col.patch",
+                        "../patches/gimp-3.2.8/0132-ChopGimp-3.27.3-lot-V5-Vectoriser-preview-Contours-s.patch"
                     ]
                 }
             ],

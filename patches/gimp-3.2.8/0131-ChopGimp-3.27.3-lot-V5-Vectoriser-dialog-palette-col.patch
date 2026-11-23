@@ -1,0 +1,129 @@
+From 924fcfe46002900a7396b5c77a52bc90874eca34 Mon Sep 17 00:00:00 2001
+From: ChopGimp <mathieu.redon@proton.me>
+Date: Mon, 23 Nov 2026 21:40:09 +0100
+Subject: [PATCH 131/131] =?UTF-8?q?ChopGimp=203.27.3=20(lot=20V5):=20Vecto?=
+ =?UTF-8?q?riser=20dialog:=20palette=20colors=20given=20to=20the=20engine?=
+ =?UTF-8?q?=20(it=20owns=20them),=20=E2=9A=A0=20on=20very=20heavy=20result?=
+ =?UTF-8?q?s=20(>=20200=20000=20anchors)?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+---
+ app/dialogs/chopgimp-trace-dialog.c | 62 ++++++++++++++++++-----------
+ 1 file changed, 38 insertions(+), 24 deletions(-)
+
+diff --git a/app/dialogs/chopgimp-trace-dialog.c b/app/dialogs/chopgimp-trace-dialog.c
+index 85f49f2..32788a0 100644
+--- a/app/dialogs/chopgimp-trace-dialog.c
++++ b/app/dialogs/chopgimp-trace-dialog.c
+@@ -250,37 +250,35 @@ dialog_shell (Dialog *d)
+ 
+ /*  ─── options ↔ widgets ─────────────────────────────────────────────── */
+ 
++/*  CUSTOM palettes: the global colors of the image, or the swatches of
++ *  the active palette. Given to the engine as « custom=#rrggbb,… »: the
++ *  colors of @d->options are always owned by the engine (freed by
++ *  chopgimp_trace_options_clear() or the next from_string())
++ */
+ static void
+-custom_colors_clear (Dialog *d)
++custom_colors_add (GString   *str,
++                   GeglColor *color)
+ {
+-  for (gint i = 0; i < d->options.n_custom; i++)
+-    g_clear_object (&d->options.custom[i]);
++  guint8 rgb[3];
+ 
+-  g_clear_pointer (&d->options.custom, g_free);
+-  d->options.n_custom = 0;
++  gegl_color_get_pixel (color, babl_format ("R'G'B' u8"), rgb);
++  g_string_append_printf (str, "%s#%02x%02x%02x",
++                          str->str[strlen ("custom=")] ? "," : "",
++                          rgb[0], rgb[1], rgb[2]);
+ }
+ 
+-/*  CUSTOM palettes: the global colors of the image, or the swatches of
+- *  the active palette
+- */
+ static void
+ custom_colors_load (Dialog *d,
+                     gint    which)
+ {
+-  GPtrArray *colors = g_ptr_array_new ();
+-
+-  custom_colors_clear (d);
++  GString *str = g_string_new ("custom=");
+ 
+   if (which == PALETTE_GLOBALS)
+     {
+       GList *list = chopgimp_vcolors_list (d->image);
+ 
+       for (GList *l = list; l; l = l->next)
+-        {
+-          const ChopGimpVColor *c = l->data;
+-
+-          g_ptr_array_add (colors, gegl_color_duplicate (c->color));
+-        }
++        custom_colors_add (str, ((const ChopGimpVColor *) l->data)->color);
+ 
+       g_list_free (list);
+     }
+@@ -290,15 +288,11 @@ custom_colors_load (Dialog *d,
+ 
+       if (palette)
+         for (GList *l = gimp_palette_get_colors (palette); l; l = l->next)
+-          {
+-            GimpPaletteEntry *e = l->data;
+-
+-            g_ptr_array_add (colors, gegl_color_duplicate (e->color));
+-          }
++          custom_colors_add (str, ((GimpPaletteEntry *) l->data)->color);
+     }
+ 
+-  d->options.n_custom = colors->len;
+-  d->options.custom   = (GeglColor **) g_ptr_array_free (colors, FALSE);
++  chopgimp_trace_options_from_string (&d->options, str->str);
++  g_string_free (str, TRUE);
+ }
+ 
+ static void
+@@ -514,6 +508,27 @@ stats_update (Dialog *d)
+                             d->result->n_anchors);
+ 
+   gtk_label_set_text (GTK_LABEL (d->stats), text);
++
++  /*  a photo traced at high fidelity can make hundreds of thousands of
++   *  anchors: a very heavy layer, slow to draw and to save
++   */
++  if (d->result && d->result->n_anchors > 200000)
++    {
++      gchar *heavy;
++
++      gtk_style_context_remove_class (gtk_widget_get_style_context (d->stats), "dim-label");
++      gimp_help_set_help_data (d->stats,
++                               _("Résultat très lourd : baissez « Chemins », le nombre de "
++                                 "couleurs, ou augmentez « Bruit »"), NULL);
++      heavy = g_strconcat ("⚠ ", text, NULL);
++      gtk_label_set_text (GTK_LABEL (d->stats), heavy);
++      g_free (heavy);
++    }
++  else
++    {
++      gtk_style_context_add_class (gtk_widget_get_style_context (d->stats), "dim-label");
++      gimp_help_set_help_data (d->stats, NULL, NULL);
++    }
+   g_free (text);
+ }
+ 
+@@ -911,7 +926,6 @@ dialog_free (Dialog *d)
+   g_clear_object (&d->cancellable);
+   g_clear_pointer (&d->result, chopgimp_trace_result_free);
+   chopgimp_trace_source_free (d->source);
+-  custom_colors_clear (d);
+   chopgimp_trace_options_clear (&d->options);
+   g_object_unref (d->drawable);
+   g_object_unref (d->image);
+-- 
+2.53.0
+

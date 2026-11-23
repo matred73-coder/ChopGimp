@@ -1,0 +1,2656 @@
+From d6c415eb8bd65aad47309b8ccaf1c81af79e287d Mon Sep 17 00:00:00 2001
+From: ChopGimp <mathieu.redon@proton.me>
+Date: Mon, 23 Nov 2026 21:35:46 +0100
+Subject: [PATCH 128/131] =?UTF-8?q?ChopGimp=203.27.3=20(lot=20V5):=20?=
+ =?UTF-8?q?=C2=AB=20Vectoriser=E2=80=A6=20=C2=BB=20(Calque=20and=20Objet?=
+ =?UTF-8?q?=20>=20Vectorisation):=20Image=20Trace=20dialog=20with=20button?=
+ =?UTF-8?q?s=20at=20the=20bottom=20(presets,=20view=20result=20/=20outline?=
+ =?UTF-8?q?s=20/=20outlines=20+=20source,=20mode,=20palette=20auto=20/=20l?=
+ =?UTF-8?q?imited=20/=20document=20global=20colors=20/=20active=20palette,?=
+ =?UTF-8?q?=20colors=20/=20fidelity=20/=20threshold;=20=C2=AB=20Avanc?=
+ =?UTF-8?q?=C3=A9=20=C2=BB:=20paths,=20corners,=20noise,=20smoothing,=20ab?=
+ =?UTF-8?q?utting=20/=20overlapping,=20fills=20/=20strokes=20with=20max=20?=
+ =?UTF-8?q?width=20and=20min=20length,=20snap=20curves=20to=20lines,=20ign?=
+ =?UTF-8?q?ore=20white=20/=20transparency,=20invert,=20group=20by=20color,?=
+ =?UTF-8?q?=20engine),=20live=20vector=20preview=20on=20the=20canvas=20(Ch?=
+ =?UTF-8?q?opGimpCanvasTrace)=20traced=20in=20a=20GTask=20thread=20250=20m?=
+ =?UTF-8?q?s=20after=20the=20last=20change,=20previous=20run=20cancelled,?=
+ =?UTF-8?q?=20progress=20bar=20and=20=C2=AB=20Arr=C3=AAter=20=C2=BB=20for?=
+ =?UTF-8?q?=20long=20runs,=20selection=20only;=20result:=20a=20new=20vecto?=
+ =?UTF-8?q?r=20layer=20above=20the=20source=20(one=20object=20per=20shape,?=
+ =?UTF-8?q?=20grouped=20by=20color,=20source=20hidden),=20one=20undo=20ste?=
+ =?UTF-8?q?p;=20=C2=AB=20vectorisation=20dynamique=20=C2=BB=20(lot=20V6=20?=
+ =?UTF-8?q?point=204):=20parasite=20chopgimp-trace=20(options,=20traced=20?=
+ =?UTF-8?q?area,=20objects=20checksum,=20PNG=20of=20the=20source=20with=20?=
+ =?UTF-8?q?the=20selection=20in=20its=20alpha)=20kept=20with=20the=20layer?=
+ =?UTF-8?q?,=20=C2=AB=20Options=20de=20vectorisation=E2=80=A6=20=C2=BB=20r?=
+ =?UTF-8?q?e-traces=20in=20place=20(warns=20when=20the=20objects=20were=20?=
+ =?UTF-8?q?edited=20since),=20=C2=AB=20D=C3=A9composer=20=C2=BB=20drops=20?=
+ =?UTF-8?q?it;=20=C2=AB=20Vectorisation=E2=80=A6=20=C2=BB=20button=20in=20?=
+ =?UTF-8?q?the=20object=20options=20bar=20of=20a=20live=20trace;=20PDB=20c?=
+ =?UTF-8?q?hopgimp-image-trace=20and=20chopgimp-image-trace-command=20(opt?=
+ =?UTF-8?q?ions,=20edited,=20expand,=20retrace);=20hidden=20with=20CHOPGIM?=
+ =?UTF-8?q?P=5FNO=5FVOBJECTS=3D1?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+---
+ app/actions/layers-actions.c          |   50 +-
+ app/actions/vector-objects-commands.c |   51 +
+ app/actions/vector-objects-commands.h |    6 +
+ app/core/chopgimp-trace-layer.c       |  521 +++++++++++
+ app/core/chopgimp-trace-layer.h       |   96 ++
+ app/core/meson.build                  |    1 +
+ app/dialogs/chopgimp-trace-dialog.c   | 1243 +++++++++++++++++++++++++
+ app/dialogs/chopgimp-trace-dialog.h   |   21 +
+ app/dialogs/meson.build               |    1 +
+ app/display/chopgimp-canvastrace.c    |  128 +++
+ app/display/chopgimp-canvastrace.h    |   44 +
+ app/display/chopgimp-vobjectbar.c     |   24 +
+ app/display/meson.build               |    1 +
+ app/pdb/chopgimp-cmds.c               |  215 +++++
+ 14 files changed, 2401 insertions(+), 1 deletion(-)
+ create mode 100644 app/core/chopgimp-trace-layer.c
+ create mode 100644 app/core/chopgimp-trace-layer.h
+ create mode 100644 app/dialogs/chopgimp-trace-dialog.c
+ create mode 100644 app/dialogs/chopgimp-trace-dialog.h
+ create mode 100644 app/display/chopgimp-canvastrace.c
+ create mode 100644 app/display/chopgimp-canvastrace.h
+
+diff --git a/app/actions/layers-actions.c b/app/actions/layers-actions.c
+index cdd1401..b86bec7 100644
+--- a/app/actions/layers-actions.c
++++ b/app/actions/layers-actions.c
+@@ -35,6 +35,7 @@
+ 
+ #include "text/gimptextlayer.h"
+ 
++#include "core/chopgimp-trace-layer.h"
+ #include "path/gimpvectorlayer.h"
+ #include "path/chopgimp-vobject.h"
+ #include "path/chopgimp-vobject-ops.h"
+@@ -405,6 +406,27 @@ static const GimpActionEntry layers_actions[] =
+     vector_objects_recolor_cmd_callback,
+     NULL },
+ 
++  /*  3.27.3 (lot V5, lot V6 point 4): « Vectoriser »  */
++  { "layers-image-trace", GIMP_ICON_PATH,
++    "Vectoriser…", NULL, { NULL },
++    "Transformer le calque (ou la sélection) en objets vectoriels : préréglages "
++    "comme Illustrator, aperçu sur le canevas, vectorisation dynamique",
++    vector_objects_image_trace_cmd_callback,
++    NULL },
++
++  { "layers-image-trace-options", NULL,
++    "Options de vectorisation…", NULL, { NULL },
++    "Changer les réglages de la vectorisation dynamique du calque (il est revectorisé)",
++    vector_objects_image_trace_cmd_callback,
++    NULL },
++
++  { "layers-image-trace-expand", NULL,
++    "Décomposer la vectorisation", NULL, { NULL },
++    "La vectorisation dynamique devient des objets ordinaires (l'image source "
++    "et les réglages sont oubliés)",
++    vector_objects_image_trace_expand_cmd_callback,
++    NULL },
++
+   { "layers-vobjects-select-all", NULL,
+     "Sélectionner tous les objets", NULL, { NULL },
+     "Sélectionner tous les objets du calque vectoriel (ou du groupe ouvert)",
+@@ -1078,7 +1100,13 @@ layers_actions_setup (GimpActionGroup *group)
+ 
+   /*  ChopGimp 3.27.2: « Redéfinir les couleurs » only with the objects  */
+   if (! chopgimp_vobjects_enabled ())
+-    gimp_action_group_set_action_visible (group, "layers-vobjects-recolor", FALSE);
++    {
++      gimp_action_group_set_action_visible (group, "layers-vobjects-recolor", FALSE);
++      /*  3.27.3: « Vectoriser » makes objects  */
++      gimp_action_group_set_action_visible (group, "layers-image-trace", FALSE);
++      gimp_action_group_set_action_visible (group, "layers-image-trace-options", FALSE);
++      gimp_action_group_set_action_visible (group, "layers-image-trace-expand", FALSE);
++    }
+ 
+   gimp_action_group_add_enum_actions (group, "layers-action",
+                                       layers_color_tag_actions,
+@@ -1474,6 +1502,26 @@ layers_actions_update (GimpActionGroup *group,
+           }
+ 
+     SET_SENSITIVE ("layers-vobjects-merge",     n_vector >= 2);
++
++    /*  3.27.3: « Vectoriser » on one layer with pixels; its options on a
++     *  live trace; « Décomposer » on the selected live traces
++     */
++    {
++      gint n_live = 0;
++
++      for (iter = layers; iter; iter = iter->next)
++        if (chopgimp_trace_layer_is_live (iter->data))
++          n_live++;
++
++      SET_SENSITIVE ("layers-image-trace",
++                     image && !fs && !ac && chopgimp_vobjects_enabled () &&
++                     n_selected_layers == 1 && layer &&
++                     ! gimp_viewable_get_children (GIMP_VIEWABLE (layer)));
++      SET_SENSITIVE ("layers-image-trace-options",
++                     image && !fs && !ac && n_selected_layers == 1 && n_live == 1);
++      SET_SENSITIVE ("layers-image-trace-expand",
++                     image && !fs && !ac && n_live > 0);
++    }
+     SET_SENSITIVE ("layers-vobjects-recolor",   image && !fs && !ac &&
+                                                 chopgimp_vobjects_enabled ());
+ 
+diff --git a/app/actions/vector-objects-commands.c b/app/actions/vector-objects-commands.c
+index b2e71e9..ab63743 100644
+--- a/app/actions/vector-objects-commands.c
++++ b/app/actions/vector-objects-commands.c
+@@ -37,6 +37,12 @@
+ #include "tools/chopgimp-vobjecttool.h"
+ 
+ #include "dialogs/chopgimp-recolor-dialog.h"
++#include "dialogs/chopgimp-trace-dialog.h"
++
++#include "core/gimpimage-undo.h"
++#include "core/chopgimp-trace-layer.h"
++
++#include "display/gimpdisplay.h"
+ 
+ #include "actions.h"
+ #include "vector-objects-commands.h"
+@@ -183,3 +189,48 @@ vector_objects_recolor_cmd_callback (GimpAction *action,
+ 
+   chopgimp_recolor_dialog_show (image, action_data_get_context (data), widget);
+ }
++
++/*  3.27.3 (lot V5, lot V6 point 4): « Vectoriser… » on the selected layer;
++ *  on a live trace, its options (it is re-traced in place)
++ */
++void
++vector_objects_image_trace_cmd_callback (GimpAction *action,
++                                         GVariant   *value,
++                                         gpointer    data)
++{
++  GimpImage *image;
++  GtkWidget *widget;
++  GList     *layers;
++  return_if_no_image (image, data);
++  return_if_no_widget (widget, data);
++
++  layers = gimp_image_get_selected_layers (image);
++  if (g_list_length (layers) != 1)
++    return;
++
++  chopgimp_trace_dialog_show (image, GIMP_DRAWABLE (layers->data),
++                              action_data_get_display (data),
++                              action_data_get_context (data), widget);
++}
++
++void
++vector_objects_image_trace_expand_cmd_callback (GimpAction *action,
++                                                GVariant   *value,
++                                                gpointer    data)
++{
++  GimpImage *image;
++  GList     *layers;
++  return_if_no_image (image, data);
++
++  layers = gimp_image_get_selected_layers (image);
++
++  gimp_image_undo_group_start (image, GIMP_UNDO_GROUP_ITEM_PROPERTIES,
++                               _("Décomposer la vectorisation"));
++
++  for (GList *l = layers; l; l = l->next)
++    if (chopgimp_trace_layer_is_live (l->data))
++      chopgimp_trace_layer_expand (l->data, TRUE);
++
++  gimp_image_undo_group_end (image);
++  gimp_image_flush (image);
++}
+diff --git a/app/actions/vector-objects-commands.h b/app/actions/vector-objects-commands.h
+index ef69fbc..1092eca 100644
+--- a/app/actions/vector-objects-commands.h
++++ b/app/actions/vector-objects-commands.h
+@@ -62,6 +62,12 @@ void   vector_objects_clip_release_cmd_callback (GimpAction *action,
+ void   vector_objects_pathfinder_cmd_callback   (GimpAction *action,
+                                                  GVariant   *value,
+                                                  gpointer    data);
++void   vector_objects_image_trace_cmd_callback (GimpAction *action,
++                                                GVariant   *value,
++                                                gpointer    data);
++void   vector_objects_image_trace_expand_cmd_callback (GimpAction *action,
++                                                       GVariant   *value,
++                                                       gpointer    data);
+ void   vector_objects_recolor_cmd_callback (GimpAction *action,
+                                             GVariant   *value,
+                                             gpointer    data);
+diff --git a/app/core/chopgimp-trace-layer.c b/app/core/chopgimp-trace-layer.c
+new file mode 100644
+index 0000000..5f9e457
+--- /dev/null
++++ b/app/core/chopgimp-trace-layer.c
+@@ -0,0 +1,521 @@
++/* GIMP - The GNU Image Manipulation Program
++ * chopgimp-trace-layer.c — ChopGimp 3.27.3 (lot V5, lot V6 point 4):
++ * « Vectoriser » into a vector layer, live traces (see the header)
++ *
++ * This program is free software: you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation; either version 3 of the License, or
++ * (at your option) any later version.
++ */
++
++#include "config.h"
++
++#include <stdlib.h>
++#include <string.h>
++
++#include <gdk-pixbuf/gdk-pixbuf.h>
++#include <gegl.h>
++
++#include "libgimpbase/gimpbase.h"
++
++#include "core-types.h"
++
++#include "gimpchannel.h"
++#include "gimpcontext.h"
++#include "gimpdrawable.h"
++#include "gimpimage.h"
++#include "gimpimage-undo.h"
++#include "gimpitem.h"
++#include "gimplayer.h"
++#include "gimpprogress.h"
++
++#include "path/gimpbezierstroke.h"
++#include "path/gimppath.h"
++#include "path/gimpvectorlayer.h"
++#include "path/chopgimp-vobject.h"
++
++#include "chopgimp-trace-layer.h"
++
++#include "gimp-intl.h"
++
++
++/*  ─── sources ───────────────────────────────────────────────────────── */
++
++ChopGimpTraceSource *
++chopgimp_trace_source_new (GimpDrawable *drawable,
++                           gboolean      selection_only)
++{
++  GimpItem            *item  = GIMP_ITEM (drawable);
++  GimpImage           *image = gimp_item_get_image (item);
++  GimpChannel         *mask  = gimp_image_get_mask (image);
++  ChopGimpTraceSource *source;
++  GeglRectangle        rect;
++  gint                 off_x, off_y;
++  gboolean             use_mask = FALSE;
++  guchar              *pixels;
++
++  gimp_item_get_offset (item, &off_x, &off_y);
++
++  rect.x      = off_x;
++  rect.y      = off_y;
++  rect.width  = gimp_item_get_width  (item);
++  rect.height = gimp_item_get_height (item);
++
++  if (selection_only && mask && ! gimp_channel_is_empty (mask))
++    {
++      gint x, y, w, h;
++
++      if (gimp_item_bounds (GIMP_ITEM (mask), &x, &y, &w, &h) &&
++          gegl_rectangle_intersect (&rect, &rect, GEGL_RECTANGLE (x, y, w, h)))
++        use_mask = TRUE;
++      else
++        return NULL;
++    }
++
++  if (rect.width < 1 || rect.height < 1)
++    return NULL;
++
++  pixels = g_malloc ((gsize) rect.width * rect.height * 4);
++
++  gegl_buffer_get (gimp_drawable_get_buffer (drawable),
++                   GEGL_RECTANGLE (rect.x - off_x, rect.y - off_y,
++                                   rect.width, rect.height),
++                   1.0, babl_format ("R'G'B'A u8"), pixels,
++                   GEGL_AUTO_ROWSTRIDE, GEGL_ABYSS_NONE);
++
++  if (use_mask)
++    {
++      guchar *m = g_malloc ((gsize) rect.width * rect.height);
++
++      gegl_buffer_get (gimp_drawable_get_buffer (GIMP_DRAWABLE (mask)), &rect,
++                       1.0, babl_format ("Y u8"), m,
++                       GEGL_AUTO_ROWSTRIDE, GEGL_ABYSS_NONE);
++
++      for (gsize i = 0; i < (gsize) rect.width * rect.height; i++)
++        pixels[i * 4 + 3] = (pixels[i * 4 + 3] * m[i] + 127) / 255;
++
++      g_free (m);
++    }
++
++  source         = g_new0 (ChopGimpTraceSource, 1);
++  source->rect   = rect;
++  source->buffer = gegl_buffer_new (&rect, babl_format ("R'G'B'A u8"));
++
++  gegl_buffer_set (source->buffer, &rect, 0, babl_format ("R'G'B'A u8"),
++                   pixels, GEGL_AUTO_ROWSTRIDE);
++  g_free (pixels);
++
++  return source;
++}
++
++void
++chopgimp_trace_source_free (ChopGimpTraceSource *source)
++{
++  if (source)
++    {
++      g_clear_object (&source->buffer);
++      g_free (source);
++    }
++}
++
++static void
++trace_progress (gdouble  fraction,
++                gpointer data)
++{
++  if (data)
++    gimp_progress_set_value (GIMP_PROGRESS (data), fraction);
++}
++
++ChopGimpTraceResult *
++chopgimp_trace_source_trace (ChopGimpTraceSource        *source,
++                             const ChopGimpTraceOptions *options,
++                             GimpProgress               *progress,
++                             GError                    **error)
++{
++  ChopGimpTraceResult *result;
++
++  g_return_val_if_fail (source != NULL, NULL);
++
++  if (progress)
++    gimp_progress_start (progress, FALSE, _("Vectorisation"));
++
++  result = chopgimp_trace_run (source->buffer, &source->rect, NULL, options,
++                               NULL, trace_progress, progress, error);
++
++  if (progress)
++    gimp_progress_end (progress);
++
++  return result;
++}
++
++
++/*  ─── the parasite ──────────────────────────────────────────────────── */
++
++static gchar *
++objects_sum (GimpVectorLayer *layer)
++{
++  gchar *xml = chopgimp_vlayer_get_xml (layer);
++  gchar *sum = g_compute_checksum_for_string (G_CHECKSUM_SHA1, xml ? xml : "", -1);
++
++  g_free (xml);
++
++  return sum;
++}
++
++static gboolean
++attach_parasite (GimpVectorLayer            *layer,
++                 ChopGimpTraceSource        *source,
++                 const ChopGimpTraceOptions *options,
++                 gboolean                    flat)
++{
++  const GeglRectangle *r = &source->rect;
++  GdkPixbuf           *pixbuf;
++  gchar               *png  = NULL;
++  gsize                size = 0;
++  gchar               *opts;
++  gchar               *sum;
++  GString             *data;
++  GimpParasite        *parasite;
++
++  pixbuf = gdk_pixbuf_new (GDK_COLORSPACE_RGB, TRUE, 8, r->width, r->height);
++  gegl_buffer_get (source->buffer, r, 1.0, babl_format ("R'G'B'A u8"),
++                   gdk_pixbuf_get_pixels (pixbuf),
++                   gdk_pixbuf_get_rowstride (pixbuf), GEGL_ABYSS_NONE);
++
++  if (! gdk_pixbuf_save_to_buffer (pixbuf, &png, &size, "png", NULL,
++                                   "compression", "6", NULL))
++    {
++      g_object_unref (pixbuf);
++      return FALSE;
++    }
++
++  g_object_unref (pixbuf);
++
++  opts = chopgimp_trace_options_to_string (options);
++  sum  = objects_sum (layer);
++
++  data = g_string_new ("chopgimp-trace 1\n");
++  g_string_append_printf (data, "x=%d\ny=%d\nw=%d\nh=%d\nflat=%d\nsum=%s\noptions=%s\n\n",
++                          r->x, r->y, r->width, r->height, flat ? 1 : 0, sum, opts);
++  g_string_append_len (data, png, size);
++
++  parasite = gimp_parasite_new (CHOPGIMP_TRACE_PARASITE,
++                                GIMP_PARASITE_PERSISTENT | GIMP_PARASITE_UNDOABLE,
++                                data->len, data->str);
++  gimp_item_parasite_attach (GIMP_ITEM (layer), parasite, TRUE);
++  gimp_parasite_free (parasite);
++
++  g_string_free (data, TRUE);
++  g_free (png);
++  g_free (opts);
++  g_free (sum);
++
++  return TRUE;
++}
++
++/*  the header lines of the parasite (key → value) and where the PNG starts  */
++static GHashTable *
++parse_header (const GimpParasite *parasite,
++              const guchar      **png,
++              gsize              *png_size)
++{
++  guint32       size = 0;
++  const gchar  *data = gimp_parasite_get_data (parasite, &size);
++  const gchar  *end;
++  GHashTable   *keys;
++  gchar       **lines;
++
++  if (! data || size < 16 || strncmp (data, "chopgimp-trace 1\n", 17))
++    return NULL;
++
++  end = g_strstr_len (data, size, "\n\n");
++  if (! end)
++    return NULL;
++
++  keys  = g_hash_table_new_full (g_str_hash, g_str_equal, g_free, g_free);
++  {
++    gchar *head = g_strndup (data, end - data);
++
++    lines = g_strsplit (head, "\n", -1);
++    g_free (head);
++  }
++
++  for (gint i = 1; lines[i]; i++)
++    {
++      gchar *eq = strchr (lines[i], '=');
++
++      if (eq)
++        g_hash_table_insert (keys, g_strndup (lines[i], eq - lines[i]),
++                             g_strdup (eq + 1));
++    }
++
++  g_strfreev (lines);
++
++  *png      = (const guchar *) end + 2;
++  *png_size = size - (end + 2 - data);
++
++  return keys;
++}
++
++static gint
++key_int (GHashTable  *keys,
++         const gchar *key)
++{
++  const gchar *v = g_hash_table_lookup (keys, key);
++
++  return v ? atoi (v) : 0;
++}
++
++
++/*  ─── live traces ───────────────────────────────────────────────────── */
++
++gboolean
++chopgimp_trace_layer_is_live (GimpItem *item)
++{
++  return (GIMP_IS_VECTOR_LAYER (item) &&
++          gimp_item_is_vector_layer (item) &&
++          gimp_item_parasite_find (item, CHOPGIMP_TRACE_PARASITE) != NULL);
++}
++
++gboolean
++chopgimp_trace_layer_get (GimpVectorLayer       *layer,
++                          ChopGimpTraceSource  **source,
++                          ChopGimpTraceOptions  *options,
++                          gboolean              *flat)
++{
++  const GimpParasite *parasite;
++  GHashTable         *keys;
++  const guchar       *png;
++  gsize               png_size;
++  gboolean            ok = FALSE;
++
++  if (! chopgimp_trace_layer_is_live (GIMP_ITEM (layer)))
++    return FALSE;
++
++  parasite = gimp_item_parasite_find (GIMP_ITEM (layer), CHOPGIMP_TRACE_PARASITE);
++  keys     = parse_header (parasite, &png, &png_size);
++  if (! keys)
++    return FALSE;
++
++  if (options)
++    chopgimp_trace_options_from_string (options, g_hash_table_lookup (keys, "options"));
++
++  if (flat)
++    *flat = key_int (keys, "flat") != 0;
++
++  if (! source)
++    {
++      ok = TRUE;
++    }
++  else
++    {
++      GInputStream *stream = g_memory_input_stream_new_from_data (png, png_size, NULL);
++      GdkPixbuf    *pixbuf = gdk_pixbuf_new_from_stream (stream, NULL, NULL);
++      GeglRectangle rect   = { key_int (keys, "x"), key_int (keys, "y"),
++                               key_int (keys, "w"), key_int (keys, "h") };
++
++      g_object_unref (stream);
++
++      if (pixbuf &&
++          gdk_pixbuf_get_width  (pixbuf) == rect.width  &&
++          gdk_pixbuf_get_height (pixbuf) == rect.height &&
++          gdk_pixbuf_get_n_channels (pixbuf) == 4)
++        {
++          ChopGimpTraceSource *s = g_new0 (ChopGimpTraceSource, 1);
++
++          s->rect   = rect;
++          s->buffer = gegl_buffer_new (&rect, babl_format ("R'G'B'A u8"));
++          gegl_buffer_set (s->buffer, &rect, 0, babl_format ("R'G'B'A u8"),
++                           gdk_pixbuf_get_pixels (pixbuf),
++                           gdk_pixbuf_get_rowstride (pixbuf));
++          *source = s;
++          ok      = TRUE;
++        }
++
++      g_clear_object (&pixbuf);
++    }
++
++  g_hash_table_unref (keys);
++
++  return ok;
++}
++
++gboolean
++chopgimp_trace_layer_is_edited (GimpVectorLayer *layer)
++{
++  const GimpParasite *parasite;
++  GHashTable         *keys;
++  const guchar       *png;
++  gsize               png_size;
++  gchar              *sum;
++  gboolean            edited;
++
++  if (! chopgimp_trace_layer_is_live (GIMP_ITEM (layer)))
++    return FALSE;
++
++  parasite = gimp_item_parasite_find (GIMP_ITEM (layer), CHOPGIMP_TRACE_PARASITE);
++  keys     = parse_header (parasite, &png, &png_size);
++  if (! keys)
++    return FALSE;
++
++  sum    = objects_sum (layer);
++  edited = g_strcmp0 (sum, g_hash_table_lookup (keys, "sum")) != 0;
++
++  g_free (sum);
++  g_hash_table_unref (keys);
++
++  return edited;
++}
++
++static GimpPath *
++placeholder_path (GimpImage           *image,
++                  const gchar         *name,
++                  const GeglRectangle *r)
++{
++  GimpPath   *path = gimp_path_new (image, name);
++  GimpCoords  c    = GIMP_COORDS_DEFAULT_VALUES;
++  GimpStroke *stroke;
++
++  c.x = r->x;
++  c.y = r->y;
++  stroke = gimp_bezier_stroke_new_moveto (&c);
++  c.x = r->x + r->width;
++  gimp_bezier_stroke_lineto (stroke, &c);
++  c.y = r->y + r->height;
++  gimp_bezier_stroke_lineto (stroke, &c);
++  c.x = r->x;
++  gimp_bezier_stroke_lineto (stroke, &c);
++  gimp_stroke_close (stroke);
++
++  gimp_path_stroke_add (path, stroke);
++  g_object_unref (stroke);
++
++  return path;
++}
++
++GimpVectorLayer *
++chopgimp_trace_layer_new (GimpImage                  *image,
++                          GimpLayer                  *above,
++                          const ChopGimpTraceResult  *result,
++                          ChopGimpTraceSource        *source,
++                          const ChopGimpTraceOptions *options,
++                          gboolean                    flat,
++                          gboolean                    hide_above,
++                          GimpContext                *context)
++{
++  GimpVectorLayer *layer;
++  GimpPath        *path;
++  GimpLayer       *parent   = NULL;
++  gint             position = 0;
++  gchar           *name;
++  gchar           *xml;
++  GeglRectangle    rect;
++
++  g_return_val_if_fail (GIMP_IS_IMAGE (image), NULL);
++  g_return_val_if_fail (result != NULL, NULL);
++
++  if (! chopgimp_vobjects_enabled () || ! result->shapes || result->shapes->len == 0)
++    return NULL;
++
++  xml = chopgimp_trace_result_to_xml (result, flat);
++  if (! xml)
++    return NULL;
++
++  if (above)
++    {
++      parent   = gimp_layer_get_parent (above);
++      position = gimp_item_get_index (GIMP_ITEM (above));
++      name     = g_strdup_printf (_("%s vectorisé"),
++                                  gimp_object_get_name (above));
++    }
++  else
++    {
++      name = g_strdup (_("Vectorisation"));
++    }
++
++  rect = (GeglRectangle) { result->offset_x, result->offset_y,
++                           MAX (1, result->width), MAX (1, result->height) };
++
++  gimp_image_undo_group_start (image, GIMP_UNDO_GROUP_LAYER_ADD, _("Vectoriser"));
++
++  path = placeholder_path (image, name, &rect);
++  gimp_image_add_path (image, path, GIMP_IMAGE_ACTIVE_PARENT, -1, TRUE);
++
++  layer = gimp_vector_layer_new (image, path, context);
++  gimp_object_set_name (GIMP_OBJECT (layer), name);
++  gimp_image_add_layer (image, GIMP_LAYER (layer), parent, position, TRUE);
++
++  if (! chopgimp_vlayer_set_xml (layer, xml, TRUE))
++    {
++      gimp_image_remove_layer (image, GIMP_LAYER (layer), TRUE, NULL);
++      gimp_image_remove_path (image, path, TRUE, NULL);
++      layer = NULL;
++    }
++  else
++    {
++      if (source)
++        attach_parasite (layer, source, options, flat);
++
++      if (above && hide_above)
++        gimp_item_set_visible (GIMP_ITEM (above), FALSE, TRUE);
++
++      gimp_image_set_selected_layers (image, g_list_prepend (NULL, layer));
++    }
++
++  gimp_image_undo_group_end (image);
++
++  g_free (name);
++  g_free (xml);
++
++  return layer;
++}
++
++gboolean
++chopgimp_trace_layer_update (GimpVectorLayer            *layer,
++                             const ChopGimpTraceResult  *result,
++                             ChopGimpTraceSource        *source,
++                             const ChopGimpTraceOptions *options,
++                             gboolean                    flat)
++{
++  GimpImage *image;
++  gchar     *xml;
++  gboolean   ok;
++
++  g_return_val_if_fail (GIMP_IS_VECTOR_LAYER (layer), FALSE);
++  g_return_val_if_fail (result != NULL, FALSE);
++
++  if (! result->shapes || result->shapes->len == 0)
++    return FALSE;
++
++  xml = chopgimp_trace_result_to_xml (result, flat);
++  if (! xml)
++    return FALSE;
++
++  image = gimp_item_get_image (GIMP_ITEM (layer));
++
++  gimp_image_undo_group_start (image, GIMP_UNDO_GROUP_ITEM_PROPERTIES,
++                               _("Options de vectorisation"));
++
++  ok = chopgimp_vlayer_set_xml (layer, xml, TRUE);
++
++  if (ok && source)
++    attach_parasite (layer, source, options, flat);
++
++  gimp_image_undo_group_end (image);
++
++  g_free (xml);
++
++  return ok;
++}
++
++gboolean
++chopgimp_trace_layer_expand (GimpVectorLayer *layer,
++                             gboolean         push_undo)
++{
++  if (! chopgimp_trace_layer_is_live (GIMP_ITEM (layer)))
++    return FALSE;
++
++  gimp_item_parasite_detach (GIMP_ITEM (layer), CHOPGIMP_TRACE_PARASITE, push_undo);
++
++  return TRUE;
++}
+diff --git a/app/core/chopgimp-trace-layer.h b/app/core/chopgimp-trace-layer.h
+new file mode 100644
+index 0000000..34579c1
+--- /dev/null
++++ b/app/core/chopgimp-trace-layer.h
+@@ -0,0 +1,96 @@
++/* GIMP - The GNU Image Manipulation Program
++ * chopgimp-trace-layer.h — ChopGimp 3.27.3 (lot V5, lot V6 point 4):
++ * « Vectoriser » into a vector layer, and the « vectorisation dynamique »
++ * (live trace) kept on that layer.
++ *
++ * A live trace is a vector layer with the item parasite « chopgimp-trace »
++ * (persistent, undoable, copied with the layer):
++ *
++ *     "chopgimp-trace 1\n"
++ *     "x=<int>\ny=<int>\nw=<int>\nh=<int>\n"      the traced area (image px)
++ *     "flat=0|1\n"                                 no groups by color
++ *     "sum=<sha1>\n"                               of the objects as traced
++ *     "options=<chopgimp_trace_options_to_string>\n"
++ *     "\n"                                         end of the header, then
++ *     PNG                                          the source pixels (the
++ *                                                  selection, if any, is
++ *                                                  in their alpha)
++ *
++ * Like Illustrator, the trace can be re-adjusted (« Options de
++ * vectorisation… ») until it is decomposed (« Décomposer »: the parasite
++ * goes, the objects stay). Editing the objects of a live trace does not
++ * decompose it: the dialog then warns that re-tracing replaces those
++ * edits (the objects no longer match « sum »).
++ *
++ * This program is free software: you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation; either version 3 of the License, or
++ * (at your option) any later version.
++ */
++
++#pragma once
++
++#include "path/chopgimp-trace.h"
++
++
++#define CHOPGIMP_TRACE_PARASITE "chopgimp-trace"
++
++
++typedef struct
++{
++  GeglBuffer    *buffer;    /* R'G'B'A u8, extent == @rect (image coords) */
++  GeglRectangle  rect;
++} ChopGimpTraceSource;
++
++
++/*  the pixels of @drawable (image coordinates), only inside the selection
++ *  when @selection_only and the image has one; NULL when empty
++ */
++ChopGimpTraceSource * chopgimp_trace_source_new      (GimpDrawable          *drawable,
++                                                      gboolean               selection_only);
++void                  chopgimp_trace_source_free     (ChopGimpTraceSource   *source);
++
++/*  traces @source (synchronous; the dialog runs chopgimp_trace_run()
++ *  itself in a thread)
++ */
++ChopGimpTraceResult * chopgimp_trace_source_trace    (ChopGimpTraceSource   *source,
++                                                      const ChopGimpTraceOptions *options,
++                                                      GimpProgress          *progress,
++                                                      GError               **error);
++
++
++/*  ─── live traces ───────────────────────────────────────────────────── */
++
++gboolean              chopgimp_trace_layer_is_live   (GimpItem              *item);
++/*  the source and options of a live trace (FALSE: not one, or damaged)  */
++gboolean              chopgimp_trace_layer_get       (GimpVectorLayer       *layer,
++                                                      ChopGimpTraceSource  **source,
++                                                      ChopGimpTraceOptions  *options,
++                                                      gboolean              *flat);
++/*  the objects were changed since the last trace  */
++gboolean              chopgimp_trace_layer_is_edited (GimpVectorLayer       *layer);
++
++/*  a new vector layer with the objects of @result, above @above (or at
++ *  the top), named « <name of above> vectorisé »; @source: keep a live
++ *  trace (NULL: plain objects); @hide_above: the traced layer is hidden.
++ *  One undo step. NULL when the result is empty or objects are disabled.
++ */
++GimpVectorLayer     * chopgimp_trace_layer_new       (GimpImage             *image,
++                                                      GimpLayer             *above,
++                                                      const ChopGimpTraceResult *result,
++                                                      ChopGimpTraceSource   *source,
++                                                      const ChopGimpTraceOptions *options,
++                                                      gboolean               flat,
++                                                      gboolean               hide_above,
++                                                      GimpContext           *context);
++/*  re-trace into @layer (its objects replaced, the parasite updated), one
++ *  undo step
++ */
++gboolean              chopgimp_trace_layer_update    (GimpVectorLayer       *layer,
++                                                      const ChopGimpTraceResult *result,
++                                                      ChopGimpTraceSource   *source,
++                                                      const ChopGimpTraceOptions *options,
++                                                      gboolean               flat);
++/*  « Décomposer »: the live trace becomes plain objects  */
++gboolean              chopgimp_trace_layer_expand    (GimpVectorLayer       *layer,
++                                                      gboolean               push_undo);
+diff --git a/app/core/meson.build b/app/core/meson.build
+index b9f4fa4..a6ff818 100644
+--- a/app/core/meson.build
++++ b/app/core/meson.build
+@@ -225,6 +225,7 @@ libappcore_sources = [
+   'chopgimp-fx-cache.c',
+   'chopgimp-layer-grow.c',
+   'chopgimp-style-clipboard.c',
++  'chopgimp-trace-layer.c',
+   'gimppickable-contiguous-region.cc',
+   'gimppickable.c',
+   'gimpprogress.c',
+diff --git a/app/dialogs/chopgimp-trace-dialog.c b/app/dialogs/chopgimp-trace-dialog.c
+new file mode 100644
+index 0000000..7db8d7a
+--- /dev/null
++++ b/app/dialogs/chopgimp-trace-dialog.c
+@@ -0,0 +1,1243 @@
++/* GIMP - The GNU Image Manipulation Program
++ * chopgimp-trace-dialog.c — ChopGimp 3.27.3 (lot V5, lot V6 point 4):
++ * « Vectoriser… », Illustrator's Image Trace panel
++ *
++ *  - presets, view (result / outlines / outlines + source), mode, palette,
++ *    colors or threshold; « Avancé »: paths, corners, noise, blur, method,
++ *    fills / strokes, snap curves to lines, ignore white / transparency,
++ *    engine, groups by color;
++ *  - live preview on the canvas: the trace runs in a thread (GTask) a
++ *    moment after the last change, the previous run is cancelled; a
++ *    progress bar and « Arrêter » for long runs;
++ *  - « Vectoriser »: a new vector layer (core/chopgimp-trace-layer.c),
++ *    kept as a live trace (« Vectorisation dynamique ») unless unchecked;
++ *    on a live trace layer: re-traced in place, or « Décomposer ».
++ *
++ * Non-modal: the canvas can be zoomed and scrolled to inspect the preview.
++ * The dialog closes when its layer goes away.
++ *
++ * This program is free software: you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation; either version 3 of the License, or
++ * (at your option) any later version.
++ */
++
++#include "config.h"
++
++#include <string.h>
++
++#include <gegl.h>
++#include <gtk/gtk.h>
++
++#include "libgimpbase/gimpbase.h"
++#include "libgimpcolor/gimpcolor.h"
++#include "libgimpwidgets/gimpwidgets.h"
++
++#include "dialogs-types.h"
++
++#include "core/gimp.h"
++#include "core/gimpchannel.h"
++#include "core/gimpcontext.h"
++#include "core/gimpdrawable.h"
++#include "core/gimpimage.h"
++#include "core/gimplayer.h"
++#include "core/gimppalette.h"
++#include "core/chopgimp-trace-layer.h"
++
++#include "path/gimpvectorlayer.h"
++#include "path/chopgimp-trace.h"
++#include "path/chopgimp-vobject.h"
++#include "path/chopgimp-vcolors.h"
++
++#include "display/gimpdisplay.h"
++#include "display/gimpdisplayshell.h"
++#include "display/gimpdisplayshell-items.h"
++#include "display/chopgimp-canvastrace.h"
++
++#include "widgets/gimphelp-ids.h"
++
++#include "chopgimp-trace-dialog.h"
++
++#include "gimp-intl.h"
++
++
++#define RESPONSE_EXPAND 1
++#define TRACE_DELAY     250   /* ms after the last change */
++
++enum
++{
++  PALETTE_AUTO,
++  PALETTE_LIMITED,
++  PALETTE_GLOBALS,
++  PALETTE_SWATCHES
++};
++
++typedef struct
++{
++  GimpImage            *image;
++  GimpContext          *context;
++  GimpDrawable         *drawable;     /* the traced layer, or the live trace */
++  GimpVectorLayer      *live;         /* editing this live trace, or NULL    */
++  GimpDisplay          *display;      /* weak                                */
++  GimpCanvasItem       *item;
++
++  ChopGimpTraceSource  *source;
++  ChopGimpTraceOptions  options;
++  gboolean              flat;
++
++  ChopGimpTraceResult  *result;       /* of the current options, or older    */
++  gboolean              stale;        /* @result is not of the options       */
++  GCancellable         *cancellable;  /* of the running trace                */
++  gboolean              running;
++  gboolean              commit;       /* apply when the trace is done        */
++  gdouble               fraction;     /* written by the thread               */
++  gint64                started;
++  guint                 timeout_id;
++  guint                 progress_id;
++  gboolean              updating;
++  gboolean              closed;
++
++  GtkWidget            *dialog;
++  GtkWidget            *preset;
++  GtkWidget            *view;
++  GtkWidget            *mode;
++  GtkWidget            *palette;
++  GtkWidget            *colors;       /* spin scales                         */
++  GtkWidget            *fidelity;
++  GtkWidget            *threshold;
++  GtkWidget            *paths;
++  GtkWidget            *corners;
++  GtkWidget            *noise;
++  GtkWidget            *blur;
++  GtkWidget            *method;
++  GtkWidget            *fills;
++  GtkWidget            *strokes;
++  GtkWidget            *stroke_width;
++  GtkWidget            *stroke_length;
++  GtkWidget            *snap_lines;
++  GtkWidget            *ignore_white;
++  GtkWidget            *ignore_transparent;
++  GtkWidget            *invert;
++  GtkWidget            *engine;
++  GtkWidget            *grouped;
++  GtkWidget            *selection_only;
++  GtkWidget            *hide_original;
++  GtkWidget            *live_toggle;
++  GtkWidget            *preview;
++  GtkWidget            *stats;
++  GtkWidget            *progress;
++  GtkWidget            *stop;
++  GtkWidget            *warning;
++
++  GtkAdjustment        *colors_adj;
++  GtkAdjustment        *fidelity_adj;
++  GtkAdjustment        *threshold_adj;
++  GtkAdjustment        *paths_adj;
++  GtkAdjustment        *corners_adj;
++  GtkAdjustment        *noise_adj;
++  GtkAdjustment        *blur_adj;
++  GtkAdjustment        *stroke_width_adj;
++  GtkAdjustment        *stroke_length_adj;
++} Dialog;
++
++
++static void   schedule_trace (Dialog *d);
++static void   start_trace    (Dialog *d);
++static void   do_commit      (Dialog *d);
++
++
++/*  ─── helpers ───────────────────────────────────────────────────────── */
++
++static GtkWidget *
++combo_new (const gchar * const *labels)
++{
++  GtkWidget *combo = gtk_combo_box_text_new ();
++
++  for (gint i = 0; labels[i]; i++)
++    gtk_combo_box_text_append_text (GTK_COMBO_BOX_TEXT (combo), _(labels[i]));
++
++  return combo;
++}
++
++static void   option_changed (Dialog *d);
++
++static void
++adj_changed (GtkAdjustment *adj,
++             Dialog        *d)
++{
++  option_changed (d);
++}
++
++static GtkWidget *
++scale_new (Dialog         *d,
++           GtkAdjustment **adj,
++           const gchar    *label,
++           gdouble         lower,
++           gdouble         upper,
++           gdouble         step,
++           gint            digits,
++           const gchar    *suffix,
++           const gchar    *tip)
++{
++  GtkWidget *scale;
++
++  *adj  = gtk_adjustment_new (lower, lower, upper, step, step * 10, 0);
++  scale = gimp_spin_scale_new (*adj, label, digits);
++
++  if (suffix &&
++      g_object_class_find_property (G_OBJECT_GET_CLASS (scale), "unit-suffix"))
++    g_object_set (scale, "unit-suffix", suffix, NULL);
++
++  if (tip)
++    gimp_help_set_help_data (scale, tip, NULL);
++
++  g_signal_connect (*adj, "value-changed", G_CALLBACK (adj_changed), d);
++
++  return scale;
++}
++
++static void
++toggle_changed (GtkToggleButton *button,
++                Dialog          *d)
++{
++  option_changed (d);
++}
++
++static GtkWidget *
++check_new (Dialog      *d,
++           const gchar *label,
++           const gchar *tip)
++{
++  GtkWidget *check = gtk_check_button_new_with_mnemonic (label);
++
++  if (tip)
++    gimp_help_set_help_data (check, tip, NULL);
++
++  g_signal_connect (check, "toggled", G_CALLBACK (toggle_changed), d);
++
++  return check;
++}
++
++static void
++grid_row (GtkWidget   *grid,
++          gint         row,
++          const gchar *label,
++          GtkWidget   *widget)
++{
++  if (label)
++    {
++      GtkWidget *l = gtk_label_new_with_mnemonic (label);
++
++      gtk_label_set_xalign (GTK_LABEL (l), 0.0);
++      gtk_label_set_mnemonic_widget (GTK_LABEL (l), widget);
++      gtk_grid_attach (GTK_GRID (grid), l, 0, row, 1, 1);
++      gtk_grid_attach (GTK_GRID (grid), widget, 1, row, 1, 1);
++    }
++  else
++    {
++      gtk_grid_attach (GTK_GRID (grid), widget, 0, row, 2, 1);
++    }
++
++  gtk_widget_set_hexpand (widget, TRUE);
++}
++
++static GimpDisplayShell *
++dialog_shell (Dialog *d)
++{
++  return d->display ? gimp_display_get_shell (d->display) : NULL;
++}
++
++
++/*  ─── options ↔ widgets ─────────────────────────────────────────────── */
++
++static void
++custom_colors_clear (Dialog *d)
++{
++  for (gint i = 0; i < d->options.n_custom; i++)
++    g_clear_object (&d->options.custom[i]);
++
++  g_clear_pointer (&d->options.custom, g_free);
++  d->options.n_custom = 0;
++}
++
++/*  CUSTOM palettes: the global colors of the image, or the swatches of
++ *  the active palette
++ */
++static void
++custom_colors_load (Dialog *d,
++                    gint    which)
++{
++  GPtrArray *colors = g_ptr_array_new ();
++
++  custom_colors_clear (d);
++
++  if (which == PALETTE_GLOBALS)
++    {
++      GList *list = chopgimp_vcolors_list (d->image);
++
++      for (GList *l = list; l; l = l->next)
++        {
++          const ChopGimpVColor *c = l->data;
++
++          g_ptr_array_add (colors, gegl_color_duplicate (c->color));
++        }
++
++      g_list_free (list);
++    }
++  else
++    {
++      GimpPalette *palette = gimp_context_get_palette (d->context);
++
++      if (palette)
++        for (GList *l = gimp_palette_get_colors (palette); l; l = l->next)
++          {
++            GimpPaletteEntry *e = l->data;
++
++            g_ptr_array_add (colors, gegl_color_duplicate (e->color));
++          }
++    }
++
++  d->options.n_custom = colors->len;
++  d->options.custom   = (GeglColor **) g_ptr_array_free (colors, FALSE);
++}
++
++static void
++update_sensitivity (Dialog *d)
++{
++  gboolean potrace = d->options.engine == CHOPGIMP_TRACE_ENGINE_POTRACE;
++  gboolean bw      = d->options.mode == CHOPGIMP_TRACE_MODE_BW;
++  gboolean pal     = ! bw && d->options.engine != CHOPGIMP_TRACE_ENGINE_CENTERLINE;
++
++  gtk_widget_set_visible (d->colors,    pal && d->options.palette == CHOPGIMP_TRACE_PALETTE_LIMITED);
++  gtk_widget_set_visible (d->fidelity,  pal && d->options.palette == CHOPGIMP_TRACE_PALETTE_AUTO);
++  gtk_widget_set_visible (d->threshold, ! pal);
++  gtk_widget_set_sensitive (d->palette, pal);
++  gtk_widget_set_sensitive (d->mode,    d->options.engine != CHOPGIMP_TRACE_ENGINE_CENTERLINE);
++  gtk_widget_set_sensitive (d->method,  potrace && ! bw);
++  gtk_widget_set_sensitive (d->fills,   potrace);
++  gtk_widget_set_sensitive (d->strokes, potrace);
++  gtk_widget_set_sensitive (d->stroke_width,
++                            d->options.engine == CHOPGIMP_TRACE_ENGINE_CENTERLINE ||
++                            (potrace && d->options.strokes));
++  gtk_widget_set_sensitive (d->stroke_length,
++                            d->options.engine == CHOPGIMP_TRACE_ENGINE_CENTERLINE ||
++                            (potrace && d->options.strokes));
++  gtk_widget_set_sensitive (d->invert, bw || d->options.engine == CHOPGIMP_TRACE_ENGINE_CENTERLINE);
++}
++
++static void
++widgets_from_options (Dialog *d)
++{
++  ChopGimpTraceOptions *o = &d->options;
++  gint                  palette;
++
++  d->updating = TRUE;
++
++  gtk_combo_box_set_active (GTK_COMBO_BOX (d->mode),   o->mode);
++  gtk_combo_box_set_active (GTK_COMBO_BOX (d->engine), o->engine);
++  gtk_combo_box_set_active (GTK_COMBO_BOX (d->method), o->method);
++
++  switch (o->palette)
++    {
++    case CHOPGIMP_TRACE_PALETTE_AUTO:    palette = PALETTE_AUTO;    break;
++    case CHOPGIMP_TRACE_PALETTE_LIMITED: palette = PALETTE_LIMITED; break;
++    default:
++      palette = gtk_combo_box_get_active (GTK_COMBO_BOX (d->palette));
++      if (palette != PALETTE_SWATCHES)
++        palette = PALETTE_GLOBALS;
++      break;
++    }
++  gtk_combo_box_set_active (GTK_COMBO_BOX (d->palette), palette);
++
++  gtk_adjustment_set_value (d->colors_adj,        o->n_colors);
++  gtk_adjustment_set_value (d->fidelity_adj,      o->color_fidelity);
++  gtk_adjustment_set_value (d->threshold_adj,     o->threshold);
++  gtk_adjustment_set_value (d->paths_adj,         o->paths);
++  gtk_adjustment_set_value (d->corners_adj,       o->corners);
++  gtk_adjustment_set_value (d->noise_adj,         o->noise);
++  gtk_adjustment_set_value (d->blur_adj,          o->blur);
++  gtk_adjustment_set_value (d->stroke_width_adj,  o->max_stroke_width);
++  gtk_adjustment_set_value (d->stroke_length_adj, o->min_stroke_length);
++
++  gtk_toggle_button_set_active (GTK_TOGGLE_BUTTON (d->fills),              o->fills);
++  gtk_toggle_button_set_active (GTK_TOGGLE_BUTTON (d->strokes),            o->strokes);
++  gtk_toggle_button_set_active (GTK_TOGGLE_BUTTON (d->snap_lines),         o->snap_lines);
++  gtk_toggle_button_set_active (GTK_TOGGLE_BUTTON (d->ignore_white),       o->ignore_white);
++  gtk_toggle_button_set_active (GTK_TOGGLE_BUTTON (d->ignore_transparent), o->ignore_transparent);
++  gtk_toggle_button_set_active (GTK_TOGGLE_BUTTON (d->invert),             o->invert);
++  gtk_toggle_button_set_active (GTK_TOGGLE_BUTTON (d->grouped),            ! d->flat);
++
++  update_sensitivity (d);
++
++  d->updating = FALSE;
++}
++
++static void
++options_from_widgets (Dialog *d)
++{
++  ChopGimpTraceOptions *o = &d->options;
++  gint                  palette;
++
++  o->mode    = gtk_combo_box_get_active (GTK_COMBO_BOX (d->mode));
++  o->engine  = gtk_combo_box_get_active (GTK_COMBO_BOX (d->engine));
++  if (! chopgimp_trace_engine_available (o->engine))
++    {
++      o->engine = CHOPGIMP_TRACE_ENGINE_POTRACE;
++      gtk_combo_box_set_active (GTK_COMBO_BOX (d->engine), o->engine);
++    }
++  o->method  = gtk_combo_box_get_active (GTK_COMBO_BOX (d->method));
++  palette    = gtk_combo_box_get_active (GTK_COMBO_BOX (d->palette));
++
++  switch (palette)
++    {
++    case PALETTE_AUTO:
++      o->palette = CHOPGIMP_TRACE_PALETTE_AUTO;
++      break;
++
++    case PALETTE_LIMITED:
++      o->palette = CHOPGIMP_TRACE_PALETTE_LIMITED;
++      break;
++
++    default:
++      if (o->palette != CHOPGIMP_TRACE_PALETTE_CUSTOM ||
++          GPOINTER_TO_INT (g_object_get_data (G_OBJECT (d->palette),
++                                              "chopgimp-loaded")) != palette)
++        {
++          custom_colors_load (d, palette);
++          g_object_set_data (G_OBJECT (d->palette), "chopgimp-loaded",
++                             GINT_TO_POINTER (palette));
++        }
++      o->palette = CHOPGIMP_TRACE_PALETTE_CUSTOM;
++      break;
++    }
++
++  o->n_colors           = gtk_adjustment_get_value (d->colors_adj);
++  o->color_fidelity     = gtk_adjustment_get_value (d->fidelity_adj);
++  o->threshold          = gtk_adjustment_get_value (d->threshold_adj);
++  o->paths              = gtk_adjustment_get_value (d->paths_adj);
++  o->corners            = gtk_adjustment_get_value (d->corners_adj);
++  o->noise              = gtk_adjustment_get_value (d->noise_adj);
++  o->blur               = gtk_adjustment_get_value (d->blur_adj);
++  o->max_stroke_width   = gtk_adjustment_get_value (d->stroke_width_adj);
++  o->min_stroke_length  = gtk_adjustment_get_value (d->stroke_length_adj);
++  o->fills              = gtk_toggle_button_get_active (GTK_TOGGLE_BUTTON (d->fills));
++  o->strokes            = gtk_toggle_button_get_active (GTK_TOGGLE_BUTTON (d->strokes));
++  o->snap_lines         = gtk_toggle_button_get_active (GTK_TOGGLE_BUTTON (d->snap_lines));
++  o->ignore_white       = gtk_toggle_button_get_active (GTK_TOGGLE_BUTTON (d->ignore_white));
++  o->ignore_transparent = gtk_toggle_button_get_active (GTK_TOGGLE_BUTTON (d->ignore_transparent));
++  o->invert             = gtk_toggle_button_get_active (GTK_TOGGLE_BUTTON (d->invert));
++  d->flat               = ! gtk_toggle_button_get_active (GTK_TOGGLE_BUTTON (d->grouped));
++
++  /*  at least something to make  */
++  if (o->engine == CHOPGIMP_TRACE_ENGINE_POTRACE && ! o->fills && ! o->strokes)
++    o->fills = TRUE;
++}
++
++static void
++option_changed (Dialog *d)
++{
++  if (d->updating || d->closed)
++    return;
++
++  options_from_widgets (d);
++
++  /*  a manual change: « Personnalisé » (the first entry)  */
++  d->updating = TRUE;
++  gtk_combo_box_set_active (GTK_COMBO_BOX (d->preset), 0);
++  d->updating = FALSE;
++
++  update_sensitivity (d);
++
++  d->stale = TRUE;
++  schedule_trace (d);
++}
++
++static void
++preset_changed (GtkComboBox *combo,
++                Dialog      *d)
++{
++  const gchar * const *ids = chopgimp_trace_get_presets ();
++  gint                 i   = gtk_combo_box_get_active (combo);
++
++  if (d->updating || d->closed || i < 1)
++    return;
++
++  if (chopgimp_trace_options_set_preset (&d->options, ids[i - 1]))
++    {
++      widgets_from_options (d);
++      d->stale = TRUE;
++      schedule_trace (d);
++    }
++}
++
++
++/*  ─── the preview ───────────────────────────────────────────────────── */
++
++static void
++preview_update (Dialog *d)
++{
++  GimpDisplayShell *shell = dialog_shell (d);
++  gboolean          show  = (gtk_toggle_button_get_active (GTK_TOGGLE_BUTTON (d->preview)) &&
++                             d->result && ! d->closed);
++
++  if (show && shell && ! d->item)
++    {
++      d->item = chopgimp_canvas_trace_new (shell, &d->source->rect);
++      gimp_display_shell_add_item (shell, d->item);
++    }
++  else if (! show && d->item)
++    {
++      if (shell)
++        gimp_display_shell_remove_item (shell, d->item);
++
++      g_clear_object (&d->item);
++    }
++
++  if (d->item)
++    chopgimp_canvas_trace_set_result (CHOPGIMP_CANVAS_TRACE (d->item), d->result,
++                                      gtk_combo_box_get_active (GTK_COMBO_BOX (d->view)));
++}
++
++static void
++stats_update (Dialog *d)
++{
++  gchar *text;
++
++  if (! d->result)
++    text = g_strdup (d->running ? _("Vectorisation…") : "");
++  else
++    text = g_strdup_printf (_("%d chemins · %d couleurs · %d points d'ancrage"),
++                            d->result->n_paths, d->result->n_colors,
++                            d->result->n_anchors);
++
++  gtk_label_set_text (GTK_LABEL (d->stats), text);
++  g_free (text);
++}
++
++static gboolean
++progress_tick (Dialog *d)
++{
++  /*  only for runs that take some time  */
++  if (d->running && g_get_monotonic_time () - d->started > 400000)
++    {
++      gtk_widget_show (d->progress);
++      gtk_widget_show (d->stop);
++      gtk_progress_bar_set_fraction (GTK_PROGRESS_BAR (d->progress),
++                                     CLAMP (d->fraction, 0.0, 1.0));
++    }
++
++  return G_SOURCE_CONTINUE;
++}
++
++typedef struct
++{
++  Dialog        *d;
++  GeglBuffer    *buffer;
++  GeglRectangle  rect;
++  gchar         *options;
++} TraceJob;
++
++static void
++trace_job_free (TraceJob *job)
++{
++  g_object_unref (job->buffer);
++  g_free (job->options);
++  g_free (job);
++}
++
++static void
++thread_progress (gdouble  fraction,
++                 gpointer data)
++{
++  /*  a plain double, read by progress_tick(): a torn value only shows a
++   *  wrong bar for 100 ms
++   */
++  ((Dialog *) data)->fraction = fraction;
++}
++
++static void
++trace_thread (GTask        *task,
++              gpointer      source_object,
++              gpointer      task_data,
++              GCancellable *cancellable)
++{
++  TraceJob             *job    = task_data;
++  ChopGimpTraceOptions  options;
++  ChopGimpTraceResult  *result;
++  GError               *error  = NULL;
++
++  chopgimp_trace_options_init (&options);
++  chopgimp_trace_options_from_string (&options, job->options);
++
++  result = chopgimp_trace_run (job->buffer, &job->rect, NULL, &options,
++                               cancellable, thread_progress, job->d, &error);
++
++  chopgimp_trace_options_clear (&options);
++
++  if (result)
++    g_task_return_pointer (task, result, (GDestroyNotify) chopgimp_trace_result_free);
++  else if (error)
++    g_task_return_error (task, error);
++  else
++    g_task_return_new_error (task, G_IO_ERROR, G_IO_ERROR_FAILED, "trace failed");
++}
++
++static void
++trace_done (GObject      *object,
++            GAsyncResult *res,
++            gpointer      data)
++{
++  GtkWidget           *dialog = GTK_WIDGET (object);
++  Dialog              *d      = g_object_get_data (G_OBJECT (dialog), "chopgimp-trace");
++  GCancellable        *cancel = g_task_get_cancellable (G_TASK (res));
++  GError              *error  = NULL;
++  ChopGimpTraceResult *result = g_task_propagate_pointer (G_TASK (res), &error);
++
++  /*  an older run (cancelled and replaced), or the dialog went away  */
++  if (! d || d->closed || cancel != d->cancellable)
++    {
++      g_clear_pointer (&result, chopgimp_trace_result_free);
++      g_clear_error (&error);
++      return;
++    }
++
++  d->running = FALSE;
++  g_clear_object (&d->cancellable);
++  gtk_widget_hide (d->progress);
++  gtk_widget_hide (d->stop);
++
++  if (result)
++    {
++      if (d->item)
++        chopgimp_canvas_trace_set_result (CHOPGIMP_CANVAS_TRACE (d->item), NULL, 0);
++
++      g_clear_pointer (&d->result, chopgimp_trace_result_free);
++      d->result = result;
++    }
++  else if (! g_error_matches (error, G_IO_ERROR, G_IO_ERROR_CANCELLED))
++    {
++      gimp_message_literal (d->image->gimp, G_OBJECT (d->dialog),
++                            GIMP_MESSAGE_WARNING,
++                            error ? error->message : _("La vectorisation a échoué."));
++      d->commit = FALSE;
++    }
++
++  g_clear_error (&error);
++
++  gtk_dialog_set_response_sensitive (GTK_DIALOG (d->dialog), GTK_RESPONSE_OK, TRUE);
++  preview_update (d);
++  stats_update (d);
++
++  /*  options changed meanwhile  */
++  if (d->stale && ! d->timeout_id)
++    {
++      start_trace (d);
++      return;
++    }
++
++  if (d->commit)
++    do_commit (d);
++}
++
++static void
++start_trace (Dialog *d)
++{
++  TraceJob *job;
++  GTask    *task;
++
++  if (d->closed)
++    return;
++
++  if (d->cancellable)
++    g_cancellable_cancel (d->cancellable);
++  g_clear_object (&d->cancellable);
++
++  job          = g_new0 (TraceJob, 1);
++  job->d       = d;
++  job->buffer  = g_object_ref (d->source->buffer);
++  job->rect    = d->source->rect;
++  job->options = chopgimp_trace_options_to_string (&d->options);
++
++  d->cancellable = g_cancellable_new ();
++  d->running     = TRUE;
++  d->stale       = FALSE;
++  d->fraction    = 0.0;
++  d->started     = g_get_monotonic_time ();
++
++  /*  the task keeps the dialog widget (and so @d) alive  */
++  task = g_task_new (d->dialog, d->cancellable, trace_done, NULL);
++  g_task_set_task_data (task, job, (GDestroyNotify) trace_job_free);
++  g_task_run_in_thread (task, trace_thread);
++  g_object_unref (task);
++
++  stats_update (d);
++}
++
++static gboolean
++trace_timeout (Dialog *d)
++{
++  d->timeout_id = 0;
++
++  /*  a run is going on: start again when it is done (trace_done)  */
++  if (d->running && d->cancellable)
++    g_cancellable_cancel (d->cancellable);
++
++  start_trace (d);
++
++  return G_SOURCE_REMOVE;
++}
++
++static void
++schedule_trace (Dialog *d)
++{
++  if (d->closed)
++    return;
++
++  if (! gtk_toggle_button_get_active (GTK_TOGGLE_BUTTON (d->preview)) && ! d->commit)
++    return;
++
++  if (d->timeout_id)
++    g_source_remove (d->timeout_id);
++
++  d->timeout_id = g_timeout_add (TRACE_DELAY, (GSourceFunc) trace_timeout, d);
++}
++
++static void
++stop_clicked (GtkButton *button,
++              Dialog    *d)
++{
++  if (d->cancellable)
++    g_cancellable_cancel (d->cancellable);
++
++  d->commit = FALSE;
++}
++
++static void
++view_changed (GtkComboBox *combo,
++              Dialog      *d)
++{
++  preview_update (d);
++}
++
++static void
++preview_toggled (GtkToggleButton *button,
++                 Dialog          *d)
++{
++  if (gtk_toggle_button_get_active (button) && (d->stale || ! d->result))
++    {
++      d->stale = TRUE;
++      schedule_trace (d);
++    }
++
++  preview_update (d);
++}
++
++static void
++selection_only_toggled (GtkToggleButton *button,
++                        Dialog          *d)
++{
++  ChopGimpTraceSource *source;
++
++  if (d->live)
++    return;
++
++  source = chopgimp_trace_source_new (d->drawable,
++                                      gtk_toggle_button_get_active (button));
++  if (! source)
++    return;
++
++  /*  the canvas item covers the traced area: a new one  */
++  if (d->item)
++    {
++      GimpDisplayShell *shell = dialog_shell (d);
++
++      if (shell)
++        gimp_display_shell_remove_item (shell, d->item);
++
++      g_clear_object (&d->item);
++    }
++
++  g_clear_pointer (&d->result, chopgimp_trace_result_free);
++  chopgimp_trace_source_free (d->source);
++  d->source = source;
++
++  d->stale = TRUE;
++  schedule_trace (d);
++  stats_update (d);
++}
++
++
++/*  ─── apply ─────────────────────────────────────────────────────────── */
++
++static void
++dialog_close (Dialog *d)
++{
++  if (d->closed)
++    return;
++
++  d->closed = TRUE;
++  gtk_widget_destroy (d->dialog);
++}
++
++static void
++do_commit (Dialog *d)
++{
++  gboolean live;
++
++  d->commit = FALSE;
++
++  if (! d->result || d->result->shapes->len == 0)
++    {
++      gimp_message_literal (d->image->gimp, G_OBJECT (d->dialog),
++                            GIMP_MESSAGE_WARNING,
++                            _("La vectorisation ne donne aucune forme : changez le "
++                              "seuil, les couleurs ou décochez « Ignorer le blanc »."));
++      return;
++    }
++
++  live = gtk_toggle_button_get_active (GTK_TOGGLE_BUTTON (d->live_toggle));
++
++  if (d->live)
++    {
++      chopgimp_trace_layer_update (d->live, d->result, live ? d->source : NULL,
++                                   &d->options, d->flat);
++      if (! live)
++        chopgimp_trace_layer_expand (d->live, TRUE);
++    }
++  else
++    {
++      chopgimp_trace_layer_new (d->image,
++                                GIMP_IS_LAYER (d->drawable) ? GIMP_LAYER (d->drawable) : NULL,
++                                d->result, live ? d->source : NULL,
++                                &d->options, d->flat,
++                                gtk_toggle_button_get_active (GTK_TOGGLE_BUTTON (d->hide_original)),
++                                d->context);
++    }
++
++  gimp_image_flush (d->image);
++
++  dialog_close (d);
++}
++
++static void
++dialog_response (GtkWidget *widget,
++                 gint       response_id,
++                 Dialog    *d)
++{
++  switch (response_id)
++    {
++    case GTK_RESPONSE_OK:
++      d->commit = TRUE;
++
++      if (d->result && ! d->stale && ! d->running && ! d->timeout_id)
++        {
++          do_commit (d);
++        }
++      else
++        {
++          /*  wait for the trace of the current options  */
++          gtk_dialog_set_response_sensitive (GTK_DIALOG (d->dialog), GTK_RESPONSE_OK, FALSE);
++
++          if (! d->running || d->timeout_id)
++            {
++              if (d->timeout_id)
++                {
++                  g_source_remove (d->timeout_id);
++                  d->timeout_id = 0;
++                }
++              start_trace (d);
++            }
++        }
++      break;
++
++    case RESPONSE_EXPAND:
++      if (d->live)
++        {
++          chopgimp_trace_layer_expand (d->live, TRUE);
++          gimp_image_flush (d->image);
++        }
++      dialog_close (d);
++      break;
++
++    default:
++      dialog_close (d);
++      break;
++    }
++}
++
++static void
++drawable_removed (GimpItem *item,
++                  Dialog   *d)
++{
++  dialog_close (d);
++}
++
++static void
++dialog_destroyed (GtkWidget *widget,
++                  Dialog    *d)
++{
++  GimpDisplayShell *shell;
++
++  d->closed = TRUE;
++
++  if (d->timeout_id)
++    g_source_remove (d->timeout_id);
++  d->timeout_id = 0;
++
++  if (d->progress_id)
++    g_source_remove (d->progress_id);
++  d->progress_id = 0;
++
++  if (d->cancellable)
++    g_cancellable_cancel (d->cancellable);
++
++  shell = dialog_shell (d);
++  if (d->item && shell)
++    gimp_display_shell_remove_item (shell, d->item);
++  g_clear_object (&d->item);
++
++  g_signal_handlers_disconnect_by_data (d->drawable, d);
++}
++
++static void
++dialog_free (Dialog *d)
++{
++  if (d->display)
++    g_object_remove_weak_pointer (G_OBJECT (d->display), (gpointer *) &d->display);
++
++  g_clear_object (&d->cancellable);
++  g_clear_pointer (&d->result, chopgimp_trace_result_free);
++  chopgimp_trace_source_free (d->source);
++  custom_colors_clear (d);
++  chopgimp_trace_options_clear (&d->options);
++  g_object_unref (d->drawable);
++  g_object_unref (d->image);
++  g_free (d);
++}
++
++
++/*  ─── public ────────────────────────────────────────────────────────── */
++
++void
++chopgimp_trace_dialog_show (GimpImage    *image,
++                            GimpDrawable *drawable,
++                            GimpDisplay  *display,
++                            GimpContext  *context,
++                            GtkWidget    *parent)
++{
++  static const gchar *views[]    = { N_("Résultat"), N_("Contours"),
++                                     N_("Contours + source"), NULL };
++  static const gchar *modes[]    = { N_("Couleur"), N_("Niveaux de gris"),
++                                     N_("Noir et blanc"), NULL };
++  static const gchar *palettes[] = { N_("Automatique"), N_("Limitée"),
++                                     N_("Couleurs globales du document"),
++                                     N_("Nuancier actif"), NULL };
++  static const gchar *methods[]  = { N_("Adjacent (formes découpées)"),
++                                     N_("Superposé (formes empilées)"), NULL };
++  static const gchar *engines[]  = { N_("Contours remplis (potrace)"),
++                                     N_("Tracé central (autotrace)"),
++                                     N_("Pixel art (depixelize)"), NULL };
++  Dialog              *d;
++  GtkWidget           *vbox;
++  GtkWidget           *grid;
++  GtkWidget           *expander;
++  GtkWidget           *hbox;
++  GtkWidget           *sep;
++  GimpChannel         *mask;
++  gboolean             has_selection;
++  gint                 row = 0;
++
++  g_return_if_fail (GIMP_IS_IMAGE (image));
++  g_return_if_fail (GIMP_IS_DRAWABLE (drawable));
++
++  d          = g_new0 (Dialog, 1);
++  d->image   = g_object_ref (image);
++  d->context = context;
++  d->drawable = g_object_ref (drawable);
++  d->display = display;
++  if (display)
++    g_object_add_weak_pointer (G_OBJECT (display), (gpointer *) &d->display);
++
++  chopgimp_trace_options_init (&d->options);
++
++  if (chopgimp_trace_layer_is_live (GIMP_ITEM (drawable)))
++    {
++      d->live = GIMP_VECTOR_LAYER (drawable);
++
++      if (! chopgimp_trace_layer_get (d->live, &d->source, &d->options, &d->flat))
++        {
++          gimp_message_literal (image->gimp, G_OBJECT (parent), GIMP_MESSAGE_WARNING,
++                                _("Les données de vectorisation de ce calque sont "
++                                  "illisibles : décomposez-le (Objet > Vectorisation "
++                                  "> Décomposer)."));
++          dialog_free (d);
++          return;
++        }
++    }
++  else
++    {
++      d->source = chopgimp_trace_source_new (drawable, FALSE);
++
++      if (! d->source)
++        {
++          gimp_message_literal (image->gimp, G_OBJECT (parent), GIMP_MESSAGE_WARNING,
++                                _("Rien à vectoriser : le calque est vide."));
++          dialog_free (d);
++          return;
++        }
++
++      chopgimp_trace_options_set_preset (&d->options, "default");
++    }
++
++  mask          = gimp_image_get_mask (image);
++  has_selection = mask && ! gimp_channel_is_empty (mask);
++
++  /*  buttons at the bottom, like the filter dialogs (no header bar)  */
++  d->dialog = g_object_new (GIMP_TYPE_DIALOG,
++                            "title",          d->live ? _("Options de vectorisation")
++                                                      : _("Vectoriser"),
++                            "role",           "chopgimp-image-trace",
++                            "modal",          FALSE,
++                            "help-func",      gimp_standard_help_func,
++                            "help-id",        GIMP_HELP_PATH_DIALOG,
++                            "transient-for",  parent ? gtk_widget_get_toplevel (parent) : NULL,
++                            "use-header-bar", FALSE,
++                            NULL);
++
++  if (d->live)
++    gimp_dialog_add_button (GIMP_DIALOG (d->dialog), _("_Décomposer"), RESPONSE_EXPAND);
++
++  gimp_dialog_add_buttons (GIMP_DIALOG (d->dialog),
++                           _("_Annuler"),    GTK_RESPONSE_CANCEL,
++                           d->live ? _("_Appliquer") : _("_Vectoriser"),
++                           GTK_RESPONSE_OK,
++                           NULL);
++  gimp_dialog_set_alternative_button_order (GTK_DIALOG (d->dialog),
++                                            GTK_RESPONSE_OK, GTK_RESPONSE_CANCEL, -1);
++
++  g_object_set_data_full (G_OBJECT (d->dialog), "chopgimp-trace", d,
++                          (GDestroyNotify) dialog_free);
++  g_signal_connect (d->dialog, "response", G_CALLBACK (dialog_response), d);
++  g_signal_connect (d->dialog, "destroy",  G_CALLBACK (dialog_destroyed), d);
++  g_signal_connect (drawable, "removed", G_CALLBACK (drawable_removed), d);
++
++  vbox = gtk_box_new (GTK_ORIENTATION_VERTICAL, 8);
++  gtk_container_set_border_width (GTK_CONTAINER (vbox), 12);
++  gtk_box_pack_start (GTK_BOX (gtk_dialog_get_content_area (GTK_DIALOG (d->dialog))),
++                      vbox, TRUE, TRUE, 0);
++
++  if (d->live && chopgimp_trace_layer_is_edited (d->live))
++    {
++      d->warning = gtk_label_new (_("Les objets de ce calque ont été modifiés depuis la "
++                                    "vectorisation : « Appliquer » les remplace par un "
++                                    "nouveau tracé. « Décomposer » garde vos modifications."));
++      gtk_label_set_line_wrap (GTK_LABEL (d->warning), TRUE);
++      gtk_label_set_max_width_chars (GTK_LABEL (d->warning), 48);
++      gtk_label_set_xalign (GTK_LABEL (d->warning), 0.0);
++      gtk_box_pack_start (GTK_BOX (vbox), d->warning, FALSE, FALSE, 0);
++    }
++
++  /*  presets and main options  */
++  grid = gtk_grid_new ();
++  gtk_grid_set_row_spacing (GTK_GRID (grid), 6);
++  gtk_grid_set_column_spacing (GTK_GRID (grid), 8);
++  gtk_box_pack_start (GTK_BOX (vbox), grid, FALSE, FALSE, 0);
++
++  d->preset = gtk_combo_box_text_new ();
++  gtk_combo_box_text_append_text (GTK_COMBO_BOX_TEXT (d->preset), _("Personnalisé"));
++  {
++    const gchar * const *ids = chopgimp_trace_get_presets ();
++
++    for (gint i = 0; ids[i]; i++)
++      gtk_combo_box_text_append_text (GTK_COMBO_BOX_TEXT (d->preset),
++                                      chopgimp_trace_get_preset_label (ids[i]));
++
++    gtk_combo_box_set_active (GTK_COMBO_BOX (d->preset), d->live ? 0 : 1);
++  }
++  g_signal_connect (d->preset, "changed", G_CALLBACK (preset_changed), d);
++  grid_row (grid, row++, _("_Paramètre prédéfini"), d->preset);
++
++  d->view = combo_new (views);
++  gtk_combo_box_set_active (GTK_COMBO_BOX (d->view), 0);
++  gimp_help_set_help_data (d->view, _("Ce que montre l'aperçu sur le canevas"), NULL);
++  g_signal_connect (d->view, "changed", G_CALLBACK (view_changed), d);
++  grid_row (grid, row++, _("_Vue"), d->view);
++
++  d->mode = combo_new (modes);
++  g_signal_connect_swapped (d->mode, "changed", G_CALLBACK (option_changed), d);
++  grid_row (grid, row++, _("_Mode"), d->mode);
++
++  d->palette = combo_new (palettes);
++  gimp_help_set_help_data (d->palette,
++                           _("Automatique : le nombre de couleurs suit la fidélité ; "
++                             "Limitée : exactement ce nombre ; couleurs globales du "
++                             "document ou nuancier actif : chaque zone prend la couleur "
++                             "la plus proche"), NULL);
++  g_signal_connect_swapped (d->palette, "changed", G_CALLBACK (option_changed), d);
++  grid_row (grid, row++, _("P_alette"), d->palette);
++
++  d->colors = scale_new (d, &d->colors_adj, _("Couleurs"), 2, 64, 1, 0, NULL,
++                         _("Nombre de couleurs (ou de gris) du tracé"));
++  grid_row (grid, row++, NULL, d->colors);
++
++  d->fidelity = scale_new (d, &d->fidelity_adj, _("Fidélité des couleurs"), 0, 100, 1, 0, "%",
++                           _("Plus haut : plus de couleurs gardées"));
++  grid_row (grid, row++, NULL, d->fidelity);
++
++  d->threshold = scale_new (d, &d->threshold_adj, _("Seuil"), 0, 255, 1, 0, NULL,
++                            _("Les pixels plus sombres que le seuil sont tracés"));
++  grid_row (grid, row++, NULL, d->threshold);
++
++  /*  « Avancé »  */
++  expander = gtk_expander_new_with_mnemonic (_("A_vancé"));
++  gtk_expander_set_expanded (GTK_EXPANDER (expander), d->live != NULL);
++  gtk_box_pack_start (GTK_BOX (vbox), expander, FALSE, FALSE, 0);
++
++  grid = gtk_grid_new ();
++  gtk_grid_set_row_spacing (GTK_GRID (grid), 6);
++  gtk_grid_set_column_spacing (GTK_GRID (grid), 8);
++  gtk_widget_set_margin_top (grid, 6);
++  gtk_container_add (GTK_CONTAINER (expander), grid);
++  row = 0;
++
++  d->paths = scale_new (d, &d->paths_adj, _("Chemins"), 0, 100, 1, 0, "%",
++                        _("Fidélité des chemins aux pixels : plus haut, plus de "
++                          "points d'ancrage"));
++  grid_row (grid, row++, NULL, d->paths);
++
++  d->corners = scale_new (d, &d->corners_adj, _("Angles"), 0, 100, 1, 0, "%",
++                          _("Plus haut : plus d'angles vifs ; plus bas : plus de courbes"));
++  grid_row (grid, row++, NULL, d->corners);
++
++  d->noise = scale_new (d, &d->noise_adj, _("Bruit"), 1, 500, 1, 0, "px",
++                        _("Les zones plus petites que cette surface sont ignorées"));
++  grid_row (grid, row++, NULL, d->noise);
++
++  d->blur = scale_new (d, &d->blur_adj, _("Lissage"), 0, 10, 0.1, 1, "px",
++                       _("Flou appliqué à la source avant le tracé (photos)"));
++  grid_row (grid, row++, NULL, d->blur);
++
++  d->method = combo_new (methods);
++  gimp_help_set_help_data (d->method,
++                           _("Adjacent : chaque couleur est découpée, les formes se "
++                             "touchent ; Superposé : les formes s'empilent, sans "
++                             "interstice"), NULL);
++  g_signal_connect_swapped (d->method, "changed", G_CALLBACK (option_changed), d);
++  grid_row (grid, row++, _("_Méthode"), d->method);
++
++  hbox = gtk_box_new (GTK_ORIENTATION_HORIZONTAL, 12);
++  d->fills   = check_new (d, _("_Fonds"), _("Formes remplies"));
++  d->strokes = check_new (d, _("C_ontours"),
++                          _("Les zones fines deviennent des traits (épaisseur "
++                            "maximale ci-dessous)"));
++  gtk_box_pack_start (GTK_BOX (hbox), d->fills,   FALSE, FALSE, 0);
++  gtk_box_pack_start (GTK_BOX (hbox), d->strokes, FALSE, FALSE, 0);
++  grid_row (grid, row++, _("Créer"), hbox);
++
++  d->stroke_width = scale_new (d, &d->stroke_width_adj, _("Épaisseur max. du trait"),
++                               0.5, 100, 0.5, 1, "px", NULL);
++  grid_row (grid, row++, NULL, d->stroke_width);
++
++  d->stroke_length = scale_new (d, &d->stroke_length_adj, _("Longueur min. du trait"),
++                                0, 500, 1, 0, "px", NULL);
++  grid_row (grid, row++, NULL, d->stroke_length);
++
++  d->snap_lines = check_new (d, _("Arrondir les _courbes en lignes"),
++                             _("Les courbes presque droites deviennent des segments"));
++  grid_row (grid, row++, NULL, d->snap_lines);
++
++  d->ignore_white = check_new (d, _("Ignorer le _blanc"),
++                               _("Aucune forme pour le blanc (fond du papier)"));
++  grid_row (grid, row++, NULL, d->ignore_white);
++
++  d->ignore_transparent = check_new (d, _("Ignorer la _transparence"),
++                                     _("Les pixels à moins de 50 % d'opacité ne sont pas tracés"));
++  grid_row (grid, row++, NULL, d->ignore_transparent);
++
++  d->invert = check_new (d, _("_Inverser (tracer le clair)"), NULL);
++  grid_row (grid, row++, NULL, d->invert);
++
++  d->grouped = check_new (d, _("_Grouper par couleur"),
++                          _("Un groupe d'objets par couleur (sinon, tous les objets "
++                            "à plat)"));
++  grid_row (grid, row++, NULL, d->grouped);
++
++  /*  an engine this build lacks is listed, marked, and not chosen  */
++  d->engine = gtk_combo_box_text_new ();
++  for (gint i = 0; engines[i]; i++)
++    {
++      gchar *label = chopgimp_trace_engine_available (i)
++                     ? g_strdup (_(engines[i]))
++                     : g_strdup_printf (_("%s (indisponible)"), _(engines[i]));
++
++      gtk_combo_box_text_append_text (GTK_COMBO_BOX_TEXT (d->engine), label);
++      g_free (label);
++    }
++  g_signal_connect_swapped (d->engine, "changed", G_CALLBACK (option_changed), d);
++  grid_row (grid, row++, _("Mo_teur"), d->engine);
++
++  sep = gtk_separator_new (GTK_ORIENTATION_HORIZONTAL);
++  gtk_box_pack_start (GTK_BOX (vbox), sep, FALSE, FALSE, 0);
++
++  /*  the result  */
++  d->selection_only = gtk_check_button_new_with_mnemonic (_("_Sélection seulement"));
++  gtk_widget_set_sensitive (d->selection_only, has_selection && ! d->live);
++  g_signal_connect (d->selection_only, "toggled", G_CALLBACK (selection_only_toggled), d);
++  gtk_box_pack_start (GTK_BOX (vbox), d->selection_only, FALSE, FALSE, 0);
++
++  d->hide_original = gtk_check_button_new_with_mnemonic (_("_Masquer l'original"));
++  gtk_toggle_button_set_active (GTK_TOGGLE_BUTTON (d->hide_original), TRUE);
++  gtk_widget_set_sensitive (d->hide_original, ! d->live);
++  gtk_box_pack_start (GTK_BOX (vbox), d->hide_original, FALSE, FALSE, 0);
++
++  d->live_toggle = gtk_check_button_new_with_mnemonic (_("Vectorisation _dynamique"));
++  gtk_toggle_button_set_active (GTK_TOGGLE_BUTTON (d->live_toggle), TRUE);
++  gimp_help_set_help_data (d->live_toggle,
++                           _("Le calque garde l'image source et ces réglages : "
++                             "Objet > Vectorisation > Options de vectorisation… "
++                             "pour les changer plus tard, « Décomposer » pour en "
++                             "faire des objets ordinaires"), NULL);
++  gtk_box_pack_start (GTK_BOX (vbox), d->live_toggle, FALSE, FALSE, 0);
++
++  hbox = gtk_box_new (GTK_ORIENTATION_HORIZONTAL, 8);
++  gtk_box_pack_start (GTK_BOX (vbox), hbox, FALSE, FALSE, 0);
++
++  d->preview = gtk_check_button_new_with_mnemonic (_("Ape_rçu"));
++  gtk_toggle_button_set_active (GTK_TOGGLE_BUTTON (d->preview), TRUE);
++  g_signal_connect (d->preview, "toggled", G_CALLBACK (preview_toggled), d);
++  gtk_box_pack_start (GTK_BOX (hbox), d->preview, FALSE, FALSE, 0);
++
++  d->stats = gtk_label_new (NULL);
++  gtk_label_set_xalign (GTK_LABEL (d->stats), 1.0);
++  gtk_label_set_ellipsize (GTK_LABEL (d->stats), PANGO_ELLIPSIZE_END);
++  gtk_style_context_add_class (gtk_widget_get_style_context (d->stats), "dim-label");
++  gtk_box_pack_end (GTK_BOX (hbox), d->stats, TRUE, TRUE, 0);
++
++  hbox = gtk_box_new (GTK_ORIENTATION_HORIZONTAL, 8);
++  gtk_box_pack_start (GTK_BOX (vbox), hbox, FALSE, FALSE, 0);
++
++  d->progress = gtk_progress_bar_new ();
++  gtk_widget_set_valign (d->progress, GTK_ALIGN_CENTER);
++  gtk_box_pack_start (GTK_BOX (hbox), d->progress, TRUE, TRUE, 0);
++
++  d->stop = gtk_button_new_with_mnemonic (_("A_rrêter"));
++  gimp_help_set_help_data (d->stop, _("Arrêter la vectorisation en cours"), NULL);
++  g_signal_connect (d->stop, "clicked", G_CALLBACK (stop_clicked), d);
++  gtk_box_pack_start (GTK_BOX (hbox), d->stop, FALSE, FALSE, 0);
++
++  gtk_widget_show_all (vbox);
++  gtk_widget_set_no_show_all (d->progress, TRUE);
++  gtk_widget_set_no_show_all (d->stop, TRUE);
++  gtk_widget_hide (d->progress);
++  gtk_widget_hide (d->stop);
++
++  widgets_from_options (d);
++
++  d->progress_id = g_timeout_add (100, (GSourceFunc) progress_tick, d);
++
++  gtk_window_set_default_size (GTK_WINDOW (d->dialog), 380, -1);
++  gtk_widget_show (d->dialog);
++
++  d->stale = TRUE;
++  start_trace (d);
++}
+diff --git a/app/dialogs/chopgimp-trace-dialog.h b/app/dialogs/chopgimp-trace-dialog.h
+new file mode 100644
+index 0000000..1fc19ae
+--- /dev/null
++++ b/app/dialogs/chopgimp-trace-dialog.h
+@@ -0,0 +1,21 @@
++/* GIMP - The GNU Image Manipulation Program
++ * chopgimp-trace-dialog.h — ChopGimp 3.27.3 (lot V5): « Vectoriser… »
++ *
++ * This program is free software: you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation; either version 3 of the License, or
++ * (at your option) any later version.
++ */
++
++#pragma once
++
++/*  the « Vectoriser » dialog on @drawable, with its live preview on the
++ *  canvas of @display (may be NULL); a live trace layer (see
++ *  core/chopgimp-trace-layer.h) is re-opened with its own source and
++ *  options and re-traced in place
++ */
++void   chopgimp_trace_dialog_show (GimpImage    *image,
++                                   GimpDrawable *drawable,
++                                   GimpDisplay  *display,
++                                   GimpContext  *context,
++                                   GtkWidget    *parent);
+diff --git a/app/dialogs/meson.build b/app/dialogs/meson.build
+index ee9adde..c040008 100644
+--- a/app/dialogs/meson.build
++++ b/app/dialogs/meson.build
+@@ -24,6 +24,7 @@ libappdialogs_sources = [
+   'dialogs.c',
+   'chopgimp-textpanels.c',
+   'chopgimp-recolor-dialog.c',
++  'chopgimp-trace-dialog.c',
+   'extensions-dialog.c',
+   'file-open-dialog.c',
+   'file-open-location-dialog.c',
+diff --git a/app/display/chopgimp-canvastrace.c b/app/display/chopgimp-canvastrace.c
+new file mode 100644
+index 0000000..efd77de
+--- /dev/null
++++ b/app/display/chopgimp-canvastrace.c
+@@ -0,0 +1,128 @@
++/* GIMP - The GNU Image Manipulation Program
++ * chopgimp-canvastrace.c — ChopGimp 3.27.3 (lot V5): the live preview of
++ * « Vectoriser » on the canvas
++ *
++ * The traced area is covered with white (the « paper »: the result is
++ * seen alone, as in Illustrator) for the views « Résultat » and
++ * « Contours »; « Contours + source » draws the outlines over the image.
++ *
++ * This program is free software: you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation; either version 3 of the License, or
++ * (at your option) any later version.
++ */
++
++#include "config.h"
++
++#include <math.h>
++
++#include <gegl.h>
++#include <gtk/gtk.h>
++
++#include "display-types.h"
++
++#include "path/chopgimp-trace.h"
++
++#include "gimpdisplayshell.h"
++#include "chopgimp-canvastrace.h"
++
++
++G_DEFINE_TYPE (ChopGimpCanvasTrace, chopgimp_canvas_trace, GIMP_TYPE_CANVAS_ITEM)
++
++
++static void
++chopgimp_canvas_trace_bounds (GimpCanvasItem        *item,
++                              cairo_rectangle_int_t *bounds)
++{
++  ChopGimpCanvasTrace *trace = CHOPGIMP_CANVAS_TRACE (item);
++  gdouble              x1, y1, x2, y2;
++
++  gimp_canvas_item_transform_xy_f (item, trace->area.x, trace->area.y, &x1, &y1);
++  gimp_canvas_item_transform_xy_f (item,
++                                   trace->area.x + trace->area.width,
++                                   trace->area.y + trace->area.height,
++                                   &x2, &y2);
++
++  /*  strokes may go a little past the area  */
++  bounds->x      = floor (MIN (x1, x2)) - 4;
++  bounds->y      = floor (MIN (y1, y2)) - 4;
++  bounds->width  = ceil (MAX (x1, x2)) + 4 - bounds->x;
++  bounds->height = ceil (MAX (y1, y2)) + 4 - bounds->y;
++}
++
++static cairo_region_t *
++chopgimp_canvas_trace_get_extents (GimpCanvasItem *item)
++{
++  cairo_rectangle_int_t r;
++
++  chopgimp_canvas_trace_bounds (item, &r);
++
++  return cairo_region_create_rectangle (&r);
++}
++
++static void
++chopgimp_canvas_trace_draw (GimpCanvasItem *item,
++                            cairo_t        *cr)
++{
++  ChopGimpCanvasTrace *trace = CHOPGIMP_CANVAS_TRACE (item);
++  GimpDisplayShell    *shell = gimp_canvas_item_get_shell (item);
++
++  cairo_save (cr);
++
++  cairo_translate (cr, -shell->offset_x, -shell->offset_y);
++  cairo_scale (cr, shell->scale_x, shell->scale_y);
++
++  if (trace->view != 2)
++    {
++      cairo_rectangle (cr, trace->area.x, trace->area.y,
++                       trace->area.width, trace->area.height);
++      cairo_set_source_rgb (cr, 1.0, 1.0, 1.0);
++      cairo_fill (cr);
++    }
++
++  if (trace->result)
++    chopgimp_trace_result_draw (trace->result, cr, trace->view);
++
++  cairo_restore (cr);
++}
++
++static void
++chopgimp_canvas_trace_class_init (ChopGimpCanvasTraceClass *klass)
++{
++  GimpCanvasItemClass *item_class = GIMP_CANVAS_ITEM_CLASS (klass);
++
++  item_class->draw        = chopgimp_canvas_trace_draw;
++  item_class->get_extents = chopgimp_canvas_trace_get_extents;
++}
++
++static void
++chopgimp_canvas_trace_init (ChopGimpCanvasTrace *trace)
++{
++}
++
++GimpCanvasItem *
++chopgimp_canvas_trace_new (GimpDisplayShell    *shell,
++                           const GeglRectangle *area)
++{
++  ChopGimpCanvasTrace *trace;
++
++  g_return_val_if_fail (GIMP_IS_DISPLAY_SHELL (shell), NULL);
++
++  trace = g_object_new (CHOPGIMP_TYPE_CANVAS_TRACE, "shell", shell, NULL);
++  trace->area = *area;
++
++  return GIMP_CANVAS_ITEM (trace);
++}
++
++void
++chopgimp_canvas_trace_set_result (ChopGimpCanvasTrace *trace,
++                                  gconstpointer        result,
++                                  gint                 view)
++{
++  g_return_if_fail (CHOPGIMP_CANVAS_TRACE (trace));
++
++  gimp_canvas_item_begin_change (GIMP_CANVAS_ITEM (trace));
++  trace->result = result;
++  trace->view   = view;
++  gimp_canvas_item_end_change (GIMP_CANVAS_ITEM (trace));
++}
+diff --git a/app/display/chopgimp-canvastrace.h b/app/display/chopgimp-canvastrace.h
+new file mode 100644
+index 0000000..4c91c8e
+--- /dev/null
++++ b/app/display/chopgimp-canvastrace.h
+@@ -0,0 +1,44 @@
++/* GIMP - The GNU Image Manipulation Program
++ * chopgimp-canvastrace.h — ChopGimp 3.27.3 (lot V5): the live preview of
++ * « Vectoriser » on the canvas (vector, sharp at every zoom)
++ *
++ * This program is free software: you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation; either version 3 of the License, or
++ * (at your option) any later version.
++ */
++
++#pragma once
++
++#include "gimpcanvasitem.h"
++
++
++#define CHOPGIMP_TYPE_CANVAS_TRACE (chopgimp_canvas_trace_get_type ())
++#define CHOPGIMP_CANVAS_TRACE(obj) (G_TYPE_CHECK_INSTANCE_CAST ((obj), CHOPGIMP_TYPE_CANVAS_TRACE, ChopGimpCanvasTrace))
++
++typedef struct _ChopGimpCanvasTrace      ChopGimpCanvasTrace;
++typedef struct _ChopGimpCanvasTraceClass ChopGimpCanvasTraceClass;
++
++struct _ChopGimpCanvasTrace
++{
++  GimpCanvasItem  parent_instance;
++
++  gconstpointer   result;    /* const ChopGimpTraceResult *, borrowed */
++  gint            view;      /* 0 result, 1 outlines, 2 outlines + source */
++  GeglRectangle   area;      /* the traced area (image px)             */
++};
++
++struct _ChopGimpCanvasTraceClass
++{
++  GimpCanvasItemClass parent_class;
++};
++
++
++GType            chopgimp_canvas_trace_get_type   (void) G_GNUC_CONST;
++
++GimpCanvasItem * chopgimp_canvas_trace_new        (GimpDisplayShell    *shell,
++                                                   const GeglRectangle *area);
++/*  @result is borrowed: set NULL before freeing it  */
++void             chopgimp_canvas_trace_set_result (ChopGimpCanvasTrace *trace,
++                                                   gconstpointer        result,
++                                                   gint                 view);
+diff --git a/app/display/chopgimp-vobjectbar.c b/app/display/chopgimp-vobjectbar.c
+index d32d042..8d3463d 100644
+--- a/app/display/chopgimp-vobjectbar.c
++++ b/app/display/chopgimp-vobjectbar.c
+@@ -52,6 +52,8 @@
+ #include "path/chopgimp-vobject-ops.h"
+ #include "path/chopgimp-vrecolor.h"
+ 
++#include "core/chopgimp-trace-layer.h"
++
+ #include "widgets/chopgimp-value-field.h"
+ 
+ #include "gimpoptionsbar.h"
+@@ -91,6 +93,7 @@ typedef struct
+   GimpImage       *image;      /* weak */
+   GimpVectorLayer *layer;      /* weak */
+   GtkWidget       *content;    /* shown while objects are selected */
++  GtkWidget       *trace;      /* 3.27.3: « Vectorisation… » on a live trace */
+ 
+   gboolean         loading;
+   gboolean         applying;
+@@ -175,6 +178,10 @@ props_load (ChopGimpVObjectProps *p)
+ 
+   gtk_widget_set_visible (p->content, objs != NULL);
+ 
++  if (p->trace)
++    gtk_widget_set_visible (p->trace,
++                            p->layer && chopgimp_trace_layer_is_live (GIMP_ITEM (p->layer)));
++
+   if (! objs)
+     return;
+ 
+@@ -793,6 +800,14 @@ pack (GtkWidget *box,
+     }
+ }
+ 
++static void
++props_trace_clicked (GtkButton            *button,
++                     ChopGimpVObjectProps *p)
++{
++  g_action_group_activate_action (G_ACTION_GROUP (p->gimp->app),
++                                  "layers-image-trace-options", NULL);
++}
++
+ GtkWidget *
+ chopgimp_vobject_bar_new (Gimp                      *gimp,
+                           ChopGimpColorDropdownFunc  color_dropdown)
+@@ -840,6 +855,15 @@ chopgimp_vobject_bar_new (Gimp                      *gimp,
+   pack (box, field (p, "rotation", _("Rotation"), "°",
+                     _("Angle de rotation des objets"), 1.0, 1));
+ 
++  /*  3.27.3 (lot V6 point 4): the options of a live trace  */
++  p->trace = gtk_button_new_with_label (_("Vectorisation…"));
++  gtk_widget_set_no_show_all (p->trace, TRUE);
++  gimp_help_set_help_data (p->trace,
++                           _("Options de la vectorisation dynamique de ce calque "
++                             "(Objet > Vectorisation)"), NULL);
++  g_signal_connect (p->trace, "clicked", G_CALLBACK (props_trace_clicked), p);
++  gtk_box_pack_start (GTK_BOX (box), p->trace, FALSE, FALSE, 0);
++
+   context = gimp_get_user_context (gimp);
+   g_signal_connect_object (context, "image-changed",
+                            G_CALLBACK (props_image_changed), p, 0);
+diff --git a/app/display/meson.build b/app/display/meson.build
+index f05ccca..10ed53c 100644
+--- a/app/display/meson.build
++++ b/app/display/meson.build
+@@ -43,6 +43,7 @@ libappdisplay_sources = [
+   'gimpcanvasproxygroup.c',
+   'gimpcanvasrectangle.c',
+   'chopgimp-canvashighlight.c',
++  'chopgimp-canvastrace.c',
+   'chopgimp-popup-palette.c',
+   'gimpcanvasrectangleguides.c',
+   'gimpcanvassamplepoint.c',
+diff --git a/app/pdb/chopgimp-cmds.c b/app/pdb/chopgimp-cmds.c
+index fca728e..ce913b8 100644
+--- a/app/pdb/chopgimp-cmds.c
++++ b/app/pdb/chopgimp-cmds.c
+@@ -45,6 +45,9 @@
+ #include "path/chopgimp-vobject-ops.h"
+ #include "path/chopgimp-vcolors.h"
+ #include "path/chopgimp-vrecolor.h"
++#include "path/chopgimp-trace.h"
++
++#include "core/chopgimp-trace-layer.h"
+ 
+ #include "text/gimptext.h"
+ #include "text/gimptextlayer.h"
+@@ -715,6 +718,172 @@ text_fx_get_invoker (GimpProcedure         *procedure,
+ }
+ 
+ 
++/*  3.27.3 (lot V5): « Vectoriser » for scripts. @options: an optional
++ *  preset id first (« 6-colors », « bw-logo »…), then « key=value » pairs
++ *  separated by « ; » (chopgimp_trace_options_to_string())
++ */
++static void
++trace_options_parse (ChopGimpTraceOptions *options,
++                     const gchar          *spec)
++{
++  const gchar *rest = spec;
++
++  if (spec && *spec)
++    {
++      const gchar *semi = strchr (spec, ';');
++      gchar       *head = semi ? g_strndup (spec, semi - spec) : g_strdup (spec);
++
++      g_strstrip (head);
++
++      if (*head && ! strchr (head, '='))
++        {
++          chopgimp_trace_options_set_preset (options, head);
++          rest = semi ? semi + 1 : "";
++        }
++
++      g_free (head);
++    }
++
++  if (rest && *rest)
++    chopgimp_trace_options_from_string (options, rest);
++}
++
++static GimpValueArray *
++image_trace_invoker (GimpProcedure         *procedure,
++                     Gimp                  *gimp,
++                     GimpContext           *context,
++                     GimpProgress          *progress,
++                     const GimpValueArray  *args,
++                     GError               **error)
++{
++  GimpDrawable         *drawable = ARG_OBJECT (0);
++  const gchar          *spec     = g_value_get_string (gimp_value_array_index (args, 1));
++  gboolean              sel_only = ARG_BOOL (2);
++  gboolean              live     = ARG_BOOL (3);
++  GimpImage            *image    = gimp_item_get_image (GIMP_ITEM (drawable));
++  GimpVectorLayer      *layer    = NULL;
++  ChopGimpTraceSource  *source;
++  ChopGimpTraceOptions  options;
++  GimpValueArray       *return_vals;
++
++  chopgimp_trace_options_init (&options);
++  chopgimp_trace_options_set_preset (&options, "default");
++  trace_options_parse (&options, spec);
++
++  source = chopgimp_vobjects_enabled () ? chopgimp_trace_source_new (drawable, sel_only) : NULL;
++
++  if (source)
++    {
++      ChopGimpTraceResult *result = chopgimp_trace_source_trace (source, &options,
++                                                                 progress, error);
++
++      if (result)
++        {
++          layer = chopgimp_trace_layer_new (image,
++                                            GIMP_IS_LAYER (drawable) ? GIMP_LAYER (drawable) : NULL,
++                                            result, live ? source : NULL, &options,
++                                            FALSE, FALSE, context);
++          chopgimp_trace_result_free (result);
++        }
++
++      chopgimp_trace_source_free (source);
++    }
++
++  chopgimp_trace_options_clear (&options);
++
++  if (! layer && error && ! *error)
++    g_set_error_literal (error, GIMP_PDB_ERROR, GIMP_PDB_ERROR_FAILED,
++                         "Nothing to trace (empty layer or selection, no shape "
++                         "with these options, or vector objects disabled)");
++
++  return_vals = gimp_procedure_get_return_values (procedure, layer != NULL,
++                                                  error ? *error : NULL);
++  if (layer)
++    g_value_set_object (gimp_value_array_index (return_vals, 1), layer);
++
++  return return_vals;
++}
++
++/*  live traces: « options » (the options string, empty: not a live
++ *  trace), « edited » (« 1 » when the objects changed since the trace),
++ *  « expand », « retrace[:spec] » (re-trace in place with @spec applied
++ *  on top of the current options)
++ */
++static GimpValueArray *
++image_trace_command_invoker (GimpProcedure         *procedure,
++                             Gimp                  *gimp,
++                             GimpContext           *context,
++                             GimpProgress          *progress,
++                             const GimpValueArray  *args,
++                             GError               **error)
++{
++  GimpVectorLayer *layer = ARG_OBJECT (0);
++  const gchar     *cmd   = g_value_get_string (gimp_value_array_index (args, 1));
++  gchar           *out   = NULL;
++  gboolean         done  = FALSE;
++  GimpValueArray  *return_vals;
++
++  if (! cmd)
++    cmd = "";
++
++  if (chopgimp_trace_layer_is_live (GIMP_ITEM (layer)))
++    {
++      if (! strcmp (cmd, "options"))
++        {
++          ChopGimpTraceOptions options;
++
++          chopgimp_trace_options_init (&options);
++          if (chopgimp_trace_layer_get (layer, NULL, &options, NULL))
++            {
++              out  = chopgimp_trace_options_to_string (&options);
++              done = TRUE;
++            }
++          chopgimp_trace_options_clear (&options);
++        }
++      else if (! strcmp (cmd, "edited"))
++        {
++          done = TRUE;
++          out  = g_strdup (chopgimp_trace_layer_is_edited (layer) ? "1" : "0");
++        }
++      else if (! strcmp (cmd, "expand"))
++        {
++          done = chopgimp_trace_layer_expand (layer, TRUE);
++        }
++      else if (g_str_has_prefix (cmd, "retrace"))
++        {
++          ChopGimpTraceSource  *source = NULL;
++          ChopGimpTraceOptions  options;
++          gboolean              flat   = FALSE;
++
++          chopgimp_trace_options_init (&options);
++
++          if (chopgimp_trace_layer_get (layer, &source, &options, &flat))
++            {
++              ChopGimpTraceResult *result;
++
++              if (cmd[7] == ':')
++                trace_options_parse (&options, cmd + 8);
++
++              result = chopgimp_trace_source_trace (source, &options, progress, NULL);
++              if (result)
++                {
++                  done = chopgimp_trace_layer_update (layer, result, source, &options, flat);
++                  chopgimp_trace_result_free (result);
++                }
++              chopgimp_trace_source_free (source);
++            }
++
++          chopgimp_trace_options_clear (&options);
++        }
++    }
++
++  return_vals = gimp_procedure_get_return_values (procedure, TRUE, NULL);
++  g_value_set_boolean (gimp_value_array_index (return_vals, 1), done);
++  g_value_take_string (gimp_value_array_index (return_vals, 2), out ? out : g_strdup (""));
++
++  return return_vals;
++}
++
+ static GimpProcedure *
+ chopgimp_procedure (GimpPDB          *pdb,
+                     GimpMarshalFunc   invoker,
+@@ -871,6 +1040,52 @@ register_chopgimp_procs (GimpPDB *pdb)
+   gimp_pdb_register_procedure (pdb, p);
+   g_object_unref (p);
+ 
++  p = chopgimp_procedure (pdb, image_trace_invoker, "chopgimp-image-trace",
++                          "« Vectoriser » (Illustrator's Image Trace): trace @drawable (only the "
++                          "selection when @selection-only and there is one) into a new vector "
++                          "layer above it, one object per shape, grouped by color. @options: "
++                          "an optional preset first (default, photo-high, photo-low, 3-colors, "
++                          "6-colors, 16-colors, gray, bw-logo, sketch, silhouettes, line-art, "
++                          "technical, pixel-art) then key=value pairs separated by ';'. @live: "
++                          "the layer keeps the source and the options (« vectorisation "
++                          "dynamique », see chopgimp-image-trace-command).");
++  gimp_procedure_add_argument (p, gimp_param_spec_drawable ("drawable", "drawable",
++                                                            "The drawable to trace",
++                                                            FALSE, GIMP_PARAM_READWRITE));
++  gimp_procedure_add_argument (p, gimp_param_spec_string ("options", "options", "The options",
++                                                          FALSE, TRUE, FALSE, NULL,
++                                                          GIMP_PARAM_READWRITE));
++  gimp_procedure_add_argument (p, g_param_spec_boolean ("selection-only", "selection-only",
++                                                        "Only the selection", FALSE,
++                                                        GIMP_PARAM_READWRITE));
++  gimp_procedure_add_argument (p, g_param_spec_boolean ("live", "live", "Live trace", TRUE,
++                                                        GIMP_PARAM_READWRITE));
++  gimp_procedure_add_return_value (p, gimp_param_spec_vector_layer ("layer", "layer",
++                                                                    "The new vector layer",
++                                                                    FALSE, GIMP_PARAM_READWRITE));
++  gimp_pdb_register_procedure (pdb, p);
++  g_object_unref (p);
++
++  p = chopgimp_procedure (pdb, image_trace_command_invoker, "chopgimp-image-trace-command",
++                          "On a live trace layer (chopgimp-image-trace with @live): « options » "
++                          "returns its options, « edited » returns 1 when its objects changed "
++                          "since the trace, « expand » makes it plain objects, "
++                          "« retrace[:options] » traces it again (options applied on top of its "
++                          "own). Returns FALSE when @layer is not a live trace.");
++  gimp_procedure_add_argument (p, gimp_param_spec_vector_layer ("layer", "layer",
++                                                                "The vector layer",
++                                                                FALSE, GIMP_PARAM_READWRITE));
++  gimp_procedure_add_argument (p, gimp_param_spec_string ("command", "command", "The command",
++                                                          FALSE, FALSE, FALSE, NULL,
++                                                          GIMP_PARAM_READWRITE));
++  gimp_procedure_add_return_value (p, g_param_spec_boolean ("done", "done", "Done",
++                                                            FALSE, GIMP_PARAM_READWRITE));
++  gimp_procedure_add_return_value (p, gimp_param_spec_string ("result", "result", "The result",
++                                                              FALSE, TRUE, FALSE, NULL,
++                                                              GIMP_PARAM_READWRITE));
++  gimp_pdb_register_procedure (pdb, p);
++  g_object_unref (p);
++
+   p = chopgimp_procedure (pdb, divide_invoker, "chopgimp-path-divide",
+                           "Pathfinder « Divide »: every region of the arrangement of the paths. "
+                           "The pieces are added at the top of the paths of the image.");
+-- 
+2.53.0
+

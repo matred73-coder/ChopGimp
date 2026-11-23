@@ -1,0 +1,222 @@
+From 3989f704a2ceaeefed7e47ed6214839b660a20ca Mon Sep 17 00:00:00 2001
+From: ChopGimp <mathieu.redon@proton.me>
+Date: Mon, 23 Nov 2026 21:24:56 +0100
+Subject: [PATCH 127/131] =?UTF-8?q?ChopGimp=203.27.3=20(lot=20V5):=20chopg?=
+ =?UTF-8?q?imp-trace.h,=20the=20=C2=AB=20Vectoriser=20=C2=BB=20engine=20in?=
+ =?UTF-8?q?terface=20(potrace=20/=20centerline=20/=20pixel=20art,=20Illust?=
+ =?UTF-8?q?rator-like=20options=20and=20presets,=20result=20=E2=86=92=20ve?=
+ =?UTF-8?q?ctor=20objects=20XML)?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+---
+ app/path/chopgimp-trace.h | 196 ++++++++++++++++++++++++++++++++++++++
+ 1 file changed, 196 insertions(+)
+ create mode 100644 app/path/chopgimp-trace.h
+
+diff --git a/app/path/chopgimp-trace.h b/app/path/chopgimp-trace.h
+new file mode 100644
+index 0000000..172740a
+--- /dev/null
++++ b/app/path/chopgimp-trace.h
+@@ -0,0 +1,196 @@
++/* GIMP - The GNU Image Manipulation Program
++ * chopgimp-trace.h — ChopGimp 3.27.3 (lot V5): « Vectoriser » (image trace)
++ *
++ * Turns pixels into vector shapes, like Illustrator's Image Trace:
++ *
++ *  - engine POTRACE (libpotrace): filled outlines; black and white in one
++ *    pass, gray / color by quantizing the image to N colors, then one
++ *    potrace pass per color, either ABUTTING (each color traced alone,
++ *    shapes side by side) or OVERLAPPING (color k traced together with
++ *    all the colors drawn above it: stacked, no gaps between shapes);
++ *  - engine CENTERLINE (autotrace, centerline mode): the middle line of
++ *    the dark strokes, as open stroked paths (sketches, line art);
++ *  - engine PIXELART (libdepixelize, Kopf-Lischinski 2011): pixel art
++ *    to smooth shapes.
++ *
++ * The result is a list of shapes in image coordinates, bottom → top,
++ * each with one color: a filled path (even-odd) or a stroked path. It
++ * becomes the objects of a vector layer through chopgimp_trace_result_to_xml()
++ * and chopgimp_vlayer_set_xml() (one object per shape, grouped by color).
++ *
++ * Thread-safe: chopgimp_trace_run() reads its own copy of the pixels and
++ * may run in a GTask thread; it checks @cancellable often and calls
++ * @progress (from that thread) with 0..1.
++ *
++ * This program is free software: you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation; either version 3 of the License, or
++ * (at your option) any later version.
++ */
++
++#pragma once
++
++#include <gio/gio.h>
++#include <gegl.h>
++
++G_BEGIN_DECLS
++
++
++typedef enum
++{
++  CHOPGIMP_TRACE_ENGINE_POTRACE,      /* filled outlines                   */
++  CHOPGIMP_TRACE_ENGINE_CENTERLINE,   /* stroked middle lines (autotrace)  */
++  CHOPGIMP_TRACE_ENGINE_PIXELART      /* depixelize                        */
++} ChopGimpTraceEngine;
++
++typedef enum
++{
++  CHOPGIMP_TRACE_MODE_COLOR,
++  CHOPGIMP_TRACE_MODE_GRAY,
++  CHOPGIMP_TRACE_MODE_BW              /* threshold                         */
++} ChopGimpTraceMode;
++
++typedef enum
++{
++  CHOPGIMP_TRACE_PALETTE_AUTO,        /* fidelity-driven number of colors  */
++  CHOPGIMP_TRACE_PALETTE_LIMITED,     /* exactly n_colors (k-means in Lab) */
++  CHOPGIMP_TRACE_PALETTE_CUSTOM       /* the colors of @palette (nearest)  */
++} ChopGimpTracePalette;
++
++typedef enum
++{
++  CHOPGIMP_TRACE_METHOD_ABUTTING,     /* « Adjacent »   (cut-out shapes)   */
++  CHOPGIMP_TRACE_METHOD_OVERLAPPING   /* « Superposé »  (stacked shapes)   */
++} ChopGimpTraceMethod;
++
++typedef struct
++{
++  ChopGimpTraceEngine   engine;
++  ChopGimpTraceMode     mode;
++  ChopGimpTracePalette  palette;
++  gint                  n_colors;     /* LIMITED: 2..256; AUTO: upper bound
++                                       * scaled by @color_fidelity          */
++  gdouble               color_fidelity; /* AUTO, 0..100: how many colors to
++                                       * keep (merge threshold in Lab)      */
++  GeglColor           **custom;       /* CUSTOM: the colors (borrowed)     */
++  gint                  n_custom;
++
++  gdouble               threshold;    /* BW: 0..255 (luminance < threshold
++                                       * is black)                          */
++  gboolean              invert;       /* BW / CENTERLINE: trace the light   */
++
++  gdouble               paths;        /* 0..100 path fidelity: 100 follows
++                                       * the pixels, 0 smooths a lot
++                                       * (potrace opttolerance 1.0 → 0.05)  */
++  gdouble               corners;      /* 0..100: 100 sharp corners, 0 round
++                                       * (potrace alphamax 0.0 → 1.334)     */
++  gint                  noise;        /* areas below this many pixels are
++                                       * dropped (potrace turdsize)         */
++  gdouble               blur;         /* 0..10 px smoothing of the source
++                                       * before quantizing (0: none)        */
++  ChopGimpTraceMethod   method;
++  gboolean              fills;        /* POTRACE: filled shapes             */
++  gboolean              strokes;      /* POTRACE: also thin areas narrower
++                                       * than @max_stroke_width as stroked
++                                       * centerlines (Illustrator « Contours »)*/
++  gdouble               max_stroke_width; /* px                             */
++  gdouble               min_stroke_length; /* px: shorter strokes dropped   */
++  gboolean              snap_lines;   /* « Arrondir les courbes en lignes »:
++                                       * near-straight curves → lines       */
++  gboolean              ignore_white; /* no shape for white (or the
++                                       * lightest color when it is ≥ 95 %)  */
++  gboolean              ignore_transparent; /* alpha < 50 % is not traced   */
++} ChopGimpTraceOptions;
++
++typedef struct
++{
++  GeglColor  *color;                  /* owned, sRGB                        */
++  gchar      *d;                      /* SVG path data, image coordinates,
++                                       * absolute M / L / C / Z only        */
++  gboolean    stroke;                 /* TRUE: open stroked path           */
++  gdouble     width;                  /* stroke width (px)                 */
++  gint        n_anchors;
++} ChopGimpTraceShape;
++
++typedef struct
++{
++  GPtrArray  *shapes;                 /* ChopGimpTraceShape *, bottom → top */
++  gint        n_colors;               /* distinct colors used               */
++  gint        n_paths;
++  gint        n_anchors;
++  gint        width, height;          /* the traced area (image px)        */
++  gint        offset_x, offset_y;     /* its origin in the image           */
++} ChopGimpTraceResult;
++
++typedef void (* ChopGimpTraceProgress) (gdouble  fraction,
++                                        gpointer data);
++
++
++/*  ─── options ───────────────────────────────────────────────────────── */
++
++/*  « Par défaut »: potrace, BW, threshold 128, paths 50, corners 75,
++ *  noise 25, fills, ignore white, abutting, n_colors 6, fidelity 50
++ */
++void                   chopgimp_trace_options_init     (ChopGimpTraceOptions *options);
++
++/*  the presets, in the order of Illustrator's list; ids are stable
++ *  (saved in live traces), labels translated. NULL-terminated, static.
++ *  « default », « photo-high », « photo-low », « 3-colors », « 6-colors »,
++ *  « 16-colors », « gray », « bw-logo », « sketch », « silhouettes »,
++ *  « line-art », « technical », « pixel-art »
++ */
++const gchar * const  * chopgimp_trace_get_presets      (void);
++const gchar          * chopgimp_trace_get_preset_label (const gchar          *id);
++/*  FALSE when @id is unknown (@options untouched)  */
++gboolean               chopgimp_trace_options_set_preset (ChopGimpTraceOptions *options,
++                                                          const gchar          *id);
++
++/*  « key=value;… » (for the live-trace parasite and the PDB); unknown
++ *  keys ignored, missing keys keep the current value. CUSTOM colors as
++ *  « custom=#rrggbb,#rrggbb »: from_string() makes owned colors that
++ *  chopgimp_trace_options_clear() frees.
++ */
++gchar                * chopgimp_trace_options_to_string  (const ChopGimpTraceOptions *options);
++void                   chopgimp_trace_options_from_string (ChopGimpTraceOptions *options,
++                                                           const gchar          *string);
++void                   chopgimp_trace_options_clear    (ChopGimpTraceOptions *options);
++
++
++/*  ─── tracing ───────────────────────────────────────────────────────── */
++
++/*  traces @rect of @buffer (any format; read as R'G'B'A float); @mask
++ *  (NULL or a selection mask, same coordinates): pixels outside are
++ *  transparent. NULL when cancelled (@error G_IO_ERROR_CANCELLED) or
++ *  when the engine fails.
++ */
++ChopGimpTraceResult  * chopgimp_trace_run              (GeglBuffer                 *buffer,
++                                                        const GeglRectangle        *rect,
++                                                        GeglBuffer                 *mask,
++                                                        const ChopGimpTraceOptions *options,
++                                                        GCancellable               *cancellable,
++                                                        ChopGimpTraceProgress       progress,
++                                                        gpointer                    progress_data,
++                                                        GError                    **error);
++
++void                   chopgimp_trace_result_free      (ChopGimpTraceResult        *result);
++
++/*  the objects for chopgimp_vlayer_set_xml(): a group per color (named
++ *  « #rrggbb »), one object per shape (fill or stroke of that color);
++ *  @flat: no groups. g_free().
++ */
++gchar                * chopgimp_trace_result_to_xml    (const ChopGimpTraceResult  *result,
++                                                        gboolean                    flat);
++
++/*  draws @result on @cr (image coordinates) for the live preview; @view:
++ *  0 result, 1 outlines (thin dark lines, no fill), 2 outlines over the
++ *  result
++ */
++void                   chopgimp_trace_result_draw      (const ChopGimpTraceResult  *result,
++                                                        gpointer                    cr,
++                                                        gint                        view);
++
++/*  which engines this build has (libpotrace, autotrace, depixelize)  */
++gboolean               chopgimp_trace_engine_available (ChopGimpTraceEngine         engine);
++
++
++G_END_DECLS
+-- 
+2.53.0
+

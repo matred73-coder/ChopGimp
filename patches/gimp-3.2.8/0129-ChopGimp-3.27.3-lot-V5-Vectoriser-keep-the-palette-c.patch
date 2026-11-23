@@ -1,0 +1,46 @@
+From 5e98e0199e674b6bf6543e9e8542684a732db199 Mon Sep 17 00:00:00 2001
+From: ChopGimp <mathieu.redon@proton.me>
+Date: Mon, 23 Nov 2026 21:36:52 +0100
+Subject: [PATCH 129/131] ChopGimp 3.27.3 (lot V5): Vectoriser: keep the
+ palette colors of a live trace, free the selected-layers list
+
+---
+ app/core/chopgimp-trace-layer.c     | 7 ++++++-
+ app/dialogs/chopgimp-trace-dialog.c | 3 +++
+ 2 files changed, 9 insertions(+), 1 deletion(-)
+
+diff --git a/app/core/chopgimp-trace-layer.c b/app/core/chopgimp-trace-layer.c
+index 5f9e457..dd5680f 100644
+--- a/app/core/chopgimp-trace-layer.c
++++ b/app/core/chopgimp-trace-layer.c
+@@ -459,7 +459,12 @@ chopgimp_trace_layer_new (GimpImage                  *image,
+       if (above && hide_above)
+         gimp_item_set_visible (GIMP_ITEM (above), FALSE, TRUE);
+ 
+-      gimp_image_set_selected_layers (image, g_list_prepend (NULL, layer));
++      {
++        GList *selected = g_list_prepend (NULL, layer);
++
++        gimp_image_set_selected_layers (image, selected);
++        g_list_free (selected);
++      }
+     }
+ 
+   gimp_image_undo_group_end (image);
+diff --git a/app/dialogs/chopgimp-trace-dialog.c b/app/dialogs/chopgimp-trace-dialog.c
+index 7db8d7a..85f49f2 100644
+--- a/app/dialogs/chopgimp-trace-dialog.c
++++ b/app/dialogs/chopgimp-trace-dialog.c
+@@ -345,6 +345,9 @@ widgets_from_options (Dialog *d)
+       palette = gtk_combo_box_get_active (GTK_COMBO_BOX (d->palette));
+       if (palette != PALETTE_SWATCHES)
+         palette = PALETTE_GLOBALS;
++      /*  the colors in @o (from a live trace) are those of this entry  */
++      g_object_set_data (G_OBJECT (d->palette), "chopgimp-loaded",
++                         GINT_TO_POINTER (palette));
+       break;
+     }
+   gtk_combo_box_set_active (GTK_COMBO_BOX (d->palette), palette);
+-- 
+2.53.0
+
