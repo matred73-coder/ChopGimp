@@ -564,7 +564,7 @@ def options_dialog(n_pages, n_layers):
                                                 ("Texte", text)])), False, False, 0)
     opt_box = vbox()
     dpi = spin_scale(Gtk.Adjustment(value=150, lower=36, upper=1200, step_increment=1, page_increment=50),
-                     "Résolution (ppp)", limits=(36, 600))
+                     "Résolution (ppp)", limits=(36, 600), unit="ppp")
     opt_box.pack_start(dpi, False, False, 0)
     mx = spin_scale(Gtk.Adjustment(value=1500, lower=50, upper=50000, step_increment=50, page_increment=500),
                     "Nombre maximal d'objets", limits=(50, 10000), gamma=2.0)

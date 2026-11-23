@@ -167,6 +167,10 @@ STYLE_NATIFS = ["filters-dropshadow", "filters-chopgimp-stroke", "filters-chopgi
                 "filters-chopgimp-inner-shadow", "filters-chopgimp-inner-glow", "filters-gegl-bevel",
                 "filters-gegl-color-overlay", "filters-long-shadow", "filters-emboss"]
 
+# Fenêtre « Style de calque » unifiée (ChopGimp 3.26, lot B) : tous les effets
+# du calque, à cocher et à régler (tools/gimpfiltertool-layerstyle.c)
+STYLE_FENETRE = ["layers-style-dialog"]
+
 # Copier / coller le style de calque (ChopGimp, presse-papiers de styles)
 STYLE_PRESSE_PAPIERS = ["layers-style-copy", "layers-style-paste", "layers-style-paste-add"]
 
@@ -180,6 +184,8 @@ def style_submenu(indent):
     l = [i + "<submenu>",
          i + '  <attribute name="label" translatable="no">Style de calque</attribute>',
          i + "  <section>"]
+    l += [i + '    <item><attribute name="action">app.%s</attribute></item>' % a for a in STYLE_FENETRE]
+    l += [i + "  </section>", i + "  <section>"]
     l += [i + '    <item><attribute name="action">app.%s</attribute></item>' % a for a in STYLE_NATIFS]
     l += [i + "  </section>", i + "  <section>"]
     l += [i + '    <item><attribute name="action">app.%s</attribute></item>' % a for a in STYLE_PRESSE_PAPIERS]

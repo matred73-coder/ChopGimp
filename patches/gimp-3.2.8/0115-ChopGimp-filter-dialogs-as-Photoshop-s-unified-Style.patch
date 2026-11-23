@@ -1,0 +1,2146 @@
+From 9cf1b460c2985ebd9f72c90ac7a706b74173e032 Mon Sep 17 00:00:00 2001
+From: ChopGimp <mathieu.redon@proton.me>
+Date: Wed, 18 Nov 2026 18:21:01 +0100
+Subject: [PATCH 115/116] =?UTF-8?q?ChopGimp:=20filter=20dialogs=20as=20Pho?=
+ =?UTF-8?q?toshop's,=20unified=20=C2=AB=20Style=20de=20calque=20=C2=BB=20w?=
+ =?UTF-8?q?indow=20(lot=20B)?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+- Tool and filter dialogs: no header bar, buttons at the bottom
+  (Réinitialiser on the left, Annuler and Valider on the right, Valider as
+  the suggested action; Enter = Valider, Esc = Annuler); « Aide » becomes a
+  small « ? » button in the dialog header (gimptooldialog.c, gimptoolgui.c).
+- Filter dialogs: clipping, region, on-canvas controls, split view and the
+  blending options in a collapsed « Avancé » expander, remembered in the
+  tool options (GimpFilterOptions:advanced-expanded); preview and « apply
+  directly to the layer » stay visible at the bottom.
+- « Style de calque » window: when the edited filter is a layer style, a
+  column at the left of the filter dialog lists the effects of the layer
+  (Biseautage, Contour, Ombre interne, Lueur interne, Incrustation couleur,
+  Lueur externe, Ombre portée) with check boxes (filter active). Clicking an
+  effect commits the edited one without closing the window and edits the
+  other in the same GimpFilterTool (gimp_operation_tool_set_operation() on
+  the existing filter, as the fx list's edit); checking an absent effect
+  adds it with the user's / factory defaults; « + » adds another Contour or
+  Ombre portée. The session is one undo group (« Style de calque »);
+  Annuler (or Ctrl+Z) undoes it and restores the active states. « Apply
+  directly to the layer » is off while the window adds effects.
+- New action layers-style-dialog (Calque > Style de calque > Options de
+  fusion…), also behind the fx button of the Layers panel; gegl:color-overlay
+  joins the ChopGimp layer styles.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ app/actions/layers-actions.c           |   13 +
+ app/actions/layers-commands.c          |  104 +++
+ app/actions/layers-commands.h          |    3 +
+ app/display/gimptooldialog.c           |   69 +-
+ app/display/gimptoolgui.c              |   95 ++-
+ app/display/gimptoolgui.h              |    1 +
+ app/operations/chopgimp-layer-styles.h |   45 +-
+ app/tools/gimpfilteroptions.c          |   21 +-
+ app/tools/gimpfilteroptions.h          |    1 +
+ app/tools/gimpfiltertool-layerstyle.c  | 1003 +++++++++++++++++++++++-
+ app/tools/gimpfiltertool-layerstyle.h  |    8 +
+ app/tools/gimpfiltertool.c             |  243 ++++--
+ app/tools/gimpfiltertool.h             |    3 +
+ app/widgets/gimplayertreeview.c        |    2 +-
+ 14 files changed, 1531 insertions(+), 80 deletions(-)
+
+diff --git a/app/actions/layers-actions.c b/app/actions/layers-actions.c
+index b04e613..b17c23f 100644
+--- a/app/actions/layers-actions.c
++++ b/app/actions/layers-actions.c
+@@ -276,6 +276,16 @@ static const GimpActionEntry layers_actions[] =
+   /*  ChopGimp: copy / paste layer style (Photoshop), see
+    *  core/chopgimp-style-clipboard.c
+    */
++  /*  ChopGimp: the « Style de calque » window (all the effects of the
++   *  layer, as Photoshop's), see tools/gimpfiltertool-layerstyle.c
++   */
++  { "layers-style-dialog", "gimp-effects",
++    "Options de fusion...", NULL, { NULL },
++    "Ouvrir la fenêtre Style de calque : les effets du calque actif, "
++    "à cocher et à régler",
++    layers_style_dialog_cmd_callback,
++    GIMP_HELP_LAYER_EFFECTS },
++
+   { "layers-style-copy", GIMP_ICON_EDIT_COPY,
+     "Copier le style de calque", NULL, { NULL },
+     "Copier les effets (filtres non destructifs) du calque actif",
+@@ -1201,6 +1211,9 @@ layers_actions_update (GimpActionGroup *group,
+ 
+     SET_SENSITIVE ("layers-style-rasterize", can_rasterize_style);
+ 
++    SET_SENSITIVE ("layers-style-dialog",
++                   layer && !fs && !ac && n_selected_layers == 1);
++
+     SET_SENSITIVE ("layers-style-copy",
+                    layer && !fs && !ac &&
+                    chopgimp_style_drawable_n_filters (GIMP_DRAWABLE (layer)) > 0);
+diff --git a/app/actions/layers-commands.c b/app/actions/layers-commands.c
+index 603e9c6..52c7d22 100644
+--- a/app/actions/layers-commands.c
++++ b/app/actions/layers-commands.c
+@@ -31,6 +31,7 @@
+ 
+ #include "config/gimpdialogconfig.h"
+ 
++#include "operations/chopgimp-layer-styles.h"
+ #include "operations/layer-modes/gimp-layer-modes.h"
+ 
+ #include "core/chopgimp-style-clipboard.h"
+@@ -97,6 +98,8 @@
+ #include "dialogs/scale-dialog.h"
+ 
+ #include "actions.h"
++#include "filters-commands.h"
++#include "gimpgeglprocedure.h"
+ #include "items-commands.h"
+ #include "layers-commands.h"
+ 
+@@ -2475,6 +2478,107 @@ layers_color_tag_cmd_callback (GimpAction *action,
+ 
+ /*  ChopGimp: copy / paste layer style (Photoshop)  */
+ 
++/*  ChopGimp: Calque > Style de calque > Options de fusion… opens the
++ *  « Style de calque » window (tools/gimpfiltertool-layerstyle.c) on the
++ *  first effect of the layer in Photoshop's order, as a double-click in
++ *  the fx list does; on a layer without style, on an unchecked Ombre
++ *  portée (nothing is added unless an effect is checked)
++ */
++void
++layers_style_dialog_cmd_callback (GimpAction *action,
++                                  GVariant   *value,
++                                  gpointer    data)
++{
++  GimpImage          *image;
++  GList              *layers;
++  GimpDisplay        *display;
++  GimpContainer      *filters;
++  GimpDrawableFilter *first      = NULL;
++  gint                first_rank = G_MAXINT;
++  GList              *list;
++  return_if_no_layers (image, layers, data);
++  return_if_no_display (display, data);
++
++  if (g_list_length (layers) != 1)
++    return;
++
++  filters = gimp_drawable_get_filters (GIMP_DRAWABLE (layers->data));
++
++  for (list = filters ? GIMP_LIST (filters)->queue->head : NULL;
++       list;
++       list = g_list_next (list))
++    {
++      GimpDrawableFilter *filter = list->data;
++      GeglNode           *node;
++      gchar              *operation = NULL;
++      gint                rank;
++
++      if (! GIMP_IS_DRAWABLE_FILTER (filter) ||
++          gimp_drawable_filter_get_temporary (filter))
++        continue;
++
++      node = gimp_drawable_filter_get_operation (filter);
++      if (! node)
++        continue;
++
++      gegl_node_get (node, "operation", &operation, NULL);
++
++      rank = chopgimp_layer_style_rank (
++               chopgimp_layer_style_find (operation,
++                                          gimp_object_get_name (filter)));
++      g_free (operation);
++
++      if (rank >= 0 && rank < first_rank)
++        {
++          first      = filter;
++          first_rank = rank;
++        }
++    }
++
++  if (first)
++    {
++      GimpProcedure *procedure;
++      gchar         *operation = NULL;
++
++      gegl_node_get (gimp_drawable_filter_get_operation (first),
++                     "operation", &operation,
++                     NULL);
++
++      /*  as gimpdrawabletreeview-filters.c edits a filter  */
++      procedure = gimp_gegl_procedure_new (image->gimp,
++                                           first,
++                                           GIMP_RUN_INTERACTIVE, NULL,
++                                           operation,
++                                           gimp_object_get_name (first),
++                                           gimp_object_get_name (first),
++                                           NULL, NULL, NULL);
++
++      filters_run_procedure (image->gimp, display, procedure,
++                             GIMP_RUN_INTERACTIVE);
++
++      g_object_unref (procedure);
++      g_free (operation);
++    }
++  else
++    {
++      GAction *shadow;
++
++      shadow = g_action_map_lookup_action (G_ACTION_MAP (image->gimp->app),
++                                           "filters-dropshadow");
++
++      if (GIMP_IS_ACTION (shadow))
++        {
++          /*  read by gimp_filter_tool_layer_style_start()  */
++          g_object_set_data (G_OBJECT (image->gimp),
++                             "chopgimp-layer-style-unchecked",
++                             GSIZE_TO_POINTER (g_get_monotonic_time () /
++                                               G_TIME_SPAN_SECOND));
++
++          gimp_action_activate (GIMP_ACTION (shadow));
++        }
++    }
++}
++
+ void
+ layers_style_copy_cmd_callback (GimpAction *action,
+                                 GVariant   *value,
+diff --git a/app/actions/layers-commands.h b/app/actions/layers-commands.h
+index c295d19..7c15019 100644
+--- a/app/actions/layers-commands.h
++++ b/app/actions/layers-commands.h
+@@ -48,6 +48,9 @@ void   layers_new_group_cmd_callback          (GimpAction *action,
+                                                GVariant   *value,
+                                                gpointer    data);
+ 
++void   layers_style_dialog_cmd_callback       (GimpAction *action,
++                                               GVariant   *value,
++                                               gpointer    data);
+ void   layers_style_copy_cmd_callback         (GimpAction *action,
+                                                GVariant   *value,
+                                                gpointer    data);
+diff --git a/app/display/gimptooldialog.c b/app/display/gimptooldialog.c
+index 312e854..196866c 100644
+--- a/app/display/gimptooldialog.c
++++ b/app/display/gimptooldialog.c
+@@ -51,6 +51,8 @@ static void   gimp_tool_dialog_dispose     (GObject          *object);
+ static void   gimp_tool_dialog_shell_unmap (GimpDisplayShell *shell,
+                                             GimpToolDialog   *dialog);
+ 
++static void   gimp_tool_dialog_help_header (GimpToolDialog   *dialog);
++
+ 
+ G_DEFINE_TYPE_WITH_PRIVATE (GimpToolDialog, gimp_tool_dialog,
+                             GIMP_TYPE_VIEWABLE_DIALOG)
+@@ -108,7 +110,6 @@ gimp_tool_dialog_new (GimpToolInfo *tool_info,
+   GtkWidget *dialog;
+   gchar     *identifier;
+   va_list    args;
+-  gboolean   use_header_bar;
+ 
+   g_return_val_if_fail (GIMP_IS_TOOL_INFO (tool_info), NULL);
+ 
+@@ -124,10 +125,10 @@ gimp_tool_dialog_new (GimpToolInfo *tool_info,
+   if (! icon_name)
+     icon_name = gimp_viewable_get_icon_name (GIMP_VIEWABLE (tool_info));
+ 
+-  g_object_get (gtk_settings_get_default (),
+-                "gtk-dialogs-use-header", &use_header_bar,
+-                NULL);
+-
++  /*  ChopGimp: no header bar in tool and filter dialogs, their buttons
++   *  are at the bottom as Photoshop's (Réinitialiser on the left,
++   *  Annuler and Valider on the right, see gimptoolgui.c)
++   */
+   dialog = g_object_new (GIMP_TYPE_TOOL_DIALOG,
+                          "title",          title,
+                          "role",           gimp_object_get_name (tool_info),
+@@ -135,13 +136,15 @@ gimp_tool_dialog_new (GimpToolInfo *tool_info,
+                          "icon-name",      icon_name,
+                          "help-func",      gimp_standard_help_func,
+                          "help-id",        help_id,
+-                         "use-header-bar", use_header_bar,
++                         "use-header-bar", FALSE,
+                           NULL);
+ 
+   va_start (args, help_id);
+   gimp_dialog_add_buttons_valist (GIMP_DIALOG (dialog), args);
+   va_end (args);
+ 
++  gimp_tool_dialog_help_header (GIMP_TOOL_DIALOG (dialog));
++
+   identifier = g_strconcat (gimp_object_get_name (tool_info), "-dialog", NULL);
+ 
+   gimp_dialog_factory_add_foreign (gimp_dialog_factory_get_singleton (),
+@@ -203,3 +206,57 @@ gimp_tool_dialog_shell_unmap (GimpDisplayShell *shell,
+   if (gtk_widget_get_mapped (GTK_WIDGET (dialog)))
+     g_signal_emit_by_name (dialog, "close");
+ }
++
++/*  ChopGimp: the « Aide » button becomes a small « ? » button in the
++ *  dialog's header (icon, name and layer), the button of the action area
++ *  is hidden but still answers the help response
++ */
++static void
++gimp_tool_dialog_help_clicked (GtkWidget *button,
++                               GtkWidget *help_button)
++{
++  gtk_button_clicked (GTK_BUTTON (help_button));
++}
++
++static void
++gimp_tool_dialog_help_header (GimpToolDialog *dialog)
++{
++  GimpViewableDialog *viewable_dialog = GIMP_VIEWABLE_DIALOG (dialog);
++  GtkWidget          *help_button;
++  GtkWidget          *header;
++  GtkWidget          *button;
++  GtkWidget          *image;
++
++  help_button = gtk_dialog_get_widget_for_response (GTK_DIALOG (dialog),
++                                                    GTK_RESPONSE_HELP);
++
++  if (! GTK_IS_BUTTON (help_button) || ! viewable_dialog->icon)
++    return;
++
++  header = gtk_widget_get_parent (viewable_dialog->icon);
++
++  if (! GTK_IS_BOX (header))
++    return;
++
++  gtk_widget_set_no_show_all (help_button, TRUE);
++  gtk_widget_set_visible (help_button, FALSE);
++
++  button = gtk_button_new ();
++  gtk_button_set_relief (GTK_BUTTON (button), GTK_RELIEF_NONE);
++  gtk_widget_set_focus_on_click (button, FALSE);
++  gtk_widget_set_valign (button, GTK_ALIGN_CENTER);
++  gtk_style_context_add_class (gtk_widget_get_style_context (button),
++                               "chopgimp-help-button");
++  gtk_box_pack_end (GTK_BOX (header), button, FALSE, FALSE, 0);
++  gtk_widget_set_visible (button, TRUE);
++
++  image = gtk_image_new_from_icon_name (GIMP_ICON_HELP, GTK_ICON_SIZE_MENU);
++  gtk_container_add (GTK_CONTAINER (button), image);
++  gtk_widget_set_visible (image, TRUE);
++
++  gimp_help_set_help_data (button, "Aide", NULL);
++
++  g_signal_connect_object (button, "clicked",
++                           G_CALLBACK (gimp_tool_dialog_help_clicked),
++                           help_button, 0);
++}
+diff --git a/app/display/gimptoolgui.c b/app/display/gimptoolgui.c
+index 28daeb8..6eeda38 100644
+--- a/app/display/gimptoolgui.c
++++ b/app/display/gimptoolgui.c
+@@ -39,6 +39,8 @@
+ #include "gimptooldialog.h"
+ #include "gimptoolgui.h"
+ 
++#include "gimp-intl.h"
++
+ 
+ enum
+ {
+@@ -78,6 +80,12 @@ struct _GimpToolGuiPrivate
+ 
+   GtkWidget        *dialog;
+   GtkWidget        *vbox;
++
++  /*  ChopGimp: [side_box | vbox], the side box is a column at the left
++   *  of the dialog (the effects of the « Style de calque » window)
++   */
++  GtkWidget        *main_box;
++  GtkWidget        *side_box;
+ };
+ 
+ #define GET_PRIVATE(gui) ((GimpToolGuiPrivate *) gimp_tool_gui_get_instance_private ((GimpToolGui *) (gui)))
+@@ -91,6 +99,7 @@ static void            gimp_tool_gui_create_dialog     (GimpToolGui   *gui,
+ static void            gimp_tool_gui_add_dialog_button (GimpToolGui   *gui,
+                                                         ResponseEntry *entry);
+ static void            gimp_tool_gui_update_buttons    (GimpToolGui   *gui);
++static void            gimp_tool_gui_style_buttons     (GimpToolGui   *gui);
+ static void            gimp_tool_gui_update_shell      (GimpToolGui   *gui);
+ static void            gimp_tool_gui_update_viewable   (GimpToolGui   *gui);
+ 
+@@ -143,6 +152,20 @@ gimp_tool_gui_init (GimpToolGui *gui)
+ 
+   private->vbox = gtk_box_new (GTK_ORIENTATION_VERTICAL, 6);
+   g_object_ref_sink (private->vbox);
++
++  private->main_box = gtk_box_new (GTK_ORIENTATION_HORIZONTAL, 0);
++  g_object_ref_sink (private->main_box);
++
++  private->side_box = gtk_box_new (GTK_ORIENTATION_VERTICAL, 4);
++  gtk_style_context_add_class (gtk_widget_get_style_context (private->side_box),
++                               "chopgimp-dialog-side");
++  gtk_box_pack_start (GTK_BOX (private->main_box), private->side_box,
++                      FALSE, FALSE, 0);
++  /*  hidden until a tool fills it  */
++
++  gtk_box_pack_start (GTK_BOX (private->main_box), private->vbox,
++                      TRUE, TRUE, 0);
++  gtk_widget_set_visible (private->vbox, TRUE);
+ }
+ 
+ static void
+@@ -159,6 +182,8 @@ gimp_tool_gui_dispose (GObject *object)
+     gimp_tool_gui_set_viewables (GIMP_TOOL_GUI (object), NULL);
+ 
+   g_clear_object (&private->vbox);
++  private->side_box = NULL;
++  g_clear_object (&private->main_box);
+ 
+   if (private->dialog)
+     {
+@@ -460,6 +485,17 @@ gimp_tool_gui_get_vbox (GimpToolGui *gui)
+   return GET_PRIVATE (gui)->vbox;
+ }
+ 
++/*  ChopGimp: a column at the left of the dialog, hidden while empty
++ *  (shown by the caller), not used in overlay mode
++ */
++GtkWidget *
++gimp_tool_gui_get_side_box (GimpToolGui *gui)
++{
++  g_return_val_if_fail (GIMP_IS_TOOL_GUI (gui), NULL);
++
++  return GET_PRIVATE (gui)->side_box;
++}
++
+ gboolean
+ gimp_tool_gui_get_visible (GimpToolGui *gui)
+ {
+@@ -561,8 +597,8 @@ gimp_tool_gui_set_overlay (GimpToolGui *gui,
+   if (visible)
+     gimp_tool_gui_hide (gui);
+ 
+-  gtk_container_remove (GTK_CONTAINER (gtk_widget_get_parent (private->vbox)),
+-                        private->vbox);
++  gtk_container_remove (GTK_CONTAINER (gtk_widget_get_parent (private->main_box)),
++                        private->main_box);
+ 
+   if (private->overlay)
+     g_object_unref (private->dialog);
+@@ -706,6 +742,8 @@ gimp_tool_gui_set_default_response (GimpToolGui *gui,
+       gtk_dialog_set_default_response (GTK_DIALOG (private->dialog),
+                                        response_id);
+     }
++
++  gimp_tool_gui_style_buttons (gui);
+ }
+ 
+ void
+@@ -801,8 +839,8 @@ gimp_tool_gui_create_dialog (GimpToolGui *gui,
+       gtk_container_set_border_width (GTK_CONTAINER (private->dialog), 6);
+ 
+       gtk_container_set_border_width (GTK_CONTAINER (private->vbox), 0);
+-      gtk_container_add (GTK_CONTAINER (private->dialog), private->vbox);
+-      gtk_widget_set_visible (private->vbox, TRUE);
++      gtk_container_add (GTK_CONTAINER (private->dialog), private->main_box);
++      gtk_widget_set_visible (private->main_box, TRUE);
+     }
+   else
+     {
+@@ -830,11 +868,12 @@ gimp_tool_gui_create_dialog (GimpToolGui *gui,
+ 
+       gtk_container_set_border_width (GTK_CONTAINER (private->vbox), 6);
+       gtk_box_pack_start (GTK_BOX (gtk_dialog_get_content_area (GTK_DIALOG (private->dialog))),
+-                          private->vbox, TRUE, TRUE, 0);
+-      gtk_widget_set_visible (private->vbox, TRUE);
++                          private->main_box, TRUE, TRUE, 0);
++      gtk_widget_set_visible (private->main_box, TRUE);
+     }
+ 
+   gimp_tool_gui_update_buttons (gui);
++  gimp_tool_gui_style_buttons (gui);
+ 
+   if (private->shell)
+     gimp_tool_gui_update_shell (gui);
+@@ -923,6 +962,50 @@ gimp_tool_gui_update_buttons (GimpToolGui *gui)
+   g_free (ids);
+ }
+ 
++/*  ChopGimp: buttons at the bottom of the tool dialogs as Photoshop's:
++ *  « Réinitialiser » on the left, the default button (Valider) styled as
++ *  the suggested action on the right
++ */
++static void
++gimp_tool_gui_style_buttons (GimpToolGui *gui)
++{
++  GimpToolGuiPrivate *private = GET_PRIVATE (gui);
++  GList              *list;
++
++  if (private->overlay || ! private->dialog)
++    return;
++
++  for (list = private->response_entries; list; list = g_list_next (list))
++    {
++      ResponseEntry   *entry = list->data;
++      GtkWidget       *button;
++      GtkWidget       *parent;
++      GtkStyleContext *style;
++
++      button = gtk_dialog_get_widget_for_response (GTK_DIALOG (private->dialog),
++                                                   entry->response_id);
++      if (! button)
++        continue;
++
++      style  = gtk_widget_get_style_context (button);
++      parent = gtk_widget_get_parent (button);
++
++      if (entry->response_id == private->default_response)
++        gtk_style_context_add_class (style, "suggested-action");
++      else
++        gtk_style_context_remove_class (style, "suggested-action");
++
++      if (entry->button_text                           &&
++          ! g_strcmp0 (entry->button_text, _("_Reset")) &&
++          GTK_IS_BUTTON_BOX (parent))
++        {
++          gtk_button_box_set_child_secondary (GTK_BUTTON_BOX (parent),
++                                              button, TRUE);
++          gtk_style_context_add_class (style, "chopgimp-reset-button");
++        }
++    }
++}
++
+ static void
+ gimp_tool_gui_update_shell (GimpToolGui *gui)
+ {
+diff --git a/app/display/gimptoolgui.h b/app/display/gimptoolgui.h
+index f528771..68545f8 100644
+--- a/app/display/gimptoolgui.h
++++ b/app/display/gimptoolgui.h
+@@ -77,6 +77,7 @@ void          gimp_tool_gui_set_viewable           (GimpToolGui      *gui,
+ 
+ GtkWidget   * gimp_tool_gui_get_dialog             (GimpToolGui      *gui);
+ GtkWidget   * gimp_tool_gui_get_vbox               (GimpToolGui      *gui);
++GtkWidget   * gimp_tool_gui_get_side_box           (GimpToolGui      *gui);
+ 
+ gboolean      gimp_tool_gui_get_visible            (GimpToolGui      *gui);
+ void          gimp_tool_gui_show                   (GimpToolGui      *gui);
+diff --git a/app/operations/chopgimp-layer-styles.h b/app/operations/chopgimp-layer-styles.h
+index df43766..d9e485d 100644
+--- a/app/operations/chopgimp-layer-styles.h
++++ b/app/operations/chopgimp-layer-styles.h
+@@ -70,6 +70,10 @@
+ #define CHOPGIMP_LAYER_STYLE_BEVEL \
+   "gegl:bevel"
+ 
++/*  Calque > Style de calque > Incrustation couleur (filters-gegl-color-overlay)  */
++#define CHOPGIMP_LAYER_STYLE_COLOR_OVERLAY \
++  "gegl:color-overlay"
++
+ 
+ /*  name of the preset holding the user's defaults of a style  */
+ #define CHOPGIMP_LAYER_STYLE_DEFAULT_NAME "Par défaut (%s)"
+@@ -96,7 +100,9 @@ static const ChopGimpLayerStyle chopgimp_layer_styles[] =
+   { "filters-chopgimp-stroke",       "chopgimp:stroke", "Contour",
+     CHOPGIMP_LAYER_STYLE_STROKE       },
+   { NULL,                            "gegl:bevel",      "Biseautage",
+-    CHOPGIMP_LAYER_STYLE_BEVEL        }
++    CHOPGIMP_LAYER_STYLE_BEVEL        },
++  { NULL,                            "gegl:color-overlay", "Incrustation couleur",
++    CHOPGIMP_LAYER_STYLE_COLOR_OVERLAY }
+ };
+ 
+ 
+@@ -169,3 +175,40 @@ chopgimp_layer_style_find_by_action (const gchar *action)
+ 
+   return NULL;
+ }
++
++/*  rank of a style in Photoshop's « Style de calque » window (Biseautage,
++ *  Contour, Ombre interne, Lueur interne, Incrustation couleur, Lueur
++ *  externe, Ombre portée), -1 if unknown
++ */
++static inline gint
++chopgimp_layer_style_rank (const ChopGimpLayerStyle *style)
++{
++  static const gchar * const order[] =
++  {
++    "Biseautage", "Contour", "Ombre interne", "Lueur interne",
++    "Incrustation couleur", "Lueur externe", "Ombre portée"
++  };
++  gint i;
++
++  if (! style)
++    return -1;
++
++  for (i = 0; i < G_N_ELEMENTS (order); i++)
++    if (! strcmp (order[i], style->label))
++      return i;
++
++  return -1;
++}
++
++/*  the style of the n-th position of Photoshop's window, or NULL  */
++static inline const ChopGimpLayerStyle *
++chopgimp_layer_style_nth (gint n)
++{
++  gint i;
++
++  for (i = 0; i < G_N_ELEMENTS (chopgimp_layer_styles); i++)
++    if (chopgimp_layer_style_rank (&chopgimp_layer_styles[i]) == n)
++      return &chopgimp_layer_styles[i];
++
++  return NULL;
++}
+diff --git a/app/tools/gimpfilteroptions.c b/app/tools/gimpfilteroptions.c
+index b3ae3f7..61ed4ef 100644
+--- a/app/tools/gimpfilteroptions.c
++++ b/app/tools/gimpfilteroptions.c
+@@ -39,7 +39,8 @@ enum
+   PROP_PREVIEW_SPLIT_POSITION,
+   PROP_CONTROLLER,
+   PROP_BLENDING_OPTIONS_EXPANDED,
+-  PROP_MERGE_FILTER
++  PROP_MERGE_FILTER,
++  PROP_ADVANCED_EXPANDED
+ };
+ 
+ 
+@@ -110,6 +111,16 @@ gimp_filter_options_class_init (GimpFilterOptionsClass *klass)
+                             FALSE,
+                             GIMP_PARAM_STATIC_STRINGS);
+ 
++  /*  ChopGimp: the « Avancé » expander of the filter dialogs (clipping,
++   *  region, on-canvas controls, split view, blending options), collapsed
++   *  by default
++   */
++  GIMP_CONFIG_PROP_BOOLEAN (object_class, PROP_ADVANCED_EXPANDED,
++                            "advanced-expanded",
++                            NULL, NULL,
++                            FALSE,
++                            GIMP_PARAM_STATIC_STRINGS);
++
+   GIMP_CONFIG_PROP_BOOLEAN (object_class, PROP_MERGE_FILTER,
+                             "merge-filter",
+                             /*  ChopGimp: applied to the pixels by default, like
+@@ -164,6 +175,10 @@ gimp_filter_options_set_property (GObject      *object,
+       options->blending_options_expanded = g_value_get_boolean (value);
+       break;
+ 
++    case PROP_ADVANCED_EXPANDED:
++      options->advanced_expanded = g_value_get_boolean (value);
++      break;
++
+     case PROP_MERGE_FILTER:
+       options->merge_filter = g_value_get_boolean (value);
+       break;
+@@ -208,6 +223,10 @@ gimp_filter_options_get_property (GObject    *object,
+       g_value_set_boolean (value, options->blending_options_expanded);
+       break;
+ 
++    case PROP_ADVANCED_EXPANDED:
++      g_value_set_boolean (value, options->advanced_expanded);
++      break;
++
+     case PROP_MERGE_FILTER:
+       g_value_set_boolean (value, options->merge_filter);
+       break;
+diff --git a/app/tools/gimpfilteroptions.h b/app/tools/gimpfilteroptions.h
+index be664ca..8d451ad 100644
+--- a/app/tools/gimpfilteroptions.h
++++ b/app/tools/gimpfilteroptions.h
+@@ -41,6 +41,7 @@ struct _GimpFilterOptions
+   gboolean           controller;
+ 
+   gboolean           blending_options_expanded;
++  gboolean           advanced_expanded;   /*  ChopGimp: « Avancé »  */
+ 
+   gboolean           merge_filter;
+ };
+diff --git a/app/tools/gimpfiltertool-layerstyle.c b/app/tools/gimpfiltertool-layerstyle.c
+index f42e341..3a00f34 100644
+--- a/app/tools/gimpfiltertool-layerstyle.c
++++ b/app/tools/gimpfiltertool-layerstyle.c
+@@ -12,6 +12,16 @@
+  *  - Contour : « Ajouter un autre contour » valide ce contour et en
+  *    ouvre un nouveau sur le calque.
+  *
++ * et la fenêtre « Style de calque » unifiée (lot B, 3.26) : quand le
++ * filtre édité est un style de calque, une colonne à gauche de la fenêtre
++ * du filtre liste les effets du calque, chacun avec sa case (le filtre est
++ * actif). Cliquer sur un effet valide celui en cours sans fermer la
++ * fenêtre et édite l'autre dans le même GimpFilterTool (même chemin que
++ * l'édition par la liste fx) ; cocher un effet absent l'ajoute avec ses
++ * réglages par défaut ; « + » ajoute un autre Contour ou une autre Ombre
++ * portée. Toute la session forme une seule étape d'annulation, et
++ * Annuler revient à l'état de départ.
++ *
+  * This program is free software: you can redistribute it and/or modify
+  * it under the terms of the GNU General Public License as published by
+  * the Free Software Foundation; either version 3 of the License, or
+@@ -43,19 +53,82 @@
+ 
+ #include "core/gimp.h"
+ #include "core/gimpcontainer.h"
++#include "core/gimpdrawable.h"
++#include "core/gimpdrawable-filters.h"
++#include "core/gimpdrawablefilter.h"
++#include "core/gimpimage.h"
++#include "core/gimpimage-undo.h"
++#include "core/gimplayer.h"
+ #include "core/gimplist.h"
+ #include "core/gimpsettings.h"
+ #include "core/gimptoolinfo.h"
++#include "core/gimpundostack.h"
+ 
+ #include "widgets/gimpaction.h"
++#include "widgets/gimphelp-ids.h"
++#include "widgets/gimpwidgets-utils.h"
+ 
+ #include "display/gimpdisplay.h"
++#include "display/gimptoolgui.h"
+ 
++#include "gimpfilteroptions.h"
++#include "gimptoolcontrol.h"
+ #include "gimpfiltertool.h"
+ #include "gimpfiltertool-layerstyle.h"
++#include "gimpoperationtool.h"
++
++
++#define STYLE_KEY   "chopgimp-layer-style"
++#define SESSION_KEY "chopgimp-layer-style-session"
++
++/*  set on the Gimp object by Calque > Style de calque > Options de
++ *  fusion… when the layer has no style: the window opens on an unchecked
++ *  Ombre portée (nothing is added unless an effect is checked)
++ */
++#define UNCHECKED_KEY "chopgimp-layer-style-unchecked"
++
++
++typedef struct
++{
++  GimpFilter *filter;
++  gboolean    active;
++} ActiveState;
++
++typedef struct
++{
++  GimpFilterTool           *filter_tool;
++  GimpDrawable             *drawable;
++
++  const ChopGimpLayerStyle *current;          /*  the edited effect      */
++  gboolean                  current_checked;  /*  its check box          */
++
++  gboolean                  validated;        /*  Valider was clicked    */
++  gboolean                  group_open;       /*  the session's undo group */
++  GimpUndo                 *group;
++
++  GList                    *actives;          /*  ActiveState at start   */
+ 
++  gboolean                  restore_merge;    /*  "merge-filter" was on  */
+ 
+-#define STYLE_KEY "chopgimp-layer-style"
++  guint                     idle_id;
++  GimpDrawableFilter       *pending_filter;
++  const ChopGimpLayerStyle *pending_style;
++} LayerStyleSession;
++
++typedef struct
++{
++  GimpImage         *image;
++  GimpUndo          *group;
++  GList             *actives;
++  GimpFilterOptions *options;
++  gboolean           undo;
++  gboolean           restore_merge;
++} LayerStyleEnd;
++
++
++static void   layer_style_switch_later (LayerStyleSession        *session,
++                                        GimpDrawableFilter       *target,
++                                        const ChopGimpLayerStyle *style);
+ 
+ 
+ /*  the preset holding the user's defaults of the style, or NULL  */
+@@ -145,13 +218,14 @@ layer_style_set_default_clicked (GtkWidget      *button,
+   g_free (name);
+ }
+ 
++/*  the style's starting settings: the user's defaults, or the factory
++ *  settings
++ */
+ static void
+-layer_style_reset_clicked (GtkWidget      *button,
+-                           GimpFilterTool *filter_tool)
++layer_style_apply_default (GimpFilterTool           *filter_tool,
++                           const ChopGimpLayerStyle *style)
+ {
+-  const ChopGimpLayerStyle *style = g_object_get_data (G_OBJECT (button),
+-                                                       STYLE_KEY);
+-  GimpSettings             *preset;
++  GimpSettings *preset;
+ 
+   if (! style || ! filter_tool->config)
+     return;
+@@ -188,6 +262,16 @@ layer_style_reset_clicked (GtkWidget      *button,
+     }
+ }
+ 
++static void
++layer_style_reset_clicked (GtkWidget      *button,
++                           GimpFilterTool *filter_tool)
++{
++  const ChopGimpLayerStyle *style = g_object_get_data (G_OBJECT (button),
++                                                       STYLE_KEY);
++
++  layer_style_apply_default (filter_tool, style);
++}
++
+ static gboolean
+ layer_style_add_stroke_idle (gpointer data)
+ {
+@@ -207,12 +291,23 @@ static void
+ layer_style_add_stroke_clicked (GtkWidget      *button,
+                                 GimpFilterTool *filter_tool)
+ {
+-  GimpTool *tool = GIMP_TOOL (filter_tool);
+-  Gimp     *gimp = tool->tool_info->gimp;
++  GimpTool          *tool    = GIMP_TOOL (filter_tool);
++  Gimp              *gimp    = tool->tool_info->gimp;
++  LayerStyleSession *session = g_object_get_data (G_OBJECT (filter_tool),
++                                                  SESSION_KEY);
+ 
+   if (! tool->display)
+     return;
+ 
++  /*  in the « Style de calque » window: a new stroke in the same window  */
++  if (session)
++    {
++      layer_style_switch_later (session, NULL,
++                                chopgimp_layer_style_find ("chopgimp:stroke",
++                                                           NULL));
++      return;
++    }
++
+   /*  as OK: the stroke is added to the layer (the dialog closes), then
+    *  a new one is opened, once the commit is done
+    */
+@@ -222,6 +317,682 @@ layer_style_add_stroke_clicked (GtkWidget      *button,
+ }
+ 
+ 
++/*  « Style de calque » window: session  */
++
++static LayerStyleSession *
++layer_style_get_session (GimpFilterTool *filter_tool)
++{
++  return g_object_get_data (G_OBJECT (filter_tool), SESSION_KEY);
++}
++
++static void
++active_state_free (ActiveState *state)
++{
++  g_object_unref (state->filter);
++  g_free (state);
++}
++
++static void
++layer_style_session_free (LayerStyleSession *session)
++{
++  if (session->idle_id)
++    g_source_remove (session->idle_id);
++
++  g_clear_object (&session->pending_filter);
++  g_clear_weak_pointer (&session->group);
++  g_clear_object (&session->drawable);
++
++  /*  moved to the end of the session (LayerStyleEnd) by halt()  */
++  g_list_free_full (session->actives, (GDestroyNotify) active_state_free);
++  g_free (session);
++}
++
++/*  the style of the filter being edited, from its operation and its name  */
++static const ChopGimpLayerStyle *
++layer_style_get_current (GimpFilterTool *filter_tool)
++{
++  const ChopGimpLayerStyle *style;
++  const gchar              *name;
++  gchar                    *operation = NULL;
++
++  if (! filter_tool->operation)
++    return NULL;
++
++  gegl_node_get (filter_tool->operation,
++                 "operation", &operation,
++                 NULL);
++
++  if (filter_tool->existing_filter)
++    name = gimp_object_get_name (filter_tool->existing_filter);
++  else
++    name = gimp_tool_get_undo_desc (GIMP_TOOL (filter_tool));
++
++  style = chopgimp_layer_style_find (operation, name);
++
++  g_free (operation);
++
++  return style;
++}
++
++/*  the style of a filter of the layer, NULL if it is not a layer style  */
++static const ChopGimpLayerStyle *
++layer_style_of_filter (GimpDrawableFilter *filter)
++{
++  const ChopGimpLayerStyle *style;
++  GeglNode                 *node;
++  gchar                    *operation = NULL;
++
++  node = gimp_drawable_filter_get_operation (filter);
++
++  if (! node)
++    return NULL;
++
++  gegl_node_get (node,
++                 "operation", &operation,
++                 NULL);
++
++  style = chopgimp_layer_style_find (operation,
++                                     gimp_object_get_name (filter));
++
++  g_free (operation);
++
++  return style;
++}
++
++/*  the filters of the layer the window lists (not the one GIMP shows
++ *  while editing), from the bottom of the stack
++ */
++static GList *
++layer_style_get_filters (LayerStyleSession *session)
++{
++  GimpFilterTool *filter_tool = session->filter_tool;
++  GimpContainer  *filters;
++  GList          *result = NULL;
++  GList          *list;
++
++  filters = gimp_drawable_get_filters (session->drawable);
++
++  if (! filters)
++    return NULL;
++
++  for (list = GIMP_LIST (filters)->queue->head; list; list = g_list_next (list))
++    {
++      GimpDrawableFilter *filter = list->data;
++
++      if (! GIMP_IS_DRAWABLE_FILTER (filter)               ||
++          filter == filter_tool->filter                    ||
++          gimp_drawable_filter_get_temporary (filter))
++        continue;
++
++      result = g_list_prepend (result, filter);
++    }
++
++  return result;
++}
++
++/*  layer styles stay editable (Photoshop): « Appliquer directement au
++ *  calque » is off while the window adds an effect, the user's choice
++ *  comes back after it (layer_style_end_idle())
++ */
++static void
++layer_style_disable_merge (LayerStyleSession *session)
++{
++  GimpFilterOptions *options = GIMP_FILTER_TOOL_GET_OPTIONS (session->filter_tool);
++
++  if (options->merge_filter)
++    {
++      session->restore_merge = TRUE;
++
++      g_object_set (options,
++                    "merge-filter", FALSE,
++                    NULL);
++    }
++}
++
++static void
++layer_style_update_drawable (LayerStyleSession *session)
++{
++  gimp_drawable_update (session->drawable, 0, 0, -1, -1);
++  gimp_image_flush (gimp_item_get_image (GIMP_ITEM (session->drawable)));
++}
++
++
++/*  switching to another effect  */
++
++static void
++layer_style_edit_config (GimpFilterTool     *filter_tool,
++                         GimpDrawableFilter *filter)
++{
++  GObject     *settings;
++  GeglNode    *node;
++  GParamSpec **pspecs;
++  guint        n_pspecs;
++  gchar       *operation = NULL;
++  gint         i;
++
++  /*  as gimpgeglprocedure.c does when editing a filter  */
++  node = gimp_drawable_filter_get_operation (filter);
++
++  gegl_node_get (node,
++                 "operation", &operation,
++                 NULL);
++
++  settings = g_object_new (G_TYPE_FROM_INSTANCE (filter_tool->config), NULL);
++
++  pspecs = gegl_operation_list_properties (operation, &n_pspecs);
++
++  for (i = 0; i < n_pspecs; i++)
++    {
++      GValue      value      = G_VALUE_INIT;
++      GParamSpec *pspec      = pspecs[i];
++      GParamSpec *gimp_pspec = g_object_class_find_property (G_OBJECT_GET_CLASS (settings),
++                                                             pspec->name);
++
++      if (! gimp_pspec)
++        continue;
++
++      g_value_init (&value, pspec->value_type);
++      gegl_node_get_property (node, pspec->name, &value);
++      g_object_set_property (settings, gimp_pspec->name, &value);
++      g_value_unset (&value);
++    }
++
++  g_free (pspecs);
++  g_free (operation);
++
++  g_object_set (settings,
++                "gimp-opacity", gimp_drawable_filter_get_opacity (filter),
++                "gimp-mode",    gimp_drawable_filter_get_paint_mode (filter),
++                "gimp-region",  gimp_drawable_filter_get_region (filter),
++                "gimp-clip",    gimp_drawable_filter_get_clip (filter),
++                NULL);
++
++  gimp_filter_tool_set_config (filter_tool, GIMP_CONFIG (settings));
++
++  g_object_unref (settings);
++}
++
++static void layer_style_update_gui (LayerStyleSession *session);
++
++/*  validates the edited effect without closing the window, then edits
++ *  @target (an effect of the layer) or a new effect of @style
++ */
++static void
++layer_style_switch (LayerStyleSession        *session,
++                    GimpDrawableFilter       *target,
++                    const ChopGimpLayerStyle *style)
++{
++  GimpFilterTool *filter_tool = session->filter_tool;
++  GimpTool       *tool        = GIMP_TOOL (filter_tool);
++  GimpImage      *image;
++  gchar          *operation   = NULL;
++  const gchar    *label;
++  const gchar    *icon_name;
++
++  if (! tool->display || ! filter_tool->filter || ! filter_tool->gui ||
++      ! GIMP_IS_OPERATION_TOOL (filter_tool))
++    return;
++
++  if (target)
++    {
++      GimpContainer *filters = gimp_drawable_get_filters (session->drawable);
++
++      if (! filters || ! gimp_container_have (filters, GIMP_OBJECT (target)) ||
++          target == filter_tool->existing_filter)
++        return;
++
++      gegl_node_get (gimp_drawable_filter_get_operation (target),
++                     "operation", &operation,
++                     NULL);
++
++      label     = gimp_object_get_name (target);
++      icon_name = gimp_viewable_get_icon_name (GIMP_VIEWABLE (target));
++      style     = layer_style_of_filter (target);
++    }
++  else if (style)
++    {
++      operation = g_strdup (style->operation);
++      label     = style->label;
++      icon_name = GIMP_ICON_GEGL;
++    }
++  else
++    {
++      return;
++    }
++
++  image = gimp_item_get_image (GIMP_ITEM (session->drawable));
++
++  /*  the tool must survive the undo steps and dirty signals  */
++  gimp_tool_control_push_preserve (tool->control, TRUE);
++
++  if (! session->group_open)
++    {
++      gimp_image_undo_group_start (image, GIMP_UNDO_GROUP_MISC,
++                                   "Style de calque");
++      session->group_open = TRUE;
++
++      g_set_weak_pointer (&session->group,
++                          gimp_undo_stack_peek (gimp_image_get_undo_stack (image)));
++    }
++
++  /*  an effect added then unchecked is not added  */
++  if (filter_tool->existing_filter || session->current_checked)
++    gimp_filter_tool_commit_keep_dialog (filter_tool);
++
++  session->current         = style;
++  session->current_checked = TRUE;
++
++  if (! target)
++    layer_style_disable_merge (session);
++
++  gimp_operation_tool_set_operation (GIMP_OPERATION_TOOL (filter_tool),
++                                     target,
++                                     operation,
++                                     label, label, label,
++                                     icon_name,
++                                     GIMP_HELP_LAYER_EFFECTS);
++
++  if (filter_tool->config && filter_tool->filter)
++    {
++      if (target)
++        layer_style_edit_config (filter_tool, target);
++      else
++        layer_style_apply_default (filter_tool, style);
++    }
++
++  gimp_tool_control_pop_preserve (tool->control);
++
++  g_free (operation);
++
++  layer_style_update_gui (session);
++}
++
++static gboolean
++layer_style_switch_idle (gpointer data)
++{
++  LayerStyleSession        *session = data;
++  GimpDrawableFilter       *target  = session->pending_filter;
++  const ChopGimpLayerStyle *style   = session->pending_style;
++
++  session->idle_id        = 0;
++  session->pending_filter = NULL;
++  session->pending_style  = NULL;
++
++  layer_style_switch (session, target, style);
++
++  g_clear_object (&target);
++
++  return G_SOURCE_REMOVE;
++}
++
++/*  from the widgets of the window, which the switch rebuilds  */
++static void
++layer_style_switch_later (LayerStyleSession        *session,
++                          GimpDrawableFilter       *target,
++                          const ChopGimpLayerStyle *style)
++{
++  if (! target && ! style)
++    return;
++
++  g_clear_object (&session->pending_filter);
++
++  if (target)
++    session->pending_filter = g_object_ref (target);
++
++  session->pending_style = style;
++
++  if (! session->idle_id)
++    session->idle_id = g_idle_add (layer_style_switch_idle, session);
++}
++
++
++/*  the effects column  */
++
++#define ROW_FILTER_KEY  "chopgimp-layer-style-filter"
++#define ROW_CURRENT_KEY "chopgimp-layer-style-current"
++
++static void
++layer_style_row_activated (GtkListBox        *list,
++                           GtkListBoxRow     *row,
++                           LayerStyleSession *session)
++{
++  const ChopGimpLayerStyle *style;
++  GimpDrawableFilter       *filter;
++
++  if (g_object_get_data (G_OBJECT (row), ROW_CURRENT_KEY))
++    return;
++
++  style  = g_object_get_data (G_OBJECT (row), STYLE_KEY);
++  filter = g_object_get_data (G_OBJECT (row), ROW_FILTER_KEY);
++
++  layer_style_switch_later (session, filter, style);
++}
++
++static void
++layer_style_check_toggled (GtkToggleButton   *check,
++                           LayerStyleSession *session)
++{
++  GimpFilterTool           *filter_tool = session->filter_tool;
++  GtkWidget                *row;
++  const ChopGimpLayerStyle *style;
++  GimpDrawableFilter       *filter;
++  gboolean                  active;
++
++  row    = gtk_widget_get_ancestor (GTK_WIDGET (check), GTK_TYPE_LIST_BOX_ROW);
++  active = gtk_toggle_button_get_active (check);
++
++  if (! row)
++    return;
++
++  style  = g_object_get_data (G_OBJECT (row), STYLE_KEY);
++  filter = g_object_get_data (G_OBJECT (row), ROW_FILTER_KEY);
++
++  if (g_object_get_data (G_OBJECT (row), ROW_CURRENT_KEY))
++    {
++      /*  the edited effect: its preview on or off, applied at the end  */
++      session->current_checked = active;
++
++      if (filter_tool->filter)
++        {
++          gimp_filter_set_active (GIMP_FILTER (filter_tool->filter), active);
++          layer_style_update_drawable (session);
++        }
++    }
++  else if (filter)
++    {
++      /*  Photoshop: unchecking an effect disables it  */
++      gimp_filter_set_active (GIMP_FILTER (filter), active);
++      layer_style_update_drawable (session);
++    }
++  else if (active)
++    {
++      /*  an absent effect: added with its default settings and edited  */
++      layer_style_switch_later (session, NULL, style);
++    }
++}
++
++static void
++layer_style_add_clicked (GtkWidget         *button,
++                         LayerStyleSession *session)
++{
++  layer_style_switch_later (session, NULL,
++                            g_object_get_data (G_OBJECT (button), STYLE_KEY));
++}
++
++static GtkWidget *
++layer_style_add_row (LayerStyleSession        *session,
++                     GtkWidget                *list,
++                     const ChopGimpLayerStyle *style,
++                     GimpDrawableFilter       *filter,
++                     gint                      index,
++                     gboolean                  current,
++                     gboolean                  checked,
++                     gboolean                  add_button)
++{
++  GtkWidget *row;
++  GtkWidget *hbox;
++  GtkWidget *check;
++  GtkWidget *label;
++  gchar     *text;
++
++  row = gtk_list_box_row_new ();
++  gtk_style_context_add_class (gtk_widget_get_style_context (row),
++                               "chopgimp-layer-style-row");
++  g_object_set_data (G_OBJECT (row), STYLE_KEY, (gpointer) style);
++
++  if (filter)
++    g_object_set_data_full (G_OBJECT (row), ROW_FILTER_KEY,
++                            g_object_ref (filter),
++                            (GDestroyNotify) g_object_unref);
++
++  if (current)
++    {
++      g_object_set_data (G_OBJECT (row), ROW_CURRENT_KEY, GINT_TO_POINTER (1));
++      gtk_style_context_add_class (gtk_widget_get_style_context (row),
++                                   "current");
++    }
++
++  gtk_container_add (GTK_CONTAINER (list), row);
++  gtk_widget_set_visible (row, TRUE);
++
++  hbox = gtk_box_new (GTK_ORIENTATION_HORIZONTAL, 4);
++  gtk_container_add (GTK_CONTAINER (row), hbox);
++  gtk_widget_set_visible (hbox, TRUE);
++
++  check = gtk_check_button_new ();
++  gtk_widget_set_focus_on_click (check, FALSE);
++  gtk_toggle_button_set_active (GTK_TOGGLE_BUTTON (check), checked);
++  gtk_box_pack_start (GTK_BOX (hbox), check, FALSE, FALSE, 0);
++  gtk_widget_set_visible (check, TRUE);
++
++  gimp_help_set_help_data (check,
++                           filter || current ?
++                           "Activer ou désactiver cet effet" :
++                           "Ajouter cet effet au calque", NULL);
++
++  g_signal_connect (check, "toggled",
++                    G_CALLBACK (layer_style_check_toggled),
++                    session);
++
++  if (index > 0)
++    text = g_strdup_printf ("%s %d", style->label, index + 1);
++  else
++    text = g_strdup (style->label);
++
++  label = gtk_label_new (text);
++  gtk_label_set_xalign (GTK_LABEL (label), 0.0);
++  gtk_label_set_ellipsize (GTK_LABEL (label), PANGO_ELLIPSIZE_END);
++  gtk_widget_set_hexpand (label, TRUE);
++  gtk_box_pack_start (GTK_BOX (hbox), label, TRUE, TRUE, 0);
++  gtk_widget_set_visible (label, TRUE);
++
++  if (current)
++    gimp_label_set_attributes (GTK_LABEL (label),
++                               PANGO_ATTR_WEIGHT, PANGO_WEIGHT_BOLD,
++                               -1);
++
++  g_free (text);
++
++  if (add_button)
++    {
++      GtkWidget *button;
++
++      button = gtk_button_new_from_icon_name (GIMP_ICON_LIST_ADD,
++                                              GTK_ICON_SIZE_MENU);
++      gtk_button_set_relief (GTK_BUTTON (button), GTK_RELIEF_NONE);
++      gtk_widget_set_focus_on_click (button, FALSE);
++      gtk_style_context_add_class (gtk_widget_get_style_context (button),
++                                   "chopgimp-layer-style-add");
++      g_object_set_data (G_OBJECT (button), STYLE_KEY, (gpointer) style);
++      gtk_box_pack_end (GTK_BOX (hbox), button, FALSE, FALSE, 0);
++      gtk_widget_set_visible (button, TRUE);
++
++      gimp_help_set_help_data (button,
++                               ! strcmp (style->operation, "chopgimp:stroke") ?
++                               "Ajouter un autre contour" :
++                               "Ajouter une autre ombre portée", NULL);
++
++      g_signal_connect (button, "clicked",
++                        G_CALLBACK (layer_style_add_clicked),
++                        session);
++    }
++
++  return row;
++}
++
++static void
++layer_style_update_gui (LayerStyleSession *session)
++{
++  GimpFilterTool *filter_tool = session->filter_tool;
++  GtkWidget      *side_box;
++  GtkWidget      *label;
++  GtkWidget      *scrolled;
++  GtkWidget      *list;
++  GtkWidget      *current_row = NULL;
++  GList          *filters;
++  gint            n;
++
++  if (! filter_tool->gui)
++    return;
++
++  side_box = gimp_tool_gui_get_side_box (filter_tool->gui);
++
++  if (! side_box)
++    return;
++
++  gimp_gtk_container_clear (GTK_CONTAINER (side_box));
++
++  label = gtk_label_new ("Styles");
++  gtk_label_set_xalign (GTK_LABEL (label), 0.0);
++  gimp_label_set_attributes (GTK_LABEL (label),
++                             PANGO_ATTR_WEIGHT, PANGO_WEIGHT_BOLD,
++                             -1);
++  gtk_style_context_add_class (gtk_widget_get_style_context (label),
++                               "chopgimp-layer-style-title");
++  gtk_box_pack_start (GTK_BOX (side_box), label, FALSE, FALSE, 0);
++  gtk_widget_set_visible (label, TRUE);
++
++  scrolled = gtk_scrolled_window_new (NULL, NULL);
++  gtk_scrolled_window_set_policy (GTK_SCROLLED_WINDOW (scrolled),
++                                  GTK_POLICY_NEVER, GTK_POLICY_AUTOMATIC);
++  gtk_scrolled_window_set_propagate_natural_height (GTK_SCROLLED_WINDOW (scrolled),
++                                                    TRUE);
++  gtk_scrolled_window_set_shadow_type (GTK_SCROLLED_WINDOW (scrolled),
++                                       GTK_SHADOW_IN);
++  gtk_box_pack_start (GTK_BOX (side_box), scrolled, TRUE, TRUE, 0);
++  gtk_widget_set_visible (scrolled, TRUE);
++
++  list = gtk_list_box_new ();
++  gtk_list_box_set_selection_mode (GTK_LIST_BOX (list), GTK_SELECTION_SINGLE);
++  gtk_list_box_set_activate_on_single_click (GTK_LIST_BOX (list), TRUE);
++  gtk_style_context_add_class (gtk_widget_get_style_context (list),
++                               "chopgimp-layer-style-list");
++  gtk_widget_set_size_request (list, 170, -1);
++  gtk_container_add (GTK_CONTAINER (scrolled), list);
++  gtk_widget_set_visible (list, TRUE);
++
++  filters = layer_style_get_filters (session);
++
++  for (n = 0; chopgimp_layer_style_nth (n); n++)
++    {
++      const ChopGimpLayerStyle *style = chopgimp_layer_style_nth (n);
++      gboolean                  multi;
++      gint                      index = 0;
++      GList                    *list2;
++      GtkWidget                *row;
++
++      multi = (! strcmp (style->operation, "chopgimp:stroke") ||
++               ! strcmp (style->label, "Ombre portée"));
++
++      for (list2 = filters; list2; list2 = g_list_next (list2))
++        {
++          GimpDrawableFilter *filter  = list2->data;
++          gboolean            current = (filter == filter_tool->existing_filter);
++          gboolean            checked;
++
++          if (layer_style_of_filter (filter) != style)
++            continue;
++
++          checked = current ? session->current_checked :
++                              gimp_filter_get_active (GIMP_FILTER (filter));
++
++          row = layer_style_add_row (session, list, style, filter, index,
++                                     current, checked, multi && index == 0);
++          if (current)
++            current_row = row;
++
++          index++;
++        }
++
++      /*  the effect being added  */
++      if (! filter_tool->existing_filter && session->current == style)
++        {
++          current_row = layer_style_add_row (session, list, style, NULL, index,
++                                             TRUE, session->current_checked,
++                                             multi && index == 0);
++          index++;
++        }
++
++      /*  an absent effect  */
++      if (index == 0)
++        layer_style_add_row (session, list, style, NULL, 0,
++                             FALSE, FALSE, FALSE);
++    }
++
++  g_list_free (filters);
++
++  if (current_row)
++    gtk_list_box_select_row (GTK_LIST_BOX (list),
++                             GTK_LIST_BOX_ROW (current_row));
++
++  g_signal_connect (list, "row-activated",
++                    G_CALLBACK (layer_style_row_activated),
++                    session);
++
++  gtk_widget_set_visible (side_box, TRUE);
++
++  gimp_tool_gui_set_title (filter_tool->gui, "Style de calque");
++
++  if (session->current)
++    gimp_tool_gui_set_description (filter_tool->gui, session->current->label);
++}
++
++
++/*  end of the session, once the tool is halted  */
++
++static gboolean
++layer_style_end_idle (gpointer data)
++{
++  LayerStyleEnd *end = data;
++
++  if (end->image)
++    {
++      if (end->undo && end->group &&
++          gimp_undo_stack_peek (gimp_image_get_undo_stack (end->image)) == end->group)
++        {
++          gimp_image_undo (end->image);
++        }
++
++      if (end->undo)
++        {
++          GList *list;
++
++          for (list = end->actives; list; list = g_list_next (list))
++            {
++              ActiveState *state = list->data;
++
++              if (gimp_filter_get_active (state->filter) != state->active)
++                {
++                  GimpDrawable *drawable;
++
++                  gimp_filter_set_active (state->filter, state->active);
++
++                  drawable =
++                    gimp_drawable_filter_get_drawable (GIMP_DRAWABLE_FILTER (state->filter));
++                  if (drawable)
++                    gimp_drawable_update (drawable, 0, 0, -1, -1);
++                }
++            }
++        }
++
++      gimp_image_flush (end->image);
++    }
++
++  if (end->restore_merge && end->options)
++    g_object_set (end->options,
++                  "merge-filter", TRUE,
++                  NULL);
++
++  g_list_free_full (end->actives, (GDestroyNotify) active_state_free);
++  g_clear_weak_pointer (&end->image);
++  g_clear_weak_pointer (&end->group);
++  g_clear_object (&end->options);
++  g_free (end);
++
++  return G_SOURCE_REMOVE;
++}
++
++
+ /*  public functions  */
+ 
+ void
+@@ -296,3 +1067,219 @@ gimp_filter_tool_layer_style_add_buttons (GimpFilterTool *filter_tool,
+                         filter_tool);
+     }
+ }
++
++/*  ChopGimp: the « Style de calque » window, see the top of the file.
++ *  Called at the end of gimp_filter_tool_initialize().
++ */
++void
++gimp_filter_tool_layer_style_start (GimpFilterTool *filter_tool)
++{
++  GimpTool                 *tool;
++  LayerStyleSession        *session;
++  const ChopGimpLayerStyle *style;
++  GimpDrawable             *drawable = NULL;
++
++  g_return_if_fail (GIMP_IS_FILTER_TOOL (filter_tool));
++
++  tool = GIMP_TOOL (filter_tool);
++
++  if (! filter_tool->gui)
++    return;
++
++  style = GIMP_IS_OPERATION_TOOL (filter_tool) ?
++          layer_style_get_current (filter_tool) : NULL;
++
++  if (filter_tool->existing_filter)
++    drawable = gimp_drawable_filter_get_drawable (filter_tool->existing_filter);
++  else if (tool->drawables)
++    drawable = tool->drawables->data;
++
++  if (! style || ! tool->display || ! GIMP_IS_LAYER (drawable))
++    {
++      GtkWidget *side_box = gimp_tool_gui_get_side_box (filter_tool->gui);
++
++      if (side_box)
++        gtk_widget_set_visible (side_box, FALSE);
++
++      return;
++    }
++
++  session = layer_style_get_session (filter_tool);
++
++  if (! session)
++    {
++      Gimp              *gimp    = tool->tool_info->gimp;
++      GList             *filters;
++      GList             *list;
++      gint64             unchecked;
++
++      session = g_new0 (LayerStyleSession, 1);
++
++      session->filter_tool     = filter_tool;
++      session->drawable        = g_object_ref (drawable);
++      session->current_checked = TRUE;
++
++      g_object_set_data_full (G_OBJECT (filter_tool), SESSION_KEY, session,
++                              (GDestroyNotify) layer_style_session_free);
++
++      /*  the active state of the effects, restored by Annuler (not
++       *  undoable in GIMP)
++       */
++      filters = layer_style_get_filters (session);
++
++      for (list = filters; list; list = g_list_next (list))
++        {
++          ActiveState *state;
++
++          if (list->data == filter_tool->existing_filter)
++            continue;
++
++          state = g_new0 (ActiveState, 1);
++          state->filter = g_object_ref (list->data);
++          state->active = gimp_filter_get_active (state->filter);
++
++          session->actives = g_list_prepend (session->actives, state);
++        }
++
++      g_list_free (filters);
++
++      if (! filter_tool->existing_filter)
++        layer_style_disable_merge (session);
++
++      /*  Options de fusion… on a layer without style  */
++      unchecked = GPOINTER_TO_SIZE (g_object_get_data (G_OBJECT (gimp),
++                                                       UNCHECKED_KEY));
++      g_object_set_data (G_OBJECT (gimp), UNCHECKED_KEY, NULL);
++
++      if (unchecked                                                     &&
++          (g_get_monotonic_time () / G_TIME_SPAN_SECOND) - unchecked < 5 &&
++          ! filter_tool->existing_filter                                 &&
++          filter_tool->filter)
++        {
++          session->current_checked = FALSE;
++
++          gimp_filter_set_active (GIMP_FILTER (filter_tool->filter), FALSE);
++          layer_style_update_drawable (session);
++        }
++    }
++
++  session->current = style;
++
++  layer_style_update_gui (session);
++}
++
++/*  TRUE while the session's undo group is open  */
++gboolean
++gimp_filter_tool_layer_style_in_group (GimpFilterTool *filter_tool)
++{
++  LayerStyleSession *session;
++
++  g_return_val_if_fail (GIMP_IS_FILTER_TOOL (filter_tool), FALSE);
++
++  session = layer_style_get_session (filter_tool);
++
++  return session && session->group_open;
++}
++
++/*  Valider: TRUE if the edited effect must not be committed (an effect
++ *  added then unchecked)
++ */
++gboolean
++gimp_filter_tool_layer_style_validate (GimpFilterTool *filter_tool)
++{
++  LayerStyleSession *session;
++
++  g_return_val_if_fail (GIMP_IS_FILTER_TOOL (filter_tool), FALSE);
++
++  session = layer_style_get_session (filter_tool);
++
++  if (! session)
++    return FALSE;
++
++  session->validated = TRUE;
++
++  return (! filter_tool->existing_filter && ! session->current_checked);
++}
++
++/*  the edited effect was committed as @filter: unchecked, it is disabled  */
++void
++gimp_filter_tool_layer_style_committed (GimpFilterTool     *filter_tool,
++                                        GimpDrawableFilter *filter)
++{
++  LayerStyleSession *session;
++  GimpContainer     *filters;
++
++  g_return_if_fail (GIMP_IS_FILTER_TOOL (filter_tool));
++  g_return_if_fail (GIMP_IS_DRAWABLE_FILTER (filter));
++
++  session = layer_style_get_session (filter_tool);
++
++  if (! session || session->current_checked)
++    return;
++
++  filters = gimp_drawable_get_filters (session->drawable);
++
++  /*  merged into the pixels  */
++  if (! filters || ! gimp_container_have (filters, GIMP_OBJECT (filter)))
++    return;
++
++  gimp_filter_set_active (GIMP_FILTER (filter), FALSE);
++  layer_style_update_drawable (session);
++}
++
++/*  start of gimp_filter_tool_halt(): ends the session's undo group;
++ *  Annuler undoes it and restores the active states, once the tool is
++ *  halted
++ */
++void
++gimp_filter_tool_layer_style_halt (GimpFilterTool *filter_tool)
++{
++  LayerStyleSession *session;
++  LayerStyleEnd     *end;
++  GimpImage         *image;
++
++  g_return_if_fail (GIMP_IS_FILTER_TOOL (filter_tool));
++
++  session = layer_style_get_session (filter_tool);
++
++  if (! session)
++    return;
++
++  if (session->idle_id)
++    {
++      g_source_remove (session->idle_id);
++      session->idle_id = 0;
++    }
++
++  if (filter_tool->gui)
++    {
++      GtkWidget *side_box = gimp_tool_gui_get_side_box (filter_tool->gui);
++
++      if (side_box)
++        {
++          gimp_gtk_container_clear (GTK_CONTAINER (side_box));
++          gtk_widget_set_visible (side_box, FALSE);
++        }
++    }
++
++  image = gimp_item_get_image (GIMP_ITEM (session->drawable));
++
++  if (session->group_open)
++    gimp_image_undo_group_end (image);
++
++  end = g_new0 (LayerStyleEnd, 1);
++
++  g_set_weak_pointer (&end->image, image);
++  g_set_weak_pointer (&end->group, session->group);
++
++  end->undo          = ! session->validated;
++  end->actives       = session->actives;
++  end->restore_merge = session->restore_merge;
++  end->options       = g_object_ref (GIMP_FILTER_TOOL_GET_OPTIONS (filter_tool));
++
++  session->actives = NULL;
++
++  g_idle_add (layer_style_end_idle, end);
++
++  g_object_set_data (G_OBJECT (filter_tool), SESSION_KEY, NULL);
++}
+diff --git a/app/tools/gimpfiltertool-layerstyle.h b/app/tools/gimpfiltertool-layerstyle.h
+index d836136..bb73009 100644
+--- a/app/tools/gimpfiltertool-layerstyle.h
++++ b/app/tools/gimpfiltertool-layerstyle.h
+@@ -23,3 +23,11 @@
+ 
+ void   gimp_filter_tool_layer_style_add_buttons (GimpFilterTool *filter_tool,
+                                                  GtkWidget      *options_gui);
++
++/*  the « Style de calque » window (hooks of gimpfiltertool.c)  */
++void       gimp_filter_tool_layer_style_start     (GimpFilterTool     *filter_tool);
++gboolean   gimp_filter_tool_layer_style_validate  (GimpFilterTool     *filter_tool);
++void       gimp_filter_tool_layer_style_committed (GimpFilterTool     *filter_tool,
++                                                   GimpDrawableFilter *filter);
++void       gimp_filter_tool_layer_style_halt      (GimpFilterTool     *filter_tool);
++gboolean   gimp_filter_tool_layer_style_in_group  (GimpFilterTool     *filter_tool);
+diff --git a/app/tools/gimpfiltertool.c b/app/tools/gimpfiltertool.c
+index 7297ec1..6c8794e 100644
+--- a/app/tools/gimpfiltertool.c
++++ b/app/tools/gimpfiltertool.c
+@@ -83,6 +83,7 @@
+ 
+ #include "gimpfilteroptions.h"
+ #include "gimpfiltertool.h"
++#include "gimpfiltertool-layerstyle.h"
+ #include "gimpfiltertool-settings.h"
+ #include "gimpfiltertool-widgets.h"
+ #include "gimpguidetool.h"
+@@ -132,6 +133,10 @@ static void      gimp_filter_tool_cursor_update  (GimpTool            *tool,
+                                                   const GimpCoords    *coords,
+                                                   GdkModifierType      state,
+                                                   GimpDisplay         *display);
++static const gchar * gimp_filter_tool_can_undo  (GimpTool            *tool,
++                                                  GimpDisplay         *display);
++static gboolean  gimp_filter_tool_undo           (GimpTool            *tool,
++                                                  GimpDisplay         *display);
+ static void      gimp_filter_tool_options_notify (GimpTool            *tool,
+                                                   GimpToolOptions     *options,
+                                                   const GParamSpec    *pspec);
+@@ -237,6 +242,8 @@ gimp_filter_tool_class_init (GimpFilterToolClass *klass)
+   tool_class->oper_update    = gimp_filter_tool_oper_update;
+   tool_class->cursor_update  = gimp_filter_tool_cursor_update;
+   tool_class->options_notify = gimp_filter_tool_options_notify;
++  tool_class->can_undo       = gimp_filter_tool_can_undo;
++  tool_class->undo           = gimp_filter_tool_undo;
+   tool_class->is_destructive = FALSE;
+ 
+   color_tool_class->can_pick = gimp_filter_tool_can_pick_color;
+@@ -289,6 +296,9 @@ gimp_filter_tool_finalize (GObject *object)
+ 
+ #define RESPONSE_RESET 1
+ 
++/*  ChopGimp: gimp_filter_tool_commit_keep_dialog()  */
++static gboolean filter_tool_keep_gui = FALSE;
++
+ static gboolean
+ gimp_filter_tool_initialize (GimpTool     *tool,
+                              GimpDisplay  *display,
+@@ -363,6 +373,8 @@ gimp_filter_tool_initialize (GimpTool     *tool,
+       GtkWidget *vbox;
+       GtkWidget *hbox;
+       GtkWidget *toggle;
++      GtkWidget *expander;
++      GtkWidget *advanced_box;
+ 
+       /*  disabled for at least GIMP 2.8  */
+       filter_tool->overlay = FALSE;
+@@ -378,7 +390,8 @@ gimp_filter_tool_initialize (GimpTool     *tool,
+ 
+                            _("_Reset"),  RESPONSE_RESET,
+                            _("_Cancel"), GTK_RESPONSE_CANCEL,
+-                           _("_OK"),     GTK_RESPONSE_OK,
++                           /*  ChopGimp: as Photoshop  */
++                           "_Valider",   GTK_RESPONSE_OK,
+ 
+                            NULL);
+ 
+@@ -407,8 +420,31 @@ gimp_filter_tool_initialize (GimpTool     *tool,
+             gtk_widget_set_visible (filter_tool->settings_box, TRUE);
+         }
+ 
++      /*  ChopGimp: the technical options (clipping, region, on-canvas
++       *  controls, split view, blending options) in a collapsed
++       *  « Avancé » expander, remembered in the tool options; the
++       *  preview and « apply directly to the layer » toggles stay
++       *  visible at the bottom, above the buttons
++       */
++      expander = gtk_expander_new ("Avancé");
++      gtk_style_context_add_class (gtk_widget_get_style_context (expander),
++                                   "chopgimp-filter-advanced");
++      gtk_expander_set_resize_toplevel (GTK_EXPANDER (expander), TRUE);
++      gtk_widget_set_visible (expander, TRUE);
++
++      g_object_bind_property (tool_info->tool_options, "advanced-expanded",
++                              expander,                "expanded",
++                              G_BINDING_SYNC_CREATE |
++                              G_BINDING_BIDIRECTIONAL);
++
++      advanced_box = gtk_box_new (GTK_ORIENTATION_VERTICAL, 4);
++      gtk_container_add (GTK_CONTAINER (expander), advanced_box);
++      gtk_widget_set_visible (advanced_box, TRUE);
++
+       /*  The preview and split view toggles  */
+       hbox = gtk_box_new (GTK_ORIENTATION_HORIZONTAL, 4);
++      gtk_style_context_add_class (gtk_widget_get_style_context (hbox),
++                                   "chopgimp-filter-preview");
+       gtk_box_pack_end (GTK_BOX (vbox), hbox, FALSE, FALSE, 0);
+       gtk_widget_set_visible (hbox, TRUE);
+ 
+@@ -492,7 +528,7 @@ gimp_filter_tool_initialize (GimpTool     *tool,
+ 
+       toggle = gimp_prop_check_button_new (G_OBJECT (tool_info->tool_options),
+                                            "preview-split", NULL);
+-      gtk_box_pack_start (GTK_BOX (hbox), toggle, FALSE, FALSE, 0);
++      gtk_box_pack_end (GTK_BOX (advanced_box), toggle, FALSE, FALSE, 0);
+ 
+       g_object_bind_property (G_OBJECT (tool_info->tool_options), "preview",
+                               toggle,                             "sensitive",
+@@ -502,7 +538,7 @@ gimp_filter_tool_initialize (GimpTool     *tool,
+       filter_tool->controller_toggle =
+         gimp_prop_check_button_new (G_OBJECT (tool_info->tool_options),
+                                     "controller", NULL);
+-      gtk_box_pack_end (GTK_BOX (vbox), filter_tool->controller_toggle,
++      gtk_box_pack_end (GTK_BOX (advanced_box), filter_tool->controller_toggle,
+                         FALSE, FALSE, 0);
+       if (! filter_tool->widget)
+         gtk_widget_set_visible (filter_tool->controller_toggle, FALSE);
+@@ -510,10 +546,13 @@ gimp_filter_tool_initialize (GimpTool     *tool,
+       /*  Fill in subclass widgets  */
+       gimp_filter_tool_dialog (filter_tool);
+ 
++      gtk_box_pack_start (GTK_BOX (vbox), expander, FALSE, FALSE, 0);
++
+       /*  The operation-settings box  */
+       filter_tool->operation_settings_box = gtk_box_new (
+         GTK_ORIENTATION_VERTICAL, 2);
+-      gtk_box_pack_start (GTK_BOX (vbox), filter_tool->operation_settings_box,
++      gtk_box_pack_start (GTK_BOX (advanced_box),
++                          filter_tool->operation_settings_box,
+                           FALSE, FALSE, 0);
+       gtk_widget_set_visible (filter_tool->operation_settings_box, TRUE);
+ 
+@@ -547,20 +586,104 @@ gimp_filter_tool_initialize (GimpTool     *tool,
+ 
+   gimp_filter_tool_create_filter (filter_tool);
+ 
++  /*  ChopGimp: the « Style de calque » window (effects column)  */
++  gimp_filter_tool_layer_style_start (filter_tool);
++
+   return TRUE;
+ }
+ 
+-static void
+-gimp_filter_tool_control (GimpTool       *tool,
+-                          GimpToolAction  action,
+-                          GimpDisplay    *display)
++/*  whether the edited filter is committed as a non-destructive filter
++ *  (factored out of control() for ChopGimp's layer style window, which
++ *  commits a filter without closing the dialog)
++ */
++static gboolean
++gimp_filter_tool_get_non_destructive (GimpFilterTool *filter_tool)
+ {
+-  GimpFilterTool    *filter_tool     = GIMP_FILTER_TOOL (tool);
+   GimpFilterOptions *options         = GIMP_FILTER_TOOL_GET_OPTIONS (filter_tool);
+   GimpDrawable      *drawable        = NULL;
+   gboolean           non_destructive = TRUE;
+   gchar             *operation_name  = NULL;
+ 
++  if (! filter_tool->filter)
++    return TRUE;
++
++  drawable = gimp_drawable_filter_get_drawable (filter_tool->filter);
++
++  /* TODO: Expand non-destructive editing to other drawables
++   * besides layers and channels */
++  if ((! GIMP_IS_LAYER (drawable) && ! GIMP_IS_CHANNEL (drawable)) ||
++      GIMP_IS_LAYER_MASK (drawable)                                ||
++      (! filter_tool->existing_filter && options->merge_filter))
++    non_destructive = FALSE;
++
++  if (filter_tool->operation)
++    {
++      gegl_node_get (filter_tool->operation,
++                     "operation", &operation_name,
++                     NULL);
++
++      if (! g_strcmp0 (operation_name, "gegl:nop"))
++        non_destructive = FALSE;
++
++      /* TODO: Once we can serialize GimpDrawable, remove so that
++       * filters with aux nodes can be non-destructive */
++      if (gegl_node_has_pad (filter_tool->operation, "aux") ||
++          /* GEGL graph is dangerous even without using third-party
++           * effects, because it may run any effect. E.g.  it can
++           * run sink effects overwriting any local files with user
++           * rights. We leave a way in through an environment
++           * variable because it is a useful tool for GEGL ops
++           * developers but it should only be set while knowing what
++           * you are doing.
++           */
++          (g_strcmp0 (operation_name, "gegl:gegl") == 0 &&
++           g_getenv ("GIMP_ALLOW_GEGL_GRAPH_LAYER_EFFECT") == NULL))
++        non_destructive = FALSE;
++
++      g_free (operation_name);
++    }
++
++  /* Ensure that filters applied to group, vector or link layers are
++   * non-destructive */
++  if (GIMP_IS_GROUP_LAYER (drawable)                   ||
++      gimp_item_is_vector_layer (GIMP_ITEM (drawable)) ||
++      gimp_item_is_text_layer (GIMP_ITEM (drawable))   ||
++      gimp_item_is_link_layer (GIMP_ITEM (drawable)))
++    non_destructive = TRUE;
++
++  return non_destructive;
++}
++
++/*  ChopGimp: while the « Style de calque » window keeps its undo group
++ *  open, undoing cancels the window (the whole session is undone)
++ */
++static const gchar *
++gimp_filter_tool_can_undo (GimpTool    *tool,
++                           GimpDisplay *display)
++{
++  if (display == tool->display &&
++      gimp_filter_tool_layer_style_in_group (GIMP_FILTER_TOOL (tool)))
++    return "Style de calque";
++
++  return NULL;
++}
++
++static gboolean
++gimp_filter_tool_undo (GimpTool    *tool,
++                       GimpDisplay *display)
++{
++  gimp_tool_control (tool, GIMP_TOOL_ACTION_HALT, display);
++
++  return TRUE;
++}
++
++static void
++gimp_filter_tool_control (GimpTool       *tool,
++                          GimpToolAction  action,
++                          GimpDisplay    *display)
++{
++  GimpFilterTool *filter_tool = GIMP_FILTER_TOOL (tool);
++
+   switch (action)
+     {
+     case GIMP_TOOL_ACTION_PAUSE:
+@@ -572,53 +695,14 @@ gimp_filter_tool_control (GimpTool       *tool,
+       break;
+ 
+     case GIMP_TOOL_ACTION_COMMIT:
+-      if (filter_tool->filter)
+-        {
+-          drawable = gimp_drawable_filter_get_drawable (filter_tool->filter);
+-
+-          /* TODO: Expand non-destructive editing to other drawables
+-           * besides layers and channels */
+-          if ((! GIMP_IS_LAYER (drawable) && ! GIMP_IS_CHANNEL (drawable)) ||
+-              GIMP_IS_LAYER_MASK (drawable)                                ||
+-              (! filter_tool->existing_filter && options->merge_filter))
+-            non_destructive = FALSE;
+-
+-          if (filter_tool->operation)
+-            {
+-              gegl_node_get (filter_tool->operation,
+-                             "operation", &operation_name,
+-                             NULL);
+-
+-              if (! g_strcmp0 (operation_name, "gegl:nop"))
+-                non_destructive = FALSE;
+-
+-              /* TODO: Once we can serialize GimpDrawable, remove so that
+-               * filters with aux nodes can be non-destructive */
+-              if (gegl_node_has_pad (filter_tool->operation, "aux") ||
+-                  /* GEGL graph is dangerous even without using third-party
+-                   * effects, because it may run any effect. E.g.  it can
+-                   * run sink effects overwriting any local files with user
+-                   * rights. We leave a way in through an environment
+-                   * variable because it is a useful tool for GEGL ops
+-                   * developers but it should only be set while knowing what
+-                   * you are doing.
+-                   */
+-                  (g_strcmp0 (operation_name, "gegl:gegl") == 0 &&
+-                   g_getenv ("GIMP_ALLOW_GEGL_GRAPH_LAYER_EFFECT") == NULL))
+-                non_destructive = FALSE;
+-
+-              g_free (operation_name);
+-            }
++      /*  ChopGimp: the layer style window validates its session; an
++       *  effect added then unchecked in it is not added
++       */
++      if (gimp_filter_tool_layer_style_validate (filter_tool))
++        break;
+ 
+-          /* Ensure that filters applied to group, vector or link layers are
+-           * non-destructive */
+-          if (GIMP_IS_GROUP_LAYER (drawable)                   ||
+-              gimp_item_is_vector_layer (GIMP_ITEM (drawable)) ||
+-              gimp_item_is_text_layer (GIMP_ITEM (drawable))   ||
+-              gimp_item_is_link_layer (GIMP_ITEM (drawable)))
+-            non_destructive = TRUE;
+-        }
+-      gimp_filter_tool_commit (filter_tool, non_destructive);
++      gimp_filter_tool_commit (filter_tool,
++                               gimp_filter_tool_get_non_destructive (filter_tool));
+       break;
+     }
+ 
+@@ -1203,6 +1287,11 @@ gimp_filter_tool_halt (GimpFilterTool *filter_tool)
+ {
+   GimpTool *tool = GIMP_TOOL (filter_tool);
+ 
++  /*  ChopGimp: ends the layer style window's session (undo group, or
++   *  undoes it when cancelled)
++   */
++  gimp_filter_tool_layer_style_halt (filter_tool);
++
+   gimp_filter_tool_flush_apply (filter_tool, FALSE);
+ 
+   gimp_filter_tool_disable_color_picking (filter_tool);
+@@ -1305,11 +1394,18 @@ static void
+ gimp_filter_tool_commit (GimpFilterTool *filter_tool,
+                          gboolean        non_destructive)
+ {
+-  GimpTool *tool = GIMP_TOOL (filter_tool);
++  GimpTool           *tool = GIMP_TOOL (filter_tool);
++  GimpDrawableFilter *committed;
+ 
+   gimp_filter_tool_flush_apply (filter_tool, TRUE);
+ 
+-  if (filter_tool->gui)
++  /*  ChopGimp: the filter the edit ends in (layer style window)  */
++  committed = filter_tool->existing_filter ? filter_tool->existing_filter :
++                                             filter_tool->filter;
++  if (committed)
++    g_object_ref (committed);
++
++  if (filter_tool->gui && ! filter_tool_keep_gui)
+     gimp_tool_gui_hide (filter_tool->gui);
+ 
+   /* Copy over filter info back to existing filter */
+@@ -1481,6 +1577,39 @@ gimp_filter_tool_commit (GimpFilterTool *filter_tool,
+     }
+ 
+   filter_tool->existing_filter = NULL;
++
++  if (committed)
++    {
++      gimp_filter_tool_layer_style_committed (filter_tool, committed);
++      g_object_unref (committed);
++    }
++}
++
++/*  ChopGimp: commits the edited filter without closing the dialog, for
++ *  the layer style window which then edits another effect of the layer
++ *  (see gimpfiltertool-layerstyle.c). The tool stays active on its
++ *  display: the caller sets a new operation right after.
++ */
++void
++gimp_filter_tool_commit_keep_dialog (GimpFilterTool *filter_tool)
++{
++  GimpTool *tool;
++
++  g_return_if_fail (GIMP_IS_FILTER_TOOL (filter_tool));
++
++  tool = GIMP_TOOL (filter_tool);
++
++  if (! filter_tool->filter || ! tool->display)
++    return;
++
++  gimp_tool_control_push_preserve (tool->control, TRUE);
++  filter_tool_keep_gui = TRUE;
++
++  gimp_filter_tool_commit (filter_tool,
++                           gimp_filter_tool_get_non_destructive (filter_tool));
++
++  filter_tool_keep_gui = FALSE;
++  gimp_tool_control_pop_preserve (tool->control);
+ }
+ 
+ static void
+diff --git a/app/tools/gimpfiltertool.h b/app/tools/gimpfiltertool.h
+index 4a40a08..79feb5e 100644
+--- a/app/tools/gimpfiltertool.h
++++ b/app/tools/gimpfiltertool.h
+@@ -112,6 +112,9 @@ void        gimp_filter_tool_edit_as               (GimpFilterTool     *filter_t
+                                                     const gchar        *new_tool_id,
+                                                     GimpConfig         *config);
+ 
++/*  ChopGimp: layer style window (gimpfiltertool-layerstyle.c)  */
++void        gimp_filter_tool_commit_keep_dialog    (GimpFilterTool     *filter_tool);
++
+ gboolean    gimp_filter_tool_on_guide              (GimpFilterTool     *filter_tool,
+                                                     const GimpCoords   *coords,
+                                                     GimpDisplay        *display);
+diff --git a/app/widgets/gimplayertreeview.c b/app/widgets/gimplayertreeview.c
+index b16c61e..7092c9e 100644
+--- a/app/widgets/gimplayertreeview.c
++++ b/app/widgets/gimplayertreeview.c
+@@ -373,7 +373,7 @@ gimp_layer_tree_view_photogimp_menu_clicked (GtkWidget         *button,
+   if (path && strstr (path, "Style de calque") && context)
+     {
+       GAction *action = g_action_map_lookup_action (G_ACTION_MAP (context->gimp->app),
+-                                                    "chopgimp-layer-style");
++                                                    "layers-style-dialog");
+       if (action && g_action_get_enabled (action))
+         {
+           g_action_activate (action, NULL);
+-- 
+2.53.0
+

@@ -495,6 +495,76 @@ GimpSpinScale button:nth-child(odd) {
   border-radius: 0 3px 3px 0;
 }
 
+/* ── 3.26.0 : curseurs façon Photoshop ─────────────────────────────
+ *   Opacité   ────────●──────────  [ 50 ] %
+ * GimpSpinScale dessine lui-même ces parties (classe .chopgimp-slider
+ * sur le widget ; les règles de structure — entrée transparente,
+ * boutons −/+ masqués — sont dans gimpspinscale.c). Ici : couleurs,
+ * épaisseur de la piste (min-height) et diamètre de la poignée
+ * (min-width). CHOPGIMP_CLASSIC_SPIN_SCALE=1 → ancienne barre (règles
+ * ci-dessus). */
+GimpSpinScale.chopgimp-slider-track {
+  background-color: @ps-button-border;
+  border-style: none;
+  border-radius: 2px;
+  min-height: 3px;
+}
+
+GimpSpinScale.chopgimp-slider-fill {
+  background-color: @ps-accent;
+  border-style: none;
+  border-radius: 2px;
+}
+
+GimpSpinScale.chopgimp-slider-knob {
+  background-color: @ps-knob;
+  border: 1px solid @edge-border-color;
+  border-radius: 100%;
+  min-width: 11px;
+  min-height: 11px;
+}
+
+GimpSpinScale.chopgimp-slider-knob:hover {
+  background-color: @ps-white;
+  border-color: @ps-accent;
+}
+
+GimpSpinScale.chopgimp-slider-field {
+  background-color: @ps-field;
+  border: 1px solid @edge-border-color;
+  border-radius: 2px;
+}
+
+GimpSpinScale.chopgimp-slider-field:hover {
+  border-color: @stronger-border-color;
+}
+
+GimpSpinScale.chopgimp-slider-field:focus {
+  border-color: @ps-accent;
+}
+
+GimpSpinScale.chopgimp-slider-unit {
+  color: alpha(@fg-color, 0.75);
+}
+
+GimpSpinScale.chopgimp-slider-fill:disabled,
+GimpSpinScale.chopgimp-slider-track:disabled {
+  background-color: alpha(@ps-button-border, 0.5);
+}
+
+GimpSpinScale.chopgimp-slider-knob:disabled {
+  background-color: alpha(@ps-knob, 0.4);
+  border-color: alpha(@edge-border-color, 0.4);
+}
+
+GimpSpinScale.chopgimp-slider-field:disabled {
+  background-color: transparent;
+}
+
+GimpSpinScale.chopgimp-slider-unit:disabled {
+  color: alpha(@fg-color, 0.4);
+}
+
 /* Curseurs GtkScale */
 scale trough {
   background-color: @ps-button-border;
@@ -941,4 +1011,268 @@ popover.chopgimp-more-popover {
   background-color: @stronger-border-color;
   min-width: 1px;
   margin: 5px 4px;
+}
+
+/* ── Fenêtres de filtres (lot B) ── */
+/* Boutons en bas (Réinitialiser à gauche, Annuler et Valider à droite :
+ * app/display/gimptoolgui.c), aide « ? » dans l'en-tête, options
+ * techniques dans « Avancé », colonne des effets de « Style de calque ». */
+GimpToolDialog button.chopgimp-help-button {
+  min-height: 20px;
+  min-width: 20px;
+  padding: 2px;
+  border-radius: 10px;
+  color: @dimmed-fg-color;
+}
+
+GimpToolDialog button.chopgimp-help-button:hover {
+  background-color: @hover-color;
+  color: @fg-color;
+}
+
+GimpToolDialog expander.chopgimp-filter-advanced > title {
+  color: @dimmed-fg-color;
+}
+
+GimpToolDialog .chopgimp-filter-preview {
+  border-top: 1px solid @border-color;
+  padding-top: 6px;
+}
+
+GimpToolDialog .chopgimp-dialog-side {
+  margin: 6px 0 6px 6px;
+}
+
+GimpToolDialog .chopgimp-layer-style-title {
+  color: @dimmed-fg-color;
+  margin: 0 0 2px 2px;
+}
+
+GimpToolDialog list.chopgimp-layer-style-list {
+  background-color: @ps-list;
+}
+
+GimpToolDialog list.chopgimp-layer-style-list row {
+  padding: 2px 4px;
+  min-height: 24px;
+}
+
+GimpToolDialog list.chopgimp-layer-style-list row:hover {
+  background-color: @hover-color;
+}
+
+GimpToolDialog list.chopgimp-layer-style-list row:selected,
+GimpToolDialog list.chopgimp-layer-style-list row.current {
+  background-color: @selected-color;
+  color: @fg-color;
+}
+
+GimpToolDialog button.chopgimp-layer-style-add {
+  min-height: 18px;
+  min-width: 18px;
+  padding: 0;
+}
+
+/* ── Panneaux (lot C) ──────────────────────────────────────────────
+ * Échelle d'espacements unique des panneaux, remplacée par
+ * tools/build_themes.py (GTK 3 n'a pas de variables CSS) :
+ *   4px = 4 px   8px = 8 px
+ *   12px = 12 px  16px = 16 px
+ * Ces règles ne visent que les classes posées par le code du lot C
+ * (app/widgets/chopgimp-panels.h) : avec CHOPGIMP_CLASSIC_PANELS=1,
+ * aucune ne s'applique et les panneaux de la 3.26.0 reviennent. */
+
+/* Onglets des groupes : icône 16 px + nom, 28 px de haut, onglet actif
+ * souligné par l'accent ; quand la place manque, seul l'onglet actif
+ * garde son nom (gimpdockbook.c). */
+notebook.chopgimp-dockbook > header {
+  padding: 0 4px;
+}
+
+notebook.chopgimp-dockbook > header > tabs > tab {
+  min-height: 20px;
+  padding: 4px 8px;
+  border: none;
+  border-radius: 0;
+  box-shadow: none;
+  background-color: transparent;
+}
+
+notebook.chopgimp-dockbook > header > tabs > tab:hover {
+  background-color: alpha(@hover-color, 0.5);
+}
+
+notebook.chopgimp-dockbook > header > tabs > tab:checked {
+  background-color: transparent;
+  box-shadow: inset 0 -2px @ps-accent;
+}
+
+notebook.chopgimp-dockbook > header > tabs > tab .chopgimp-tab image {
+  color: @dimmed-fg-color;
+}
+
+notebook.chopgimp-dockbook > header > tabs > tab:checked .chopgimp-tab image {
+  color: @ps-accent;
+}
+
+/* Réduire, ⋮, fermer : discrets, visibles au survol */
+notebook.chopgimp-dockbook #chopgimp-dockbook-buttons button {
+  min-width: 22px;
+  min-height: 22px;
+  margin: 0 1px;
+  padding: 0;
+  border-radius: 4px;
+  color: @dimmed-fg-color;
+  opacity: 0.6;
+}
+
+notebook.chopgimp-dockbook #chopgimp-dockbook-buttons button:hover {
+  background-color: @hover-color;
+  color: @fg-color;
+  opacity: 1;
+}
+
+/* Barres de boutons du bas : icônes 16 px, survol arrondi, groupes
+ * séparés (classe chopgimp-group-start), corbeille à droite */
+box.chopgimp-button-bar {
+  padding: 4px;
+  border-top: 1px solid @edge-border-color;
+}
+
+box.chopgimp-button-bar > button {
+  min-width: 24px;
+  min-height: 24px;
+  padding: 2px;
+  margin: 0 1px;
+  border: none;
+  border-radius: 4px;
+  background-image: none;
+  background-color: transparent;
+  box-shadow: none;
+}
+
+box.chopgimp-button-bar > button:hover {
+  background-color: @hover-color;
+}
+
+box.chopgimp-button-bar > button:active,
+box.chopgimp-button-bar > button:checked {
+  background-color: @selected-color;
+}
+
+box.chopgimp-button-bar > button:disabled image {
+  color: @disabled-fg-color;
+}
+
+box.chopgimp-button-bar > button.chopgimp-group-start {
+  margin-left: 8px;
+}
+
+/* Calques : ligne Mode + Opacité compacte */
+box.chopgimp-layer-options {
+  padding: 4px 8px;
+}
+
+/* Calques : œil atténué sauf au survol / sur la ligne active ; cadenas
+ * net quand il est mis (et pâle au survol, dessiné par le code) */
+treeview.chopgimp-panels .toggle-icon.chopgimp-eye.visible {
+  color: alpha(@fg-color, 0.45);
+}
+
+treeview.chopgimp-panels .toggle-icon.chopgimp-eye.visible:hover,
+treeview.chopgimp-panels .toggle-icon.chopgimp-eye.visible:selected {
+  color: @fg-color;
+}
+
+treeview.chopgimp-panels .toggle-icon.chopgimp-lock.visible {
+  color: @fg-color;
+}
+
+/* Calques : effets du calque actif, sous la liste */
+box.chopgimp-fx-strip {
+  padding: 2px 4px;
+  border-top: 1px solid @edge-border-color;
+  background-color: @ps-list;
+}
+
+box.chopgimp-fx-strip button {
+  min-height: 20px;
+  min-width: 20px;
+  padding: 1px 4px;
+  border: none;
+  border-radius: 4px;
+  background-image: none;
+  background-color: transparent;
+  box-shadow: none;
+}
+
+box.chopgimp-fx-strip button:hover {
+  background-color: @hover-color;
+}
+
+box.chopgimp-fx-strip button.chopgimp-fx-eye:checked {
+  background-color: transparent;
+}
+
+box.chopgimp-fx-row {
+  padding-left: 16px;
+  min-height: 22px;
+}
+
+box.chopgimp-fx-row:hover {
+  background-color: alpha(@hover-color, 0.5);
+  border-radius: 4px;
+}
+
+box.chopgimp-fx-row.chopgimp-fx-off label {
+  color: @dimmed-fg-color;
+}
+
+box.chopgimp-fx-row button.chopgimp-fx-edit {
+  opacity: 0.35;
+}
+
+box.chopgimp-fx-row:hover button.chopgimp-fx-edit,
+box.chopgimp-fx-row button.chopgimp-fx-edit:hover {
+  opacity: 1;
+}
+
+/* Couleur : grand carré TSV + bande de teinte, rangée hex + menu des
+ * sélecteurs, couleurs récentes ; canal (H S V / R G B / L C h) dans
+ * un menu compact « H ▾ » */
+GimpColorEditor.chopgimp-panels {
+  padding: 8px;
+}
+
+GimpColorEditor.chopgimp-panels GimpColorSelect label {
+  color: @dimmed-fg-color;
+  font-size: 0.85em;
+}
+
+button.chopgimp-channel-menu,
+button.chopgimp-selector-menu {
+  min-height: 20px;
+  min-width: 20px;
+  padding: 0 4px;
+  border: none;
+  border-radius: 4px;
+  background-image: none;
+  background-color: transparent;
+  box-shadow: none;
+  color: @dimmed-fg-color;
+}
+
+button.chopgimp-channel-menu:hover,
+button.chopgimp-channel-menu:checked,
+button.chopgimp-selector-menu:hover,
+button.chopgimp-selector-menu:checked {
+  background-color: @hover-color;
+  color: @fg-color;
+}
+
+button.chopgimp-channel-menu label,
+GimpColorEditor.chopgimp-panels GimpColorSelect button.chopgimp-channel-menu label {
+  color: inherit;
+  font-size: 0.9em;
+  font-weight: bold;
 }

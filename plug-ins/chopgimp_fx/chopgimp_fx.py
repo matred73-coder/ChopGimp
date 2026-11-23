@@ -640,13 +640,15 @@ def layer_style_dialog(image, layer, focus=None):
         op_adj = Gtk.Adjustment(value=round(mem[2] * 100) if mem else
                                 (100 if key in ("stroke", "overlay") else 75), lower=0, upper=100,
                                 step_increment=1, page_increment=10)
-        op_spin = spin_scale(op_adj, "Opacité (%)")
+        op_spin = spin_scale(op_adj, "Opacité (%)", unit="%")
         inner.pack_start(op_spin, False, False, 0)
         pw = {}
         for plabel, pkey, lo, hi, default in params:
             value = mem[0].get(pkey, default) if mem else default
             adj = Gtk.Adjustment(value=value, lower=lo, upper=hi, step_increment=1, page_increment=10)
-            sp = spin_scale(adj, plabel)
+            sp = spin_scale(adj, plabel,
+                            unit={"dist": "px", "radius": "px", "size": "px",
+                                  "angle": "°"}.get(pkey))
             inner.pack_start(sp, False, False, 0)
             pw[pkey] = sp
         fr, check = check_frame(label, label in present, inner)
@@ -871,7 +873,7 @@ def stroke_width_dialog(layer, outside):
     box = dialog_box(dialog)
     width = spin_scale(Gtk.Adjustment(value=max(1.0, layer.get_stroke_width()),
                                       lower=0.5, upper=500, step_increment=1, page_increment=10),
-                       "Épaisseur (px)", digits=1, limits=(0.5, 100), gamma=1.5)
+                       "Épaisseur (px)", digits=1, limits=(0.5, 100), gamma=1.5, unit="px")
     box.pack_start(width, False, False, 0)
     cur = rgba(layer.get_stroke_color())
     cbtn = color_button("Couleur du contour", cur[:3])

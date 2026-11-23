@@ -141,6 +141,19 @@ def palette_css(name):
     return "\n".join(lines) + "\n"
 
 
+# Échelle unique des espacements des panneaux (lot C). GTK 3 n'a pas de
+# variables CSS : « var(--sp-2) » est remplacé ici par sa valeur.
+SPACING = {"--sp-1": "4px", "--sp-2": "8px", "--sp-3": "12px", "--sp-4": "16px"}
+
+
+def expand_spacing(css):
+    def sub(m):
+        if m.group(1) not in SPACING:
+            raise SystemExit("variable d'espacement inconnue : %s" % m.group(1))
+        return SPACING[m.group(1)]
+    return re.sub(r"var\((--[a-z0-9-]+)\)", sub, css)
+
+
 def lint(path):
     """Pas de taille en pt (la mise à l'échelle des Préférences ne marche
     qu'en rem) ni de couleur codée en dur hors des palettes."""
@@ -162,7 +175,11 @@ def build():
     for f in ("common.css", "common-dark.css", "common-light.css", "system.css"):
         shutil.copy(os.path.join(SRC, f), OUT)
     shutil.copytree(os.path.join(SRC, "ui"), os.path.join(OUT, "ui"))
-    shutil.copy(os.path.join(SRC, "ps-overrides.css"), OUT)
+    # échelle d'espacements des panneaux (lot C) : var(--sp-N) -> px
+    with open(os.path.join(SRC, "ps-overrides.css"), encoding="utf-8") as f:
+        css = expand_spacing(f.read())
+    with open(os.path.join(OUT, "ps-overrides.css"), "w", encoding="utf-8") as f:
+        f.write(css)
 
     for name in PALETTES:
         open(os.path.join(OUT, "palette-%s.css" % name), "w", encoding="utf-8").write(palette_css(name))

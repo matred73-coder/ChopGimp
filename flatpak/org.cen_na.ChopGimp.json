@@ -809,6 +809,10 @@
                 {
                     "type": "patch",
                     "path": "../patches/gegl-0.4.72/0006-threaded-rendering-hook-and-level-aware-cache.patch"
+                },
+                {
+                    "type": "patch",
+                    "path": "../patches/gegl-0.4.72/0007-dropshadow-blend-mode.patch"
                 }
             ],
             "buildsystem": "meson",
@@ -1117,7 +1121,15 @@
                         "../patches/gimp-3.2.8/0106-ChopGimp-fused-layer-styles-chopgimp-layer-style-fus.patch",
                         "../patches/gimp-3.2.8/0107-ChopGimp-drafts-only-during-user-input-on-the-canvas.patch",
                         "../patches/gimp-3.2.8/0108-ChopGimp-options-bar-without-scrolling-compact-value.patch",
-                        "../patches/gimp-3.2.8/0109-ChopGimp-options-bar-narrower-blend-mode-box.patch"
+                        "../patches/gimp-3.2.8/0109-ChopGimp-options-bar-narrower-blend-mode-box.patch",
+                        "../patches/gimp-3.2.8/0110-ChopGimp-stable-XCF-effects-cache-key-Aide-button-un.patch",
+                        "../patches/gimp-3.2.8/0111-ChopGimp-background-rendering-no-full-graph-walk-per.patch",
+                        "../patches/gimp-3.2.8/0112-ChopGimp-Photoshop-like-GimpSpinScale-label-thin-tra.patch",
+                        "../patches/gimp-3.2.8/0113-ChopGimp-blend-mode-of-drop-shadows-and-outer-glows-.patch",
+                        "../patches/gimp-3.2.8/0114-ChopGimp-expressions-in-the-compact-value-fields-beh.patch",
+                        "../patches/gimp-3.2.8/0115-ChopGimp-filter-dialogs-as-Photoshop-s-unified-Style.patch",
+                        "../patches/gimp-3.2.8/0116-ChopGimp-modernised-panels-lot-C-dock-tabs-icon-name.patch",
+                        "../patches/gimp-3.2.8/0117-ChopGimp-dock-tab-names-no-longer-shrink-to-layer-st.patch"
                     ]
                 }
             ],

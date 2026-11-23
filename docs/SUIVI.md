@@ -593,3 +593,16 @@ Restent à traiter (identiques avec ou sans effets) : blocages au déplacement, 
 - Banc : `CHOPGIMP_GUITEST_SIZE=1280x800` pour tester une largeur de portable.
 - Vérifié au banc : Pinceau et Texte à 1600 et 1280 px (aucun défilement, ⋯ 5 / ⋯ 7), curseur de Dureté, menu ⋯ ; 103 tests.
 - Restes connus : pas de calcul dans la saisie (« 2*5 ») ; unités de l'approche et de l'interlignage non affichées ; le reste de la modernisation (curseurs des fenêtres, styles de calque unifiés, panneaux, icônes, styles d'interface) est gardé pour plus tard (plan).
+
+## 3.26.1 — Curseurs façon Photoshop, Style de calque unifié, panneaux modernisés
+
+- **Curseurs façon Photoshop partout** (`GimpSpinScale` amélioré) : libellé, curseur fin à poignée ronde, valeur + unité ; plus de − / + ; glisser sur la piste ou le libellé, Maj = fin. `CHOPGIMP_CLASSIC_SPIN_SCALE=1` pour l'ancien curseur.
+- **Fenêtres de filtres** : boutons en bas (Réinitialiser à gauche, Annuler / Valider à droite), « ? » pour l'aide, options techniques dans « Avancé » (replié, mémorisé).
+- **Fenêtre « Style de calque » unifiée** (Calque > Style de calque > Options de fusion…, bouton fx, double-clic dans la liste fx) : effets à gauche avec cases à cocher, réglages à droite, « + » pour un second Contour / Ombre portée, une seule étape d'annulation.
+- **Mode de fusion de l'ombre portée et de la lueur externe** sur les calques du dessous (Produit / Écran par défaut ; patch GEGL 0007 ; `CHOPGIMP_NO_BEHIND_MODES=1`). Anciens fichiers identiques. Limites : groupe « Traverser », pixelliser / fusionner (ombre figée en Normal), pas de cache XCF pour ces ombres.
+- **Panneaux** (`CHOPGIMP_CLASSIC_PANELS=1` pour revenir) : onglets icône + nom (soulignement accent, ⋮), barres de boutons regroupées, panneau Calques (Mode + Opacité sur une ligne, vignettes arrondies, œil / cadenas discrets, bande « Effets » du calque actif), panneau Couleur compact.
+- **Cache des effets XCF** : clé stable (`CHOPGIMP_FX_RENDER_VERSION` dans `app/core/chopgimp-fx-render-version.h`) — **à incrémenter à chaque changement du rendu d'un effet** — au lieu de l'identifiant de compilation ; il survit donc aux mises à jour.
+- **Rendu en arrière-plan** : contrôle du graphe au plus toutes les 250 ms (cause du surcoût pendant un trait), petites zones sur le fil principal. Toujours désactivé par défaut, **à mesurer**.
+- **Finitions** : calculs dans les champs de la barre (« 2*5 »), unités (approche px, interligne, Déformation %), « Aide », unités dans les fenêtres des greffons, ombres « Produit » visibles dans les vignettes, Contour « Aligner sur le calque » / « Lier au calque », opacités des styles en %.
+- Vérifié : 103 tests ; banc : fenêtre Style de calque, panneaux, onglets (après correction des noms réduits à « … »).
+- Non fait / à surveiller : pipette sur le calque sans les effets (comportement GIMP) ; pendant la fenêtre Style de calque, une action sur l'image va dans la même étape d'annulation ; mesure du rendu en arrière-plan.

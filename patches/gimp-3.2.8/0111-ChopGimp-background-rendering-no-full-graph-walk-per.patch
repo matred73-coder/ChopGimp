@@ -1,0 +1,318 @@
+From f12846da849193ddc859ed2158e8f8ab29f728bc Mon Sep 17 00:00:00 2001
+From: ChopGimp <mathieu.redon@proton.me>
+Date: Wed, 18 Nov 2026 17:21:55 +0100
+Subject: [PATCH 111/116] ChopGimp: background rendering: no full graph walk
+ per job on the main thread (threadable check at most every 250 ms, per-class
+ cache of object properties, thread-side serial cache), small jobs on the main
+ thread (CHOPGIMP_THREADABLE_RECHECK_MS, CHOPGIMP_RENDER_THREAD_MIN_US)
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ app/core/gimpprojection.c       | 145 +++++++++++++++++++++++++++++---
+ app/gegl/gimp-gegl-graph-lock.c |  59 +++++++++++++
+ 2 files changed, 192 insertions(+), 12 deletions(-)
+
+diff --git a/app/core/gimpprojection.c b/app/core/gimpprojection.c
+index bc22474..52affdb 100644
+--- a/app/core/gimpprojection.c
++++ b/app/core/gimpprojection.c
+@@ -97,6 +97,17 @@
+ #define CHOPGIMP_PROJECTION_DRAFTABLE_TIME       (250 * G_TIME_SPAN_MILLISECOND)
+ #define CHOPGIMP_PROJECTION_WATCHDOG_INTERVAL    50    /* ms */
+ 
++/*  the main thread re-checks whether the image graph is threadable at
++ *  most this often (CHOPGIMP_THREADABLE_RECHECK_MS); the rendering thread
++ *  checks it anyway before rendering, whenever it may have changed
++ */
++#define CHOPGIMP_PROJECTION_THREADABLE_TIME      (250 * G_TIME_SPAN_MILLISECOND)
++
++/*  a job whose estimated rendering time is below this is rendered on the
++ *  main thread (CHOPGIMP_RENDER_THREAD_MIN_US, 0 to always use the thread)
++ */
++#define CHOPGIMP_PROJECTION_THREAD_MIN_TIME      1000  /* µs */
++
+ 
+ enum
+ {
+@@ -173,6 +184,7 @@ struct _GimpProjectionPrivate
+   gboolean                   threadable;
+   gboolean                   threadable_valid;
+   guint                      threadable_serial;
++  gint64                     threadable_time;
+   gboolean                   draftable;
+   gint64                     draftable_time;
+ };
+@@ -1601,6 +1613,63 @@ gimp_projection_is_acting (GimpProjection *proj)
+           now - proj->priv->last_update_time   < CHOPGIMP_PROJECTION_ACTIVITY_TIME);
+ }
+ 
++static gboolean
++gimp_projection_debug_render (void)
++{
++  static gint debug = -1;
++
++  if (debug < 0)
++    debug = (g_getenv ("CHOPGIMP_DEBUG_RENDER") != NULL);
++
++  return debug;
++}
++
++/*  an integer environment variable, @def if unset or invalid  */
++static gint64
++gimp_projection_get_env_int (const gchar *name,
++                             gint64       def)
++{
++  const gchar *env = g_getenv (name);
++  gchar       *end = NULL;
++  gint64       value;
++
++  if (! env || ! *env)
++    return def;
++
++  value = g_ascii_strtoll (env, &end, 10);
++
++  if (! end || *end || value < 0)
++    return def;
++
++  return value;
++}
++
++static gint64
++gimp_projection_get_threadable_recheck_time (void)
++{
++  static gint64 recheck = -1;
++
++  if (recheck < 0)
++    recheck = gimp_projection_get_env_int ("CHOPGIMP_THREADABLE_RECHECK_MS",
++                                           CHOPGIMP_PROJECTION_THREADABLE_TIME /
++                                           G_TIME_SPAN_MILLISECOND) *
++              G_TIME_SPAN_MILLISECOND;
++
++  return recheck;
++}
++
++static gint64
++gimp_projection_get_thread_min_time (void)
++{
++  static gint64 min_time = -1;
++
++  if (min_time < 0)
++    min_time = gimp_projection_get_env_int ("CHOPGIMP_RENDER_THREAD_MIN_US",
++                                            CHOPGIMP_PROJECTION_THREAD_MIN_TIME);
++
++  return min_time;
++}
++
+ static gboolean
+ gimp_projection_want_thread (GimpProjection *proj)
+ {
+@@ -1617,17 +1686,39 @@ gimp_projection_want_thread (GimpProjection *proj)
+     }
+ 
+   /*  the main thread takes the graph lock (and bumps the serial) whenever
+-   *  it may have changed the graph
++   *  it may have changed the graph -- but also whenever it merely
++   *  evaluates it (bounding boxes, previews...), i.e. at nearly every
++   *  main loop iteration while the user paints.  Walking the whole image
++   *  graph each time cost the main thread a full walk per job during
++   *  strokes (the likely cause of their doubled main thread CPU with
++   *  background rendering; CHOPGIMP_DEBUG_RENDER shows the walks, and
++   *  CHOPGIMP_THREADABLE_RECHECK_MS=0 restores that behavior).  The
++   *  answer here only picks the thread or the main thread: the rendering
++   *  thread checks the graph again, under the lock, before rendering
++   *  anything (job->checked_serial is this check's serial), so a stale
++   *  answer costs at most an aborted job.  So the walk is redone at most every THREADABLE_TIME, or at once
++   *  after an aborted job (threadable_valid cleared).
+    */
+   serial = gimp_gegl_graph_lock_get_serial ();
+ 
+-  if (! priv->threadable_valid || serial != priv->threadable_serial)
++  if (! priv->threadable_valid ||
++      (serial != priv->threadable_serial &&
++       g_get_monotonic_time () - priv->threadable_time >=
++       gimp_projection_get_threadable_recheck_time ()))
+     {
++      gint64 start = g_get_monotonic_time ();
++
+       priv->threadable =
+         gimp_gegl_graph_is_threadable (gimp_projectable_get_graph (priv->projectable));
+ 
+       priv->threadable_serial = serial;
+       priv->threadable_valid  = TRUE;
++      priv->threadable_time   = g_get_monotonic_time ();
++
++      if (gimp_projection_debug_render ())
++        g_printerr ("chopgimp: threadable check (main) %s, %.2f ms\n",
++                    priv->threadable ? "yes" : "no",
++                    (priv->threadable_time - start) / 1000.0);
+     }
+ 
+   return priv->threadable;
+@@ -1735,7 +1826,14 @@ static void
+ gimp_projection_job_thread_func (ChopRenderJob *job,
+                                  gpointer       unused)
+ {
+-  gint i;
++  /*  the last graph found threadable by this thread, and the serial it
++   *  was checked at: the main thread can only change a graph after
++   *  taking the lock, which bumps the serial, so a graph checked at the
++   *  current serial needs no new check (rendering thread only)
++   */
++  static GeglNode *checked_graph  = NULL;
++  static guint     checked_serial = 0;
++  gint             i;
+ 
+   for (i = 0; i < job->n_subs; i++)
+     {
+@@ -1758,9 +1856,18 @@ gimp_projection_job_thread_func (ChopRenderJob *job,
+        */
+       serial = gimp_gegl_graph_lock_get_serial ();
+ 
+-      if (serial != job->checked_serial)
++      if (serial != job->checked_serial &&
++          ! (job->graph == checked_graph && serial == checked_serial))
+         {
+-          if (! gimp_gegl_graph_is_threadable (job->graph))
++          gint64   check_start = g_get_monotonic_time ();
++          gboolean threadable  = gimp_gegl_graph_is_threadable (job->graph);
++
++          if (gimp_projection_debug_render ())
++            g_printerr ("chopgimp: threadable check (thread) %s, %.2f ms\n",
++                        threadable ? "yes" : "no",
++                        (g_get_monotonic_time () - check_start) / 1000.0);
++
++          if (! threadable)
+             {
+               job->aborted = TRUE;
+ 
+@@ -1768,9 +1875,12 @@ gimp_projection_job_thread_func (ChopRenderJob *job,
+               break;
+             }
+ 
+-          job->checked_serial = serial;
++          checked_graph  = job->graph;
++          checked_serial = serial;
+         }
+ 
++      job->checked_serial = serial;
++
+       start = g_get_monotonic_time ();
+ 
+       gimp_projection_job_blit (job, i);
+@@ -2252,12 +2362,7 @@ gimp_projection_job_complete (GimpProjection *proj,
+   rest = gimp_projection_job_get_region (job, job->n_done, job->n_subs);
+ 
+   {
+-    static gint debug = -1;
+-
+-    if (debug < 0)
+-      debug = (g_getenv ("CHOPGIMP_DEBUG_RENDER") != NULL);
+-
+-    if (debug)
++    if (gimp_projection_debug_render ())
+       g_printerr ("chopgimp: job %s level %d %dx%d+%d+%d slices %d/%d%s, "
+                   "%.1f ms, rate %.3f px/us\n",
+                   job->on_main ? "main" : "thread", job->level,
+@@ -2403,6 +2508,22 @@ gimp_projection_job_iteration (GimpProjection *proj,
+ 
+   priv->job = job;
+ 
++  /*  a small area costs the main thread less to render (GEGL's workers
++   *  share the work) than the round trip through the rendering thread,
++   *  and is on screen at once: while the user paints, the areas updated
++   *  at each frame are small, and in the thread they were often changed
++   *  again before being done (rendered and copied twice)
++   */
++  if (threaded)
++    {
++      gdouble rate = (priv->rate > 0.0 ?
++                      priv->rate : CHOPGIMP_PROJECTION_INITIAL_RATE);
++      gdouble cost = (gdouble) job->lrect.width * job->lrect.height / rate;
++
++      if (cost < (gdouble) gimp_projection_get_thread_min_time ())
++        threaded = FALSE;
++    }
++
+   if (threaded)
+     {
+       priv->job_watchdog_id =
+diff --git a/app/gegl/gimp-gegl-graph-lock.c b/app/gegl/gimp-gegl-graph-lock.c
+index c62420f..59ae5a6 100644
+--- a/app/gegl/gimp-gegl-graph-lock.c
++++ b/app/gegl/gimp-gegl-graph-lock.c
+@@ -514,6 +514,59 @@ gimp_gegl_graph_name_in (const gchar        *name,
+   return FALSE;
+ }
+ 
++/*  whether the operation's class has readable properties holding objects
++ *  (other than buffers and colors), which make an operation unsafe in the
++ *  rendering thread when they are set.  Cached on the type: the check
++ *  below runs for every node of the image graph, possibly at every
++ *  rendering job, and listing the properties of each operation dominated
++ *  it.  Thread-safe (type qdata is protected by GLib's type lock).
++ */
++static gboolean
++gimp_gegl_graph_class_has_object_props (GeglOperation *operation)
++{
++  static GQuark   quark = 0;
++  GType           type  = G_OBJECT_TYPE (operation);
++  gpointer        data;
++  GParamSpec    **pspecs;
++  guint           n_pspecs;
++  guint           i;
++  gboolean        has   = FALSE;
++
++  /*  racy, but every thread computes the same value  */
++  if (G_UNLIKELY (! quark))
++    quark = g_quark_from_static_string ("chopgimp-graph-object-props");
++
++  data = g_type_get_qdata (type, quark);
++
++  if (data)
++    return (GPOINTER_TO_INT (data) == 2);
++
++  pspecs = g_object_class_list_properties (G_OBJECT_GET_CLASS (operation),
++                                           &n_pspecs);
++
++  for (i = 0; i < n_pspecs && ! has; i++)
++    {
++      GParamSpec *pspec = pspecs[i];
++      GType       vtype = pspec->value_type;
++
++      if (! (pspec->flags & G_PARAM_READABLE))
++        continue;
++
++      if ((G_TYPE_IS_OBJECT (vtype) || G_TYPE_IS_INTERFACE (vtype)) &&
++          ! g_type_is_a (vtype, GEGL_TYPE_BUFFER)                  &&
++          ! g_type_is_a (vtype, GEGL_TYPE_COLOR))
++        {
++          has = TRUE;
++        }
++    }
++
++  g_free (pspecs);
++
++  g_type_set_qdata (type, quark, GINT_TO_POINTER (has ? 2 : 1));
++
++  return has;
++}
++
+ /*  an operation can be processed in the rendering thread while the main
+  *  thread runs, if it only depends on plain property values (numbers,
+  *  enums, strings, colors) and buffers: objects of the application
+@@ -554,6 +607,12 @@ gimp_gegl_graph_check_threadable (GeglNode      *node,
+       return FALSE;
+     }
+ 
++  /*  most operations (point filters, composers, buffer sources, layer
++   *  modes...) have no object property at all
++   */
++  if (! gimp_gegl_graph_class_has_object_props (operation))
++    return TRUE;
++
+   pspecs = g_object_class_list_properties (G_OBJECT_GET_CLASS (operation),
+                                            &n_pspecs);
+ 
+-- 
+2.53.0
+

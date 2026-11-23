@@ -50,7 +50,7 @@
             (current-page 0)
             (dockable "gimp-layer-list"
                 (tab-style name)
-                (preview-size 64)
+                (preview-size 32)
                 (aux-info
                     (show-button-bar "true")))
             (dockable "gimp-channel-list"

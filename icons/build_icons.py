@@ -679,6 +679,12 @@ def _panel_close():
     return line(4, 4, 12, 12, 1.7) + line(12, 4, 4, 12, 1.7)
 
 
+@icon("chopgimp-panel-menu")
+def _panel_menu():
+    # « ⋮ » : menu discret d'un groupe de panneaux (lot C)
+    return circle(8, 3.5, 1.3) + circle(8, 8, 1.3) + circle(8, 12.5, 1.3)
+
+
 @icon("chopgimp-dock-hide")
 def _dock_hide():
     # Double chevron vers la droite : masquer la colonne de panneaux

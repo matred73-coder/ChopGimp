@@ -90,7 +90,7 @@ def workspace_books(name):
     """Les trois groupes de panneaux de droite d'un espace de travail
     (comme les espaces de travail de Photoshop)."""
     info = dockable("gimp-cursor-view", extra=['(frame-1-mode "pixel")', '(frame-2-mode "rgb-percent")'])
-    layers3 = [dockable("gimp-layer-list", tab="name", preview=64),
+    layers3 = [dockable("gimp-layer-list", tab="name", preview=32),
                dockable("gimp-channel-list", tab="name", preview=32),
                dockable("gimp-path-list", tab="name", preview=32)]
     if name == "photographie":
@@ -103,20 +103,20 @@ def workspace_books(name):
                             dockable("gimp-pattern-grid")]),
                 book(250, [dockable("gimp-brush-grid"), dockable("gimp-mypaint-brush-grid"),
                            dockable("gimp-tool-preset-list"), dockable("gimp-dynamics-list")]),
-                book(330, [dockable("gimp-layer-list", tab="name", preview=64),
+                book(330, [dockable("gimp-layer-list", tab="name", preview=32),
                            dockable("gimp-navigation-view"), dockable("gimp-symmetry-editor")]))
     if name == "typographie":
         return (book(None, [dockable("chopgimp-character"), dockable("chopgimp-paragraph")]),
                 book(250, [dockable("chopgimp-fonts"), dockable("chopgimp-document-texts"),
                            dockable("chopgimp-glyphs"), dockable("chopgimp-text-styles")]),
-                book(330, [dockable("gimp-layer-list", tab="name", preview=64),
+                book(330, [dockable("gimp-layer-list", tab="name", preview=32),
                            dockable("gimp-path-list", tab="name", preview=32)]))
     if name == "illustration":
         return (book(None, [dockable("gimp-color-editor"), dockable("gimp-palette-editor"),
                             dockable("gimp-gradient-list")]),
                 book(250, [dockable("gimp-path-list", tab="name", preview=32),
                            dockable("gimp-undo-history"), dockable("gimp-symmetry-editor")]),
-                book(330, [dockable("gimp-layer-list", tab="name", preview=64),
+                book(330, [dockable("gimp-layer-list", tab="name", preview=32),
                            dockable("gimp-channel-list", tab="name", preview=32)]))
     return None
 
@@ -136,7 +136,7 @@ def sessionrc(workspace="essentiel"):
                        dockable("chopgimp-text-styles"),
                        dockable("gimp-brush-grid"),
                        dockable("gimp-cursor-view", extra=['(frame-1-mode "pixel")', '(frame-2-mode "rgb-percent")'])])
-    layers = book(330, [dockable("gimp-layer-list", tab="name", preview=64),
+    layers = book(330, [dockable("gimp-layer-list", tab="name", preview=32),
                         dockable("gimp-channel-list", tab="name", preview=32),
                         dockable("gimp-path-list", tab="name", preview=32)])
     if workspace != "essentiel":

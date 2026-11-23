@@ -120,7 +120,7 @@ def export_web(image):
                       "Qualité")
     opts.pack_start(qual, False, False, 0)
     size = spin_scale(Gtk.Adjustment(value=100, lower=5, upper=100, step_increment=5, page_increment=10),
-                      "Taille (%)")
+                      "Taille (%)", unit="%")
     opts.pack_start(size, False, False, 0)
     info = Gtk.Label(xalign=0)
     info.get_style_context().add_class("dim-label")

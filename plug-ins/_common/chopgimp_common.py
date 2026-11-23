@@ -227,13 +227,43 @@ def vbox(spacing=6):
     return Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=spacing)
 
 
-def spin_scale(adj, label, digits=0, limits=None, gamma=None):
+_UNIT_SUFFIX = None
+
+
+def _has_unit_suffix(GimpUi):
+    """GimpSpinScale de ChopGimp : propriété « unit-suffix » (absente dans
+    un GIMP classique)."""
+    global _UNIT_SUFFIX
+    if _UNIT_SUFFIX is None:
+        try:
+            _UNIT_SUFFIX = any(p.name == "unit-suffix"
+                               for p in GimpUi.SpinScale.list_properties())
+        except Exception:
+            _UNIT_SUFFIX = False
+    return _UNIT_SUFFIX
+
+
+def spin_scale(adj, label, digits=0, limits=None, gamma=None, unit=None):
     """Glissière GIMP (GimpSpinScale) sur l'ajustement adj : le libellé est
     dans la barre. limits=(bas, haut) restreint la plage de la glissière
     (la saisie au clavier garde toute la plage de adj) ; gamma > 1 donne
-    plus de précision vers le bas d'une plage large."""
+    plus de précision vers le bas d'une plage large. unit (« px », « % »,
+    « ° »…) s'affiche après la valeur ; le libellé peut le porter entre
+    parenthèses (« Taille (%) ») : il en est retiré quand l'unité est
+    affichée, gardé sinon (GIMP classique)."""
     GimpUi, Gtk = _ui()
+    if unit and _has_unit_suffix(GimpUi):
+        suffix = " (%s)" % unit
+        if label.endswith(suffix):
+            label = label[:-len(suffix)]
+    else:
+        unit = None
     sc = GimpUi.SpinScale.new(adj, label, digits)
+    if unit:
+        try:
+            sc.set_property("unit-suffix", unit)
+        except Exception:
+            pass
     sc.set_hexpand(True)
     if limits is not None:
         lo = max(limits[0], adj.get_lower())

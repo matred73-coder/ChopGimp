@@ -215,10 +215,10 @@ def rescale_dialog(w, h, has_sel):
     size = vbox()
     main.pack_start(frame("Calque actif : %d × %d px" % (w, h), size), False, False, 0)
     sw = spin_scale(Gtk.Adjustment(value=75, lower=10, upper=200, step_increment=1, page_increment=10),
-                    "Largeur (%)")
+                    "Largeur (%)", unit="%")
     size.pack_start(sw, False, False, 0)
     sh = spin_scale(Gtk.Adjustment(value=100, lower=10, upper=200, step_increment=1, page_increment=10),
-                    "Hauteur (%)")
+                    "Hauteur (%)", unit="%")
     size.pack_start(sh, False, False, 0)
     protect = Gtk.CheckButton(label="Protéger la sélection (visages, sujet…)")
     protect.set_active(has_sel)

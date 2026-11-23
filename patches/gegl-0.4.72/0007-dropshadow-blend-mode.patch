@@ -1,0 +1,78 @@
+From: ChopGimp <mathieu.redon@proton.me>
+Subject: [PATCH] dropshadow: blend-mode property (Photoshop's shadow / glow mode)
+
+The mode with which the application composites the shadow onto the layers
+below the layer it belongs to (ChopGimp: "behind effects", drop shadow in
+Multiply, outer glow in Screen). The operation's rendering is unchanged:
+the default, "normal", keeps the shadow composited with the layer, as
+before. The nicks are GIMP's GimpLayerMode ones.
+
+---
+diff --git a/operations/common/dropshadow.c b/operations/common/dropshadow.c
+--- a/operations/common/dropshadow.c
++++ b/operations/common/dropshadow.c
+@@ -40,6 +40,46 @@
+   enum_value (GEGL_DROPSHADOW_CONTOUR_RING_DOUBLE,   "ring-double",   N_("Ring - Double"))
+ enum_end (GeglDropshadowContour)
+ 
++/* The nicks are the ones of GIMP's GimpLayerMode, values are stored in
++ * files: only append new ones.
++ */
++enum_start (gegl_dropshadow_blend_mode)
++  enum_value (GEGL_DROPSHADOW_BLEND_MODE_NORMAL,         "normal",         N_("Normal"))
++  enum_value (GEGL_DROPSHADOW_BLEND_MODE_DISSOLVE,       "dissolve",       N_("Dissolve"))
++  enum_value (GEGL_DROPSHADOW_BLEND_MODE_DARKEN_ONLY,    "darken-only",    N_("Darken only"))
++  enum_value (GEGL_DROPSHADOW_BLEND_MODE_MULTIPLY,       "multiply",       N_("Multiply"))
++  enum_value (GEGL_DROPSHADOW_BLEND_MODE_BURN,           "burn",           N_("Burn"))
++  enum_value (GEGL_DROPSHADOW_BLEND_MODE_LINEAR_BURN,    "linear-burn",    N_("Linear burn"))
++  enum_value (GEGL_DROPSHADOW_BLEND_MODE_LUMA_DARKEN,    "luma-darken-only",  N_("Luma darken only"))
++  enum_value (GEGL_DROPSHADOW_BLEND_MODE_LIGHTEN_ONLY,   "lighten-only",   N_("Lighten only"))
++  enum_value (GEGL_DROPSHADOW_BLEND_MODE_SCREEN,         "screen",         N_("Screen"))
++  enum_value (GEGL_DROPSHADOW_BLEND_MODE_DODGE,          "dodge",          N_("Dodge"))
++  enum_value (GEGL_DROPSHADOW_BLEND_MODE_ADDITION,       "addition",       N_("Addition"))
++  enum_value (GEGL_DROPSHADOW_BLEND_MODE_LUMA_LIGHTEN,   "luma-lighten-only", N_("Luma lighten only"))
++  enum_value (GEGL_DROPSHADOW_BLEND_MODE_OVERLAY,        "overlay",        N_("Overlay"))
++  enum_value (GEGL_DROPSHADOW_BLEND_MODE_SOFTLIGHT,      "softlight",      N_("Soft light"))
++  enum_value (GEGL_DROPSHADOW_BLEND_MODE_HARDLIGHT,      "hardlight",      N_("Hard light"))
++  enum_value (GEGL_DROPSHADOW_BLEND_MODE_VIVID_LIGHT,    "vivid-light",    N_("Vivid light"))
++  enum_value (GEGL_DROPSHADOW_BLEND_MODE_LINEAR_LIGHT,   "linear-light",   N_("Linear light"))
++  enum_value (GEGL_DROPSHADOW_BLEND_MODE_PIN_LIGHT,      "pin-light",      N_("Pin light"))
++  enum_value (GEGL_DROPSHADOW_BLEND_MODE_HARD_MIX,       "hard-mix",       N_("Hard mix"))
++  enum_value (GEGL_DROPSHADOW_BLEND_MODE_DIFFERENCE,     "difference",     N_("Difference"))
++  enum_value (GEGL_DROPSHADOW_BLEND_MODE_EXCLUSION,      "exclusion",      N_("Exclusion"))
++  enum_value (GEGL_DROPSHADOW_BLEND_MODE_SUBTRACT,       "subtract",       N_("Subtract"))
++  enum_value (GEGL_DROPSHADOW_BLEND_MODE_GRAIN_EXTRACT,  "grain-extract",  N_("Grain extract"))
++  enum_value (GEGL_DROPSHADOW_BLEND_MODE_GRAIN_MERGE,    "grain-merge",    N_("Grain merge"))
++  enum_value (GEGL_DROPSHADOW_BLEND_MODE_DIVIDE,         "divide",         N_("Divide"))
++  enum_value (GEGL_DROPSHADOW_BLEND_MODE_HSV_HUE,        "hsv-hue",        N_("HSV Hue"))
++  enum_value (GEGL_DROPSHADOW_BLEND_MODE_HSV_SATURATION, "hsv-saturation", N_("HSV Saturation"))
++  enum_value (GEGL_DROPSHADOW_BLEND_MODE_HSL_COLOR,      "hsl-color",      N_("HSL Color"))
++  enum_value (GEGL_DROPSHADOW_BLEND_MODE_HSV_VALUE,      "hsv-value",      N_("HSV Value"))
++  enum_value (GEGL_DROPSHADOW_BLEND_MODE_LCH_HUE,        "lch-hue",        N_("LCh Hue"))
++  enum_value (GEGL_DROPSHADOW_BLEND_MODE_LCH_CHROMA,     "lch-chroma",     N_("LCh Chroma"))
++  enum_value (GEGL_DROPSHADOW_BLEND_MODE_LCH_COLOR,      "lch-color",      N_("LCh Color"))
++  enum_value (GEGL_DROPSHADOW_BLEND_MODE_LCH_LIGHTNESS,  "lch-lightness",  N_("LCh Lightness"))
++  enum_value (GEGL_DROPSHADOW_BLEND_MODE_LUMINANCE,      "luminance",      N_("Luminance"))
++enum_end (GeglDropshadowBlendMode)
++
+ property_double (x, _("X"), 20.0)
+   description   (_("Horizontal shadow offset"))
+   ui_range      (-40.0, 40.0)
+@@ -112,6 +152,17 @@
+   description   (_("Gradient stops: \"pos r g b a;...\", linear RGBA"))
+   ui_meta       ("visible", "use-gradient")
+ 
++/* Photoshop's blend mode of drop shadows and outer glows: the mode with
++ * which an application composites the shadow onto what lies below the
++ * layer (GIMP: ChopGimp's "behind effects").  The operation itself
++ * ignores it and always renders the shadow under its input, "normal"
++ * keeps the shadow composited together with the layer, as before.
++ */
++property_enum   (blend_mode, _("Blend mode"),
++                 GeglDropshadowBlendMode, gegl_dropshadow_blend_mode,
++                 GEGL_DROPSHADOW_BLEND_MODE_NORMAL)
++  description   (_("How the shadow is composited onto the layers below (used by the application; the operation renders it in normal mode)"))
++
+ #else
+ 
+ #define GEGL_OP_META
