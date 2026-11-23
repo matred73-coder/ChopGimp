@@ -913,7 +913,7 @@ try:
             Gimp.context_set_foreground(color(*c))
             col.edit_fill(Gimp.FillType.FOREGROUND)
         Gimp.Selection.none(im2)
-        cl = trace(col, "6-colors;ignore_white=0")
+        cl = trace(col, "6-colors;ignore-white=0")
         cx = trace_xml(cl) if cl else ""
         report(cl is not None and cx.count("<path ") >= 3 and cx.count("<group ") >= 3,
                "Vectoriser : image en couleurs → objets groupés par couleur",
