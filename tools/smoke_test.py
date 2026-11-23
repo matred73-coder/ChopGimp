@@ -870,6 +870,99 @@ try:
     except Exception as e:
         report(False, "Contour", repr(e)[:200])
 
+    # 3.27.3 (lot V5, V6 point 4) : Vectoriser, vectorisation dynamique
+    try:
+        def trace_xml(layer):
+            r = run("chopgimp-vobjects-get-xml", layer=layer)
+            return r.index(1) if r is not None and r.index(0) == Gimp.PDBStatusType.SUCCESS else ""
+
+        def trace(drawable, options, sel=False, live=True):
+            r = run("chopgimp-image-trace", drawable=drawable, options=options,
+                    **{"selection-only": sel, "live": live})
+            ok = r is not None and r.index(0) == Gimp.PDBStatusType.SUCCESS
+            return r.index(1) if ok else None
+
+        def trace_cmd(layer, cmd):
+            r = run("chopgimp-image-trace-command", layer=layer, command=cmd)
+            return (r.index(1), r.index(2)) if r is not None else (False, "")
+
+        # logo noir et blanc : un disque et un carré noirs sur blanc
+        im = Gimp.Image.new(300, 200, Gimp.ImageBaseType.RGB)
+        logo = Gimp.Layer.new(im, "Logo", 300, 200, Gimp.ImageType.RGB_IMAGE, 100, Gimp.LayerMode.NORMAL)
+        im.insert_layer(logo, None, 0)
+        Gimp.context_set_background(color(1, 1, 1))
+        logo.fill(Gimp.FillType.BACKGROUND)
+        Gimp.context_set_foreground(color(0, 0, 0))
+        im.select_ellipse(Gimp.ChannelOps.REPLACE, 20, 30, 120, 120)
+        logo.edit_fill(Gimp.FillType.FOREGROUND)
+        im.select_rectangle(Gimp.ChannelOps.REPLACE, 180, 50, 90, 90)
+        logo.edit_fill(Gimp.FillType.FOREGROUND)
+        Gimp.Selection.none(im)
+        vl = trace(logo, "bw-logo")
+        x = trace_xml(vl) if vl else ""
+        report(vl is not None and isinstance(vl, Gimp.VectorLayer) and x.count("<path ") >= 2 and
+               vl.get_parasite("chopgimp-trace") is not None,
+               "Vectoriser : logo noir et blanc → calque vectoriel à objets, dynamique",
+               "%s, %d objets" % (vl.get_name() if vl else "-", x.count("<path ")))
+        # couleur : trois bandes de couleur → au moins 3 objets, groupés par couleur
+        im2 = Gimp.Image.new(240, 120, Gimp.ImageBaseType.RGB)
+        col = Gimp.Layer.new(im2, "Bandes", 240, 120, Gimp.ImageType.RGB_IMAGE, 100, Gimp.LayerMode.NORMAL)
+        im2.insert_layer(col, None, 0)
+        for i, c in enumerate([(0.9, 0.1, 0.1), (0.1, 0.7, 0.2), (0.1, 0.2, 0.9)]):
+            im2.select_rectangle(Gimp.ChannelOps.REPLACE, i * 80, 0, 80, 120)
+            Gimp.context_set_foreground(color(*c))
+            col.edit_fill(Gimp.FillType.FOREGROUND)
+        Gimp.Selection.none(im2)
+        cl = trace(col, "6-colors;ignore_white=0")
+        cx = trace_xml(cl) if cl else ""
+        report(cl is not None and cx.count("<path ") >= 3 and cx.count("<group ") >= 3,
+               "Vectoriser : image en couleurs → objets groupés par couleur",
+               "%d objets, %d groupes" % (cx.count("<path "), cx.count("<group ")))
+        # sélection seulement : le carré seul
+        im.select_rectangle(Gimp.ChannelOps.REPLACE, 170, 40, 110, 110)
+        sl = trace(logo, "bw-logo", sel=True, live=False)
+        sx = trace_xml(sl) if sl else ""
+        Gimp.Selection.none(im)
+        report(sl is not None and sx.count("<path ") == 1 and sl.get_parasite("chopgimp-trace") is None,
+               "Vectoriser : sélection seulement, sans vectorisation dynamique",
+               "%d objets" % sx.count("<path "))
+        if vl:
+            done, opts = trace_cmd(vl, "options")
+            report(done and "threshold" in opts, "Vectorisation dynamique : options relues", opts[:120])
+            done, ed = trace_cmd(vl, "edited")
+            report(done and ed == "0", "Vectorisation dynamique : objets non modifiés", ed)
+            # revectoriser avec d'autres réglages : même calque, parasite à jour
+            done, _ = trace_cmd(vl, "retrace:noise=2")
+            done2, opts2 = trace_cmd(vl, "options")
+            report(done and "noise=2" in opts2.replace(" ", ""), "Vectorisation dynamique : revectoriser",
+                   opts2[:120])
+            # XCF : le parasite survit, les objets aussi
+            xcf = os.path.join(TMP, "vectoriser.xcf")
+            Gimp.file_save(Gimp.RunMode.NONINTERACTIVE, im, Gio.File.new_for_path(xcf), None)
+            imx = Gimp.file_load(Gimp.RunMode.NONINTERACTIVE, Gio.File.new_for_path(xcf))
+            vx = [l for l in imx.get_layers() if isinstance(l, Gimp.VectorLayer) and
+                  l.get_parasite("chopgimp-trace") is not None]
+            okx = len(vx) == 1 and trace_xml(vx[0]).count("<path ") >= 2
+            report(okx and trace_cmd(vx[0], "edited") == (True, "0"),
+                   "Vectorisation dynamique : aller-retour XCF",
+                   "%d calques dynamiques" % len(vx))
+            # dupliquer garde la vectorisation dynamique
+            dup = vl.copy()
+            im.insert_layer(dup, None, 0)
+            report(dup.get_parasite("chopgimp-trace") is not None,
+                   "Vectorisation dynamique : gardée par la copie du calque")
+            # décomposer : le parasite part, les objets restent
+            n = trace_xml(vl).count("<path ")
+            done, _ = trace_cmd(vl, "expand")
+            report(done and vl.get_parasite("chopgimp-trace") is None and
+                   trace_xml(vl).count("<path ") == n,
+                   "Vectorisation dynamique : Décomposer", "%d objets" % n)
+            imx.delete()
+        im.delete()
+        im2.delete()
+    except Exception:
+        report(False, "Vectoriser", traceback.format_exc().replace("\n", " | ")[:400])
+
     # 4. Réglages d'usine présents (thème, icônes, menus, raccourcis)
     data = Gimp.data_directory()
     sysconf = Gimp.sysconf_directory()

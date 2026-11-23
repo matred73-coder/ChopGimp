@@ -206,7 +206,9 @@ calque = get["_Layer"][:2] + calque_head + get["_Layer"][2:]
 # renommé, les plug-ins (« <Image>/Layer/… ») s'accrochent toujours à leur
 # menu par son libellé d'origine.
 CALQUE_OBJETS = [["layers-vobjects-merge", "layers-vobjects-split",
-                  "layers-vobjects-decompose"]]
+                  "layers-vobjects-decompose"],
+                 # 3.27.3 (lot V5) : Vectoriser (vectorisation dynamique)
+                 ["layers-image-trace", "layers-image-trace-expand"]]
 
 # (libellé du sous-menu ou None, [actions])
 OBJET_MENU = [
@@ -226,6 +228,9 @@ OBJET_MENU = [
     [(None, ["layers-vobjects-style-picker", "layers-vobjects-recolor",
              "layers-vobjects-select-all", "layers-vobjects-delete"])],
     [(None, ["layers-vobjects-merge", "layers-vobjects-split", "layers-vobjects-decompose"])],
+    # 3.27.3 (lot V5 et V6 point 4) : Vectorisation dynamique
+    [("_Vectorisation", ["layers-image-trace", "layers-image-trace-options",
+                         "layers-image-trace-expand"])],
     # 3.27.2 (lot V3) : panneaux Aspect et Contour ; (lot V6.2) Couleurs globales
     [(None, ["dialogs-appearance", "dialogs-stroke", "dialogs-global-colors"])],
 ]

@@ -640,3 +640,17 @@ Restent à traiter (identiques avec ou sans effets) : blocages au déplacement, 
 - **Correctifs** : dupliquer un calque ou une image ne remplace plus le dégradé du premier objet par sa couleur ; décalage d'un demi-pixel à l'aller-retour SVG.
 - Vérifié : 106 tests (dont aller-retour SVG dans GIMP) ; tests console t4–t7 ; banc : liste Objets, panneau Aspect, Redéfinir les couleurs.
 - Limites : panneau Aspect tassé dans son emplacement par défaut ; boutons de la fenêtre Redéfinir en haut ; glisser une couleur globale sur le canevas et réordonner les couleurs : non faits ; masques SVG, filtres et motifs SVG non importés ; les profils d'épaisseur ignorent l'alignement et les tirets.
+
+## 3.27.3 — Vectoriser (lot V5) et vectorisation dynamique (lot V6 point 4)
+
+- **Correctifs de la 3.27.2** : la fenêtre « Redéfinir les couleurs » a ses boutons en bas (plus de barre d'en-tête, même si GNOME la demande) ; la liste du panneau Aspect fait au moins 150 px de haut, l'emplacement du dock s'agrandit au lieu de la tasser.
+- **Calque > Vectoriser…** et **Objet > Vectorisation** (`app/dialogs/chopgimp-trace-dialog.c`), comme la Vectorisation dynamique d'Illustrator :
+  - paramètres prédéfinis (Par défaut, Photo haute / basse fidélité, 3 / 6 / 16 couleurs, Niveaux de gris, Logo noir et blanc, Croquis, Silhouettes, Dessin au trait, Dessin technique, Pixel art) ;
+  - Vue (Résultat, Contours, Contours + source), Mode (Couleur, Niveaux de gris, Noir et blanc), Palette (Automatique, Limitée, Couleurs globales du document, Nuancier actif), Couleurs / Fidélité / Seuil ;
+  - Avancé : Chemins, Angles, Bruit, Lissage, Méthode (Adjacent / Superposé), Fonds / Contours (épaisseur max., longueur min.), Arrondir les courbes en lignes, Ignorer le blanc, Ignorer la transparence, Inverser, Grouper par couleur, Moteur (potrace, tracé central, pixel art) ;
+  - **aperçu vectoriel sur le canevas** (net à tout zoom), calculé dans un fil séparé 250 ms après le dernier réglage (le calcul précédent est annulé), barre de progression et « Arrêter » pour les longs calculs, statistiques chemins · couleurs · points d'ancrage ;
+  - « Sélection seulement », « Masquer l'original », fenêtre non modale (on peut zoomer pendant l'aperçu).
+- **Résultat** : un nouveau calque vectoriel au-dessus de la source, un objet par forme, un groupe par couleur ; une seule annulation.
+- **Vectorisation dynamique** (`app/core/chopgimp-trace-layer.c`) : le calque garde l'image source (PNG, sélection dans l'alpha) et les réglages (parasite `chopgimp-trace`, gardé par le XCF et la copie du calque). « Options de vectorisation… » (menu Objet, bouton « Vectorisation… » de la barre d'options en mode objet) revectorise sur place ; si les objets ont été retouchés depuis, la fenêtre prévient que « Appliquer » les remplace (« Décomposer » les garde). « Décomposer » oublie la source : objets ordinaires. Choix : retoucher les objets ne décompose pas automatiquement (comme Illustrator, la vectorisation reste réglable jusqu'à « Décomposer »).
+- **PDB** : `chopgimp-image-trace` (calque, préréglage + réglages, sélection seulement, dynamique) et `chopgimp-image-trace-command` (options, edited, expand, retrace).
+- `CHOPGIMP_NO_VOBJECTS=1` masque Vectoriser.
