@@ -1,0 +1,253 @@
+# ═══════════════════════════════════════════════════════════════
+# ChopGimp — installateur Windows automatique (voir docs/CI-WINDOWS.md)
+#
+# Reprend docs/COMPILATION-WINDOWS.md étape par étape, sur un runner
+# GitHub Windows avec MSYS2 CLANG64 :
+#   babl 0.1.128 et GEGL 0.4.72 (patchs ChopGimp) → lib2geom 1.4 →
+#   GIMP 3.2.8 + patches/gimp-3.2.8 (mode installateur) → Resynthesizer →
+#   données ChopGimp → compléments DLL → marque → Inno Setup → Release.
+# Déclenché par un tag « v* » (le .exe va dans la Release du tag) ou à
+# la main (onglet Actions > Windows > Run workflow : artefact seulement).
+# ═══════════════════════════════════════════════════════════════
+name: Windows
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: windows-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  setup-exe:
+    runs-on: windows-latest
+    timeout-minutes: 340          # limite GitHub : 6 h par tâche
+    env:
+      ROOT: C:\gimpshop           # chemin court, sans espace (exigé par les scripts de GIMP)
+      MSYSTEM_PREFIX: clang64
+      PYTHONUTF8: '1'             # scripts Python ChopGimp en UTF-8
+      CCACHE_DIR: C:\gimpshop\ccache
+      CCACHE_BASEDIR: C:\gimpshop
+      CCACHE_MAXSIZE: 4G
+      CCACHE_COMPRESS: '1'
+
+    steps:
+      - name: Git — fins de ligne LF, identité pour « git am »
+        run: |
+          git config --global core.autocrlf false
+          git config --global core.longpaths true
+          git config --global user.name  "ChopGimp CI"
+          git config --global user.email "ci@chopgimp.invalid"
+          git config --global advice.detachedHead false
+
+      - uses: actions/checkout@v4
+
+      - name: Version
+        id: ver
+        shell: pwsh
+        run: |
+          $v = (Get-Content VERSION -TotalCount 1).Trim()
+          if ($env:GITHUB_REF_TYPE -eq 'tag' -and $env:GITHUB_REF_NAME -ne "v$v") {
+            Write-Host "::error::Le tag $env:GITHUB_REF_NAME ne correspond pas au fichier VERSION ($v)"; exit 1
+          }
+          "version=$v" >> $env:GITHUB_OUTPUT
+          Write-Host "ChopGimp $v"
+
+      # Paquets de 1_build-deps-msys2.ps1 (all-deps-uni.txt, installés par le
+      # script lui-même) + ceux que le guide et l'autre session ajoutent à la
+      # main : lib2geom (boost, gsl, double-conversion), Vectoriser (potrace),
+      # compléments du bundle (hunspell, liblqr, GStreamer), Pillow (marque).
+      - uses: msys2/setup-msys2@v2
+        id: msys2
+        with:
+          msystem: CLANG64
+          update: true
+          release: true
+          cache: true
+          install: git
+          pacboy: >-
+            toolchain:p cmake:p ninja:p meson:p ccache:p python:p python-pillow:p
+            boost:p gsl:p double-conversion:p potrace:p
+            hunspell:p liblqr:p gstreamer:p gst-plugins-base:p gst-plugins-good:p
+
+      - name: Variables MSYS2
+        shell: pwsh
+        run: |
+          $m = '${{ steps.msys2.outputs.msys2-location }}' -replace '\\','/'
+          "MSYS_ROOT=$m" >> $env:GITHUB_ENV
+          New-Item -ItemType Directory -Force $env:ROOT, $env:CCACHE_DIR | Out-Null
+
+      - name: Cache ccache
+        uses: actions/cache@v4
+        with:
+          path: C:\gimpshop\ccache
+          key: ccache-windows-${{ github.run_id }}
+          restore-keys: ccache-windows-
+
+      # ── Sources figées, identiques au Flatpak (tools/make_manifest.py)
+      - name: Sources babl, GEGL, GIMP 3.2.8 + patchs ChopGimp
+        shell: pwsh
+        run: |
+          Set-Location $env:ROOT
+          function apply_dir ($repo, $dir) {
+            foreach ($p in Get-ChildItem "$env:GITHUB_WORKSPACE\patches\$dir\*.patch" -ErrorAction SilentlyContinue | Sort-Object Name) {
+              git -C $repo apply -v $p.FullName; if ($LASTEXITCODE) { exit 1 }
+            }
+          }
+          git clone --depth 1 --branch BABL_0_1_128 https://gitlab.gnome.org/GNOME/babl.git; if ($LASTEXITCODE) { exit 1 }
+          apply_dir babl babl-0.1.128
+          git clone --depth 1 --branch GEGL_0_4_72 https://gitlab.gnome.org/GNOME/gegl.git; if ($LASTEXITCODE) { exit 1 }
+          apply_dir gegl gegl-0.4.72
+          git clone --depth 1 --branch GIMP_3_2_8 --recurse-submodules https://gitlab.gnome.org/GNOME/gimp.git; if ($LASTEXITCODE) { exit 1 }
+          # comme le Flatpak : gimp-data est un sous-module, « git am » n'y
+          # applique pas gimp.ico (patch 0045) — windows_branding.py ico le refait
+          $patches = Get-ChildItem "$env:GITHUB_WORKSPACE\patches\gimp-3.2.8\*.patch" | Sort-Object Name | ForEach-Object FullName
+          Write-Host "$($patches.Count) patchs ChopGimp"
+          git -C gimp am --exclude='gimp-data/*' $patches; if ($LASTEXITCODE) { exit 1 }
+
+      # ── Étape 4 du guide. babl et gegl déjà clonés : le script les compile
+      #    tels quels (son « git pull » échoue sur un tag, sans conséquence).
+      - name: babl, GEGL, exiv2 (1_build-deps-msys2.ps1)
+        shell: pwsh
+        run: |
+          $PSNativeCommandArgumentPassing = 'Legacy'
+          $PKGCONF_RELOCATABLE_OPTION = '-Dpkgconfig.relocatable=true'
+          Set-Location "$env:ROOT\gimp"
+          .\build\windows\1_build-deps-msys2.ps1
+          if (-not $?) { exit 1 }
+          if (Test-Path "$env:ROOT\winflexbison") { "$env:ROOT\winflexbison" >> $env:GITHUB_PATH }
+
+      # ── Annexe « moteur vectoriel d'Inkscape » du guide (même commit que le Flatpak)
+      - name: lib2geom 1.4
+        shell: msys2 {0}
+        run: |
+          set -e
+          cd /c/gimpshop
+          git clone --depth 1 --branch 1.4 https://gitlab.com/inkscape/lib2geom.git
+          test "$(git -C lib2geom rev-parse HEAD)" = 23316118755def8156c268f767894c145130e07d
+          cmake -S lib2geom -B lib2geom/_build -G Ninja \
+                -D2GEOM_BUILD_SHARED=ON -D2GEOM_TESTING=OFF -DCMAKE_BUILD_TYPE=Release \
+                -DCMAKE_POLICY_VERSION_MINIMUM=3.5 -DCMAKE_INSTALL_LIBDIR=lib \
+                -DCMAKE_INSTALL_PREFIX="$(cygpath -m /c/gimpshop/_install)"
+          ninja -C lib2geom/_build install
+
+      # ── Étapes 5 et 7 du guide en un seul passage : configuré d'emblée en
+      #    mode installateur (2_build-gimp-msys2.ps1 ne reconfigure pas un
+      #    _build-clang64 existant, il compile puis fabrique gimp-clang64).
+      - name: Configurer ChopGimp (mode installateur)
+        shell: pwsh
+        run: |
+          $PSNativeCommandArgumentPassing = 'Legacy'
+          Set-Location "$env:ROOT\gimp"
+          & "$env:MSYS_ROOT/clang64/bin/python3.exe" -I "$env:GITHUB_WORKSPACE\tools\windows_branding.py" ico "$env:ROOT\gimp"
+          if ($LASTEXITCODE) { exit 1 }
+          $GIMP_PREFIX = "$env:ROOT\_install"
+          Invoke-Expression ((Get-Content .gitlab-ci.yml | Select-String 'win_environ\[' -Context 0,9) -replace '> ','' -replace '- ','')
+          meson setup _build-clang64 -Dprefix="$GIMP_PREFIX" `
+                -Drelocatable-bundle=yes -Dpkgconfig.relocatable=true -Dwindows-installer=true `
+                -Dgimpdir=ChopGimp -Denable-default-bin=enabled -Dbuild-id='org.gimp.GIMP_official'
+          if ($LASTEXITCODE) { exit 1 }
+          # Vectoriser sans potrace = moteur principal absent : on refuse
+          if (-not (Select-String -Quiet 'Library potrace found: YES' _build-clang64\meson-logs\meson-log.txt)) {
+            Write-Host '::error::libpotrace introuvable (Calque > Vectoriser)'; exit 1
+          }
+
+      - name: Compiler ChopGimp (2_build-gimp-msys2.ps1)
+        shell: pwsh
+        run: |
+          $PSNativeCommandArgumentPassing = 'Legacy'
+          Set-Location "$env:ROOT\gimp"
+          .\build\windows\2_build-gimp-msys2.ps1
+          if (-not $?) {
+            # guide, étape 7 : win_bison en parallèle perd parfois imap_cern_parse.c
+            Write-Host 'Nouvel essai (fichier bison perdu ?)'
+            .\build\windows\2_build-gimp-msys2.ps1
+            if (-not $?) { exit 1 }
+          }
+
+      # ── Étape 6 du guide
+      - name: Resynthesizer 3.0.1
+        shell: msys2 {0}
+        run: |
+          set -e
+          cd /c/gimpshop
+          git clone --depth 1 --branch v3.0.1 https://github.com/bootchk/resynthesizer.git
+          test "$(git -C resynthesizer rev-parse HEAD)" = bddb1dfb6bddc2363bf74d79a95a60691bc46279
+          export PKG_CONFIG_PATH=/c/gimpshop/_install/lib/pkgconfig
+          meson setup resynthesizer/_build resynthesizer --prefix="$(cygpath -m /c/gimpshop/_install)"
+          ninja -C resynthesizer/_build install
+
+      - name: Refaire le dossier autonome (avec Resynthesizer)
+        shell: pwsh
+        run: |
+          $PSNativeCommandArgumentPassing = 'Legacy'
+          Set-Location "$env:ROOT\gimp"
+          .\build\windows\2_build-gimp-msys2.ps1
+          if (-not $?) { exit 1 }
+
+      # ── Étape 8 du guide : une seule fois, après le dernier « ninja install »
+      - name: Données ChopGimp (install_data.sh)
+        shell: msys2 {0}
+        run: |
+          set -e
+          export PYTHONUTF8=1
+          cd "$(cygpath -u "$GITHUB_WORKSPACE")"
+          sh tools/install_data.sh /c/gimpshop/gimp/gimp-clang64
+
+      # ── Commit 0373a10 (autre session) : DLL chargées à l'exécution
+      - name: Compléments du dossier autonome (windows_bundle_extras.py)
+        shell: pwsh
+        run: |
+          & "$env:MSYS_ROOT/clang64/bin/python3.exe" "$env:GITHUB_WORKSPACE\tools\windows_bundle_extras.py" `
+            "$env:ROOT\gimp\gimp-clang64" "$env:ROOT\gimp" "$env:MSYS_ROOT/clang64"
+          if ($LASTEXITCODE) { exit 1 }
+
+      # ── Étape 9 du guide
+      - name: Installateur Inno Setup
+        shell: pwsh
+        env:
+          CHOPGIMP_VERSION: ${{ steps.ver.outputs.version }}
+        run: |
+          $PSNativeCommandArgumentPassing = 'Legacy'
+          Set-Location "$env:ROOT\gimp"
+          & "$env:MSYS_ROOT/clang64/bin/python3.exe" -I "$env:GITHUB_WORKSPACE\tools\windows_branding.py" installer "$env:ROOT\gimp\_build-clang64"
+          if ($LASTEXITCODE) { exit 1 }
+          .\build\windows\installer\3_dist-gimp-inno.ps1
+          if (-not $?) { exit 1 }
+          $exe = "chopgimp-$env:CHOPGIMP_VERSION-setup.exe"
+          if (-not (Test-Path $exe)) { Write-Host "::error::$exe absent"; exit 1 }
+          New-Item -ItemType Directory -Force "$env:ROOT\out" | Out-Null
+          Move-Item $exe "$env:ROOT\out\"
+
+      # ── Étape 10 du guide
+      - name: Version portable
+        shell: pwsh
+        run: |
+          pwsh "$env:GITHUB_WORKSPACE\tools\make_windows_portable.ps1" `
+            -Bundle "$env:ROOT\gimp\gimp-clang64" -OutDir "$env:ROOT\portable" -Version '${{ steps.ver.outputs.version }}'
+          if ($LASTEXITCODE) { exit 1 }
+          Move-Item "$env:ROOT\portable\*.zip" "$env:ROOT\out\"
+          Set-Location "$env:ROOT\out"
+          Get-ChildItem -File | ForEach-Object {
+            "$((Get-FileHash $_.Name -Algorithm SHA256).Hash.ToLower()) *$($_.Name)"
+          } | Set-Content -Encoding ascii SHA256SUMS.txt
+          Get-ChildItem
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: chopgimp-${{ steps.ver.outputs.version }}-windows
+          path: C:\gimpshop\out\*
+          retention-days: 14
+          compression-level: 0
+
+      - name: Release GitHub du tag
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: C:/gimpshop/out/*
+          fail_on_unmatched_files: true
