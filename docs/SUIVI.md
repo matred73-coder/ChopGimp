@@ -655,4 +655,13 @@ Restent à traiter (identiques avec ou sans effets) : blocages au déplacement, 
 - **PDB** : `chopgimp-image-trace` (calque, préréglage + réglages, sélection seulement, dynamique) et `chopgimp-image-trace-command` (options, edited, expand, retrace).
 - `CHOPGIMP_NO_VOBJECTS=1` masque Vectoriser.
 - Vérifié : 115 tests (dont 9 nouveaux : logo noir et blanc, couleurs groupées, sélection seulement, options relues, objets non modifiés, revectoriser, aller-retour XCF, copie du calque, Décomposer) ; banc : fenêtre (boutons en bas), aperçu sur le canevas (Résultat, Contours + source), préréglage 6 couleurs, calque créé et original masqué, Options de vectorisation rouvertes avec les réglages, Décomposer.
-- Limites : le réglage « Angles » par défaut (75 %) donne des cercles en polygones (correspondance angles → alphamax de potrace à revoir) ; une vectorisation dynamique ne suit pas une mise à l'échelle de l'image (la source garde sa taille) ; « 1 couleurs » (pluriel) dans les statistiques ; Pixel art refusé au-delà de 1 Mpx ; une photo en haute fidélité peut dépasser 700 000 points (⚠ dans la fenêtre).
+- Corrigé avant livraison : « Angles » → alphamax quadratique (50 % = défaut de potrace, 75 % garde les cercles ronds) ; singulier / pluriel dans les statistiques.
+- Limites : une vectorisation dynamique ne suit pas une mise à l'échelle de l'image (la source garde sa taille) ; Pixel art refusé au-delà de 1 Mpx ; une photo en haute fidélité peut dépasser 700 000 points (⚠ dans la fenêtre).
+
+## 3.27.4 — Fenêtre d'accueil
+
+- Page « Créer » façon accueil Photoshop (`app/dialogs/welcome-dialog.c`) : colonne d'actions à gauche (« Nouveau… », « Ouvrir… », « Afficher au démarrage » en bas), à droite les 7 documents en un clic sur une ligne puis les fichiers récents en grille (2 lignes de 5, vignette, nom, taille, date, dossier au survol, un clic ouvre). Retirés : le bouton « Créer » en double et « Ouvrir les images sélectionnées ».
+- La fenêtre prend la hauteur de l'onglet affiché (pile non homogène en hauteur) au lieu de celle de l'onglet le plus grand.
+- Titre « Bienvenue dans ChopGimp », onglets Accueil / Personnaliser / Contribuer / Créer.
+- Vérifié : 115 tests ; banc graphique (onglet Créer : tout tient, la fenêtre s'arrête sous la grille).
+- Reste en anglais : les textes de l'onglet Accueil (« GIMP is Free Software… », « Community Tutorials »).

@@ -1,0 +1,503 @@
+From b3945504c0b63960e767ccf1006900f9b0b28c4a Mon Sep 17 00:00:00 2001
+From: ChopGimp <mathieu.redon@proton.me>
+Date: Tue, 24 Nov 2026 09:20:41 +0100
+Subject: [PATCH] =?UTF-8?q?ChopGimp=203.27.4:=20welcome=20=C2=AB=20Cr?=
+ =?UTF-8?q?=C3=A9er=20=C2=BB=20page=20laid=20out=20like=20Photoshop's=20ho?=
+ =?UTF-8?q?me=20(actions=20column,=20one-click=20documents,=20grid=20of=20?=
+ =?UTF-8?q?recent=20files=20with=20size=20and=20date,=20single=20click=20o?=
+ =?UTF-8?q?pens),=20window=20as=20tall=20as=20the=20visible=20page,=20Fren?=
+ =?UTF-8?q?ch=20title=20and=20tabs?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+---
+ app/dialogs/welcome-dialog.c | 358 +++++++++++++++++++++--------------
+ 1 file changed, 212 insertions(+), 146 deletions(-)
+
+diff --git a/app/dialogs/welcome-dialog.c b/app/dialogs/welcome-dialog.c
+index 848eed3..b8e42d6 100644
+--- a/app/dialogs/welcome-dialog.c
++++ b/app/dialogs/welcome-dialog.c
+@@ -53,6 +53,7 @@
+ #include "widgets/gimphelp-ids.h"
+ #include "widgets/gimpprefsbox.h"
+ #include "widgets/gimprow.h"
++#include "widgets/gimpview.h"
+ #include "widgets/gimpuimanager.h"
+ #include "widgets/gimpwidgets-utils.h"
+ 
+@@ -114,11 +115,10 @@ static void   welcome_dialog_new_dialog_response     (GtkWidget      *dialog,
+                                                       GtkWidget      *welcome_dialog);
+ static void   welcome_dialog_open_dialog_close       (GtkWidget      *dialog,
+                                                       GtkWidget      *welcome_dialog);
+-static void   welcome_open_activated_callback        (GtkListBox     *listbox,
+-                                                      GtkListBoxRow  *row,
+-                                                      GtkWidget      *welcome_dialog);
+-static void   welcome_open_images_callback           (GtkWidget      *button,
+-                                                      GtkListBox     *listbox);
++static GtkWidget * chopgimp_welcome_heading          (const gchar     *text);
++static void   chopgimp_welcome_recent_activated      (GtkFlowBox      *flow,
++                                                      GtkFlowBoxChild *child,
++                                                      GtkWidget       *welcome_dialog);
+ static void   welcome_dialog_new_image_accelerator   (GtkAccelGroup  *accel_group,
+                                                       GObject        *accelerator_widget,
+                                                       guint           keyval,
+@@ -208,7 +208,7 @@ welcome_dialog_new (Gimp       *gimp,
+   gchar         **accels;
+ 
+   /* Translators: the %s string will be the version, e.g. "3.0". */
+-  title = g_strdup_printf (_("Welcome to GIMP %s"), GIMP_VERSION);
++  title = g_strdup (_("Bienvenue dans ChopGimp"));
+   windows = gimp_get_image_windows (gimp);
+   dialog = gimp_dialog_new (title,
+                             "gimp-welcome-dialog",
+@@ -236,6 +236,11 @@ welcome_dialog_new (Gimp       *gimp,
+   stack     = gimp_prefs_box_get_stack (GIMP_PREFS_BOX (prefs_box));
+ 
+   gimp_prefs_box_set_header_visible (GIMP_PREFS_BOX (prefs_box), FALSE);
++  /*  ChopGimp: the window takes the height of the visible page (the
++   *  « Créer » page is short; « Personnaliser » and « Accueil » are tall)
++   */
++  gtk_stack_set_vhomogeneous (GTK_STACK (stack), FALSE);
++  gtk_stack_set_interpolate_size (GTK_STACK (stack), TRUE);
+   gtk_stack_switcher_set_stack (GTK_STACK_SWITCHER (switcher),
+                                 GTK_STACK (stack));
+   gtk_container_set_border_width (GTK_CONTAINER (switcher), 2);
+@@ -257,8 +262,8 @@ welcome_dialog_new (Gimp       *gimp,
+ 
+   main_vbox = gimp_prefs_box_add_page (GIMP_PREFS_BOX (prefs_box),
+                                        "gimp-wilber",
+-                                       _("Welcome"),
+-                                       _("Welcome"),
++                                       _("Accueil"),
++                                       _("Accueil"),
+                                        "gimp-welcome",
+                                        NULL,
+                                        &top_iter);
+@@ -272,8 +277,8 @@ welcome_dialog_new (Gimp       *gimp,
+ 
+   main_vbox = gimp_prefs_box_add_page (GIMP_PREFS_BOX (prefs_box),
+                                        "gimp-wilber",
+-                                       _("Personalize"),
+-                                       _("Personalize"),
++                                       _("Personnaliser"),
++                                       _("Personnaliser"),
+                                        "gimp-welcome-personalize",
+                                        NULL,
+                                        &top_iter);
+@@ -284,8 +289,8 @@ welcome_dialog_new (Gimp       *gimp,
+ 
+   main_vbox = gimp_prefs_box_add_page (GIMP_PREFS_BOX (prefs_box),
+                                        "gimp-wilber",
+-                                       _("Contribute"),
+-                                       _("Contribute"),
++                                       _("Contribuer"),
++                                       _("Contribuer"),
+                                        "gimp-welcome-contribute",
+                                        NULL,
+                                        &top_iter);
+@@ -296,8 +301,8 @@ welcome_dialog_new (Gimp       *gimp,
+ 
+   main_vbox = gimp_prefs_box_add_page (GIMP_PREFS_BOX (prefs_box),
+                                        "gimp-wilber",
+-                                       _("Create"),
+-                                       _("Create"),
++                                       _("Créer"),
++                                       _("Créer"),
+                                        "gimp-welcome-create",
+                                        NULL,
+                                        &top_iter);
+@@ -800,11 +805,19 @@ chopgimp_welcome_presets (Gimp      *gimp,
+                           GtkWidget *welcome_dialog,
+                           GtkWidget *main_vbox)
+ {
+-  GtkWidget *vbox = prefs_frame_new (_("Nouveau document"), GTK_CONTAINER (main_vbox), FALSE);
++  GtkWidget *vbox = main_vbox;
+   GtkWidget *flow = gtk_flow_box_new ();
+   guint      i;
+ 
++  gtk_box_pack_start (GTK_BOX (main_vbox),
++                      chopgimp_welcome_heading (_("Nouveau document")),
++                      FALSE, FALSE, 0);
++
+   gtk_flow_box_set_selection_mode (GTK_FLOW_BOX (flow), GTK_SELECTION_NONE);
++  /*  min = max: the height asked for at the minimum width is one row
++   *  (else the scrolled page asks for 7 rows and the window is too tall)
++   */
++  gtk_flow_box_set_min_children_per_line (GTK_FLOW_BOX (flow), 7);
+   gtk_flow_box_set_max_children_per_line (GTK_FLOW_BOX (flow), 7);
+   gtk_flow_box_set_homogeneous (GTK_FLOW_BOX (flow), TRUE);
+   gtk_box_pack_start (GTK_BOX (vbox), flow, FALSE, FALSE, 0);
+@@ -847,133 +860,219 @@ chopgimp_welcome_presets (Gimp      *gimp,
+   gtk_widget_show_all (flow);
+ }
+ 
++static GtkWidget *
++chopgimp_welcome_heading (const gchar *text)
++{
++  GtkWidget *label = gtk_label_new (NULL);
++  gchar     *markup = g_markup_printf_escaped ("<b>%s</b>", text);
++
++  gtk_label_set_markup (GTK_LABEL (label), markup);
++  gtk_label_set_xalign (GTK_LABEL (label), 0.0);
++  gtk_widget_set_margin_top (label, 4);
++  g_free (markup);
++
++  return label;
++}
++
++static GtkWidget *
++chopgimp_welcome_recent_tile (Gimp          *gimp,
++                              GimpImagefile *imagefile,
++                              const gchar   *path,
++                              gint           index)
++{
++  GtkWidget     *box   = gtk_box_new (GTK_ORIENTATION_VERTICAL, 3);
++  GtkWidget     *frame = gtk_frame_new (NULL);
++  GtkWidget     *view;
++  GtkWidget     *label;
++  GimpThumbnail *thumb = gimp_imagefile_get_thumbnail (imagefile);
++  GFile         *file  = g_file_new_for_path (path);
++  GFileInfo     *info;
++  GString       *sub   = g_string_new (NULL);
++  gchar         *basename = g_path_get_basename (path);
++  gchar         *markup;
++  gchar         *dirname;
++  gchar         *tooltip;
++
++  /*  a fixed square cell: the thumbnail centred in it  */
++  gtk_widget_set_size_request (frame, 120, 120);
++  gtk_frame_set_shadow_type (GTK_FRAME (frame), GTK_SHADOW_NONE);
++  gtk_style_context_add_class (gtk_widget_get_style_context (frame), "view");
++  view = gimp_view_new (gimp_get_user_context (gimp), GIMP_VIEWABLE (imagefile),
++                        112, 0, FALSE);
++  gtk_widget_set_halign (view, GTK_ALIGN_CENTER);
++  gtk_widget_set_valign (view, GTK_ALIGN_CENTER);
++  gtk_container_add (GTK_CONTAINER (frame), view);
++  gtk_box_pack_start (GTK_BOX (box), frame, FALSE, FALSE, 0);
++
++  label = gtk_label_new (basename);
++  gtk_label_set_ellipsize (GTK_LABEL (label), PANGO_ELLIPSIZE_MIDDLE);
++  gtk_label_set_max_width_chars (GTK_LABEL (label), 16);
++  gtk_label_set_width_chars (GTK_LABEL (label), 16);
++  gtk_box_pack_start (GTK_BOX (box), label, FALSE, FALSE, 0);
++
++  if (thumb)
++    {
++      gint w = 0, h = 0;
++
++      g_object_get (thumb, "image-width", &w, "image-height", &h, NULL);
++      if (w > 0 && h > 0)
++        g_string_append_printf (sub, "%d × %d", w, h);
++    }
++
++  info = g_file_query_info (file, G_FILE_ATTRIBUTE_TIME_MODIFIED,
++                            G_FILE_QUERY_INFO_NONE, NULL, NULL);
++  if (info)
++    {
++      GDateTime *dt = g_file_info_get_modification_date_time (info);
++
++      if (dt)
++        {
++          GDateTime *local = g_date_time_to_local (dt);
++          gchar     *date  = g_date_time_format (local, "%d/%m/%Y");
++
++          g_string_append_printf (sub, "%s%s", sub->len ? " · " : "", date);
++          g_free (date);
++          g_date_time_unref (local);
++          g_date_time_unref (dt);
++        }
++      g_object_unref (info);
++    }
++
++  label  = gtk_label_new (NULL);
++  markup = g_markup_printf_escaped ("<small>%s</small>", sub->str);
++  gtk_label_set_markup (GTK_LABEL (label), markup);
++  gtk_style_context_add_class (gtk_widget_get_style_context (label), "dim-label");
++  gtk_box_pack_start (GTK_BOX (box), label, FALSE, FALSE, 0);
++  g_free (markup);
++
++  dirname = g_path_get_dirname (path);
++  tooltip = g_strdup_printf ("%s\n%s", basename, dirname);
++  gtk_widget_set_tooltip_text (box, tooltip);
++  g_free (tooltip);
++  g_free (dirname);
++
++  g_object_set_data_full (G_OBJECT (box), "action_name",
++                          g_strdup_printf ("file-open-recent-%02u", index + 1),
++                          g_free);
++
++  g_string_free (sub, TRUE);
++  g_free (basename);
++  g_object_unref (file);
++
++  gtk_widget_show_all (box);
++
++  return box;
++}
++
++/*  ChopGimp: Photoshop-like home: a column of actions on the left, the
++ *  one-click documents and a grid of recent files on the right; wider
++ *  than tall
++ */
+ static void
+ welcome_dialog_create_creation_page (Gimp       *gimp,
+                                      GimpConfig *config,
+                                      GtkWidget  *welcome_dialog,
+                                      GtkWidget  *main_vbox)
+ {
+-  GtkWidget *vbox;
+   GtkWidget *hbox;
++  GtkWidget *left;
++  GtkWidget *right;
+   GtkWidget *button;
+-  GtkWidget *listbox;
++  GtkWidget *flow;
+   GtkWidget *toggle;
++  GtkWidget *label;
+   gint       num_images;
+-  gint       list_count;
++  gint       shown = 0;
+ 
+-  hbox = gtk_box_new (GTK_ORIENTATION_HORIZONTAL, 6);
+-  gtk_box_set_homogeneous (GTK_BOX (hbox), TRUE);
+-  gtk_box_pack_start (GTK_BOX (main_vbox), hbox, FALSE, FALSE, 0);
+-  gtk_widget_set_visible (hbox, TRUE);
++  hbox = gtk_box_new (GTK_ORIENTATION_HORIZONTAL, 18);
++  gtk_box_pack_start (GTK_BOX (main_vbox), hbox, TRUE, TRUE, 0);
+ 
+-  vbox = prefs_frame_new (_("Create a New Image"), GTK_CONTAINER (hbox),
+-                          FALSE);
++  /*  left column  */
++  left = gtk_box_new (GTK_ORIENTATION_VERTICAL, 8);
++  gtk_widget_set_size_request (left, 170, -1);
++  gtk_box_pack_start (GTK_BOX (hbox), left, FALSE, FALSE, 0);
+ 
+-  button = gtk_button_new_with_mnemonic (_("C_reate"));
+-  /* Balancing the indent from the frame */
+-  gtk_widget_set_margin_end (button, 12);
+-  gtk_box_pack_start (GTK_BOX (vbox), button, FALSE, FALSE, 0);
+-  gtk_widget_set_visible (button, TRUE);
++  button = gtk_button_new_with_mnemonic (_("_Nouveau…"));
++  gtk_style_context_add_class (gtk_widget_get_style_context (button),
++                               "suggested-action");
++  gimp_help_set_help_data (button, _("Créer une nouvelle image (Ctrl+N)"), NULL);
++  gtk_box_pack_start (GTK_BOX (left), button, FALSE, FALSE, 0);
+   g_signal_connect (button, "clicked",
+                     G_CALLBACK (welcome_dialog_new_image_dialog),
+                     welcome_dialog);
+ 
+-  vbox = prefs_frame_new (_("Open an Existing Image"), GTK_CONTAINER (hbox),
+-                          FALSE);
+-
+-  button = gtk_button_new_with_mnemonic (_("_Open"));
+-  gtk_widget_set_margin_end (button, 12);
+-  gtk_box_pack_start (GTK_BOX (vbox), button, FALSE, FALSE, 0);
+-  gtk_widget_set_visible (button, TRUE);
++  button = gtk_button_new_with_mnemonic (_("_Ouvrir…"));
++  gimp_help_set_help_data (button, _("Ouvrir une image existante (Ctrl+O)"), NULL);
++  gtk_box_pack_start (GTK_BOX (left), button, FALSE, FALSE, 0);
+   g_signal_connect (button, "clicked",
+                     G_CALLBACK (welcome_dialog_open_image_dialog),
+                     welcome_dialog);
+ 
+-  /*  ChopGimp: one-click documents (Photoshop's home screen)  */
+-  chopgimp_welcome_presets (gimp, welcome_dialog, main_vbox);
++  toggle = gimp_prop_check_button_new (G_OBJECT (config), "show-welcome-dialog",
++                                       _("Afficher au démarrage"));
++  gimp_help_set_help_data (toggle,
++                           _("La fenêtre d'accueil reste disponible dans le menu Aide"),
++                           NULL);
++  gtk_box_pack_end (GTK_BOX (left), toggle, FALSE, FALSE, 0);
++
++  gtk_box_pack_start (GTK_BOX (hbox),
++                      gtk_separator_new (GTK_ORIENTATION_VERTICAL),
++                      FALSE, FALSE, 0);
+ 
+-  /* Recent Files */
+-  vbox = prefs_frame_new (_("Recent Images"), GTK_CONTAINER (main_vbox),
+-                          FALSE);
++  /*  right: documents, then recent files  */
++  right = gtk_box_new (GTK_ORIENTATION_VERTICAL, 8);
++  gtk_box_pack_start (GTK_BOX (hbox), right, TRUE, TRUE, 0);
+ 
+-  listbox = gtk_list_box_new ();
+-  gtk_list_box_set_selection_mode (GTK_LIST_BOX (listbox),
+-                                   GTK_SELECTION_MULTIPLE);
+-  gtk_list_box_set_activate_on_single_click (GTK_LIST_BOX (listbox),
+-                                             FALSE);
+-  gtk_container_add (GTK_CONTAINER (vbox), listbox);
+-  gtk_widget_set_visible (listbox, TRUE);
++  chopgimp_welcome_presets (gimp, welcome_dialog, right);
++
++  gtk_box_pack_start (GTK_BOX (right),
++                      chopgimp_welcome_heading (_("Fichiers récents")),
++                      FALSE, FALSE, 0);
++
++  flow = gtk_flow_box_new ();
++  gtk_flow_box_set_selection_mode (GTK_FLOW_BOX (flow), GTK_SELECTION_NONE);
++  gtk_flow_box_set_activate_on_single_click (GTK_FLOW_BOX (flow), TRUE);
++  gtk_flow_box_set_homogeneous (GTK_FLOW_BOX (flow), TRUE);
++  gtk_flow_box_set_min_children_per_line (GTK_FLOW_BOX (flow), 5);
++  gtk_flow_box_set_max_children_per_line (GTK_FLOW_BOX (flow), 5);
++  gtk_flow_box_set_column_spacing (GTK_FLOW_BOX (flow), 8);
++  gtk_flow_box_set_row_spacing (GTK_FLOW_BOX (flow), 8);
++  gtk_widget_set_halign (flow, GTK_ALIGN_START);
++  gtk_box_pack_start (GTK_BOX (right), flow, FALSE, FALSE, 0);
+ 
+   num_images = gimp_container_get_n_children (gimp->documents);
+-  list_count = (num_images <= 8) ? num_images : 8;
+ 
+-  for (gint i = 0; i < list_count; i++)
++  /*  at most two rows; skip the files that are gone  */
++  for (gint i = 0; i < num_images && i < 20 && shown < 10; i++)
+     {
+-      GimpImagefile *imagefile = NULL;
+-      GtkWidget     *row;
+-      GtkWidget     *label;
+-      GFile         *file;
++      GimpImagefile *imagefile;
+       const gchar   *name;
+-      gchar         *basename;
+-      gchar         *action_name;
+ 
+       imagefile = (GimpImagefile *)
+         gimp_container_get_child_by_index (gimp->documents, i);
++      name = gimp_file_get_utf8_name (gimp_imagefile_get_file (imagefile));
+ 
+-      file = gimp_imagefile_get_file (imagefile);
+-
+-      name     = gimp_file_get_utf8_name (file);
+-      basename = g_path_get_basename (name);
+-
+-      /* If the file is not found, remove it and try to
+-       * load another one if possible */
+       if (! g_file_test (name, G_FILE_TEST_IS_REGULAR))
+-        {
+-          g_free (basename);
+-
+-          if (list_count < num_images)
+-            list_count++;
+-
+-          continue;
+-        }
+-
+-      /*  ChopGimp: larger thumbnails  */
+-      row = gimp_row_new (gimp_get_user_context (gimp),
+-                          GIMP_VIEWABLE (imagefile),
+-                          56, 0);
+-
+-      label = gimp_row_get_label (GIMP_ROW (row));
+-      if (label)
+-        gtk_label_set_ellipsize (GTK_LABEL (label), PANGO_ELLIPSIZE_MIDDLE);
+-
+-      action_name = g_strdup_printf ("file-open-recent-%02u", i + 1);
+-      g_object_set_data_full (G_OBJECT (row), "action_name", action_name,
+-                              g_free);
++        continue;
+ 
+-      gtk_widget_set_visible (row, TRUE);
+-      gtk_list_box_insert (GTK_LIST_BOX (listbox), row, -1);
++      gtk_container_add (GTK_CONTAINER (flow),
++                         chopgimp_welcome_recent_tile (gimp, imagefile, name, i));
++      shown++;
+     }
+ 
+-  g_signal_connect (listbox, "row-activated",
+-                    G_CALLBACK (welcome_open_activated_callback),
++  g_signal_connect (flow, "child-activated",
++                    G_CALLBACK (chopgimp_welcome_recent_activated),
+                     welcome_dialog);
+ 
+-  button = gtk_button_new_with_mnemonic (_("O_pen Selected Images"));
+-  gtk_box_pack_start (GTK_BOX (vbox), button, FALSE, FALSE, 0);
+-  gtk_widget_set_visible (button, TRUE);
+-  g_signal_connect (button, "clicked",
+-                    G_CALLBACK (welcome_open_images_callback),
+-                    listbox);
+-
+-  /* "Always show welcome dialog" checkbox */
+-  toggle = prefs_check_button_add (G_OBJECT (config), "show-welcome-dialog",
+-                                   _("Show on Start "
+-                                     "(You can show the Welcome dialog again from the \"Help\" menu)"),
+-                                   GTK_BOX (main_vbox));
+-  gtk_container_child_set (GTK_CONTAINER (main_vbox), toggle,
+-                           "fill",      TRUE,
+-                           "pack-type", GTK_PACK_END,
+-                           NULL);
++  if (! shown)
++    {
++      label = gtk_label_new (_("Aucun fichier récent."));
++      gtk_label_set_xalign (GTK_LABEL (label), 0.0);
++      gtk_style_context_add_class (gtk_widget_get_style_context (label), "dim-label");
++      gtk_box_pack_start (GTK_BOX (right), label, FALSE, FALSE, 0);
++    }
++
++  gtk_widget_show_all (hbox);
+ }
+ 
+ static void
+@@ -1355,50 +1454,17 @@ welcome_dialog_open_dialog_close (GtkWidget *dialog,
+ }
+ 
+ static void
+-welcome_open_activated_callback (GtkListBox    *listbox,
+-                                 GtkListBoxRow *row,
+-                                 GtkWidget     *welcome_dialog)
+-{
+-  welcome_open_images_callback (NULL, listbox);
+-}
+-
+-static void
+-welcome_open_images_callback (GtkWidget  *button,
+-                              GtkListBox *listbox)
++chopgimp_welcome_recent_activated (GtkFlowBox      *flow,
++                                   GtkFlowBoxChild *child,
++                                   GtkWidget       *dialog)
+ {
+-  GList         *rows   = NULL;
+-  Gimp          *gimp   = NULL;
+-  gboolean       opened = FALSE;
+-  gchar         *action_name;
+-  GimpUIManager *manager;
+-
+-  if (! welcome_dialog)
+-    return;
+-
+-  gimp = g_object_get_data (G_OBJECT (welcome_dialog), "gimp");
+-  manager = menus_get_image_manager_singleton (gimp);
+-
+-  rows = gtk_list_box_get_selected_rows (listbox);
+-  if (rows)
+-    {
+-      gtk_widget_set_sensitive (welcome_dialog, FALSE);
+-
+-      for (GList *iter = rows; iter; iter = iter->next)
+-        {
+-          action_name = (gchar *) g_object_get_data (G_OBJECT (iter->data),
+-                                                     "action_name");
+-
+-          if (gimp_ui_manager_activate_action (manager, "file", action_name))
+-            opened = TRUE;
+-        }
+-
+-      g_list_free (rows);
+-    }
++  Gimp          *gimp    = g_object_get_data (G_OBJECT (dialog), "gimp");
++  GimpUIManager *manager = menus_get_image_manager_singleton (gimp);
++  GtkWidget     *tile    = gtk_bin_get_child (GTK_BIN (child));
++  const gchar   *action  = g_object_get_data (G_OBJECT (tile), "action_name");
+ 
+-  /* If no images were successfully opened, leave the dialogue up */
+-  gtk_widget_set_sensitive (welcome_dialog, TRUE);
+-  if (opened)
+-    gtk_widget_destroy (welcome_dialog);
++  if (action && gimp_ui_manager_activate_action (manager, "file", action))
++    gtk_widget_destroy (dialog);
+ }
+ 
+ static void
+-- 
+2.53.0
+
