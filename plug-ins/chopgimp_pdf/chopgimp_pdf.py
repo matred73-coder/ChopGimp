@@ -779,7 +779,9 @@ def ps_to_pdf(src, dst):
     import ctypes
     import ctypes.util
     lib = None
-    for name in ("libgs.so.10", "libgs.so", ctypes.util.find_library("gs") or ""):
+    # noms Linux puis Windows (libgs-10.dll de MSYS2, à côté de python.exe)
+    for name in ("libgs.so.10", "libgs.so", "libgs-10.dll",
+                 ctypes.util.find_library("gs") or ""):
         if not name:
             continue
         try:

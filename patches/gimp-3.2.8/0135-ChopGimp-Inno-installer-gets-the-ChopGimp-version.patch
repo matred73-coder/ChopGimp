@@ -1,0 +1,28 @@
+From 9b8bbc8f71b64dac3ce6039f29e18056a58da6b6 Mon Sep 17 00:00:00 2001
+From: ChopGimp <mathieu.redon@proton.me>
+Date: Tue, 24 Nov 2026 07:52:53 +0100
+Subject: [PATCH] ChopGimp: Inno installer gets the ChopGimp version
+
+3_dist-gimp-inno.ps1 passes CHOPGIMP_VERSION to iscc, so that the
+installer name, its title and the uninstall entry show the version
+being packaged instead of the default of gimp-setup.iss.
+---
+ build/windows/installer/3_dist-gimp-inno.ps1 | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/build/windows/installer/3_dist-gimp-inno.ps1 b/build/windows/installer/3_dist-gimp-inno.ps1
+index 09c7d6c..cfc29d1 100644
+--- a/build/windows/installer/3_dist-gimp-inno.ps1
++++ b/build/windows/installer/3_dist-gimp-inno.ps1
+@@ -199,7 +199,7 @@ Write-Output "$([char]27)[0Ksection_end:$(Get-Date -UFormat %s -Millisecond 0):i
+ #ChopGimp: must match OutputBaseFileName of gimp-setup.iss
+ $INSTALLER="chopgimp-${CHOPGIMP_VERSION}-setup.exe"
+ Write-Output "$([char]27)[0Ksection_start:$(Get-Date -UFormat %s -Millisecond 0):installer_making[collapsed=true]$([char]13)$([char]27)[0KConstructing $INSTALLER installer"
+-iscc -DREVISION="$revision" -DBUILD_DIR="$BUILD_DIR" $supported_archs -DDEBUG_SYMBOLS -DPYTHON build\windows\installer\gimp-setup.iss | Out-Null; if ("$LASTEXITCODE" -gt '0') { exit 1 }
++iscc -DREVISION="$revision" -DBUILD_DIR="$BUILD_DIR" -DCHOPGIMP_VERSION="$CHOPGIMP_VERSION" $supported_archs -DDEBUG_SYMBOLS -DPYTHON build\windows\installer\gimp-setup.iss | Out-Null; if ("$LASTEXITCODE" -gt '0') { exit 1 }
+ Write-Output "$([char]27)[0Ksection_end:$(Get-Date -UFormat %s -Millisecond 0):installer_making$([char]13)$([char]27)[0K"
+ 
+ ## Clean changes in Inno installation
+-- 
+2.54.0.windows.1
+

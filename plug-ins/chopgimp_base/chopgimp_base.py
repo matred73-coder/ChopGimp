@@ -173,16 +173,24 @@ def straighten(image):
 
 # ─── mise à l'échelle selon le contenu (liblqr) ─────────────────────────
 
-def lqr():
-    for name in ("liblqr-1.so.0", "liblqr-1.so"):
+def _cdll(names):
+    """Première bibliothèque chargeable parmi « names » (noms Linux puis
+    Windows : sous Windows les DLL sont à côté de python.exe), ou None."""
+    for name in names:
         try:
-            lib = ctypes.CDLL(name)
-            break
+            return ctypes.CDLL(name)
         except OSError:
-            lib = None
+            continue
+    return None
+
+
+def lqr():
+    lib = _cdll(("liblqr-1.so.0", "liblqr-1.so", "liblqr-1-0.dll"))
     if lib is None:
         return None, None
-    glib = ctypes.CDLL("libglib-2.0.so.0")
+    glib = _cdll(("libglib-2.0.so.0", "libglib-2.0-0.dll"))
+    if glib is None:
+        return None, None
     glib.g_malloc.restype = ctypes.c_void_p
     glib.g_malloc.argtypes = [ctypes.c_size_t]
     glib.g_free.argtypes = [ctypes.c_void_p]

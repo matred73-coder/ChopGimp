@@ -1,0 +1,86 @@
+From 72d7fd82550bacd4093ef99a39a56e88c60bdc7f Mon Sep 17 00:00:00 2001
+From: ChopGimp <mathieu.redon@proton.me>
+Date: Tue, 24 Nov 2026 07:52:32 +0100
+Subject: [PATCH] ChopGimp: spell checking on Windows
+
+libhunspell is opened as libhunspell-1.7-0.dll (shipped next to the
+executables) and the dictionaries are looked up in
+<installation>\share\hunspell, where install_data.sh puts the French
+one. The paths get the "\?\" prefix so that Hunspell opens them with
+_wfopen() (installation folders with accents). Windows-only code.
+---
+ app/widgets/chopgimp-spell.c | 33 +++++++++++++++++++++++++++++++++
+ 1 file changed, 33 insertions(+)
+
+diff --git a/app/widgets/chopgimp-spell.c b/app/widgets/chopgimp-spell.c
+index 6017944..ac6424f 100644
+--- a/app/widgets/chopgimp-spell.c
++++ b/app/widgets/chopgimp-spell.c
+@@ -86,7 +86,12 @@ hun_load (void)
+     return hun.module != NULL;
+ 
+   hun.tried  = TRUE;
++#ifdef G_OS_WIN32
++  /*  Windows: the DLL is shipped next to the executables  */
++  hun.module = g_module_open ("libhunspell-1.7-0.dll", G_MODULE_BIND_LAZY);
++#else
+   hun.module = g_module_open ("libhunspell-1.7.so.0", G_MODULE_BIND_LAZY);
++#endif
+ 
+   if (! hun.module)
+     return FALSE;
+@@ -158,8 +163,14 @@ to_dict (Dict        *dict,
+ static Dict *
+ dict_get (const gchar *lang)
+ {
++#ifdef G_OS_WIN32
++  /*  Windows: the dictionaries are in <installation>\share\hunspell  */
++  static gchar *win_dir = NULL;
++  const gchar  *dirs[2];
++#else
+   static const gchar *dirs[] = { "/app/share/hunspell", "/usr/share/hunspell",
+                                  "/usr/share/myspell", NULL };
++#endif
+   gchar *key;
+   Dict  *dict;
+   gint   d, c;
+@@ -167,6 +178,14 @@ dict_get (const gchar *lang)
+   if (! hun_load ())
+     return NULL;
+ 
++#ifdef G_OS_WIN32
++  if (! win_dir)
++    win_dir = g_build_filename (gimp_installation_directory (),
++                                "share", "hunspell", NULL);
++  dirs[0] = win_dir;
++  dirs[1] = NULL;
++#endif
++
+   if (! dicts)
+     dicts = g_hash_table_new (g_str_hash, g_str_equal);
+ 
+@@ -198,7 +217,21 @@ dict_get (const gchar *lang)
+           if (g_file_test (aff, G_FILE_TEST_EXISTS) &&
+               g_file_test (dic, G_FILE_TEST_EXISTS))
+             {
++#ifdef G_OS_WIN32
++              /*  Hunspell opens UTF-8 paths with _wfopen() only when they
++               *  carry the "\\?\" prefix (folders with accents)
++               */
++              gchar   *waff   = g_strdelimit (g_strconcat ("\\\\?\\", aff, NULL),
++                                              "/", '\\');
++              gchar   *wdic   = g_strdelimit (g_strconcat ("\\\\?\\", dic, NULL),
++                                              "/", '\\');
++              gpointer handle = hun.create (waff, wdic);
++
++              g_free (waff);
++              g_free (wdic);
++#else
+               gpointer handle = hun.create (aff, dic);
++#endif
+ 
+               if (handle)
+                 {
+-- 
+2.54.0.windows.1
+
