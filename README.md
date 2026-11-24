@@ -115,6 +115,12 @@ Ils sont produits automatiquement par GitHub Actions à chaque tag `v*`
   - 13 préréglages Illustrator et toutes les options avancées ;
   - aperçu en direct, calcul annulable, sélection seule ;
   - le résultat reste réglable, et « Décomposer » le fige en objets ordinaires.
+- **Outil Largeur** (Maj+W) : on tire sur le contour d'un objet pour faire varier
+  son épaisseur, d'un seul côté avec Alt ; les profils de largeur s'enregistrent
+  et se réutilisent (barre d'options, panneau Contour).
+- **Objet > Distorsion** : Déformation (15 modèles : arc, drapeau, onde, poisson…),
+  Enveloppe à maille ou d'après l'objet du dessus, Distorsion libre en perspective,
+  avec l'outil Enveloppe ; modifiable jusqu'à « Décomposer ».
 - **Gomme vectorielle**, texte déformé, texte sur tracé et texte dans une forme.
 
 ### Texte

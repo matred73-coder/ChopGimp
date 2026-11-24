@@ -32,7 +32,10 @@ PS_MAP = [
     ("Outils", "tools-free-select",        ["l"],            "Lasso"),
     ("Outils", "tools-iscissors",          [S + "l"],        "Lasso magnétique (ciseaux intelligents)"),
     ("Outils", "tools-fuzzy-select",       ["w"],            "Baguette magique"),
-    ("Outils", "tools-foreground-select",  [S + "w"],        "Sélection d'objet / rapide (premier plan)"),
+    # 3.27.6 : Maj+W va à l'outil Largeur (Illustrator) ; la sélection de
+    # premier plan reste dans le groupe W de la boîte à outils.
+    ("Outils", "tools-foreground-select",  [],               "Sélection d'objet / rapide (premier plan)"),
+    ("Outils", "tools-width",              [S + "w"],        "Largeur (Illustrator)"),
     ("Outils", "tools-by-color-select",    [S + A + "w"],    "Plage de couleurs"),
     ("Outils", "tools-crop",               ["c"],            "Recadrage"),
     ("Outils", "tools-perspective",        [S + "c"],        "Perspective (transformation)"),
@@ -220,7 +223,7 @@ def main():
 
     # 1. actions valides
     for _, act, _, _ in PS_MAP:
-        if act not in defaults and not act.startswith(("photogimp-", "chopgimp-", "tools-opacity-ps-", "tools-hand", "tools-rotate-view", "tools-shape", "tools-spot-heal", "windows-hide-right-docks", "tools-shape-builder", "tools-direct-select", "layers-vobjects-")):
+        if act not in defaults and not act.startswith(("photogimp-", "chopgimp-", "tools-opacity-ps-", "tools-hand", "tools-rotate-view", "tools-shape", "tools-spot-heal", "windows-hide-right-docks", "tools-shape-builder", "tools-direct-select", "tools-width", "tools-envelope", "layers-vobjects-")):
             errors.append("action inconnue de GIMP 3.2.8 : %s" % act)
 
     # 2. aucune touche attribuée deux fois dans PS_MAP

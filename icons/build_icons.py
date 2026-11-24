@@ -714,6 +714,71 @@ def _shape_builder():
     return s
 
 
+@icon("chopgimp-tool-width")
+def _width_tool():
+    # Un trait qui s'épaissit au milieu (profil de largeur) et une poignée
+    s = polygon([(1.5, 11), (5, 8.2), (8, 6.2), (11, 8.2), (14.5, 11),
+                 (11, 9.6), (8, 9.2), (5, 9.6)])
+    s += line(8, 2, 8, 5.4, 0.9) + circle(8, 2.2, 1.3)
+    s += line(8, 10.2, 8, 13.6, 0.9) + circle(8, 13.8, 1.3)
+    return s
+
+
+@icon("chopgimp-tool-envelope")
+def _envelope_tool():
+    # Une maille 2 × 2 bombée, des poignées aux coins
+    s = polyline([(2, 4), (8, 2), (14, 4)], 1.0) + polyline([(2, 12), (8, 14), (14, 12)], 1.0)
+    s += line(2, 4, 2, 12, 1.0) + line(14, 4, 14, 12, 1.0)
+    s += polyline([(8, 2), (8.8, 8), (8, 14)], 0.7) + polyline([(2, 8), (8, 8.6), (14, 8)], 0.7)
+    for x, y in [(2, 4), (14, 4), (2, 12), (14, 12)]:
+        s += rect(x - 1.3, y - 1.3, 2.6, 2.6)
+    return s
+
+
+@icon("chopgimp-distort-warp")
+def _distort_warp():
+    # Un drapeau : deux ondes parallèles
+    return polyline([(1.5, 5), (4.5, 2.5), (8, 5), (11.5, 7.5), (14.5, 5)], 1.1) + \
+        polyline([(1.5, 11), (4.5, 8.5), (8, 11), (11.5, 13.5), (14.5, 11)], 1.1) + \
+        line(1.5, 5, 1.5, 11, 1.1) + line(14.5, 5, 14.5, 11, 1.1)
+
+
+@icon("chopgimp-distort-mesh")
+def _distort_mesh():
+    s = rect_outline(1.5, 1.5, 13, 13, 1.0)
+    s += line(6, 1.5, 6, 14.5, 0.7) + line(10.5, 1.5, 10.5, 14.5, 0.7)
+    s += line(1.5, 6, 14.5, 6, 0.7) + line(1.5, 10.5, 14.5, 10.5, 0.7)
+    return s
+
+
+@icon("chopgimp-distort-top")
+def _distort_top():
+    # Un cercle (l'objet du dessus) qui enveloppe un carré
+    return ring(8, 8, 6.3, 1.0) + rect(5, 5, 6, 6, 0, 0.6)
+
+
+@icon("chopgimp-distort-free")
+def _distort_free():
+    s = polygon([(3, 2), (14, 4), (12.5, 14), (1.5, 12)], 0.35)
+    s += polyline([(3, 2), (14, 4), (12.5, 14), (1.5, 12)], 1.0, closed=True)
+    for x, y in [(3, 2), (14, 4), (12.5, 14), (1.5, 12)]:
+        s += rect(x - 1.3, y - 1.3, 2.6, 2.6)
+    return s
+
+
+@icon("chopgimp-distort-contents")
+def _distort_contents():
+    # Une enveloppe en pointillés et un nœud plein dedans
+    return dashed_rect(1.5, 1.5, 13, 13) + polygon([(8, 4.5), (11.5, 8), (8, 11.5), (4.5, 8)])
+
+
+@icon("chopgimp-distort-expand")
+def _distort_expand():
+    # Une forme bombée et une flèche « figer »
+    return polyline([(1.5, 9), (5, 5.5), (9, 9)], 1.1) + polygon([(1.5, 9), (5, 5.5), (9, 9), (9, 14), (1.5, 14)], 0.4) + \
+        line(11, 2, 11, 9, 1.0) + polygon([(9, 8), (13, 8), (11, 11)])
+
+
 def _two_squares(a_op, b_op):
     return rect(1.5, 1.5, 9, 9, 0.5, a_op) + rect(5.5, 5.5, 9, 9, 0.5, b_op)
 

@@ -1143,6 +1143,171 @@ try:
     except Exception:
         report(False, "Vectoriser 3.27.5", traceback.format_exc().replace("\n", " | ")[:400])
 
+    # 3.27.6 : outil Largeur (profils asymétriques, enregistrés), Distorsion d'objets,
+    # filet anti-jointures qui suit le fond, vectorisation dynamique déplacée par l'outil Chemin
+    try:
+        import re
+
+        def alpha_sum(layer):
+            buf = layer.get_buffer()
+            rect = buf.get_extent()
+            data = buf.get(rect, 1.0, "A u8", Gegl.AbyssPolicy.NONE)
+            return sum(data) / 255.0
+
+        def vxml(layer):
+            r = run("chopgimp-vobjects-get-xml", layer=layer)
+            return r.index(1) if r is not None and r.index(0) == Gimp.PDBStatusType.SUCCESS else ""
+
+        imw = Gimp.Image.new(400, 300, Gimp.ImageBaseType.RGB)
+        bgw = Gimp.Layer.new(imw, "Fond", 400, 300, Gimp.ImageType.RGB_IMAGE, 100, Gimp.LayerMode.NORMAL)
+        imw.insert_layer(bgw, None, 0)
+        pw = Gimp.Path.new(imw, "Deux")
+        imw.insert_path(pw, None, 0)
+        pw.bezier_stroke_new_ellipse(100, 150, 50, 40, 0)
+        pw.bezier_stroke_new_ellipse(280, 150, 60, 50, 0)
+        vw = Gimp.VectorLayer.new(imw, pw)
+        imw.insert_layer(vw, None, 0)
+        vw.set_enable_fill(False); vw.set_enable_stroke(True); vw.set_stroke_width(8)
+        vw.refresh()
+        imw.set_selected_layers([vw])
+
+        def ocmd(c):
+            r = run("chopgimp-vobjects-command", image=imw, command=c)
+            return r is not None and r.index(0) == Gimp.PDBStatusType.SUCCESS and r.index(1)
+
+        ocmd("split-new")
+        ocmd("select-all")
+        a_uni = alpha_sum(vw)
+        ok_sym = ocmd("width-profile:0:1,0.5:3,1:1")
+        a_sym = alpha_sum(vw)
+        ok_asym = ocmd("width-profile:0:1,0.5:3/0.5,1:1")
+        a_asym = alpha_sum(vw)
+        x = vxml(vw)
+        report(ok_sym and ok_asym and 'profile="0:1,0.5:3/0.5,1:1"' in x and a_uni < a_asym < a_sym,
+               "Outil Largeur : profil asymétrique (un côté plus large)",
+               "encre uniforme %d, asymétrique %d, symétrique %d" % (a_uni, a_asym, a_sym))
+        ok_save = ocmd("save-profile:Test smoke")
+        pf = os.path.join(Gimp.directory(), "chopgimp-width-profiles")
+        txt = open(pf).read() if os.path.exists(pf) else ""
+        report(ok_save and "Test smoke=0:1,0.5:3/0.5,1:1" in txt, "Outil Largeur : profil enregistré",
+               txt.strip()[:80])
+        ocmd("width-profile:uniform")
+
+        # Déformation : les 15 styles, la distorsion reste modifiable et part dans le XML aplati
+        styles = ["arc", "arc-lower", "arc-upper", "arch", "bulge", "shell-lower", "shell-upper", "flag",
+                  "wave", "fish", "rise", "fisheye", "inflate", "squeeze", "twist"]
+        b0 = (vw.get_offsets()[1:], vw.get_width(), vw.get_height())
+        changed = []
+        for st in styles:
+            if ocmd("distort-warp:%s:60:0:0:0" % st):
+                changed.append(alpha_sum(vw) != a_uni or
+                               (vw.get_offsets()[1:], vw.get_width(), vw.get_height()) != b0)
+            ocmd("distort-release")
+        report(len(changed) == 15 and all(changed), "Distorsion : 15 déformations",
+               "%d/%d appliquées et visibles" % (sum(changed), len(changed)))
+        ocmd("distort-warp:arc:50:20:0:1")
+        x = vxml(vw)
+        report("type=distort" in x and "d-effective=" in x and "vertical=1" in x,
+               "Distorsion : gardée dans les objets (modifiable), tracé aplati pour l'export")
+        ocmd("distort-release")
+
+        # Enveloppe à maille : un point tiré vers la gauche agrandit le calque
+        w0, ox0 = vw.get_width(), vw.get_offsets()[1]
+        ok_m = ocmd("distort-mesh:2:3") and ocmd("distort-mesh-point:0:-0.3:0")
+        report(ok_m and vw.get_offsets()[1] < ox0 - 20, "Distorsion : enveloppe à maille, point déplacé",
+               "x %d → %d" % (ox0, vw.get_offsets()[1]))
+        ocmd("distort-release")
+        # Distorsion libre : coin haut droit tiré vers la droite
+        ok_f = ocmd("distort-free") and ocmd("distort-mesh-point:1:0.3:0")
+        report(ok_f and vw.get_width() > w0 + 20, "Distorsion libre : 4 coins",
+               "largeur %d → %d" % (w0, vw.get_width()))
+        # XCF : la distorsion survit
+        xcfw = os.path.join(TMP, "distorsion.xcf")
+        Gimp.file_save(Gimp.RunMode.NONINTERACTIVE, imw, Gio.File.new_for_path(xcfw), None)
+        imwx = Gimp.file_load(Gimp.RunMode.NONINTERACTIVE, Gio.File.new_for_path(xcfw))
+        vwx = [l for l in imwx.get_layers() if isinstance(l, Gimp.VectorLayer)]
+        report(len(vwx) == 1 and "type=distort" in vxml(vwx[0]) and vwx[0].get_width() == vw.get_width(),
+               "Distorsion : aller-retour XCF", "largeur %s" % (vwx[0].get_width() if vwx else "-"))
+        imwx.delete()
+        # Décomposer : la forme distordue devient le tracé, plus d'effet
+        wd = vw.get_width()
+        ok_e = ocmd("distort-expand")
+        x = vxml(vw)
+        report(ok_e and "distort" not in x and abs(vw.get_width() - wd) <= 2 and x.count("<path ") == 2,
+               "Distorsion : Décomposer", "largeur %d → %d" % (wd, vw.get_width()))
+        # d'après l'objet du dessus : 2 objets → 1 objet dans l'enveloppe du second
+        ocmd("select-all")
+        ok_t = ocmd("distort-top")
+        x = vxml(vw)
+        report(ok_t and x.count("<path ") == 1 and "mode=mesh" in x,
+               "Distorsion : créer d'après l'objet du dessus", "%d objet(s)" % x.count("<path "))
+        imw.delete()
+
+        # pixel art : le filet anti-jointures suit le fond
+        imp = Gimp.Image.new(16, 16, Gimp.ImageBaseType.RGB)
+        lp = Gimp.Layer.new(imp, "Pixels", 16, 16, Gimp.ImageType.RGB_IMAGE, 100, Gimp.LayerMode.NORMAL)
+        imp.insert_layer(lp, None, 0)
+        Gimp.context_set_background(color(1, 1, 1)); lp.fill(Gimp.FillType.BACKGROUND)
+        imp.select_rectangle(Gimp.ChannelOps.REPLACE, 4, 4, 6, 6)
+        Gimp.context_set_foreground(color(1, 0, 0)); lp.edit_fill(Gimp.FillType.FOREGROUND)
+        Gimp.Selection.none(imp)
+        r = run("chopgimp-image-trace", drawable=lp, options="pixel-art;ignore-white=0",
+                **{"selection-only": False, "live": False})
+        vp = r.index(1) if r is not None and r.index(0) == Gimp.PDBStatusType.SUCCESS else None
+        x = vxml(vp) if vp else ""
+        # le fond rouge seul passe au vert (comme dans le panneau Aspect)
+        m = re.search(r'<fill type="color" color="1 0 0 1"/>', x)
+        x2 = x[:m.start()] + '<fill type="color" color="0 1 0 1"/>' + x[m.end():] if m else x
+        if vp:
+            run("chopgimp-vobjects-set-xml", layer=vp, xml=x2)
+        x3 = vxml(vp) if vp else ""
+        report("follow-fill" in x and m is not None and
+               re.search(r'<stroke type="color" color="0 1 0 1"[^>]*follow-fill', x3) is not None,
+               "Vectoriser : le filet anti-jointures suit le fond", "%d objets" % x.count("<path "))
+        imp.delete()
+
+        # vectorisation dynamique : objets déplacés ensemble (outil Chemin), sans la matrice
+        imv = Gimp.Image.new(300, 200, Gimp.ImageBaseType.RGB)
+        lv = Gimp.Layer.new(imv, "Logo", 300, 200, Gimp.ImageType.RGB_IMAGE, 100, Gimp.LayerMode.NORMAL)
+        imv.insert_layer(lv, None, 0)
+        Gimp.context_set_background(color(1, 1, 1)); lv.fill(Gimp.FillType.BACKGROUND)
+        Gimp.context_set_foreground(color(0, 0, 0))
+        imv.select_ellipse(Gimp.ChannelOps.REPLACE, 20, 30, 120, 120); lv.edit_fill(Gimp.FillType.FOREGROUND)
+        Gimp.Selection.none(imv)
+        r = run("chopgimp-image-trace", drawable=lv, options="bw-logo", **{"selection-only": False, "live": True})
+        vv = r.index(1) if r is not None and r.index(0) == Gimp.PDBStatusType.SUCCESS else None
+        if vv:
+            def box(layer):
+                nums = []
+                for d in re.findall(r' d="([^"]*)"', vxml(layer)):
+                    nums += [float(v) for v in re.findall(r'-?[0-9.]+(?:e-?[0-9]+)?', d)]
+                return (min(nums[0::2]), min(nums[1::2]), max(nums[0::2]), max(nums[1::2]))
+
+            def shift(m):
+                vals = [float(v) for v in re.findall(r'-?[0-9.]+(?:e-?[0-9]+)?', m.group(1))]
+                out, k = [], 0
+                def rep(mm):
+                    nonlocal k
+                    v = float(mm.group(0)) + (12 if k % 2 == 0 else 7)
+                    k += 1
+                    return repr(v)
+                return ' d="%s"' % re.sub(r'-?[0-9.]+(?:e-?[0-9]+)?', rep, m.group(1))
+
+            b1 = box(vv)
+            run("chopgimp-vobjects-set-xml", layer=vv, xml=re.sub(r' d="([^"]*)"', shift, vxml(vv)))
+            r1 = run("chopgimp-image-trace-command", layer=vv, command="edited")
+            ed = r1.index(2) if r1 is not None else "?"
+            run("chopgimp-image-trace-command", layer=vv, command="retrace")
+            b2 = box(vv)
+            okv = ed == "0" and all(abs(b2[i] - b1[i] - (12 if i % 2 == 0 else 7)) <= 1.5 for i in range(4))
+            report(okv, "Vectorisation dynamique : suit un déplacement des objets (outil Chemin)",
+                   "modifié %s, %s → %s" % (ed, tuple(round(v) for v in b1), tuple(round(v) for v in b2)))
+        else:
+            report(False, "Vectorisation dynamique : suit un déplacement des objets (outil Chemin)", "pas de tracé")
+        imv.delete()
+    except Exception:
+        report(False, "3.27.6", traceback.format_exc().replace("\n", " | ")[:400])
+
     # 4. Réglages d'usine présents (thème, icônes, menus, raccourcis)
     data = Gimp.data_directory()
     sysconf = Gimp.sysconf_directory()

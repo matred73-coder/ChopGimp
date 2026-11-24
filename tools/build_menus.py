@@ -228,6 +228,12 @@ OBJET_MENU = [
     [(None, ["layers-vobjects-style-picker", "layers-vobjects-recolor",
              "layers-vobjects-select-all", "layers-vobjects-delete"])],
     [(None, ["layers-vobjects-merge", "layers-vobjects-split", "layers-vobjects-decompose"])],
+    # 3.27.6 (lot V6 point 8) : Distorsion (enveloppes, déformations)
+    [("_Distorsion", ["layers-vobjects-distort-warp", "layers-vobjects-distort-mesh",
+                      "layers-vobjects-distort-top", "layers-vobjects-distort-free",
+                      "layers-vobjects-distort-edit-envelope",
+                      "layers-vobjects-distort-edit-contents",
+                      "layers-vobjects-distort-expand", "layers-vobjects-distort-release"])],
     # 3.27.3 (lot V5 et V6 point 4) : Vectorisation dynamique
     [("_Vectorisation", ["layers-image-trace", "layers-image-trace-options",
                          "layers-image-trace-expand"])],

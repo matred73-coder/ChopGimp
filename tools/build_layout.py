@@ -27,7 +27,7 @@ TOOLBOX = [
     ("dodge-burn",),                                          # O
     ("path", "direct-select"),                                # P / A
     ("text",),                                                # T
-    ("shape", "shape-builder"),                               # U / Maj+Alt+M
+    ("shape", "shape-builder", "width", "envelope"),          # U / Maj+Alt+M / Maj+W
     ("unified-transform", "scale", "rotate", "shear", "flip",
      "transform-3d", "handle-transform", "warp", "cage", "offset"),  # Ctrl+T
     ("hand", "rotate-view"),                                  # H / R
@@ -41,7 +41,8 @@ ICON = {"dodge-burn": "gimp-tool-dodge", "convolve": "gimp-tool-blur",
         "rotate-view": "chopgimp-tool-rotate-view", "shape": "chopgimp-tool-shape",
         "spot-heal": "chopgimp-tool-spot-heal",
         "direct-select": "chopgimp-tool-direct-select",
-        "shape-builder": "chopgimp-tool-shape-builder"}
+        "shape-builder": "chopgimp-tool-shape-builder",
+        "width": "chopgimp-tool-width", "envelope": "chopgimp-tool-envelope"}
 
 
 def info(tool, visible=True, indent=""):

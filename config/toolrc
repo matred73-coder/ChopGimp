@@ -153,6 +153,12 @@
             (visible yes))
         (GimpToolInfo "gimp-shape-builder-tool"
             (icon-name "chopgimp-tool-shape-builder")
+            (visible yes))
+        (GimpToolInfo "gimp-width-tool"
+            (icon-name "chopgimp-tool-width")
+            (visible yes))
+        (GimpToolInfo "gimp-envelope-tool"
+            (icon-name "chopgimp-tool-envelope")
             (visible yes))))
 (GimpToolGroup "tool group"
     (visible yes)

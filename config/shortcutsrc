@@ -21,7 +21,9 @@
 # Baguette magique
 (action "tools-fuzzy-select" "w")
 # Sélection d'objet / rapide (premier plan)
-(action "tools-foreground-select" "<Shift>w")
+(action "tools-foreground-select")
+# Largeur (Illustrator)
+(action "tools-width" "<Shift>w")
 # Plage de couleurs
 (action "tools-by-color-select" "<Shift><Alt>w")
 # Recadrage
