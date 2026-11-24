@@ -1,0 +1,93 @@
+# ═══════════════════════════════════════════════════════════════
+# ChopGimp — paquet Flatpak automatique (voir docs/CI-WINDOWS.md)
+#
+# Même manifeste que « make build » (flatpak/org.cen_na.ChopGimp.json,
+# commité, patchs relatifs) → bundle ChopGimp-<VERSION>.flatpak joint à
+# la Release du tag, à côté de l'installateur Windows.
+# Déclenché par un tag « v* » ou à la main (artefact seulement).
+# ═══════════════════════════════════════════════════════════════
+name: Flatpak
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: flatpak-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  bundle:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 340
+    steps:
+      - name: Libérer de la place sur le disque
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
+                      /opt/hostedtoolcache/CodeQL /usr/local/share/boost
+          sudo docker image prune --all --force || true
+          df -h /
+
+      - uses: actions/checkout@v4
+
+      - name: Version
+        id: ver
+        shell: bash
+        run: |
+          v=$(tr -d ' \n\r' < VERSION)
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+          if [[ "$GITHUB_REF" == refs/tags/* && "${GITHUB_REF_NAME#v}" != "$v" ]]; then
+            echo "::error::le tag $GITHUB_REF_NAME ne correspond pas à VERSION ($v)"; exit 1
+          fi
+
+      - name: flatpak et flatpak-builder
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q flatpak flatpak-builder ccache
+          flatpak remote-add --user --if-not-exists flathub \
+            https://dl.flathub.org/repo/flathub.flatpakrepo
+
+      - name: Cache flatpak-builder (sources et ccache)
+        uses: actions/cache@v4
+        with:
+          path: flatpak/.flatpak-builder
+          key: flatpak-${{ hashFiles('flatpak/org.cen_na.ChopGimp.json') }}
+          restore-keys: flatpak-
+
+      - name: Compilation
+        working-directory: flatpak
+        run: |
+          flatpak-builder --user --ccache --disable-rofiles-fuse --force-clean \
+            --install-deps-from=flathub --state-dir=.flatpak-builder \
+            --repo=repo --default-branch=stable \
+            --subject="ChopGimp ${{ steps.ver.outputs.version }}" \
+            build-dir org.cen_na.ChopGimp.json
+          # le cache ne garde que sources et ccache (pas les étages de build)
+          rm -rf .flatpak-builder/build .flatpak-builder/rofiles build-dir
+
+      - name: Bundle
+        run: |
+          mkdir -p out
+          flatpak build-bundle --runtime-repo=https://dl.flathub.org/repo/flathub.flatpakrepo \
+            flatpak/repo out/ChopGimp-${{ steps.ver.outputs.version }}.flatpak \
+            org.cen_na.ChopGimp stable
+          (cd out && sha256sum *.flatpak > SHA256SUMS-flatpak.txt)
+          ls -lh out
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: chopgimp-${{ steps.ver.outputs.version }}-flatpak
+          path: out/*
+          retention-days: 14
+          compression-level: 0
+
+      - name: Release GitHub du tag
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: out/*
+          fail_on_unmatched_files: true

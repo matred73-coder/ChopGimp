@@ -59,3 +59,13 @@ est de 6 h.
 
 - **Installateur non signé :** Windows affiche « éditeur inconnu ».
 - **IA locale absente sous Windows**, comme en compilation manuelle.
+
+## Flatpak (Linux)
+
+`.github/workflows/flatpak.yml` se lance sur les mêmes tags `v*` : runner
+Ubuntu 24.04, `flatpak-builder` sur le manifeste commité
+`flatpak/org.cen_na.ChopGimp.json` (le même que `make build`), puis
+`ChopGimp-<VERSION>.flatpak` et `SHA256SUMS-flatpak.txt` sont joints à la
+Release du tag, à côté du `.exe`. Penser à `make manifest` avant de taguer
+(le manifeste commité doit lister tous les patchs). Lancement manuel :
+Actions > Flatpak > Run workflow (artefact seulement, 14 jours).
