@@ -1168,7 +1168,8 @@
                         "../patches/gimp-3.2.8/0133-ChopGimp-3.27.3-lot-V5-Angles-maps-quadratically-to-.patch",
                         "../patches/gimp-3.2.8/0134-ChopGimp-spell-checking-on-Windows.patch",
                         "../patches/gimp-3.2.8/0135-ChopGimp-Inno-installer-gets-the-ChopGimp-version.patch",
-                        "../patches/gimp-3.2.8/0136-ChopGimp-3.27.4-welcome-Cr-er-page-laid-out-like-Pho.patch"
+                        "../patches/gimp-3.2.8/0136-ChopGimp-3.27.4-welcome-Cr-er-page-laid-out-like-Pho.patch",
+                        "../patches/gimp-3.2.8/0137-ChopGimp-3.27.5-Vectoriser-fixes-no-seams-between-ab.patch"
                     ]
                 }
             ],

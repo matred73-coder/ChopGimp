@@ -6,6 +6,7 @@ Résultats : <SMOKE_OUT> (une ligne « OK|ÉCHEC  test  détail » par test).
 """
 import os
 import traceback
+import time
 
 from gi.repository import Gimp, Gegl, Gio
 
@@ -962,6 +963,185 @@ try:
         im2.delete()
     except Exception:
         report(False, "Vectoriser", traceback.format_exc().replace("\n", " | ")[:400])
+
+    # 3.27.5 : jointures, pixel art agrandi, allègement, vectorisation dynamique qui suit le calque
+    try:
+        import re, math
+
+        def coords(layer):
+            x = trace_xml(layer)
+            nums = []
+            for d in re.findall(r' d="([^"]*)"', x):
+                nums += [float(v) for v in re.findall(r'-?[0-9.]+(?:e-?[0-9]+)?', d)]
+            xs, ys = nums[0::2], nums[1::2]
+            return (min(xs), min(ys), max(xs), max(ys)) if xs else (0, 0, 0, 0)
+
+        def anchors(layer):
+            return sum(d.count("C") + d.count("M") for d in re.findall(r' d="([^"]*)"', trace_xml(layer)))
+
+        def near(a, b, tol=1.5):
+            return all(abs(u - v) <= tol for u, v in zip(a, b))
+
+        def pxa(l, x, y):
+            ok_, x0, y0 = l.get_offsets()
+            return round(l.get_pixel(x - x0, y - y0).get_rgba_with_space(None)[3] * 255)
+
+        # jointures : un disque rouge sur fond bleu, en mode adjacent (pas de liseré transparent)
+        Gimp.context_set_antialias(True)
+        ims = Gimp.Image.new(200, 200, Gimp.ImageBaseType.RGB)
+        ls_ = Gimp.Layer.new(ims, "Disque", 200, 200, Gimp.ImageType.RGB_IMAGE, 100, Gimp.LayerMode.NORMAL)
+        ims.insert_layer(ls_, None, 0)
+        Gimp.context_set_background(color(0.1, 0.2, 0.9)); ls_.fill(Gimp.FillType.BACKGROUND)
+        ims.select_ellipse(Gimp.ChannelOps.REPLACE, 40, 40, 120, 120)
+        Gimp.context_set_foreground(color(0.9, 0.1, 0.1)); ls_.edit_fill(Gimp.FillType.FOREGROUND)
+        Gimp.Selection.none(ims)
+        mins = {}
+        for seams in (1, 0):
+            v = trace(ls_, "6-colors;ignore-white=0;method=abutting;seams=%d" % seams, live=False)
+            if v:
+                mins[seams] = min(pxa(v, round(100 + 60 * math.cos(a / 57.3)), round(100 + 60 * math.sin(a / 57.3)))
+                                  for a in range(0, 360, 3))
+                ims.remove_layer(v)
+        report(mins.get(1, 0) >= 250, "Vectoriser : pas de liseré entre formes adjacentes",
+               "alpha min. sur le bord %s (sans « jointures » : %s)" % (mins.get(1), mins.get(0)))
+        ims.delete()
+
+        # pixel art agrandi 8× (1280 × 960 : plus d'1 Mpx) : tracé à sa vraie taille
+        Gimp.context_set_antialias(False)
+        Gimp.context_set_interpolation(Gimp.InterpolationType.NONE)
+        imp = Gimp.Image.new(160, 120, Gimp.ImageBaseType.RGB)
+        lp = Gimp.Layer.new(imp, "Pixel", 160, 120, Gimp.ImageType.RGB_IMAGE, 100, Gimp.LayerMode.NORMAL)
+        imp.insert_layer(lp, None, 0)
+        Gimp.context_set_background(color(1, 1, 1)); lp.fill(Gimp.FillType.BACKGROUND)
+        for i, (c, r) in enumerate([((0.9, 0.2, 0.1), (10, 10, 40, 30)), ((0.1, 0.6, 0.2), (60, 20, 50, 50)),
+                                    ((0.2, 0.2, 0.8), (30, 70, 90, 30))]):
+            imp.select_ellipse(Gimp.ChannelOps.REPLACE, *r)
+            Gimp.context_set_foreground(color(*c)); lp.edit_fill(Gimp.FillType.FOREGROUND)
+        Gimp.Selection.none(imp)
+        imp.scale(1280, 960)
+        t0 = time.time()
+        vp = trace(lp, "pixel-art", live=False)
+        dt = time.time() - t0
+        b = coords(vp) if vp else (0, 0, 0, 0)
+        report(vp is not None and b[2] <= 1280.01 and b[3] <= 960.01 and b[2] > 1000,
+               "Vectoriser : pixel art agrandi 8× tracé à sa taille d'origine",
+               "%.1f s, %d objets, cadre %s" % (dt, trace_xml(vp).count("<path ") if vp else 0,
+                                                 tuple(round(v) for v in b)))
+        # une grande image qui n'est pas du pixel art : refus clair, qui propose potrace
+        lp2 = Gimp.Layer.new(imp, "Dégradé", 1280, 960, Gimp.ImageType.RGB_IMAGE, 100, Gimp.LayerMode.NORMAL)
+        imp.insert_layer(lp2, None, 0)
+        Gimp.context_set_foreground(color(0, 0, 0)); Gimp.context_set_background(color(1, 1, 1))
+        lp2.edit_gradient_fill(Gimp.GradientType.LINEAR, 0, False, 1, 0.0, True, 0, 0, 1280, 960)
+        r = run("chopgimp-image-trace", drawable=lp2, options="pixel-art", **{"selection-only": False, "live": False})
+        msg = r.index(1) if r is not None and r.index(0) != Gimp.PDBStatusType.SUCCESS else ""
+        report(isinstance(msg, str) and "potrace" in msg, "Vectoriser : pixel art trop grand → message clair",
+               str(msg)[:120])
+        imp.delete()
+        Gimp.context_set_antialias(True)
+        Gimp.context_set_interpolation(Gimp.InterpolationType.CUBIC)
+
+        # allègement : 1500 petites taches de couleur en haute fidélité
+        import random
+        random.seed(7)
+        iml = Gimp.Image.new(1200, 900, Gimp.ImageBaseType.RGB)
+        ll = Gimp.Layer.new(iml, "Taches", 1200, 900, Gimp.ImageType.RGB_IMAGE, 100, Gimp.LayerMode.NORMAL)
+        iml.insert_layer(ll, None, 0)
+        Gimp.context_set_background(color(0.5, 0.5, 0.5)); ll.fill(Gimp.FillType.BACKGROUND)
+        for i in range(3500):
+            iml.select_ellipse(Gimp.ChannelOps.REPLACE, random.randint(-10, 1190), random.randint(-10, 890),
+                               random.randint(3, 40), random.randint(3, 40))
+            Gimp.context_set_foreground(color(random.random(), random.random(), random.random()))
+            ll.edit_fill(Gimp.FillType.FOREGROUND)
+        Gimp.Selection.none(iml)
+        res = {}
+        for lighten in (0, 1):
+            t0 = time.time()
+            v = trace(ll, "photo-high;lighten=%d" % lighten, live=False)
+            t1 = time.time()
+            if v:
+                v.transform_translate(3, 0)          # fluidité : un déplacement
+                t2 = time.time()
+                res[lighten] = (anchors(v), t1 - t0, t2 - t1)
+                iml.remove_layer(v)
+        a0, a1 = res.get(0, (0, 0, 0)), res.get(1, (0, 0, 0))
+        report(a0[0] > 150000 and 0 < a1[0] < a0[0],
+               "Vectoriser : « Alléger les résultats lourds »",
+               "%d → %d points d'ancrage ; tracé %.1f → %.1f s ; déplacement %.2f → %.2f s" %
+               (a0[0], a1[0], a0[1], a1[1], a0[2], a1[2]))
+        iml.delete()
+
+        # vectorisation dynamique : suit l'échelle, le déplacement, le retournement et le recadrage
+        imt = Gimp.Image.new(300, 200, Gimp.ImageBaseType.RGB)
+        lt = Gimp.Layer.new(imt, "Logo", 300, 200, Gimp.ImageType.RGB_IMAGE, 100, Gimp.LayerMode.NORMAL)
+        imt.insert_layer(lt, None, 0)
+        Gimp.context_set_background(color(1, 1, 1)); lt.fill(Gimp.FillType.BACKGROUND)
+        Gimp.context_set_foreground(color(0, 0, 0))
+        imt.select_ellipse(Gimp.ChannelOps.REPLACE, 20, 30, 120, 120); lt.edit_fill(Gimp.FillType.FOREGROUND)
+        imt.select_rectangle(Gimp.ChannelOps.REPLACE, 180, 50, 90, 90); lt.edit_fill(Gimp.FillType.FOREGROUND)
+        Gimp.Selection.none(imt)
+        vt = trace(lt, "bw-logo")
+        if vt:
+            steps = []
+            def check(name, expect):
+                b1 = coords(vt)
+                ed = trace_cmd(vt, "edited")[1]
+                done, _ = trace_cmd(vt, "retrace")
+                b2 = coords(vt)
+                ed2 = trace_cmd(vt, "edited")[1]
+                ok = near(b1, expect) and near(b2, expect) and ed == "0" and ed2 == "0" and done
+                steps.append(ok)
+                report(ok, "Vectorisation dynamique : suit « %s »" % name,
+                       "attendu %s, objets %s, revectorisé %s, modifié %s/%s" %
+                       (tuple(round(v) for v in expect), tuple(round(v) for v in b1),
+                        tuple(round(v) for v in b2), ed, ed2))
+            b0 = coords(vt)
+            imt.scale(600, 400)
+            check("Mettre l'image à l'échelle", tuple(v * 2 for v in b0))
+            b0 = coords(vt)
+            vt.transform_translate(10, 5)
+            check("déplacer le calque", (b0[0] + 10, b0[1] + 5, b0[2] + 10, b0[3] + 5))
+            b0 = coords(vt)
+            imt.flip(Gimp.OrientationType.HORIZONTAL)
+            check("Retourner l'image", (600 - b0[2], b0[1], 600 - b0[0], b0[3]))
+            b0 = coords(vt)
+            imt.crop(500, 380, 40, 10)
+            check("Recadrer l'image", (b0[0] - 40, b0[1] - 10, b0[2] - 40, b0[3] - 10))
+            # aller-retour XCF après transformations : toujours « non modifié »
+            xcft = os.path.join(TMP, "vectoriser-transforme.xcf")
+            Gimp.file_save(Gimp.RunMode.NONINTERACTIVE, imt, Gio.File.new_for_path(xcft), None)
+            imx2 = Gimp.file_load(Gimp.RunMode.NONINTERACTIVE, Gio.File.new_for_path(xcft))
+            vx2 = [l for l in imx2.get_layers() if l.get_parasite("chopgimp-trace") is not None]
+            report(len(vx2) == 1 and trace_cmd(vx2[0], "edited")[1] == "0" and
+                   vx2[0].get_parasite("chopgimp-trace-matrix") is not None,
+                   "Vectorisation dynamique : transformée, aller-retour XCF",
+                   "modifié %s" % (trace_cmd(vx2[0], "edited")[1] if vx2 else "-"))
+            imx2.delete()
+            # en couleurs (couleurs non exactes en flottant), mise à l'échelle 3/4, XCF
+            imc = Gimp.Image.new(240, 160, Gimp.ImageBaseType.RGB)
+            lc = Gimp.Layer.new(imc, "Couleurs", 240, 160, Gimp.ImageType.RGB_IMAGE, 100, Gimp.LayerMode.NORMAL)
+            imc.insert_layer(lc, None, 0)
+            Gimp.context_set_background(color(0.55, 0.62, 0.23)); lc.fill(Gimp.FillType.BACKGROUND)
+            imc.select_ellipse(Gimp.ChannelOps.REPLACE, 30, 30, 100, 90)
+            Gimp.context_set_foreground(color(0.31, 0.12, 0.67)); lc.edit_fill(Gimp.FillType.FOREGROUND)
+            Gimp.Selection.none(imc)
+            vc = trace(lc, "6-colors;ignore-white=0")
+            imc.scale(180, 120)
+            xcfc = os.path.join(TMP, "vectoriser-couleurs.xcf")
+            Gimp.file_save(Gimp.RunMode.NONINTERACTIVE, imc, Gio.File.new_for_path(xcfc), None)
+            imx3 = Gimp.file_load(Gimp.RunMode.NONINTERACTIVE, Gio.File.new_for_path(xcfc))
+            vx3 = [l for l in imx3.get_layers() if l.get_parasite("chopgimp-trace") is not None]
+            report(vc is not None and len(vx3) == 1 and trace_cmd(vx3[0], "edited")[1] == "0",
+                   "Vectorisation dynamique : couleurs, mise à l'échelle 3/4, aller-retour XCF",
+                   "modifié %s" % (trace_cmd(vx3[0], "edited")[1] if vx3 else "-"))
+            imx3.delete()
+            imc.delete()
+            # une vraie modification reste détectée
+            x = trace_xml(vt)
+            run("chopgimp-vobjects-set-xml", layer=vt, xml=x.replace('color="0 0 0 1"', 'color="1 0 0 1"', 1))
+            report(trace_cmd(vt, "edited")[1] == "1", "Vectorisation dynamique : modification détectée après transformations")
+        imt.delete()
+    except Exception:
+        report(False, "Vectoriser 3.27.5", traceback.format_exc().replace("\n", " | ")[:400])
 
     # 4. Réglages d'usine présents (thème, icônes, menus, raccourcis)
     data = Gimp.data_directory()

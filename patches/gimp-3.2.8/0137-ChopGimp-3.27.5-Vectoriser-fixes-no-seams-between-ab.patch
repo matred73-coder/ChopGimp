@@ -1,0 +1,2484 @@
+From aa9d7f0dcf98adf9f48e8f33170cfe049321169d Mon Sep 17 00:00:00 2001
+From: ChopGimp <mathieu.redon@proton.me>
+Date: Tue, 24 Nov 2026 15:20:16 +0100
+Subject: [PATCH] ChopGimp 3.27.5: Vectoriser fixes (no seams between abutting
+ shapes, light results for heavy traces, pixel art traced at its native size,
+ live traces follow layer and image transformations, dialog on the canvas edge
+ with room made in the view, Stop keeps the trace stale), welcome dialog in
+ French
+
+---
+ app/core/chopgimp-trace-layer.c     | 313 +++++++++++++++-
+ app/core/chopgimp-trace-layer.h     |  32 +-
+ app/dialogs/chopgimp-trace-dialog.c | 534 +++++++++++++++++++++++++---
+ app/dialogs/welcome-dialog.c        | 106 +++---
+ app/display/chopgimp-canvastrace.c  |  43 ++-
+ app/display/chopgimp-canvastrace.h  |   4 +
+ app/path/chopgimp-trace.cc          | 458 ++++++++++++++++++++----
+ app/path/chopgimp-trace.h           |  27 +-
+ app/path/gimppath.c                 |  38 ++
+ 9 files changed, 1372 insertions(+), 183 deletions(-)
+
+diff --git a/app/core/chopgimp-trace-layer.c b/app/core/chopgimp-trace-layer.c
+index dd5680f..c8f1d1a 100644
+--- a/app/core/chopgimp-trace-layer.c
++++ b/app/core/chopgimp-trace-layer.c
+@@ -12,6 +12,9 @@
+ 
+ #include <stdlib.h>
+ #include <string.h>
++#include <math.h>
++
++#include <cairo.h>
+ 
+ #include <gdk-pixbuf/gdk-pixbuf.h>
+ #include <gegl.h>
+@@ -32,6 +35,7 @@
+ #include "path/gimpbezierstroke.h"
+ #include "path/gimppath.h"
+ #include "path/gimpvectorlayer.h"
++#include "path/gimpvectorlayeroptions.h"
+ #include "path/chopgimp-vobject.h"
+ 
+ #include "chopgimp-trace-layer.h"
+@@ -100,6 +104,7 @@ chopgimp_trace_source_new (GimpDrawable *drawable,
+   source         = g_new0 (ChopGimpTraceSource, 1);
+   source->rect   = rect;
+   source->buffer = gegl_buffer_new (&rect, babl_format ("R'G'B'A u8"));
++  source->matrix[0] = source->matrix[3] = 1.0;
+ 
+   gegl_buffer_set (source->buffer, &rect, 0, babl_format ("R'G'B'A u8"),
+                    pixels, GEGL_AUTO_ROWSTRIDE);
+@@ -139,6 +144,9 @@ chopgimp_trace_source_trace (ChopGimpTraceSource        *source,
+   if (progress)
+     gimp_progress_start (progress, FALSE, _("Vectorisation"));
+ 
++  /*  in traced coordinates: chopgimp_trace_layer_update() writes the
++   *  objects through @source->matrix
++   */
+   result = chopgimp_trace_run (source->buffer, &source->rect, NULL, options,
+                                NULL, trace_progress, progress, error);
+ 
+@@ -162,6 +170,155 @@ objects_sum (GimpVectorLayer *layer)
+   return sum;
+ }
+ 
++/*  3.27.5: the signature of the objects in traced coordinates (mapped
++ *  back through @matrix): "<sha1 of the XML without the path data>
++ *  <number of coordinates> <4 weighted sums of the points> <root of the
++ *  sum of their squares>" (for the tolerance: the XCF keeps the path
++ *  points as 32-bit floats, a relative error of 6e-8 per coordinate).
++ *  Moving, scaling… the layer keeps it; any other change of the objects
++ *  (a node, a style, an object added or removed) changes it.
++ */
++static gchar *
++objects_signature (GimpVectorLayer *layer,
++                   const gdouble    matrix[6])
++{
++  gchar          *xml   = chopgimp_vlayer_get_xml (layer);
++  GString        *style = g_string_new (NULL);
++  cairo_matrix_t  inv;
++  const gchar    *p;
++  gdouble         s[4] = { 0, 0, 0, 0 };
++  gdouble         mag  = 0.0;
++  guint64         n    = 0;
++  gchar          *sum;
++  gchar          *sig;
++  gchar           buf[7][G_ASCII_DTOSTR_BUF_SIZE];
++
++  cairo_matrix_init (&inv, matrix[0], matrix[1], matrix[2], matrix[3],
++                     matrix[4], matrix[5]);
++  if (cairo_matrix_invert (&inv) != CAIRO_STATUS_SUCCESS)
++    cairo_matrix_init_identity (&inv);
++
++  /*  « options-style » (the layer's own fill / stroke, kept to notice
++   *  their changes) is not an object, and its colors are stored as
++   *  floats by the XCF: out of the digest
++   */
++  if (xml)
++    {
++      gchar *os = strstr (xml, " options-style=\"");
++
++      if (os)
++        {
++          gchar *end = strchr (os + 16, '"');
++
++          if (end)
++            memmove (os, end + 1, strlen (end + 1) + 1);
++        }
++    }
++
++  for (p = xml ? xml : ""; *p; )
++    {
++      const gchar *d = strstr (p, " d=\"");
++      gdouble      v[2];
++      gint         k = 0;
++
++      if (! d)
++        {
++          g_string_append (style, p);
++          break;
++        }
++
++      g_string_append_len (style, p, d - p);
++      p = d + 4;
++
++      while (*p && *p != '"')
++        {
++          gchar *end;
++
++          if (g_ascii_isalpha (*p) && *p != 'e' && *p != 'E')
++            {
++              g_string_append_c (style, *p);
++              p++;
++              continue;
++            }
++          if (*p == ' ' || *p == ',')
++            {
++              p++;
++              continue;
++            }
++
++          v[k] = g_ascii_strtod (p, &end);
++          if (end == p)
++            {
++              p++;
++              continue;
++            }
++          p = end;
++
++          if (++k == 2)
++            {
++              gdouble x = v[0], y = v[1];
++              guint32 i = (guint32) (n / 2);
++              gdouble w1 = 1.0 + (((i * 2654435761u) >> 16) & 0xffff) / 65536.0;
++              gdouble w2 = 1.0 + ((((i ^ 0x5bd1e995u) * 2246822519u) >> 16) & 0xffff) / 65536.0;
++
++              cairo_matrix_transform_point (&inv, &x, &y);
++              s[0] += w1 * x; s[1] += w1 * y;
++              s[2] += w2 * x; s[3] += w2 * y;
++              mag  += (w1 * w1 + w2 * w2) * (x * x + y * y);
++              k = 0;
++            }
++          n++;
++        }
++      if (*p == '"')
++        p++;
++    }
++
++  sum = g_compute_checksum_for_string (G_CHECKSUM_SHA1, style->str, style->len);
++  sig = g_strdup_printf ("%s %" G_GUINT64_FORMAT " %s %s %s %s %s", sum, n,
++                         g_ascii_formatd (buf[0], sizeof (buf[0]), "%.17g", s[0]),
++                         g_ascii_formatd (buf[1], sizeof (buf[1]), "%.17g", s[1]),
++                         g_ascii_formatd (buf[2], sizeof (buf[2]), "%.17g", s[2]),
++                         g_ascii_formatd (buf[3], sizeof (buf[3]), "%.17g", s[3]),
++                         g_ascii_formatd (buf[4], sizeof (buf[4]), "%.17g", sqrt (mag)));
++  g_free (sum);
++  g_string_free (style, TRUE);
++  g_free (xml);
++
++  return sig;
++}
++
++static gboolean
++signatures_match (const gchar *a,
++                  const gchar *b)
++{
++  gchar  **ta, **tb;
++  gboolean same = FALSE;
++
++  if (! a || ! b)
++    return FALSE;
++
++  ta = g_strsplit (a, " ", -1);
++  tb = g_strsplit (b, " ", -1);
++
++  if (g_strv_length (ta) == 7 && g_strv_length (tb) == 7 &&
++      ! strcmp (ta[0], tb[0]) && ! strcmp (ta[1], tb[1]))
++    {
++      /*  float rounding: independent errors, 6 standard deviations  */
++      gdouble rms = MAX (g_ascii_strtod (ta[6], NULL), g_ascii_strtod (tb[6], NULL));
++      gdouble tol = 1e-3 + 4e-7 * rms;
++
++      same = TRUE;
++      for (gint i = 2; i < 6; i++)
++        if (fabs (g_ascii_strtod (ta[i], NULL) - g_ascii_strtod (tb[i], NULL)) > tol)
++          same = FALSE;
++    }
++
++  g_strfreev (ta);
++  g_strfreev (tb);
++
++  return same;
++}
++
+ static gboolean
+ attach_parasite (GimpVectorLayer            *layer,
+                  ChopGimpTraceSource        *source,
+@@ -173,7 +330,8 @@ attach_parasite (GimpVectorLayer            *layer,
+   gchar               *png  = NULL;
+   gsize                size = 0;
+   gchar               *opts;
+-  gchar               *sum;
++  gchar               *sig;
++  gdouble              matrix[6];
+   GString             *data;
+   GimpParasite        *parasite;
+ 
+@@ -191,12 +349,14 @@ attach_parasite (GimpVectorLayer            *layer,
+ 
+   g_object_unref (pixbuf);
+ 
++  chopgimp_trace_layer_get_matrix (layer, matrix);
++
+   opts = chopgimp_trace_options_to_string (options);
+-  sum  = objects_sum (layer);
++  sig  = objects_signature (layer, matrix);
+ 
+   data = g_string_new ("chopgimp-trace 1\n");
+-  g_string_append_printf (data, "x=%d\ny=%d\nw=%d\nh=%d\nflat=%d\nsum=%s\noptions=%s\n\n",
+-                          r->x, r->y, r->width, r->height, flat ? 1 : 0, sum, opts);
++  g_string_append_printf (data, "x=%d\ny=%d\nw=%d\nh=%d\nflat=%d\nsig=%s\noptions=%s\n\n",
++                          r->x, r->y, r->width, r->height, flat ? 1 : 0, sig, opts);
+   g_string_append_len (data, png, size);
+ 
+   parasite = gimp_parasite_new (CHOPGIMP_TRACE_PARASITE,
+@@ -208,7 +368,7 @@ attach_parasite (GimpVectorLayer            *layer,
+   g_string_free (data, TRUE);
+   g_free (png);
+   g_free (opts);
+-  g_free (sum);
++  g_free (sig);
+ 
+   return TRUE;
+ }
+@@ -324,6 +484,7 @@ chopgimp_trace_layer_get (GimpVectorLayer       *layer,
+           ChopGimpTraceSource *s = g_new0 (ChopGimpTraceSource, 1);
+ 
+           s->rect   = rect;
++          chopgimp_trace_layer_get_matrix (layer, s->matrix);
+           s->buffer = gegl_buffer_new (&rect, babl_format ("R'G'B'A u8"));
+           gegl_buffer_set (s->buffer, &rect, 0, babl_format ("R'G'B'A u8"),
+                            gdk_pixbuf_get_pixels (pixbuf),
+@@ -358,8 +519,20 @@ chopgimp_trace_layer_is_edited (GimpVectorLayer *layer)
+   if (! keys)
+     return FALSE;
+ 
+-  sum    = objects_sum (layer);
+-  edited = g_strcmp0 (sum, g_hash_table_lookup (keys, "sum")) != 0;
++  if (g_hash_table_lookup (keys, "sig"))
++    {
++      gdouble matrix[6];
++
++      chopgimp_trace_layer_get_matrix (layer, matrix);
++      sum    = objects_signature (layer, matrix);
++      edited = ! signatures_match (sum, g_hash_table_lookup (keys, "sig"));
++    }
++  else
++    {
++      /*  3.27.3 / 3.27.4: the digest of the objects as they were  */
++      sum    = objects_sum (layer);
++      edited = g_strcmp0 (sum, g_hash_table_lookup (keys, "sum")) != 0;
++    }
+ 
+   g_free (sum);
+   g_hash_table_unref (keys);
+@@ -367,6 +540,87 @@ chopgimp_trace_layer_is_edited (GimpVectorLayer *layer)
+   return edited;
+ }
+ 
++void
++chopgimp_trace_layer_get_matrix (GimpVectorLayer *layer,
++                                 gdouble          matrix[6])
++{
++  const GimpParasite *parasite;
++  guint32             size = 0;
++  const gchar        *data;
++
++  matrix[0] = 1.0; matrix[1] = 0.0; matrix[2] = 0.0;
++  matrix[3] = 1.0; matrix[4] = 0.0; matrix[5] = 0.0;
++
++  parasite = gimp_item_parasite_find (GIMP_ITEM (layer), CHOPGIMP_TRACE_MATRIX_PARASITE);
++  data     = parasite ? gimp_parasite_get_data (parasite, &size) : NULL;
++
++  if (data && size > 0 && size < 1024)
++    {
++      gchar   *text = g_strndup (data, size);
++      gchar  **v    = g_strsplit_set (g_strstrip (text), " \t\n", -1);
++      gdouble  m[6];
++      gint     n    = 0;
++
++      for (gint i = 0; v[i] && n < 6; i++)
++        if (*v[i])
++          m[n++] = g_ascii_strtod (v[i], NULL);
++
++      if (n == 6 && fabs (m[0] * m[3] - m[1] * m[2]) > 1e-12)
++        memcpy (matrix, m, sizeof (m));
++
++      g_strfreev (v);
++      g_free (text);
++    }
++}
++
++void
++chopgimp_trace_layer_transformed (GimpVectorLayer *layer,
++                                  const gdouble    matrix[6],
++                                  gboolean         push_undo)
++{
++  cairo_matrix_t old, t, res;
++  gdouble        m[6];
++
++  if (! chopgimp_trace_layer_is_live (GIMP_ITEM (layer)))
++    return;
++
++  chopgimp_trace_layer_get_matrix (layer, m);
++  cairo_matrix_init (&old, m[0], m[1], m[2], m[3], m[4], m[5]);
++  cairo_matrix_init (&t, matrix[0], matrix[1], matrix[2], matrix[3],
++                     matrix[4], matrix[5]);
++  /*  the old one first, then @matrix  */
++  cairo_matrix_multiply (&res, &old, &t);
++
++  if (fabs (res.xx - 1.0) < 1e-12 && fabs (res.yx) < 1e-12 &&
++      fabs (res.xy) < 1e-12 && fabs (res.yy - 1.0) < 1e-12 &&
++      fabs (res.x0) < 1e-9 && fabs (res.y0) < 1e-9)
++    {
++      if (gimp_item_parasite_find (GIMP_ITEM (layer), CHOPGIMP_TRACE_MATRIX_PARASITE))
++        gimp_item_parasite_detach (GIMP_ITEM (layer), CHOPGIMP_TRACE_MATRIX_PARASITE,
++                                   push_undo);
++    }
++  else
++    {
++      gchar         b[6][G_ASCII_DTOSTR_BUF_SIZE];
++      gchar        *text;
++      GimpParasite *parasite;
++
++      text = g_strdup_printf ("%s %s %s %s %s %s",
++                              g_ascii_formatd (b[0], sizeof (b[0]), "%.17g", res.xx),
++                              g_ascii_formatd (b[1], sizeof (b[1]), "%.17g", res.yx),
++                              g_ascii_formatd (b[2], sizeof (b[2]), "%.17g", res.xy),
++                              g_ascii_formatd (b[3], sizeof (b[3]), "%.17g", res.yy),
++                              g_ascii_formatd (b[4], sizeof (b[4]), "%.17g", res.x0),
++                              g_ascii_formatd (b[5], sizeof (b[5]), "%.17g", res.y0));
++      parasite = gimp_parasite_new (CHOPGIMP_TRACE_MATRIX_PARASITE,
++                                    GIMP_PARASITE_PERSISTENT | GIMP_PARASITE_UNDOABLE,
++                                    strlen (text) + 1, text);
++      gimp_item_parasite_attach (GIMP_ITEM (layer), parasite, push_undo);
++      gimp_parasite_free (parasite);
++      g_free (text);
++    }
++}
++
+ static GimpPath *
+ placeholder_path (GimpImage           *image,
+                   const gchar         *name,
+@@ -417,7 +671,7 @@ chopgimp_trace_layer_new (GimpImage                  *image,
+   if (! chopgimp_vobjects_enabled () || ! result->shapes || result->shapes->len == 0)
+     return NULL;
+ 
+-  xml = chopgimp_trace_result_to_xml (result, flat);
++  xml = chopgimp_trace_result_to_xml (result, flat, NULL);
+   if (! xml)
+     return NULL;
+ 
+@@ -485,6 +739,7 @@ chopgimp_trace_layer_update (GimpVectorLayer            *layer,
+   GimpImage *image;
+   gchar     *xml;
+   gboolean   ok;
++  gdouble    matrix[6];
+ 
+   g_return_val_if_fail (GIMP_IS_VECTOR_LAYER (layer), FALSE);
+   g_return_val_if_fail (result != NULL, FALSE);
+@@ -492,7 +747,9 @@ chopgimp_trace_layer_update (GimpVectorLayer            *layer,
+   if (! result->shapes || result->shapes->len == 0)
+     return FALSE;
+ 
+-  xml = chopgimp_trace_result_to_xml (result, flat);
++  /*  traced coordinates → where the layer is now  */
++  chopgimp_trace_layer_get_matrix (layer, matrix);
++  xml = chopgimp_trace_result_to_xml (result, flat, matrix);
+   if (! xml)
+     return FALSE;
+ 
+@@ -521,6 +778,44 @@ chopgimp_trace_layer_expand (GimpVectorLayer *layer,
+     return FALSE;
+ 
+   gimp_item_parasite_detach (GIMP_ITEM (layer), CHOPGIMP_TRACE_PARASITE, push_undo);
++  if (gimp_item_parasite_find (GIMP_ITEM (layer), CHOPGIMP_TRACE_MATRIX_PARASITE))
++    gimp_item_parasite_detach (GIMP_ITEM (layer), CHOPGIMP_TRACE_MATRIX_PARASITE,
++                               push_undo);
+ 
+   return TRUE;
+ }
++
++void
++chopgimp_trace_path_transformed (GimpPath          *path,
++                                 const GimpMatrix3 *matrix,
++                                 gboolean           push_undo)
++{
++  GimpImage *image = gimp_item_get_image (GIMP_ITEM (path));
++  GList     *layers;
++  gdouble    m[6] = { matrix->coeff[0][0], matrix->coeff[1][0],
++                      matrix->coeff[0][1], matrix->coeff[1][1],
++                      matrix->coeff[0][2], matrix->coeff[1][2] };
++
++  if (! image)
++    return;
++
++  layers = gimp_image_get_layer_list (image);
++
++  for (GList *l = layers; l; l = l->next)
++    {
++      GimpVectorLayer *vl;
++
++      if (! GIMP_IS_VECTOR_LAYER (l->data))
++        continue;
++
++      vl = GIMP_VECTOR_LAYER (l->data);
++
++      if (vl->options && vl->options->path == path &&
++          chopgimp_trace_layer_is_live (GIMP_ITEM (vl)))
++        chopgimp_trace_layer_transformed (vl, m,
++                                          push_undo &&
++                                          gimp_item_is_attached (GIMP_ITEM (vl)));
++    }
++
++  g_list_free (layers);
++}
+diff --git a/app/core/chopgimp-trace-layer.h b/app/core/chopgimp-trace-layer.h
+index 34579c1..ab3498b 100644
+--- a/app/core/chopgimp-trace-layer.h
++++ b/app/core/chopgimp-trace-layer.h
+@@ -22,6 +22,15 @@
+  * decompose it: the dialog then warns that re-tracing replaces those
+  * edits (the objects no longer match « sum »).
+  *
++ * 3.27.5: a live trace follows the layer and the image (moved, scaled,
++ * cropped, flipped, rotated, transformed): the matrix from the traced
++ * area to the image is the item parasite « chopgimp-trace-matrix »
++ * ("xx yx xy yy x0 y0", cairo order; none: identity), updated by the
++ * transformations of the vector layer, and a re-trace goes through it.
++ * « sum » became « sig »: the objects mapped back through that matrix
++ * (a style digest, the number of coordinates and weighted sums of the
++ * points), so that moving or scaling the layer is not an edit.
++ *
+  * This program is free software: you can redistribute it and/or modify
+  * it under the terms of the GNU General Public License as published by
+  * the Free Software Foundation; either version 3 of the License, or
+@@ -33,13 +42,15 @@
+ #include "path/chopgimp-trace.h"
+ 
+ 
+-#define CHOPGIMP_TRACE_PARASITE "chopgimp-trace"
++#define CHOPGIMP_TRACE_PARASITE        "chopgimp-trace"
++#define CHOPGIMP_TRACE_MATRIX_PARASITE "chopgimp-trace-matrix"
+ 
+ 
+ typedef struct
+ {
+-  GeglBuffer    *buffer;    /* R'G'B'A u8, extent == @rect (image coords) */
++  GeglBuffer    *buffer;    /* R'G'B'A u8, extent == @rect (traced coords) */
+   GeglRectangle  rect;
++  gdouble        matrix[6]; /* traced coords → image (cairo order)         */
+ } ChopGimpTraceSource;
+ 
+ 
+@@ -69,6 +80,23 @@ gboolean              chopgimp_trace_layer_get       (GimpVectorLayer       *lay
+                                                       gboolean              *flat);
+ /*  the objects were changed since the last trace  */
+ gboolean              chopgimp_trace_layer_is_edited (GimpVectorLayer       *layer);
++/*  the matrix traced area → image of @layer (identity when none)  */
++void                  chopgimp_trace_layer_get_matrix (GimpVectorLayer      *layer,
++                                                       gdouble               matrix[6]);
++/*  called by the transformations of a vector layer: a live trace follows
++ *  (@matrix: the transformation, image coordinates, cairo order)
++ */
++void                  chopgimp_trace_layer_transformed (GimpVectorLayer     *layer,
++                                                        const gdouble        matrix[6],
++                                                        gboolean             push_undo);
++/*  called by the transformations of a path (GimpPath translate, scale,
++ *  resize, flip, rotate, transform): the live traces drawn by @path (the
++ *  path of their vector layer) follow. The image operations move the
++ *  paths of the vector layers, not the layers themselves.
++ */
++void                  chopgimp_trace_path_transformed  (GimpPath            *path,
++                                                        const GimpMatrix3   *matrix,
++                                                        gboolean             push_undo);
+ 
+ /*  a new vector layer with the objects of @result, above @above (or at
+  *  the top), named « <name of above> vectorisé »; @source: keep a live
+diff --git a/app/dialogs/chopgimp-trace-dialog.c b/app/dialogs/chopgimp-trace-dialog.c
+index afe8c79..5756cf6 100644
+--- a/app/dialogs/chopgimp-trace-dialog.c
++++ b/app/dialogs/chopgimp-trace-dialog.c
+@@ -52,6 +52,7 @@
+ #include "display/gimpdisplay.h"
+ #include "display/gimpdisplayshell.h"
+ #include "display/gimpdisplayshell-items.h"
++#include "display/gimpdisplayshell-scale.h"
+ #include "display/chopgimp-canvastrace.h"
+ 
+ #include "widgets/gimphelp-ids.h"
+@@ -62,6 +63,7 @@
+ 
+ 
+ #define RESPONSE_EXPAND 1
++#define RESPONSE_DETACH 3   /* the panel becomes a window                  */
+ #define TRACE_DELAY     250   /* ms after the last change */
+ 
+ enum
+@@ -96,12 +98,29 @@ typedef struct
+   guint                 progress_id;
+   gboolean              updating;
+   gboolean              closed;
++  gboolean              stopped;      /* « Arrêter »: @result is older       */
++
++  /*  3.27.5: the options are a panel inside the image window, right of
++   *  the canvas (which gets narrower: nothing of the image is covered;
++   *  on Wayland a window cannot be placed beside the canvas); the view
++   *  fits the traced area if it is not all visible. « Détacher » makes
++   *  it a window (remembered for the session). Not a GimpOverlayDialog:
++   *  combo box menus open at the wrong place from its offscreen window.
++   */
++  GtkWidget            *content;      /* the options, in either container    */
++  gboolean              in_panel;
++  GtkWidget            *ok_button;    /* panel                               */
++  guint                 room_id;
++  gboolean              view_moved;
++  gdouble               old_zoom, set_zoom;
++  gint                  old_offx, old_offy, set_offx, set_offy;
+ 
+   GtkWidget            *dialog;
+   GtkWidget            *preset;
+   GtkWidget            *view;
+   GtkWidget            *mode;
+   GtkWidget            *palette;
++  GtkWidget            *palette_info; /* the custom colors: where, how many  */
+   GtkWidget            *colors;       /* spin scales                         */
+   GtkWidget            *fidelity;
+   GtkWidget            *threshold;
+@@ -118,6 +137,8 @@ typedef struct
+   GtkWidget            *ignore_white;
+   GtkWidget            *ignore_transparent;
+   GtkWidget            *invert;
++  GtkWidget            *seams;
++  GtkWidget            *lighten;
+   GtkWidget            *engine;
+   GtkWidget            *grouped;
+   GtkWidget            *selection_only;
+@@ -144,6 +165,16 @@ typedef struct
+ static void   schedule_trace (Dialog *d);
+ static void   start_trace    (Dialog *d);
+ static void   do_commit      (Dialog *d);
++static void   dialog_response (GtkWidget *widget,
++                               gint       response_id,
++                               Dialog    *d);
++static void   dialog_destroyed (GtkWidget *widget,
++                                Dialog    *d);
++static void   dialog_free    (Dialog *d);
++static void   restore_view   (Dialog *d);
++static gboolean detach_idle  (GtkWidget *dialog);
++
++static gboolean prefer_window = FALSE;   /* « Détacher » chosen this session */
+ 
+ 
+ /*  ─── helpers ───────────────────────────────────────────────────────── */
+@@ -247,6 +278,17 @@ dialog_shell (Dialog *d)
+   return d->display ? gimp_display_get_shell (d->display) : NULL;
+ }
+ 
++static void
++set_ok_sensitive (Dialog   *d,
++                  gboolean  sensitive)
++{
++  if (d->in_panel)
++    gtk_widget_set_sensitive (d->ok_button, sensitive);
++  else
++    gtk_dialog_set_response_sensitive (GTK_DIALOG (d->dialog),
++                                       GTK_RESPONSE_OK, sensitive);
++}
++
+ 
+ /*  ─── options ↔ widgets ─────────────────────────────────────────────── */
+ 
+@@ -293,6 +335,34 @@ custom_colors_load (Dialog *d,
+ 
+   chopgimp_trace_options_from_string (&d->options, str->str);
+   g_string_free (str, TRUE);
++
++  /*  3.27.5: say which colors (the active palette is often the color
++   *  history, with a color or two)
++   */
++  if (d->palette_info)
++    {
++      gchar *text;
++      gint   n = d->options.n_custom;
++
++      if (which == PALETTE_GLOBALS)
++        text = n > 0
++               ? g_strdup_printf (n > 1 ? _("%d couleurs globales") : _("%d couleur globale"), n)
++               : g_strdup (_("Aucune couleur globale dans le document : "
++                             "couleurs automatiques"));
++      else
++        {
++          GimpPalette *palette = gimp_context_get_palette (d->context);
++          const gchar *name    = palette ? gimp_object_get_name (palette) : "";
++
++          text = n > 0
++                 ? g_strdup_printf (n > 1 ? _("Nuancier « %s » : %d couleurs")
++                                          : _("Nuancier « %s » : %d couleur"), name, n)
++                 : g_strdup_printf (_("Nuancier « %s » vide : couleurs automatiques"), name);
++        }
++
++      gtk_label_set_text (GTK_LABEL (d->palette_info), text);
++      g_free (text);
++    }
+ }
+ 
+ static void
+@@ -303,6 +373,7 @@ update_sensitivity (Dialog *d)
+   gboolean pal     = ! bw && d->options.engine != CHOPGIMP_TRACE_ENGINE_CENTERLINE;
+ 
+   gtk_widget_set_visible (d->colors,    pal && d->options.palette == CHOPGIMP_TRACE_PALETTE_LIMITED);
++  gtk_widget_set_visible (d->palette_info, pal && d->options.palette == CHOPGIMP_TRACE_PALETTE_CUSTOM);
+   gtk_widget_set_visible (d->fidelity,  pal && d->options.palette == CHOPGIMP_TRACE_PALETTE_AUTO);
+   gtk_widget_set_visible (d->threshold, ! pal);
+   gtk_widget_set_sensitive (d->palette, pal);
+@@ -317,6 +388,11 @@ update_sensitivity (Dialog *d)
+                             d->options.engine == CHOPGIMP_TRACE_ENGINE_CENTERLINE ||
+                             (potrace && d->options.strokes));
+   gtk_widget_set_sensitive (d->invert, bw || d->options.engine == CHOPGIMP_TRACE_ENGINE_CENTERLINE);
++  gtk_widget_set_sensitive (d->seams,
++                            d->options.engine == CHOPGIMP_TRACE_ENGINE_PIXELART ||
++                            (potrace && d->options.fills &&
++                             d->options.method == CHOPGIMP_TRACE_METHOD_ABUTTING));
++  gtk_widget_set_sensitive (d->lighten, d->options.engine != CHOPGIMP_TRACE_ENGINE_PIXELART);
+ }
+ 
+ static void
+@@ -342,6 +418,15 @@ widgets_from_options (Dialog *d)
+       /*  the colors in @o (from a live trace) are those of this entry  */
+       g_object_set_data (G_OBJECT (d->palette), "chopgimp-loaded",
+                          GINT_TO_POINTER (palette));
++      if (d->palette_info)
++        {
++          gchar *text = g_strdup_printf (o->n_custom > 1 ? _("%d couleurs choisies")
++                                                         : _("%d couleur choisie"),
++                                         o->n_custom);
++
++          gtk_label_set_text (GTK_LABEL (d->palette_info), text);
++          g_free (text);
++        }
+       break;
+     }
+   gtk_combo_box_set_active (GTK_COMBO_BOX (d->palette), palette);
+@@ -362,6 +447,8 @@ widgets_from_options (Dialog *d)
+   gtk_toggle_button_set_active (GTK_TOGGLE_BUTTON (d->ignore_white),       o->ignore_white);
+   gtk_toggle_button_set_active (GTK_TOGGLE_BUTTON (d->ignore_transparent), o->ignore_transparent);
+   gtk_toggle_button_set_active (GTK_TOGGLE_BUTTON (d->invert),             o->invert);
++  gtk_toggle_button_set_active (GTK_TOGGLE_BUTTON (d->seams),              o->seams);
++  gtk_toggle_button_set_active (GTK_TOGGLE_BUTTON (d->lighten),            o->lighten);
+   gtk_toggle_button_set_active (GTK_TOGGLE_BUTTON (d->grouped),            ! d->flat);
+ 
+   update_sensitivity (d);
+@@ -423,6 +510,8 @@ options_from_widgets (Dialog *d)
+   o->ignore_white       = gtk_toggle_button_get_active (GTK_TOGGLE_BUTTON (d->ignore_white));
+   o->ignore_transparent = gtk_toggle_button_get_active (GTK_TOGGLE_BUTTON (d->ignore_transparent));
+   o->invert             = gtk_toggle_button_get_active (GTK_TOGGLE_BUTTON (d->invert));
++  o->seams              = gtk_toggle_button_get_active (GTK_TOGGLE_BUTTON (d->seams));
++  o->lighten            = gtk_toggle_button_get_active (GTK_TOGGLE_BUTTON (d->lighten));
+   d->flat               = ! gtk_toggle_button_get_active (GTK_TOGGLE_BUTTON (d->grouped));
+ 
+   /*  at least something to make  */
+@@ -481,6 +570,7 @@ preview_update (Dialog *d)
+     {
+       d->item = chopgimp_canvas_trace_new (shell, &d->source->rect);
+       chopgimp_canvas_trace_set_source (CHOPGIMP_CANVAS_TRACE (d->item), d->source->buffer);
++      chopgimp_canvas_trace_set_matrix (CHOPGIMP_CANVAS_TRACE (d->item), d->source->matrix);
+       gimp_display_shell_add_item (shell, d->item);
+     }
+   else if (! show && d->item)
+@@ -501,10 +591,14 @@ stats_update (Dialog *d)
+ {
+   gchar *text;
+ 
++  GString *tip = g_string_new (NULL);
++
+   if (! d->result)
+-    text = g_strdup (d->running ? _("Vectorisation…") : "");
++    text = g_strdup (d->running ? _("Vectorisation…") :
++                     d->stopped ? _("Arrêtée") : "");
+   else
+-    text = g_strdup_printf ("%d %s · %d %s · %d %s",
++    text = g_strdup_printf ("%s%d %s · %d %s · %d %s",
++                            d->stopped && ! d->running ? _("Arrêtée — aperçu précédent : ") : "",
+                             d->result->n_paths,
+                             d->result->n_paths > 1 ? _("chemins") : _("chemin"),
+                             d->result->n_colors,
+@@ -515,6 +609,17 @@ stats_update (Dialog *d)
+ 
+   gtk_label_set_text (GTK_LABEL (d->stats), text);
+ 
++  if (d->result && d->result->lightened > 0)
++    g_string_append_printf (tip, _("Résultat allégé automatiquement (%d passe(s)) : "
++                                   "bords lissés, petites zones fusionnées, chemins simplifiés. "
++                                   "Décochez « Alléger les résultats lourds » pour "
++                                   "tout garder."), d->result->lightened);
++  if (d->result && d->result->pixel_size > 1)
++    g_string_append_printf (tip, _("%sPixel art en blocs de %d × %d pixels : tracé à "
++                                   "sa taille d'origine, puis agrandi."),
++                            tip->len ? "\n" : "",
++                            d->result->pixel_size, d->result->pixel_size);
++
+   /*  a photo traced at high fidelity can make hundreds of thousands of
+    *  anchors: a very heavy layer, slow to draw and to save
+    */
+@@ -524,8 +629,12 @@ stats_update (Dialog *d)
+ 
+       gtk_style_context_remove_class (gtk_widget_get_style_context (d->stats), "dim-label");
+       gimp_help_set_help_data (d->stats,
+-                               _("Résultat très lourd : baissez « Chemins », le nombre de "
+-                                 "couleurs, ou augmentez « Bruit »"), NULL);
++                               d->options.lighten
++                               ? _("Résultat très lourd, même allégé : baissez « Chemins », "
++                                   "le nombre de couleurs, ou augmentez « Bruit »")
++                               : _("Résultat très lourd : cochez « Alléger les résultats "
++                                   "lourds », baissez « Chemins », le nombre de couleurs, "
++                                   "ou augmentez « Bruit »"), NULL);
+       heavy = g_strconcat ("⚠ ", text, NULL);
+       gtk_label_set_text (GTK_LABEL (d->stats), heavy);
+       g_free (heavy);
+@@ -533,9 +642,10 @@ stats_update (Dialog *d)
+   else
+     {
+       gtk_style_context_add_class (gtk_widget_get_style_context (d->stats), "dim-label");
+-      gimp_help_set_help_data (d->stats, NULL, NULL);
++      gimp_help_set_help_data (d->stats, tip->len ? tip->str : NULL, NULL);
+     }
+   g_free (text);
++  g_string_free (tip, TRUE);
+ }
+ 
+ static gboolean
+@@ -630,6 +740,23 @@ trace_done (GObject      *object,
+   gtk_widget_hide (d->progress);
+   gtk_widget_hide (d->stop);
+ 
++  /*  « Arrêter »: the preview shows the older result, which is not of
++   *  the options: « Vectoriser » traces again, nothing starts by itself
++   */
++  if (! result && g_error_matches (error, G_IO_ERROR, G_IO_ERROR_CANCELLED))
++    {
++      g_clear_error (&error);
++      d->stale   = TRUE;
++      d->stopped = TRUE;
++      d->commit  = FALSE;
++      set_ok_sensitive (d, TRUE);
++      preview_update (d);
++      stats_update (d);
++      return;
++    }
++
++  d->stopped = FALSE;
++
+   if (result)
+     {
+       if (d->item)
+@@ -648,7 +775,7 @@ trace_done (GObject      *object,
+ 
+   g_clear_error (&error);
+ 
+-  gtk_dialog_set_response_sensitive (GTK_DIALOG (d->dialog), GTK_RESPONSE_OK, TRUE);
++  set_ok_sensitive (d, TRUE);
+   preview_update (d);
+   stats_update (d);
+ 
+@@ -860,7 +987,7 @@ dialog_response (GtkWidget *widget,
+       else
+         {
+           /*  wait for the trace of the current options  */
+-          gtk_dialog_set_response_sensitive (GTK_DIALOG (d->dialog), GTK_RESPONSE_OK, FALSE);
++          set_ok_sensitive (d, FALSE);
+ 
+           if (! d->running || d->timeout_id)
+             {
+@@ -874,6 +1001,11 @@ dialog_response (GtkWidget *widget,
+         }
+       break;
+ 
++    case RESPONSE_DETACH:
++      if (d->in_panel)
++        g_idle_add ((GSourceFunc) detach_idle, g_object_ref (d->dialog));
++      break;
++
+     case RESPONSE_EXPAND:
+       if (d->live)
+         {
+@@ -904,6 +1036,8 @@ dialog_destroyed (GtkWidget *widget,
+ 
+   d->closed = TRUE;
+ 
++  restore_view (d);
++
+   if (d->timeout_id)
+     g_source_remove (d->timeout_id);
+   d->timeout_id = 0;
+@@ -939,6 +1073,326 @@ dialog_free (Dialog *d)
+ }
+ 
+ 
++/*  ─── the container: on the canvas, or a window ────────────────────── */
++
++static void dialog_container_new (Dialog    *d,
++                                  GtkWidget *parent,
++                                  gboolean   overlay);
++
++/*  the traced area in image coordinates (through the live trace matrix)  */
++static void
++traced_bounds (Dialog  *d,
++               gdouble *x1,
++               gdouble *y1,
++               gdouble *x2,
++               gdouble *y2)
++{
++  const GeglRectangle *r = &d->source->rect;
++  const gdouble       *m = d->source->matrix;
++
++  *x1 = *y1 = G_MAXDOUBLE;
++  *x2 = *y2 = -G_MAXDOUBLE;
++
++  for (gint i = 0; i < 4; i++)
++    {
++      gdouble ax = r->x + ((i & 1) ? r->width  : 0);
++      gdouble ay = r->y + ((i & 2) ? r->height : 0);
++      gdouble ix = m[0] * ax + m[2] * ay + m[4];
++      gdouble iy = m[1] * ax + m[3] * ay + m[5];
++
++      *x1 = MIN (*x1, ix); *y1 = MIN (*y1, iy);
++      *x2 = MAX (*x2, ix); *y2 = MAX (*y2, iy);
++    }
++}
++
++/*  the view shows the traced area left of the on-canvas dialog (zooming
++ *  out only if needed); restored when the dialog goes, unless the user
++ *  changed the view meanwhile
++ */
++static gboolean
++make_room (Dialog *d)
++{
++  GimpDisplayShell *shell = dialog_shell (d);
++  GtkAllocation     a;
++  gdouble           x1, y1, x2, y2;
++  gdouble           zoom, ratio;
++  gint              free_w, disp_h;
++  gint              ox, oy;
++
++  d->room_id = 0;
++
++  if (d->closed || ! shell || ! d->in_panel || shell->rotate_transform)
++    return G_SOURCE_REMOVE;
++
++  gtk_widget_get_allocation (d->dialog, &a);
++  free_w = shell->disp_width;
++  disp_h = shell->disp_height;
++
++  if (a.width <= 1 || free_w < 160 || disp_h < 160)
++    return G_SOURCE_REMOVE;
++
++  traced_bounds (d, &x1, &y1, &x2, &y2);
++
++  /*  already in view  */
++  if (x1 * shell->scale_x - shell->offset_x >= 0                     &&
++      x2 * shell->scale_x - shell->offset_x <= free_w                &&
++      y1 * shell->scale_y - shell->offset_y >= 0                     &&
++      y2 * shell->scale_y - shell->offset_y <= disp_h)
++    return G_SOURCE_REMOVE;
++
++  zoom  = gimp_zoom_model_get_factor (shell->zoom);
++  ratio = MIN (1.0, MIN ((free_w - 16) / MAX (1.0, (x2 - x1) * shell->scale_x),
++                         (disp_h - 16) / MAX (1.0, (y2 - y1) * shell->scale_y)));
++
++  ox = (gint) floor ((x1 + x2) / 2.0 * shell->scale_x * ratio - free_w / 2.0 + 0.5);
++  oy = (gint) floor ((y1 + y2) / 2.0 * shell->scale_y * ratio - disp_h / 2.0 + 0.5);
++
++  d->old_zoom = zoom;
++  d->old_offx = shell->offset_x;
++  d->old_offy = shell->offset_y;
++
++  gimp_display_shell_scale_by_values (shell, zoom * ratio, ox, oy, FALSE);
++
++  d->view_moved = TRUE;
++  d->set_zoom   = gimp_zoom_model_get_factor (shell->zoom);
++  d->set_offx   = shell->offset_x;
++  d->set_offy   = shell->offset_y;
++
++  return G_SOURCE_REMOVE;
++}
++
++static void
++restore_view (Dialog *d)
++{
++  GimpDisplayShell *shell = dialog_shell (d);
++
++  if (d->room_id)
++    g_source_remove (d->room_id);
++  d->room_id = 0;
++
++  if (d->view_moved && shell &&
++      ! gtk_widget_in_destruction (GTK_WIDGET (shell)) &&
++      gimp_zoom_model_get_factor (shell->zoom) == d->set_zoom &&
++      shell->offset_x == d->set_offx && shell->offset_y == d->set_offy)
++    gimp_display_shell_scale_by_values (shell, d->old_zoom,
++                                        d->old_offx, d->old_offy, FALSE);
++
++  d->view_moved = FALSE;
++}
++
++static void
++panel_allocated (GtkWidget     *widget,
++                   GtkAllocation *allocation,
++                   Dialog        *d)
++{
++  if (! d->view_moved && ! d->room_id && allocation->width > 1)
++    d->room_id = g_idle_add ((GSourceFunc) make_room, d);
++}
++
++/*  « Détacher »: the same options, in a window (from an idle: not while
++ *  the panel's button emits « clicked »)
++ */
++static void
++panel_detach (Dialog *d)
++{
++  GtkWidget        *old   = d->dialog;
++  GimpDisplayShell *shell = dialog_shell (d);
++
++  prefer_window = TRUE;
++
++  restore_view (d);
++
++  g_object_ref (d->content);
++  gtk_container_remove (GTK_CONTAINER (old), d->content);
++
++  g_signal_handlers_disconnect_by_data (old, d);
++  g_object_steal_data (G_OBJECT (old), "chopgimp-trace");
++
++  dialog_container_new (d, shell ? GTK_WIDGET (shell) : NULL, FALSE);
++  g_object_unref (d->content);
++
++  gtk_widget_destroy (old);
++
++  /*  a run belongs to its container: start it again in the new one  */
++  if (d->running)
++    start_trace (d);
++}
++
++static void
++panel_button_clicked (GtkWidget *button,
++                      Dialog    *d)
++{
++  dialog_response (d->dialog,
++                   GPOINTER_TO_INT (g_object_get_data (G_OBJECT (button), "response")),
++                   d);
++}
++
++static gboolean
++detach_idle (GtkWidget *dialog)
++{
++  Dialog *d = g_object_get_data (G_OBJECT (dialog), "chopgimp-trace");
++
++  if (d && ! d->closed && d->dialog == dialog)
++    panel_detach (d);
++
++  g_object_unref (dialog);
++
++  return G_SOURCE_REMOVE;
++}
++
++static void
++dialog_container_new (Dialog    *d,
++                      GtkWidget *parent,
++                      gboolean   overlay)
++{
++  GimpDisplayShell *shell = dialog_shell (d);
++  const gchar      *title = d->live ? _("Options de vectorisation") : _("Vectoriser");
++  const gchar      *ok    = d->live ? _("_Appliquer") : _("_Vectoriser");
++
++  d->in_panel  = FALSE;
++  d->ok_button = NULL;
++
++  if (overlay && shell && GTK_IS_GRID (gtk_widget_get_parent (shell->canvas)))
++    {
++      GtkWidget *grid = gtk_widget_get_parent (shell->canvas);
++      GtkWidget *header;
++      GtkWidget *label;
++      GtkWidget *button;
++      GtkWidget *bbox;
++
++      d->in_panel = TRUE;
++      d->dialog   = gtk_box_new (GTK_ORIENTATION_VERTICAL, 0);
++      /*  the canvas takes the extra width, not the panel  */
++      gtk_widget_set_hexpand (d->dialog, FALSE);
++      gtk_style_context_add_class (gtk_widget_get_style_context (d->dialog),
++                                   "chopgimp-trace-panel");
++
++      /*  title, « Détacher », « Fermer »  */
++      header = gtk_box_new (GTK_ORIENTATION_HORIZONTAL, 4);
++      gtk_container_set_border_width (GTK_CONTAINER (header), 6);
++      gtk_box_pack_start (GTK_BOX (d->dialog), header, FALSE, FALSE, 0);
++
++      label = gtk_image_new_from_icon_name (GIMP_ICON_PATH, GTK_ICON_SIZE_MENU);
++      gtk_box_pack_start (GTK_BOX (header), label, FALSE, FALSE, 0);
++
++      label = gtk_label_new (title);
++      gimp_label_set_attributes (GTK_LABEL (label), PANGO_ATTR_WEIGHT, PANGO_WEIGHT_BOLD, -1);
++      gtk_label_set_xalign (GTK_LABEL (label), 0.0);
++      gtk_box_pack_start (GTK_BOX (header), label, TRUE, TRUE, 0);
++
++      button = gtk_button_new_from_icon_name (GIMP_ICON_CLOSE, GTK_ICON_SIZE_MENU);
++      gtk_button_set_relief (GTK_BUTTON (button), GTK_RELIEF_NONE);
++      gimp_help_set_help_data (button, _("Fermer sans vectoriser"), NULL);
++      g_object_set_data (G_OBJECT (button), "response", GINT_TO_POINTER (GTK_RESPONSE_CANCEL));
++      g_signal_connect (button, "clicked", G_CALLBACK (panel_button_clicked), d);
++      gtk_box_pack_end (GTK_BOX (header), button, FALSE, FALSE, 0);
++
++      button = gtk_button_new_from_icon_name (GIMP_ICON_DETACH, GTK_ICON_SIZE_MENU);
++      gtk_button_set_relief (GTK_BUTTON (button), GTK_RELIEF_NONE);
++      gimp_help_set_help_data (button, _("Ouvrir ces options dans une fenêtre"), NULL);
++      g_object_set_data (G_OBJECT (button), "response", GINT_TO_POINTER (RESPONSE_DETACH));
++      g_signal_connect (button, "clicked", G_CALLBACK (panel_button_clicked), d);
++      gtk_box_pack_end (GTK_BOX (header), button, FALSE, FALSE, 0);
++
++      gtk_box_pack_start (GTK_BOX (d->dialog),
++                          gtk_separator_new (GTK_ORIENTATION_HORIZONTAL), FALSE, FALSE, 0);
++
++      gtk_scrolled_window_set_max_content_height (GTK_SCROLLED_WINDOW (d->content), -1);
++      gtk_scrolled_window_set_propagate_natural_height (GTK_SCROLLED_WINDOW (d->content), FALSE);
++      /*  a fixed width: a long statistics line ellipsizes, the canvas
++       *  does not jump
++       */
++      gtk_scrolled_window_set_propagate_natural_width (GTK_SCROLLED_WINDOW (d->content), FALSE);
++      gtk_widget_set_size_request (d->content, 390, -1);
++      gtk_widget_set_vexpand (d->content, TRUE);
++      gtk_box_pack_start (GTK_BOX (d->dialog), d->content, TRUE, TRUE, 0);
++
++      gtk_box_pack_start (GTK_BOX (d->dialog),
++                          gtk_separator_new (GTK_ORIENTATION_HORIZONTAL), FALSE, FALSE, 0);
++
++      bbox = gtk_button_box_new (GTK_ORIENTATION_HORIZONTAL);
++      gtk_button_box_set_layout (GTK_BUTTON_BOX (bbox), GTK_BUTTONBOX_END);
++      gtk_box_set_spacing (GTK_BOX (bbox), 6);
++      gtk_container_set_border_width (GTK_CONTAINER (bbox), 8);
++      gtk_box_pack_start (GTK_BOX (d->dialog), bbox, FALSE, FALSE, 0);
++
++      if (d->live)
++        {
++          button = gtk_button_new_with_mnemonic (_("_Décomposer"));
++          g_object_set_data (G_OBJECT (button), "response", GINT_TO_POINTER (RESPONSE_EXPAND));
++          g_signal_connect (button, "clicked", G_CALLBACK (panel_button_clicked), d);
++          gtk_container_add (GTK_CONTAINER (bbox), button);
++          gtk_button_box_set_child_secondary (GTK_BUTTON_BOX (bbox), button, TRUE);
++        }
++
++      button = gtk_button_new_with_mnemonic (_("_Annuler"));
++      g_object_set_data (G_OBJECT (button), "response", GINT_TO_POINTER (GTK_RESPONSE_CANCEL));
++      g_signal_connect (button, "clicked", G_CALLBACK (panel_button_clicked), d);
++      gtk_container_add (GTK_CONTAINER (bbox), button);
++
++      d->ok_button = button = gtk_button_new_with_mnemonic (ok);
++      gtk_style_context_add_class (gtk_widget_get_style_context (button), "suggested-action");
++      g_object_set_data (G_OBJECT (button), "response", GINT_TO_POINTER (GTK_RESPONSE_OK));
++      g_signal_connect (button, "clicked", G_CALLBACK (panel_button_clicked), d);
++      gtk_container_add (GTK_CONTAINER (bbox), button);
++
++      g_signal_connect (d->dialog, "size-allocate", G_CALLBACK (panel_allocated), d);
++
++      /*  right of the vertical scrollbar, over the rulers / canvas / scrollbar rows  */
++      gtk_grid_attach (GTK_GRID (grid), d->dialog, 3, 0, 1, 3);
++    }
++  else
++    {
++      /*  buttons at the bottom, like the filter dialogs (no header bar)  */
++      d->dialog = g_object_new (GIMP_TYPE_DIALOG,
++                                "title",          title,
++                                "role",           "chopgimp-image-trace",
++                                "modal",          FALSE,
++                                "help-func",      gimp_standard_help_func,
++                                "help-id",        GIMP_HELP_PATH_DIALOG,
++                                "transient-for",  parent ? gtk_widget_get_toplevel (parent) : NULL,
++                                "use-header-bar", FALSE,
++                                NULL);
++
++      if (d->live)
++        gimp_dialog_add_button (GIMP_DIALOG (d->dialog), _("_Décomposer"), RESPONSE_EXPAND);
++
++      gimp_dialog_add_buttons (GIMP_DIALOG (d->dialog),
++                               _("_Annuler"), GTK_RESPONSE_CANCEL,
++                               ok,            GTK_RESPONSE_OK,
++                               NULL);
++      gimp_dialog_set_alternative_button_order (GTK_DIALOG (d->dialog),
++                                                GTK_RESPONSE_OK, GTK_RESPONSE_CANCEL, -1);
++
++      gtk_scrolled_window_set_propagate_natural_height (GTK_SCROLLED_WINDOW (d->content), TRUE);
++      gtk_scrolled_window_set_propagate_natural_width (GTK_SCROLLED_WINDOW (d->content), TRUE);
++      gtk_scrolled_window_set_max_content_height (GTK_SCROLLED_WINDOW (d->content), 680);
++      gtk_widget_set_size_request (d->content, -1, -1);
++      gtk_widget_set_vexpand (d->content, TRUE);
++      gtk_box_pack_start (GTK_BOX (gtk_dialog_get_content_area (GTK_DIALOG (d->dialog))),
++                          d->content, TRUE, TRUE, 0);
++      gtk_window_set_default_size (GTK_WINDOW (d->dialog), 380, -1);
++    }
++
++  g_object_set_data_full (G_OBJECT (d->dialog), "chopgimp-trace", d,
++                          (GDestroyNotify) dialog_free);
++  if (! d->in_panel)
++    g_signal_connect (d->dialog, "response", G_CALLBACK (dialog_response), d);
++  g_signal_connect (d->dialog, "destroy",  G_CALLBACK (dialog_destroyed), d);
++
++  if (d->in_panel)
++    {
++      /*  show_all() shows the options hidden for this mode too  */
++      gtk_widget_show_all (d->dialog);
++      update_sensitivity (d);
++    }
++  else
++    {
++      gtk_widget_show (d->dialog);
++    }
++}
++
++
+ /*  ─── public ────────────────────────────────────────────────────────── */
+ 
+ void
+@@ -1015,39 +1469,8 @@ chopgimp_trace_dialog_show (GimpImage    *image,
+   mask          = gimp_image_get_mask (image);
+   has_selection = mask && ! gimp_channel_is_empty (mask);
+ 
+-  /*  buttons at the bottom, like the filter dialogs (no header bar)  */
+-  d->dialog = g_object_new (GIMP_TYPE_DIALOG,
+-                            "title",          d->live ? _("Options de vectorisation")
+-                                                      : _("Vectoriser"),
+-                            "role",           "chopgimp-image-trace",
+-                            "modal",          FALSE,
+-                            "help-func",      gimp_standard_help_func,
+-                            "help-id",        GIMP_HELP_PATH_DIALOG,
+-                            "transient-for",  parent ? gtk_widget_get_toplevel (parent) : NULL,
+-                            "use-header-bar", FALSE,
+-                            NULL);
+-
+-  if (d->live)
+-    gimp_dialog_add_button (GIMP_DIALOG (d->dialog), _("_Décomposer"), RESPONSE_EXPAND);
+-
+-  gimp_dialog_add_buttons (GIMP_DIALOG (d->dialog),
+-                           _("_Annuler"),    GTK_RESPONSE_CANCEL,
+-                           d->live ? _("_Appliquer") : _("_Vectoriser"),
+-                           GTK_RESPONSE_OK,
+-                           NULL);
+-  gimp_dialog_set_alternative_button_order (GTK_DIALOG (d->dialog),
+-                                            GTK_RESPONSE_OK, GTK_RESPONSE_CANCEL, -1);
+-
+-  g_object_set_data_full (G_OBJECT (d->dialog), "chopgimp-trace", d,
+-                          (GDestroyNotify) dialog_free);
+-  g_signal_connect (d->dialog, "response", G_CALLBACK (dialog_response), d);
+-  g_signal_connect (d->dialog, "destroy",  G_CALLBACK (dialog_destroyed), d);
+-  g_signal_connect (drawable, "removed", G_CALLBACK (drawable_removed), d);
+-
+   vbox = gtk_box_new (GTK_ORIENTATION_VERTICAL, 8);
+   gtk_container_set_border_width (GTK_CONTAINER (vbox), 12);
+-  gtk_box_pack_start (GTK_BOX (gtk_dialog_get_content_area (GTK_DIALOG (d->dialog))),
+-                      vbox, TRUE, TRUE, 0);
+ 
+   if (d->live && chopgimp_trace_layer_is_edited (d->live))
+     {
+@@ -1099,6 +1522,12 @@ chopgimp_trace_dialog_show (GimpImage    *image,
+   g_signal_connect_swapped (d->palette, "changed", G_CALLBACK (option_changed), d);
+   grid_row (grid, row++, _("P_alette"), d->palette);
+ 
++  d->palette_info = gtk_label_new (NULL);
++  gtk_label_set_xalign (GTK_LABEL (d->palette_info), 0.0);
++  gtk_label_set_ellipsize (GTK_LABEL (d->palette_info), PANGO_ELLIPSIZE_END);
++  gtk_style_context_add_class (gtk_widget_get_style_context (d->palette_info), "dim-label");
++  grid_row (grid, row++, NULL, d->palette_info);
++
+   d->colors = scale_new (d, &d->colors_adj, _("Couleurs"), 2, 64, 1, 0, NULL,
+                          _("Nombre de couleurs (ou de gris) du tracé"));
+   grid_row (grid, row++, NULL, d->colors);
+@@ -1202,6 +1631,20 @@ chopgimp_trace_dialog_show (GimpImage    *image,
+   sep = gtk_separator_new (GTK_ORIENTATION_HORIZONTAL);
+   gtk_box_pack_start (GTK_BOX (vbox), sep, FALSE, FALSE, 0);
+ 
++  /*  3.27.5  */
++  d->seams = check_new (d, _("_Masquer les jointures"),
++                        _("Adjacent : chaque forme passe 1 pixel sous ses voisines du "
++                          "dessus ; pixel art : un filet de sa couleur. Sans cela, un "
++                          "fin liseré du fond apparaît entre les couleurs"));
++  grid_row (grid, row++, NULL, d->seams);
++
++  d->lighten = check_new (d, _("A_lléger les résultats lourds"),
++                          _("Au-delà de 150 000 points d'ancrage, les bords sont lissés, "
++                            "les petites zones fusionnées et les chemins simplifiés, "
++                            "jusqu'à 4 fois : un "
++                            "calque plus léger à afficher, déplacer et enregistrer"));
++  grid_row (grid, row++, NULL, d->lighten);
++
+   /*  the result  */
+   d->selection_only = gtk_check_button_new_with_mnemonic (_("_Sélection seulement"));
+   gtk_widget_set_sensitive (d->selection_only, has_selection && ! d->live);
+@@ -1254,13 +1697,24 @@ chopgimp_trace_dialog_show (GimpImage    *image,
+   gtk_widget_hide (d->progress);
+   gtk_widget_hide (d->stop);
+ 
++  /*  tall with « Avancé » open: scrolls when the canvas is too short  */
++  d->content = gtk_scrolled_window_new (NULL, NULL);
++  gtk_scrolled_window_set_policy (GTK_SCROLLED_WINDOW (d->content),
++                                  GTK_POLICY_NEVER, GTK_POLICY_AUTOMATIC);
++  gtk_scrolled_window_set_propagate_natural_height (GTK_SCROLLED_WINDOW (d->content), TRUE);
++  gtk_scrolled_window_set_propagate_natural_width (GTK_SCROLLED_WINDOW (d->content), TRUE);
++  gtk_container_add (GTK_CONTAINER (d->content), vbox);
++  gtk_widget_set_size_request (vbox, 360, -1);
++  gtk_widget_show (d->content);
++
+   widgets_from_options (d);
+ 
+   d->progress_id = g_timeout_add (100, (GSourceFunc) progress_tick, d);
+ 
+-  gtk_window_set_default_size (GTK_WINDOW (d->dialog), 380, -1);
+-  gtk_widget_show (d->dialog);
++  dialog_container_new (d, parent,
++                        dialog_shell (d) != NULL && ! prefer_window);
+ 
++  g_signal_connect (drawable, "removed", G_CALLBACK (drawable_removed), d);
+   d->stale = TRUE;
+   start_trace (d);
+ }
+diff --git a/app/dialogs/welcome-dialog.c b/app/dialogs/welcome-dialog.c
+index b8e42d6..8d7a6d5 100644
+--- a/app/dialogs/welcome-dialog.c
++++ b/app/dialogs/welcome-dialog.c
+@@ -215,7 +215,7 @@ welcome_dialog_new (Gimp       *gimp,
+                             windows ?  windows->data : NULL,
+                             0, gimp_standard_help_func,
+                             GIMP_HELP_WELCOME_DIALOG,
+-                            _("_Close"), GTK_RESPONSE_CLOSE,
++                            _("_Fermer"), GTK_RESPONSE_CLOSE,
+                             NULL);
+   g_list_free (windows);
+   gtk_window_set_position (GTK_WINDOW (dialog), GTK_WIN_POS_CENTER_ON_PARENT);
+@@ -319,8 +319,8 @@ welcome_dialog_new (Gimp       *gimp,
+     {
+       main_vbox = gimp_prefs_box_add_page (GIMP_PREFS_BOX (prefs_box),
+                                            "gimp-wilber",
+-                                           _("Release Notes"),
+-                                           _("Release Notes"),
++                                           _("Nouveautés"),
++                                           _("Nouveautés"),
+                                            "gimp-welcome-release_notes",
+                                            NULL,
+                                            &top_iter);
+@@ -441,8 +441,8 @@ welcome_dialog_response (GtkWidget *widget,
+     {
+       GString *string;
+ 
+-      string = g_string_new (_("You will have to restart GIMP for "
+-                               "the following changes to take effect:"));
++      string = g_string_new (_("Redémarrez ChopGimp pour que ces "
++                               "changements prennent effet :"));
+       g_string_append (string, "\n\n");
+ 
+       for (list = restart_diff; list; list = g_list_next (list))
+@@ -505,7 +505,7 @@ welcome_dialog_create_welcome_page (Gimp      *gimp,
+   gtk_widget_set_visible (grid, TRUE);
+ 
+   /* Translators: the %s string will be the version, e.g. "3.0". */
+-  tmp = g_strdup_printf (_("You installed GIMP %s!"), GIMP_VERSION);
++  tmp = g_strdup_printf (_("Bienvenue dans ChopGimp, basé sur GIMP %s !"), GIMP_VERSION);
+   widget = gtk_label_new (NULL);
+   /* XXX For GTK4, we may just replace with gtk_widget_add_css_class() AFAICS. */
+   gtk_style_context_add_class (gtk_widget_get_style_context (widget), "title-3");
+@@ -519,8 +519,8 @@ welcome_dialog_create_welcome_page (Gimp      *gimp,
+ 
+   /* Welcome message: left */
+ 
+-  markup = _("GIMP is Free Software for image authoring and manipulation.\n"
+-             "Want to know more?");
++  markup = _("ChopGimp est un logiciel libre de création et de retouche d'images, basé sur GIMP.\n"
++             "Pour en savoir plus :");
+ 
+   widget = gtk_label_new (NULL);
+   gtk_label_set_max_width_chars (GTK_LABEL (widget), 30);
+@@ -548,7 +548,7 @@ welcome_dialog_create_welcome_page (Gimp      *gimp,
+   welcome_add_link (GTK_GRID (grid), 0, &row,
+                     /* "globe with meridians" emoticone in UTF-8. */
+                     "\xf0\x9f\x8c\x90",
+-                    _("GIMP website"), "https://www.gimp.org/");
++                    _("Site de GIMP"), "https://www.gimp.org/");
+   welcome_add_link (GTK_GRID (grid), 0, &row,
+                     /* "open book" emoticone in UTF-8. */
+                     "\xf0\x9f\x93\x96",
+@@ -557,7 +557,7 @@ welcome_dialog_create_welcome_page (Gimp      *gimp,
+   welcome_add_link (GTK_GRID (grid), 0, &row,
+                     /* "graduation cap" emoticone in UTF-8. */
+                     "\xf0\x9f\x8e\x93",
+-                    _("Community Tutorials"),
++                    _("Tutoriels de la communauté"),
+                     "https://www.gimp.org/tutorials/");
+ 
+   /* XXX: should we add API docs for plug-in developers once it's
+@@ -565,8 +565,8 @@ welcome_dialog_create_welcome_page (Gimp      *gimp,
+ 
+   /* Welcome message: right */
+ 
+-  markup = _("GIMP is Community Software under the GNU general public license v3.\n"
+-             "Want to contribute?");
++  markup = _("ChopGimp et GIMP sont des logiciels communautaires sous licence GNU GPL v3.\n"
++             "Envie de contribuer ?");
+ 
+   widget = gtk_label_new (NULL);
+   gtk_label_set_line_wrap (GTK_LABEL (widget), TRUE);
+@@ -590,12 +590,12 @@ welcome_dialog_create_welcome_page (Gimp      *gimp,
+   welcome_add_link (GTK_GRID (grid), 1, &row,
+                     /* "keyboard" emoticone in UTF-8. */
+                     "\xe2\x8c\xa8",
+-                    _("Contributing"),
++                    _("Contribuer"),
+                     "https://www.gimp.org/develop/");
+   welcome_add_link (GTK_GRID (grid), 1, &row,
+                     /* "love letter" emoticone in UTF-8. */
+                     "\xf0\x9f\x92\x8c",
+-                    _("Donating"),
++                    _("Faire un don"),
+                     "https://www.gimp.org/donating/");
+ }
+ 
+@@ -625,7 +625,7 @@ welcome_dialog_create_personalize_page (Gimp       *gimp,
+   size_group = gtk_size_group_new (GTK_SIZE_GROUP_HORIZONTAL);
+ 
+   /* Themes */
+-  vbox = prefs_frame_new (_("Theme"), GTK_CONTAINER (main_vbox), FALSE);
++  vbox = prefs_frame_new (_("Thème"), GTK_CONTAINER (main_vbox), FALSE);
+ 
+   hbox = gtk_box_new (GTK_ORIENTATION_HORIZONTAL, 12);
+   gtk_container_set_border_width (GTK_CONTAINER (hbox), 0);
+@@ -636,7 +636,7 @@ welcome_dialog_create_personalize_page (Gimp       *gimp,
+   grid = prefs_grid_new (GTK_CONTAINER (hbox));
+   button = prefs_enum_combo_box_add (object, "theme-color-scheme",
+                                      0, 0,
+-                                     _("Color scheme"), GTK_GRID (grid),
++                                     _("Jeu de couleurs"), GTK_GRID (grid),
+                                      0, size_group);
+ 
+   hbox = gtk_box_new (GTK_ORIENTATION_HORIZONTAL, 12);
+@@ -662,7 +662,7 @@ welcome_dialog_create_personalize_page (Gimp       *gimp,
+   gtk_widget_set_visible (widget, TRUE);
+ 
+   grid = prefs_grid_new (GTK_CONTAINER (hbox));
+-  prefs_widget_add_aligned (widget, _("Icon theme"), GTK_GRID (grid), 0, FALSE,
++  prefs_widget_add_aligned (widget, _("Thème d'icônes"), GTK_GRID (grid), 0, FALSE,
+                             size_group);
+   g_object_unref (store);
+ 
+@@ -671,14 +671,14 @@ welcome_dialog_create_personalize_page (Gimp       *gimp,
+   size_group = gtk_size_group_new (GTK_SIZE_GROUP_HORIZONTAL);
+ 
+   prefs_switch_add (object, "prefer-symbolic-icons",
+-                    _("Use symbolic icons if available"),
++                    _("Utiliser les icônes symboliques si possible"),
+                     GTK_BOX (hbox), NULL, &button);
+   gtk_widget_set_valign (button, GTK_ALIGN_CENTER);
+ 
+-  vbox = prefs_frame_new (_("Icon Scaling"), GTK_CONTAINER (main_vbox), FALSE);
++  vbox = prefs_frame_new (_("Taille des icônes"), GTK_CONTAINER (main_vbox), FALSE);
+ 
+   prefs_switch_add (object, "override-theme-icon-size",
+-                    _("_Override icon sizes set by the theme"),
++                    _("_Remplacer la taille des icônes du thème"),
+                     GTK_BOX (vbox), NULL, &button);
+ 
+   scale = gtk_scale_new_with_range (GTK_ORIENTATION_HORIZONTAL,
+@@ -687,13 +687,13 @@ welcome_dialog_create_personalize_page (Gimp       *gimp,
+   gtk_scale_set_draw_value (GTK_SCALE (scale), FALSE);
+   gtk_range_set_round_digits (GTK_RANGE (scale), 0.0);
+   gtk_scale_add_mark (GTK_SCALE (scale), 0.0, GTK_POS_BOTTOM,
+-                      _("Small"));
++                      _("Petite"));
+   gtk_scale_add_mark (GTK_SCALE (scale), 1.0, GTK_POS_BOTTOM,
+-                      _("Medium"));
++                      _("Moyenne"));
+   gtk_scale_add_mark (GTK_SCALE (scale), 2.0, GTK_POS_BOTTOM,
+-                      _("Large"));
++                      _("Grande"));
+   gtk_scale_add_mark (GTK_SCALE (scale), 3.0, GTK_POS_BOTTOM,
+-                      _("Huge"));
++                      _("Immense"));
+   g_signal_connect (scale, "draw",
+                     G_CALLBACK (prefs_scale_marks_draw),
+                     NULL);
+@@ -712,9 +712,9 @@ welcome_dialog_create_personalize_page (Gimp       *gimp,
+                           scale,  "sensitive",
+                           G_BINDING_SYNC_CREATE);
+ 
+-  vbox = prefs_frame_new (_("Font Scaling"), GTK_CONTAINER (main_vbox), FALSE);
++  vbox = prefs_frame_new (_("Taille du texte"), GTK_CONTAINER (main_vbox), FALSE);
+   gimp_help_set_help_data (vbox,
+-                           _("Font scaling will not work with themes using absolute sizes."),
++                           _("La taille du texte reste fixe avec les thèmes en tailles absolues."),
+                            NULL);
+   scale = gtk_scale_new_with_range (GTK_ORIENTATION_HORIZONTAL,
+                                     50, 200, 10);
+@@ -742,16 +742,16 @@ welcome_dialog_create_personalize_page (Gimp       *gimp,
+   gtk_widget_set_visible (scale, TRUE);
+ 
+ #ifdef HAVE_ISO_CODES
+-  vbox = prefs_frame_new (_("GUI Language (requires restart)"),
++  vbox = prefs_frame_new (_("Langue de l'interface (au redémarrage)"),
+                           GTK_CONTAINER (main_vbox), FALSE);
+   prefs_language_combo_box_add (object, "language", GTK_BOX (vbox));
+ #endif
+ 
+-  vbox = prefs_frame_new (_("Additional Customizations"), GTK_CONTAINER (main_vbox), FALSE);
++  vbox = prefs_frame_new (_("Autres réglages"), GTK_CONTAINER (main_vbox), FALSE);
+ 
+ #ifndef GDK_WINDOWING_QUARTZ
+   prefs_switch_add (object, "custom-title-bar",
+-                    _("Merge menu and title bar (requires restart)"),
++                    _("Fusionner le menu et la barre de titre (au redémarrage)"),
+                     GTK_BOX (vbox), size_group, NULL);
+ #endif
+ 
+@@ -759,13 +759,13 @@ welcome_dialog_create_personalize_page (Gimp       *gimp,
+   if (gimp_version_check_update ())
+     {
+       prefs_switch_add (object, "check-updates",
+-                        _("Enable check for updates (requires internet)"),
++                        _("Rechercher les mises à jour (connexion Internet)"),
+                         GTK_BOX (vbox), size_group, NULL);
+     }
+ #endif
+ 
+   prefs_switch_add (object, "toolbox-groups",
+-                    _("Use tool _groups"),
++                    _("Utiliser des _groupes d'outils"),
+                     GTK_BOX (vbox), size_group, NULL);
+ 
+   g_clear_object (&size_group);
+@@ -1094,7 +1094,7 @@ welcome_dialog_create_contribute_page (Gimp       *gimp,
+   gtk_box_pack_start (GTK_BOX (main_vbox), hbox, FALSE, FALSE, 0);
+   gtk_widget_set_visible (hbox, TRUE);
+ 
+-  tmp = g_strdup_printf (_("Ways to contribute"));
++  tmp = g_strdup_printf (_("Comment contribuer"));
+   markup = g_strdup_printf ("<big>%s</big>", tmp);
+   g_free (tmp);
+   label = gtk_label_new (NULL);
+@@ -1103,63 +1103,63 @@ welcome_dialog_create_contribute_page (Gimp       *gimp,
+   gtk_box_set_center_widget (GTK_BOX (hbox), label);
+   gtk_widget_set_visible (label, TRUE);
+ 
+-  vbox = prefs_frame_new (_("Report Bugs"), GTK_CONTAINER (main_vbox), FALSE);
++  vbox = prefs_frame_new (_("Signaler des bogues"), GTK_CONTAINER (main_vbox), FALSE);
+ 
+-  tmp = g_strdup_printf (_("As any application, GIMP is not bug-free, so "
+-                           "reporting bugs that you encounter is very "
+-                           "important to the development."));
++  tmp = g_strdup_printf (_("Comme tout logiciel, GIMP a des bogues : signaler "
++                           "ceux que vous rencontrez aide beaucoup "
++                           "son développement."));
+   label = gtk_label_new (tmp);
+   g_free (tmp);
+   gtk_label_set_max_width_chars (GTK_LABEL (label), 30);
+   gtk_label_set_line_wrap (GTK_LABEL (label), TRUE);
+   gtk_box_pack_start (GTK_BOX (vbox), label, FALSE, FALSE, 0);
+   gtk_widget_set_visible (label, TRUE);
+-  button = gtk_link_button_new_with_label ("https://www.gimp.org/bugs/", _("Report Bugs"));
++  button = gtk_link_button_new_with_label ("https://www.gimp.org/bugs/", _("Signaler un bogue"));
+   gtk_box_pack_start (GTK_BOX (main_vbox), button, FALSE, FALSE, 0);
+   gtk_widget_set_visible (button, TRUE);
+ 
+-  vbox = prefs_frame_new (_("Write Code"), GTK_CONTAINER (main_vbox), FALSE);
++  vbox = prefs_frame_new (_("Écrire du code"), GTK_CONTAINER (main_vbox), FALSE);
+ 
+-  tmp = g_strdup_printf (_("Our Developer Website is where you want to start "
+-                           "learning about being a code contributor."));
++  tmp = g_strdup_printf (_("Le site des développeurs de GIMP est le point de "
++                           "départ pour contribuer au code."));
+   label = gtk_label_new (tmp);
+   g_free (tmp);
+   gtk_label_set_max_width_chars (GTK_LABEL (label), 30);
+   gtk_label_set_line_wrap (GTK_LABEL (label), TRUE);
+   gtk_box_pack_start (GTK_BOX (vbox), label, FALSE, FALSE, 0);
+   gtk_widget_set_visible (label, TRUE);
+-  button = gtk_link_button_new_with_label ("https://developer.gimp.org/", _("Write Code"));
++  button = gtk_link_button_new_with_label ("https://developer.gimp.org/", _("Site des développeurs"));
+   gtk_box_pack_start (GTK_BOX (main_vbox), button, FALSE, FALSE, 0);
+   gtk_widget_set_visible (button, TRUE);
+ 
+-  vbox = prefs_frame_new (_("Translate"), GTK_CONTAINER (main_vbox), FALSE);
++  vbox = prefs_frame_new (_("Traduire"), GTK_CONTAINER (main_vbox), FALSE);
+ 
+-  tmp = g_strdup_printf (_("Contact the respective translation team for your "
+-                           "language"));
++  tmp = g_strdup_printf (_("Contactez l'équipe de traduction de votre "
++                           "langue"));
+   label = gtk_label_new (tmp);
+   g_free (tmp);
+   gtk_label_set_max_width_chars (GTK_LABEL (label), 30);
+   gtk_label_set_line_wrap (GTK_LABEL (label), TRUE);
+   gtk_box_pack_start (GTK_BOX (vbox), label, FALSE, FALSE, 0);
+   gtk_widget_set_visible (label, TRUE);
+-  button = gtk_link_button_new_with_label ("https://l10n.gnome.org/teams/", _("Translate"));
++  button = gtk_link_button_new_with_label ("https://l10n.gnome.org/teams/", _("Équipes de traduction"));
+   gtk_box_pack_start (GTK_BOX (main_vbox), button, FALSE, FALSE, 0);
+   gtk_widget_set_visible (button, TRUE);
+ 
+-  vbox = prefs_frame_new (_("Donate"), GTK_CONTAINER (main_vbox), FALSE);
++  vbox = prefs_frame_new (_("Faire un don"), GTK_CONTAINER (main_vbox), FALSE);
+ 
+-  tmp = g_strdup_printf (_("Donating money is important: it makes GIMP "
+-                           "sustainable."));
++  tmp = g_strdup_printf (_("Les dons sont importants : ils font vivre "
++                           "GIMP dans la durée."));
+   label = gtk_label_new (tmp);
+   g_free (tmp);
+   gtk_label_set_max_width_chars (GTK_LABEL (label), 30);
+   gtk_label_set_line_wrap (GTK_LABEL (label), TRUE);
+   gtk_box_pack_start (GTK_BOX (vbox), label, FALSE, FALSE, 0);
+   gtk_widget_set_visible (label, TRUE);
+-  button = gtk_link_button_new_with_label ("https://liberapay.com/GIMP/donate", _("Donate via Liberapay"));
++  button = gtk_link_button_new_with_label ("https://liberapay.com/GIMP/donate", _("Don par Liberapay"));
+   gtk_box_pack_start (GTK_BOX (main_vbox), button, FALSE, FALSE, 0);
+   gtk_widget_set_visible (button, TRUE);
+-  button = gtk_link_button_new_with_label ("https://www.gimp.org/donating/", _("Other donation options"));
++  button = gtk_link_button_new_with_label ("https://www.gimp.org/donating/", _("Autres façons de donner"));
+   gtk_box_pack_start (GTK_BOX (main_vbox), button, FALSE, FALSE, 0);
+   gtk_widget_set_visible (button, TRUE);
+ }
+@@ -1193,7 +1193,7 @@ welcome_dialog_create_release_page (Gimp      *gimp,
+       gtk_widget_set_visible (hbox, TRUE);
+ 
+       /* Translators: the %s string will be the version, e.g. "3.0". */
+-      tmp = g_strdup_printf (_("GIMP %s Release Notes"), GIMP_VERSION);
++      tmp = g_strdup_printf (_("Nouveautés de GIMP %s"), GIMP_VERSION);
+       markup = g_strdup_printf ("<b><big>%s</big></b>", tmp);
+       g_free (tmp);
+       widget = gtk_label_new (NULL);
+@@ -1306,7 +1306,7 @@ welcome_dialog_create_release_page (Gimp      *gimp,
+           gtk_widget_set_visible (image, TRUE);
+ 
+           widget = gtk_label_new (NULL);
+-          tmp = g_strdup_printf (_("Click on release items with a %s bullet point to get a tour."),
++          tmp = g_strdup_printf (_("Cliquez sur un élément marqué %s pour une visite guidée."),
+                                  "<span weight='ultrabold'>\xe2\x96\xb6</span>");
+           markup = g_strdup_printf ("<i>%s</i>", tmp);
+           g_free (tmp);
+@@ -1346,7 +1346,7 @@ welcome_dialog_create_release_page (Gimp      *gimp,
+           release_link = g_strdup ("https://www.gimp.org/");
+         }
+ 
+-      widget = gtk_link_button_new_with_label (release_link, _("Learn more"));
++      widget = gtk_link_button_new_with_label (release_link, _("En savoir plus"));
+       gtk_widget_set_visible (widget, TRUE);
+       gtk_box_pack_start (GTK_BOX (hbox), widget, FALSE, FALSE, 0);
+       g_free (release_link);
+diff --git a/app/display/chopgimp-canvastrace.c b/app/display/chopgimp-canvastrace.c
+index b53aa87..d1b546f 100644
+--- a/app/display/chopgimp-canvastrace.c
++++ b/app/display/chopgimp-canvastrace.c
+@@ -15,6 +15,7 @@
+ #include "config.h"
+ 
+ #include <math.h>
++#include <string.h>
+ 
+ #include <gegl.h>
+ #include <gtk/gtk.h>
+@@ -35,13 +36,23 @@ chopgimp_canvas_trace_bounds (GimpCanvasItem        *item,
+                               cairo_rectangle_int_t *bounds)
+ {
+   ChopGimpCanvasTrace *trace = CHOPGIMP_CANVAS_TRACE (item);
+-  gdouble              x1, y1, x2, y2;
++  const gdouble       *m     = trace->matrix;
++  gdouble              x1 = G_MAXDOUBLE, y1 = G_MAXDOUBLE;
++  gdouble              x2 = -G_MAXDOUBLE, y2 = -G_MAXDOUBLE;
+ 
+-  gimp_canvas_item_transform_xy_f (item, trace->area.x, trace->area.y, &x1, &y1);
+-  gimp_canvas_item_transform_xy_f (item,
+-                                   trace->area.x + trace->area.width,
+-                                   trace->area.y + trace->area.height,
+-                                   &x2, &y2);
++  /*  the 4 corners of the area, through the matrix  */
++  for (gint i = 0; i < 4; i++)
++    {
++      gdouble ax = trace->area.x + ((i & 1) ? trace->area.width  : 0);
++      gdouble ay = trace->area.y + ((i & 2) ? trace->area.height : 0);
++      gdouble ix = m[0] * ax + m[2] * ay + m[4];
++      gdouble iy = m[1] * ax + m[3] * ay + m[5];
++      gdouble sx, sy;
++
++      gimp_canvas_item_transform_xy_f (item, ix, iy, &sx, &sy);
++      x1 = MIN (x1, sx); y1 = MIN (y1, sy);
++      x2 = MAX (x2, sx); y2 = MAX (y2, sy);
++    }
+ 
+   /*  strokes may go a little past the area  */
+   bounds->x      = floor (MIN (x1, x2)) - 4;
+@@ -72,6 +83,14 @@ chopgimp_canvas_trace_draw (GimpCanvasItem *item,
+   cairo_translate (cr, -shell->offset_x, -shell->offset_y);
+   cairo_scale (cr, shell->scale_x, shell->scale_y);
+ 
++  {
++    cairo_matrix_t m;
++
++    cairo_matrix_init (&m, trace->matrix[0], trace->matrix[1], trace->matrix[2],
++                       trace->matrix[3], trace->matrix[4], trace->matrix[5]);
++    cairo_transform (cr, &m);
++  }
++
+   cairo_rectangle (cr, trace->area.x, trace->area.y,
+                    trace->area.width, trace->area.height);
+   cairo_set_source_rgb (cr, 1.0, 1.0, 1.0);
+@@ -130,6 +149,7 @@ chopgimp_canvas_trace_new (GimpDisplayShell    *shell,
+ 
+   trace = g_object_new (CHOPGIMP_TYPE_CANVAS_TRACE, "shell", shell, NULL);
+   trace->area = *area;
++  trace->matrix[0] = trace->matrix[3] = 1.0;
+ 
+   return GIMP_CANVAS_ITEM (trace);
+ }
+@@ -170,3 +190,14 @@ chopgimp_canvas_trace_set_source (ChopGimpCanvasTrace *trace,
+   trace->source = surface;
+   gimp_canvas_item_end_change (GIMP_CANVAS_ITEM (trace));
+ }
++
++void
++chopgimp_canvas_trace_set_matrix (ChopGimpCanvasTrace *trace,
++                                  const gdouble        matrix[6])
++{
++  g_return_if_fail (CHOPGIMP_CANVAS_TRACE (trace));
++
++  gimp_canvas_item_begin_change (GIMP_CANVAS_ITEM (trace));
++  memcpy (trace->matrix, matrix, sizeof (trace->matrix));
++  gimp_canvas_item_end_change (GIMP_CANVAS_ITEM (trace));
++}
+diff --git a/app/display/chopgimp-canvastrace.h b/app/display/chopgimp-canvastrace.h
+index f4495d8..381d80e 100644
+--- a/app/display/chopgimp-canvastrace.h
++++ b/app/display/chopgimp-canvastrace.h
+@@ -27,6 +27,7 @@ struct _ChopGimpCanvasTrace
+   gint            view;      /* 0 result, 1 outlines, 2 outlines + source */
+   GeglRectangle   area;      /* the traced area (image px)             */
+   gpointer        source;    /* cairo_surface_t * of the source pixels */
++  gdouble         matrix[6]; /* traced coords → image (cairo order)    */
+ };
+ 
+ struct _ChopGimpCanvasTraceClass
+@@ -48,3 +49,6 @@ void             chopgimp_canvas_trace_set_source (ChopGimpCanvasTrace *trace,
+ void             chopgimp_canvas_trace_set_result (ChopGimpCanvasTrace *trace,
+                                                    gconstpointer        result,
+                                                    gint                 view);
++/*  3.27.5: a live trace moved, scaled… since (see chopgimp-trace-layer.h)  */
++void             chopgimp_canvas_trace_set_matrix (ChopGimpCanvasTrace *trace,
++                                                   const gdouble        matrix[6]);
+diff --git a/app/path/chopgimp-trace.cc b/app/path/chopgimp-trace.cc
+index cf6af3d..d2cd158 100644
+--- a/app/path/chopgimp-trace.cc
++++ b/app/path/chopgimp-trace.cc
+@@ -1,5 +1,6 @@
+ /* GIMP - The GNU Image Manipulation Program
+  * chopgimp-trace.cc — ChopGimp 3.27.3 (lot V5): « Vectoriser » engines
++ * 3.27.5: seams, lighten, pixel art at its native size, matrix
+  *
+  * See chopgimp-trace.h. Pipeline:
+  *
+@@ -51,6 +52,8 @@ extern "C" {
+ 
+ #include <2geom/pathvector.h>
+ #include <2geom/bezier-curve.h>
++#include <2geom/intersection-graph.h>
++#include <2geom/transforms.h>
+ #include "trace/depixelize/kopftracer2011.h"
+ 
+ #include "chopgimp-trace.h"
+@@ -247,6 +250,7 @@ struct Shape
+   std::string d;
+   Geometry    g;
+   gint        anchors;
++  double      bleed = 0.0;
+ };
+ 
+ struct ResultPriv
+@@ -764,6 +768,57 @@ merge_speckles (Job &job, int min_area)
+ }
+ 
+ 
++/*  3.27.5 « lighten »: a 3 × 3 majority filter on the labels. A photo
++ *  quantized to many colors has ragged borders (1 px steps everywhere),
++ *  which potrace follows with many anchors; a label taken by 5 of the 9
++ *  pixels around replaces the center one. Transparent stays transparent.
++ */
++void
++smooth_labels (Job &job)
++{
++  const int w = job.w, h = job.h;
++  std::vector<guint16> out (job.labels);
++
++  for (int y = 1; y < h - 1; y++)
++    {
++      if ((y & 63) == 0 && job.is_cancelled ())
++        return;
++
++      for (int x = 1; x < w - 1; x++)
++        {
++          gsize   i = (gsize) y * w + x;
++          guint16 c = job.labels[i];
++          guint16 l[9];
++          int     k = 0;
++
++          if (c == NO_LABEL)
++            continue;
++
++          for (int dy = -1; dy <= 1; dy++)
++            for (int dx = -1; dx <= 1; dx++)
++              l[k++] = job.labels[(gsize) (y + dy) * w + x + dx];
++
++          for (int a = 0; a < 9; a++)
++            {
++              if (l[a] == c || l[a] == NO_LABEL)
++                continue;
++              int n = 0;
++              for (int b = 0; b < 9; b++)
++                n += l[b] == l[a];
++              if (n >= 5)
++                {
++                  out[i] = l[a];
++                  job.colors[c].area--;
++                  job.colors[l[a]].area++;
++                  break;
++                }
++            }
++        }
++    }
++  job.labels.swap (out);
++}
++
++
+ /*  ─── distance transform (squared euclidean, Felzenszwalb) ──────────── */
+ 
+ void
+@@ -1172,6 +1227,38 @@ run_pass (Job &job, const std::vector<Pass> &passes, const std::vector<int> &ord
+   std::vector<guint8> thin;
+   bool has_thin = o->strokes && split_thin (job, mask, thin);
+ 
++  /*  3.27.5 « seams »: side by side, two antialiased edges let the
++   *  background show through (a light hairline between the colors); the
++   *  shape goes 1 px under the shapes drawn above it, which hide it
++   */
++  if (! overlapping && o->seams)
++    {
++      const int w = job.w, h = job.h;
++      std::vector<guint8> grown (mask);
++
++      for (int y = 0; y < h; y++)
++        for (int x = 0; x < w; x++)
++          {
++            gsize   i = (gsize) y * w + x;
++            guint16 l = job.labels[i];
++
++            if (mask[i] || l == NO_LABEL || order_of[l] <= pass.order)
++              continue;
++
++            for (int dy = -1; dy <= 1 && ! grown[i]; dy++)
++              for (int dx = -1; dx <= 1; dx++)
++                {
++                  int qx = x + dx, qy = y + dy;
++                  if (qx >= 0 && qy >= 0 && qx < w && qy < h && mask[(gsize) qy * w + qx])
++                    {
++                      grown[i] = 1;
++                      break;
++                    }
++                }
++          }
++      mask.swap (grown);
++    }
++
+ #ifdef CHOPGIMP_HAVE_POTRACE
+   potrace_shapes (job, mask, rgb, out);
+ #endif
+@@ -1218,27 +1305,119 @@ append_pathvector (PathBuilder &pb, const Geom::PathVector &pv)
+     }
+ }
+ 
++/*  pixel art is often enlarged (each art pixel a k × k block): the size
++ *  of the blocks and their phase (@x0, @y0 in 0..k-1), 1 when the pixels
++ *  are not in blocks. Every color change, along the rows and the columns,
++ *  happens on the block grid.
++ */
++int
++pixel_block_size (const std::vector<guint8> &px, int w, int h, int &x0, int &y0)
++{
++  auto same = [&] (gsize a, gsize b)
++    {
++      return ! memcmp (&px[a * 4], &px[b * 4], 4);
++    };
++  auto gcd = [] (long a, long b)
++    {
++      a = labs (a); b = labs (b);
++      while (b) { long t = a % b; a = b; b = t; }
++      return a;
++    };
++
++  long gx = 0, gy = 0, rx = -1, ry = -1;
++
++  for (int y = 0; y < h; y++)
++    for (int x = 1; x < w; x++)
++      if (! same ((gsize) y * w + x, (gsize) y * w + x - 1))
++        {
++          if (rx < 0)
++            rx = x;
++          else
++            gx = gcd (gx, x - rx);
++          if (gx == 1)
++            return 1;
++        }
++
++  for (int x = 0; x < w; x++)
++    for (int y = 1; y < h; y++)
++      if (! same ((gsize) y * w + x, (gsize) (y - 1) * w + x))
++        {
++          if (ry < 0)
++            ry = y;
++          else
++            gy = gcd (gy, y - ry);
++          if (gy == 1)
++            return 1;
++        }
++
++  long k = gcd (gx, gy);
++
++  /*  every change is at (first change + a multiple of k) along its axis  */
++  if (k < 2 || k > MIN (w, h) / 2)
++    return 1;
++
++  x0 = rx >= 0 ? (int) (rx % k) : 0;
++  y0 = ry >= 0 ? (int) (ry % k) : 0;
++
++  return (int) k;
++}
++
+ bool
+-trace_pixelart (Job &job, std::vector<Shape> &out, GError **error)
++trace_pixelart (Job &job, std::vector<Shape> &out, int &block, GError **error)
+ {
+   const ChopGimpTraceOptions *o = job.o;
+ 
+-  if ((gint64) job.w * job.h > 1024 * 1024)
+-    {
+-      g_set_error (error, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT,
+-                   _("Pixel art : l'image est trop grande (%d × %d pixels, "
+-                     "au plus 1 million de pixels). Réduisez-la ou "
+-                     "choisissez un autre moteur."), job.w, job.h);
+-      return false;
+-    }
+-
+   /* transparent pixels (ignored) stay transparent, else on white */
+   std::vector<guint8> px (job.rgba);
+   for (gsize i = 0; i < (gsize) job.w * job.h; i++)
+     if (job.labels[i] == NO_LABEL)
+       memset (&px[i * 4], 0, 4);
+ 
+-  Tracer::Image img = { px.data (), job.w, job.h, job.w * 4, 4 };
++  /*  3.27.5: enlarged pixel art is traced at its own size, then scaled
++   *  back: same shapes, k² fewer pixels for depixelize
++   */
++  int k = 1, x0 = 0, y0 = 0;
++  int cw = job.w, ch = job.h;
++  int ox = 0, oy = 0;                    /* origin of cell 0 (≤ 0) */
++
++  k = pixel_block_size (px, job.w, job.h, x0, y0);
++  if (k > 1)
++    {
++      ox = x0 > 0 ? x0 - k : 0;
++      oy = y0 > 0 ? y0 - k : 0;
++      cw = (job.w - ox + k - 1) / k;
++      ch = (job.h - oy + k - 1) / k;
++
++      std::vector<guint8> small ((gsize) cw * ch * 4);
++      for (int y = 0; y < ch; y++)
++        for (int x = 0; x < cw; x++)
++          {
++            int sx = MAX (0, ox + x * k), sy = MAX (0, oy + y * k);
++            memcpy (&small[((gsize) y * cw + x) * 4], &px[((gsize) sy * job.w + sx) * 4], 4);
++          }
++      px.swap (small);
++    }
++  block = k;
++
++  if ((gint64) cw * ch > 1024 * 1024)
++    {
++      if (k > 1)
++        g_set_error (error, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT,
++                     _("Pixel art : même ramenée à ses vrais pixels (blocs de %d × %d), "
++                       "l'image reste trop grande (%d × %d pixels, au plus 1 million). "
++                       "Choisissez le moteur « Contours remplis (potrace) », fait pour "
++                       "les grandes images."), k, k, cw, ch);
++      else
++        g_set_error (error, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT,
++                     _("Pixel art : l'image est trop grande (%d × %d pixels, au plus "
++                       "1 million) et ses pixels ne forment pas de blocs réguliers : "
++                       "ce n'est sans doute pas du pixel art. Choisissez le moteur "
++                       "« Contours remplis (potrace) », fait pour les grandes images."),
++                     cw, ch);
++      return false;
++    }
++
++  Tracer::Image img = { px.data (), cw, ch, cw * 4, 4 };
+   Tracer::Kopf2011::Options kopts;
+   kopts.optimize = o->paths < 80.0;
+   kopts.curvesMultiplier = 1.0 + (100.0 - CLAMP (o->corners, 0.0, 100.0)) / 100.0;
+@@ -1256,6 +1435,12 @@ trace_pixelart (Job &job, std::vector<Shape> &out, GError **error)
+       return false;
+     }
+ 
++  /*  the partial cells at the edges go past the area: cut there  */
++  bool clip = k > 1 && (ox < 0 || oy < 0 || ox + cw * k > job.w || oy + ch * k > job.h);
++  Geom::PathVector area;
++  if (clip)
++    area.push_back (Geom::Path (Geom::Rect (0, 0, job.w, job.h)));
++
+   for (const Tracer::Splines::Path &p : splines)
+     {
+       if (p.rgba[3] < 128)
+@@ -1267,8 +1452,30 @@ trace_pixelart (Job &job, std::vector<Shape> &out, GError **error)
+             continue;
+         }
+ 
++      Geom::PathVector pv = p.pathVector;
++      if (k > 1)
++        {
++          pv *= Geom::Scale (k, k) * Geom::Translate (ox, oy);
++          if (clip)
++            {
++              Geom::Rect  r  = Geom::Rect (0, 0, job.w, job.h);
++              Geom::OptRect bb = pv.boundsFast ();
++              if (bb && ! r.contains (*bb))
++                {
++                  try
++                    {
++                      Geom::PathIntersectionGraph pig (pv, area);
++                      pv = pig.getIntersection ();
++                    }
++                  catch (...)
++                    {
++                    }
++                }
++            }
++        }
++
+       PathBuilder pb (job.ox, job.oy);
+-      append_pathvector (pb, p.pathVector);
++      append_pathvector (pb, pv);
+       if (pb.anchors == 0)
+         continue;
+ 
+@@ -1279,6 +1486,8 @@ trace_pixelart (Job &job, std::vector<Shape> &out, GError **error)
+       sh.anchors = pb.anchors;
+       sh.d       = std::move (pb.d);
+       sh.g       = std::move (pb.g);
++      /*  the cells touch: a hairline of their color hides the seams  */
++      sh.bleed   = o->seams ? 0.6 : 0.0;
+       out.push_back (std::move (sh));
+     }
+   return true;
+@@ -1383,6 +1592,8 @@ chopgimp_trace_options_init (ChopGimpTraceOptions *options)
+   options->snap_lines         = FALSE;
+   options->ignore_white       = TRUE;
+   options->ignore_transparent = TRUE;
++  options->seams              = TRUE;
++  options->lighten            = TRUE;
+ }
+ 
+ extern "C" const gchar * const *
+@@ -1511,9 +1722,10 @@ chopgimp_trace_options_to_string (const ChopGimpTraceOptions *o)
+   num ("max-stroke", o->max_stroke_width);
+   num ("min-stroke", o->min_stroke_length);
+   g_string_append_printf (s, "invert=%d;fills=%d;strokes=%d;snap-lines=%d;"
+-                          "ignore-white=%d;ignore-transparent=%d",
++                          "ignore-white=%d;ignore-transparent=%d;seams=%d;lighten=%d",
+                           !! o->invert, !! o->fills, !! o->strokes, !! o->snap_lines,
+-                          !! o->ignore_white, !! o->ignore_transparent);
++                          !! o->ignore_white, !! o->ignore_transparent,
++                          !! o->seams, !! o->lighten);
+   if (o->custom && o->n_custom > 0)
+     {
+       g_string_append (s, ";custom=");
+@@ -1567,6 +1779,8 @@ chopgimp_trace_options_from_string (ChopGimpTraceOptions *o,
+       else if (! strcmp (k, "snap-lines")) o->snap_lines = d != 0;
+       else if (! strcmp (k, "ignore-white")) o->ignore_white = d != 0;
+       else if (! strcmp (k, "ignore-transparent")) o->ignore_transparent = d != 0;
++      else if (! strcmp (k, "seams"))    o->seams = d != 0;
++      else if (! strcmp (k, "lighten"))  o->lighten = d != 0;
+       else if (! strcmp (k, "custom"))
+         {
+           gchar    **cols = g_strsplit (v, ",", -1);
+@@ -1686,8 +1900,11 @@ chopgimp_trace_run (GeglBuffer                 *buffer,
+       return NULL;
+     }
+ 
++  /*  « lighten » may change some of them: a copy (custom colors borrowed)  */
++  ChopGimpTraceOptions eff = *options;
++
+   Job job;
+-  job.o  = options;
++  job.o  = &eff;
+   job.w  = r.width;
+   job.h  = r.height;
+   job.ox = r.x;
+@@ -1749,10 +1966,12 @@ chopgimp_trace_run (GeglBuffer                 *buffer,
+   report (0.05);
+ 
+   std::vector<Shape> shapes;
++  int                block     = 1;
++  int                lightened = 0;
+ 
+   if (options->engine == CHOPGIMP_TRACE_ENGINE_PIXELART)
+     {
+-      if (! trace_pixelart (job, shapes, error))
++      if (! trace_pixelart (job, shapes, block, error))
+         return NULL;
+     }
+   else
+@@ -1794,62 +2013,94 @@ chopgimp_trace_run (GeglBuffer                 *buffer,
+             }
+         }
+ 
+-      /* stack: largest area at the bottom */
+-      std::vector<Pass> passes;
+-      for (gsize j = 0; j < job.colors.size (); j++)
+-        if (job.colors[j].area > 0)
+-          passes.push_back ({ 0, (guint16) j });
+-      std::stable_sort (passes.begin (), passes.end (), [&] (const Pass &a, const Pass &b)
+-                        { return job.colors[a.label].area > job.colors[b.label].area; });
+-      std::vector<int> order_of (job.colors.size (), G_MAXINT);
+-      for (gsize p = 0; p < passes.size (); p++)
++      /*  3.27.5 « lighten »: a photo traced with many colors can make
++       *  close to a million anchors (a layer of tens of MB, slow to draw,
++       *  to move and to save). Above the budget, the small areas are
++       *  merged into their neighbours, the borders and paths smoothed,
++       *  then traced again (at most 4 times, each pass lighter and faster).
++       */
++      const gint64 budget = 150000;
++
++      for (;;)
+         {
+-          passes[p].order = (int) p;
+-          order_of[passes[p].label] = (int) p;
+-        }
++          /* stack: largest area at the bottom */
++          std::vector<Pass> passes;
++          for (gsize j = 0; j < job.colors.size (); j++)
++            if (job.colors[j].area > 0)
++              passes.push_back ({ 0, (guint16) j });
++          std::stable_sort (passes.begin (), passes.end (), [&] (const Pass &a, const Pass &b)
++                            { return job.colors[a.label].area > job.colors[b.label].area; });
++          std::vector<int> order_of (job.colors.size (), G_MAXINT);
++          for (gsize p = 0; p < passes.size (); p++)
++            {
++              passes[p].order = (int) p;
++              order_of[passes[p].label] = (int) p;
++            }
++
++          /* passes in parallel; progress and cancellation from here */
++          job.pass_shapes.assign (passes.size (), {});
++          std::atomic<int>        next { 0 };
++          std::atomic<int>        finished { 0 };
++          std::mutex              m;
++          std::condition_variable cv;
++          int nthreads = (int) MIN ((guint) passes.size (), MAX (1u, g_get_num_processors ()));
++          if (options->engine == CHOPGIMP_TRACE_ENGINE_CENTERLINE)
++            nthreads = MIN (nthreads, 2);   /* autotrace is serialized */
++
++          std::vector<std::thread> workers;
++          for (int t = 0; t < nthreads; t++)
++            workers.emplace_back ([&]
++              {
++                while (true)
++                  {
++                    int p = next++;
++                    if (p >= (int) passes.size () || job.is_cancelled ())
++                      break;
++                    run_pass (job, passes, order_of, p, job.pass_shapes[p]);
++                    finished++;
++                    std::lock_guard<std::mutex> g (m);
++                    cv.notify_all ();
++                  }
++              });
+ 
+-      /* passes in parallel; progress and cancellation from here */
+-      job.pass_shapes.assign (passes.size (), {});
+-      std::atomic<int>        next { 0 };
+-      std::atomic<int>        finished { 0 };
+-      std::mutex              m;
+-      std::condition_variable cv;
+-      int nthreads = (int) MIN ((guint) passes.size (), MAX (1u, g_get_num_processors ()));
+-      if (options->engine == CHOPGIMP_TRACE_ENGINE_CENTERLINE)
+-        nthreads = MIN (nthreads, 2);   /* autotrace is serialized */
+-
+-      std::vector<std::thread> workers;
+-      for (int t = 0; t < nthreads; t++)
+-        workers.emplace_back ([&]
+           {
+-            while (true)
++            std::unique_lock<std::mutex> lk (m);
++            while (finished.load () < (int) passes.size ())
+               {
+-                int p = next++;
+-                if (p >= (int) passes.size () || job.is_cancelled ())
++                cv.wait_for (lk, std::chrono::milliseconds (60));
++                if (job.is_cancelled ())
+                   break;
+-                run_pass (job, passes, order_of, p, job.pass_shapes[p]);
+-                finished++;
+-                std::lock_guard<std::mutex> g (m);
+-                cv.notify_all ();
++                if (! passes.empty ())
++                  report (0.2 + 0.75 * finished.load () / (double) passes.size ());
+               }
+-          });
+-
+-      {
+-        std::unique_lock<std::mutex> lk (m);
+-        while (finished.load () < (int) passes.size ())
+-          {
+-            cv.wait_for (lk, std::chrono::milliseconds (60));
+-            if (job.is_cancelled ())
+-              break;
+-            if (! passes.empty ())
+-              report (0.2 + 0.75 * finished.load () / (double) passes.size ());
+           }
+-      }
+-      for (std::thread &t : workers)
+-        t.join ();
++          for (std::thread &t : workers)
++            t.join ();
+ 
+-      if (cancelled ())
+-        return NULL;
++          if (cancelled ())
++            return NULL;
++
++          gint64 anchors = 0;
++          for (auto &v : job.pass_shapes)
++            for (Shape &sh : v)
++              anchors += sh.anchors;
++
++          if (! eff.lighten || anchors <= budget || lightened >= 4)
++            break;
++
++          /*  smoother borders first (most of the anchors of a photo),
++           *  then fewer small areas and smoother paths
++           */
++          lightened++;
++          smooth_labels (job);
++          if (lightened >= 2)
++            smooth_labels (job);
++          eff.noise = MAX (eff.noise * 4, 16);
++          eff.paths = MAX (0.0, eff.paths - 12.0);
++          merge_speckles (job, eff.noise);
++          if (cancelled ())
++            return NULL;
++        }
+ 
+       for (auto &v : job.pass_shapes)
+         for (Shape &s : v)
+@@ -1865,8 +2116,10 @@ chopgimp_trace_run (GeglBuffer                 *buffer,
+   res->shapes   = g_ptr_array_new ();
+   res->width    = r.width;
+   res->height   = r.height;
+-  res->offset_x = r.x;
+-  res->offset_y = r.y;
++  res->offset_x   = r.x;
++  res->offset_y   = r.y;
++  res->lightened  = lightened;
++  res->pixel_size = block;
+ 
+   std::vector<guint32> used;
+   for (Shape &s : shapes)
+@@ -1877,6 +2130,7 @@ chopgimp_trace_run (GeglBuffer                 *buffer,
+       ts->stroke    = s.stroke;
+       ts->width     = s.width;
+       ts->n_anchors = s.anchors;
++      ts->bleed     = s.bleed;
+       g_ptr_array_add (res->shapes, ts);
+ 
+       rp->geom.push_back (std::move (s.g));
+@@ -1912,12 +2166,56 @@ chopgimp_trace_result_free (ChopGimpTraceResult *result)
+   delete (ResultPriv *) result;
+ }
+ 
++/*  the path data of @g through @m (cairo order: xx yx xy yy x0 y0)  */
++static std::string
++geometry_to_d (const Geometry &g, const gdouble *m)
++{
++  std::string d;
++  gsize       k = 0;
++
++  auto pt = [&] (float x, float y)
++    {
++      append_pt (d, m[0] * x + m[2] * y + m[4], m[1] * x + m[3] * y + m[5]);
++    };
++
++  for (guint8 op : g.ops)
++    {
++      if (! d.empty ())
++        d += ' ';
++      switch (op)
++        {
++        case OP_MOVE:  d += 'M'; pt (g.pts[k], g.pts[k + 1]); k += 2; break;
++        case OP_LINE:  d += 'L'; pt (g.pts[k], g.pts[k + 1]); k += 2; break;
++        case OP_CURVE:
++          d += 'C';
++          pt (g.pts[k], g.pts[k + 1]);     d += ' ';
++          pt (g.pts[k + 2], g.pts[k + 3]); d += ' ';
++          pt (g.pts[k + 4], g.pts[k + 5]);
++          k += 6;
++          break;
++        case OP_CLOSE: d += 'Z'; break;
++        }
++    }
++  return d;
++}
++
++static bool
++matrix_is_identity (const gdouble *m)
++{
++  return ! m || (m[0] == 1.0 && m[1] == 0.0 && m[2] == 0.0 && m[3] == 1.0 &&
++                 m[4] == 0.0 && m[5] == 0.0);
++}
++
+ extern "C" gchar *
+ chopgimp_trace_result_to_xml (const ChopGimpTraceResult *result,
+-                              gboolean                   flat)
++                              gboolean                   flat,
++                              const gdouble             *matrix)
+ {
+   g_return_val_if_fail (result != NULL, NULL);
+ 
++  const ResultPriv *rp  = (const ResultPriv *) result;
++  const bool        tfm = ! matrix_is_identity (matrix);
++
+   GString *s  = g_string_new (NULL);
+   gint     id = 0;
+   gboolean in_group = FALSE;
+@@ -1955,7 +2253,8 @@ chopgimp_trace_result_to_xml (const ChopGimpTraceResult *result,
+       gchar *name = g_markup_escape_text (sh->stroke ? _("Trait") : _("Zone"), -1);
+       g_string_append_printf (s, "<path id=\"%d\" name=\"%s\" opacity=\"1\" mode=\"normal\" "
+                               "visible=\"1\" locked=\"0\" fill-rule=\"evenodd\" "
+-                              "antialias=\"1\" d=\"%s\">\n", ++id, name, sh->d);
++                              "antialias=\"1\" d=\"%s\">\n", ++id, name,
++                              tfm ? geometry_to_d (rp->geom[i], matrix).c_str () : sh->d);
+       g_free (name);
+ 
+       if (sh->stroke)
+@@ -1970,8 +2269,20 @@ chopgimp_trace_result_to_xml (const ChopGimpTraceResult *result,
+         {
+           g_string_append (s, "<fill type=\"color\" color=\"");
+           color_attr (sh->color);
+-          g_string_append (s, "\"/>\n<stroke type=\"none\" width=\"1\" align=\"center\" "
+-                              "cap=\"butt\" join=\"miter\" miter=\"4\"/>\n");
++          if (sh->bleed > 0.0)
++            {
++              /*  « seams »: a hairline of the same color  */
++              g_string_append (s, "\"/>\n<stroke type=\"color\" color=\"");
++              color_attr (sh->color);
++              g_string_append_printf (s, "\" width=\"%s\" align=\"center\" cap=\"round\" "
++                                      "join=\"round\" miter=\"4\"/>\n",
++                                      g_ascii_formatd (c[0], sizeof (c[0]), "%.3g", sh->bleed));
++            }
++          else
++            {
++              g_string_append (s, "\"/>\n<stroke type=\"none\" width=\"1\" align=\"center\" "
++                                  "cap=\"butt\" join=\"miter\" miter=\"4\"/>\n");
++            }
+         }
+       g_string_append (s, "</path>\n");
+     }
+@@ -2033,6 +2344,13 @@ chopgimp_trace_result_draw (const ChopGimpTraceResult *result,
+               cairo_set_line_join (cr, CAIRO_LINE_JOIN_ROUND);
+               cairo_stroke (cr);
+             }
++          else if (sh->bleed > 0.0)
++            {
++              cairo_fill_preserve (cr);
++              cairo_set_line_width (cr, sh->bleed);
++              cairo_set_line_join (cr, CAIRO_LINE_JOIN_ROUND);
++              cairo_stroke (cr);
++            }
+           else
+             cairo_fill (cr);
+         }
+diff --git a/app/path/chopgimp-trace.h b/app/path/chopgimp-trace.h
+index 172740a..a1ceeb9 100644
+--- a/app/path/chopgimp-trace.h
++++ b/app/path/chopgimp-trace.h
+@@ -1,5 +1,7 @@
+ /* GIMP - The GNU Image Manipulation Program
+  * chopgimp-trace.h — ChopGimp 3.27.3 (lot V5): « Vectoriser » (image trace)
++ * 3.27.5: no seams between abutting shapes, lighter heavy results, pixel
++ * art traced at its native size, results drawn / written through a matrix
+  *
+  * Turns pixels into vector shapes, like Illustrator's Image Trace:
+  *
+@@ -100,6 +102,16 @@ typedef struct
+   gboolean              ignore_white; /* no shape for white (or the
+                                        * lightest color when it is ≥ 95 %)  */
+   gboolean              ignore_transparent; /* alpha < 50 % is not traced   */
++  gboolean              seams;        /* 3.27.5 « Masquer les jointures »:
++                                       * ABUTTING fills reach 1 px under the
++                                       * shapes drawn above them, PIXELART
++                                       * shapes get a hairline of their own
++                                       * color, so no background shows
++                                       * between neighbours (antialiasing)   */
++  gboolean              lighten;      /* 3.27.5 « Alléger les résultats
++                                       * lourds »: above ~150 000 anchors,
++                                       * small areas are merged and paths
++                                       * simplified until it fits           */
+ } ChopGimpTraceOptions;
+ 
+ typedef struct
+@@ -110,6 +122,8 @@ typedef struct
+   gboolean    stroke;                 /* TRUE: open stroked path           */
+   gdouble     width;                  /* stroke width (px)                 */
+   gint        n_anchors;
++  gdouble     bleed;                  /* fill: hairline of the same color
++                                       * (px, 0: none), see « seams »       */
+ } ChopGimpTraceShape;
+ 
+ typedef struct
+@@ -120,6 +134,9 @@ typedef struct
+   gint        n_anchors;
+   gint        width, height;          /* the traced area (image px)        */
+   gint        offset_x, offset_y;     /* its origin in the image           */
++  gint        lightened;              /* « lighten » steps taken (0: none) */
++  gint        pixel_size;             /* PIXELART: the size of the pixel art
++                                       * blocks found (1: none)             */
+ } ChopGimpTraceResult;
+ 
+ typedef void (* ChopGimpTraceProgress) (gdouble  fraction,
+@@ -129,7 +146,8 @@ typedef void (* ChopGimpTraceProgress) (gdouble  fraction,
+ /*  ─── options ───────────────────────────────────────────────────────── */
+ 
+ /*  « Par défaut »: potrace, BW, threshold 128, paths 50, corners 75,
+- *  noise 25, fills, ignore white, abutting, n_colors 6, fidelity 50
++ *  noise 25, fills, ignore white, abutting, n_colors 6, fidelity 50,
++ *  seams, lighten
+  */
+ void                   chopgimp_trace_options_init     (ChopGimpTraceOptions *options);
+ 
+@@ -176,10 +194,13 @@ void                   chopgimp_trace_result_free      (ChopGimpTraceResult
+ 
+ /*  the objects for chopgimp_vlayer_set_xml(): a group per color (named
+  *  « #rrggbb »), one object per shape (fill or stroke of that color);
+- *  @flat: no groups. g_free().
++ *  @flat: no groups; @matrix (NULL: identity, else 6 doubles xx yx xy yy
++ *  x0 y0 as cairo_matrix_t): applied to the points (a live trace that was
++ *  scaled, moved, flipped… since). g_free().
+  */
+ gchar                * chopgimp_trace_result_to_xml    (const ChopGimpTraceResult  *result,
+-                                                        gboolean                    flat);
++                                                        gboolean                    flat,
++                                                        const gdouble              *matrix);
+ 
+ /*  draws @result on @cr (image coordinates) for the live preview; @view:
+  *  0 result, 1 outlines (thin dark lines, no fill), 2 outlines over the
+diff --git a/app/path/gimppath.c b/app/path/gimppath.c
+index 95adfe0..1a9fb70 100644
+--- a/app/path/gimppath.c
++++ b/app/path/gimppath.c
+@@ -31,6 +31,7 @@
+ 
+ #include "core/gimp.h"
+ #include "core/gimp-transform-utils.h"
++#include "core/chopgimp-trace-layer.h"
+ #include "core/gimpbezierdesc.h"
+ #include "core/gimpchannel-select.h"
+ #include "core/gimpcontainer.h"
+@@ -471,6 +472,18 @@ gimp_path_translate (GimpItem *item,
+       gimp_stroke_translate (stroke, offset_x, offset_y);
+     }
+ 
++  /*  ChopGimp 3.27.5: a live trace drawn by this path follows (no undo
++   *  step without @push_undo: undoing the move of a vector layer moves
++   *  its path back)
++   */
++  {
++    GimpMatrix3 m;
++
++    gimp_matrix3_identity (&m);
++    gimp_matrix3_translate (&m, offset_x, offset_y);
++    chopgimp_trace_path_transformed (path, &m, push_undo);
++  }
++
+   gimp_path_thaw (path);
+ }
+ 
+@@ -502,6 +515,17 @@ gimp_path_scale (GimpItem              *item,
+       gimp_stroke_translate (stroke, new_offset_x, new_offset_y);
+     }
+ 
++  {
++    GimpMatrix3 m;
++
++    gimp_matrix3_identity (&m);
++    gimp_matrix3_scale (&m,
++                        (gdouble) new_width  / (gdouble) gimp_item_get_width  (item),
++                        (gdouble) new_height / (gdouble) gimp_item_get_height (item));
++    gimp_matrix3_translate (&m, new_offset_x, new_offset_y);
++    chopgimp_trace_path_transformed (path, &m, gimp_item_is_attached (item));
++  }
++
+   GIMP_ITEM_CLASS (parent_class)->scale (item,
+                                          gimp_image_get_width  (image),
+                                          gimp_image_get_height (image),
+@@ -536,6 +560,14 @@ gimp_path_resize (GimpItem     *item,
+       gimp_stroke_translate (stroke, offset_x, offset_y);
+     }
+ 
++  {
++    GimpMatrix3 m;
++
++    gimp_matrix3_identity (&m);
++    gimp_matrix3_translate (&m, offset_x, offset_y);
++    chopgimp_trace_path_transformed (path, &m, gimp_item_is_attached (item));
++  }
++
+   GIMP_ITEM_CLASS (parent_class)->resize (item, context, fill_type,
+                                           gimp_image_get_width  (image),
+                                           gimp_image_get_height (image),
+@@ -571,6 +603,8 @@ gimp_path_flip (GimpItem            *item,
+       gimp_stroke_transform (stroke, &matrix, NULL);
+     }
+ 
++  chopgimp_trace_path_transformed (path, &matrix, gimp_item_is_attached (item));
++
+   gimp_path_thaw (path);
+ }
+ 
+@@ -602,6 +636,8 @@ gimp_path_rotate (GimpItem         *item,
+       gimp_stroke_transform (stroke, &matrix, NULL);
+     }
+ 
++  chopgimp_trace_path_transformed (path, &matrix, gimp_item_is_attached (item));
++
+   gimp_path_thaw (path);
+ }
+ 
+@@ -660,6 +696,8 @@ gimp_path_transform (GimpItem               *item,
+ 
+   g_queue_clear (&strokes);
+ 
++  chopgimp_trace_path_transformed (path, &local_matrix, push_undo);
++
+   gimp_path_thaw (path);
+ }
+ 
+-- 
+2.53.0
+
