@@ -918,7 +918,7 @@ class SvgImport:
             self.vh = parse_length(root.get("height"), 100.0, 100.0) or 100.0
         self.vd = math.sqrt((self.vw ** 2 + self.vh ** 2) / 2.0)
         self.stats = {"objects": 0, "groups": 0, "clips": 0, "gradients": 0, "gradients_approx": 0,
-                      "patterns": 0, "masks": 0, "filters": 0, "images": 0, "texts": 0,
+                      "patterns": 0, "patterns_approx": 0, "masks": 0, "masks_clip": 0, "filters": 0, "images": 0, "texts": 0,
                       "lost_clips": 0, "markers": 0, "unknown": {}}
         self._use_depth = 0
 
@@ -1063,6 +1063,12 @@ class SvgImport:
                 if p:
                     return p
             elif target is not None and local(target.tag) == "pattern":
+                # 3.28.2 : un motif devient la couleur moyenne de ses formes
+                # (pondérée par leur aire), signalé comme approché
+                avg = self.pattern_color(target)
+                if avg is not None:
+                    self.stats["patterns_approx"] += 1
+                    return {"type": "color", "rgba": (avg[0], avg[1], avg[2], avg[3] * opacity)}
                 self.stats["patterns"] += 1
                 if not fallback:
                     return {"type": "color", "rgba": (0.5, 0.5, 0.5, opacity)}
@@ -1071,6 +1077,30 @@ class SvgImport:
         if rgba is None:
             return {"type": "none"}
         return {"type": "color", "rgba": (rgba[0], rgba[1], rgba[2], rgba[3] * opacity)}
+
+    def pattern_color(self, pat, depth=0):
+        if pat is None or depth > 4:
+            return None
+        kids = [c for c in pat.iter() if c is not pat and isinstance(c.tag, str)]
+        if not kids:
+            h = self.href(pat)
+            return self.pattern_color(self.ref(h), depth + 1) if h else None
+        tot, acc = 0.0, [0.0, 0.0, 0.0, 0.0]
+        for c in kids:
+            if local(c.tag) not in SHAPES:
+                continue
+            st = self.style(c, {})
+            rgba = parse_color(st.get("fill", "black"), st.get("color"))
+            if rgba is None:
+                continue
+            b = bbox(self.geometry(c) or [])
+            area = max(1e-6, (b[2] - b[0]) * (b[3] - b[1])) if b else 1.0
+            for i in range(4):
+                acc[i] += rgba[i] * area
+            tot += area
+        if tot <= 0:
+            return None
+        return tuple(v / tot for v in acc)
 
     # ── géométrie des formes ──
     def geometry(self, el):
@@ -1243,7 +1273,9 @@ class SvgImport:
             n.visible = False
         if el.get(SODI_NS + "insensitive") == "true":
             n.locked = True
-        if st.get("mask") not in (None, "none"):
+        # 3.28.2 : un masque simple (formes blanches opaques) devient un
+        # masque d'écrêtage dans convert() ; les autres restent signalés
+        if st.get("mask") not in (None, "none") and not self.simple_mask(self.ref(st.get("mask"))):
             self.stats["masks"] += 1
         if st.get("filter") not in (None, "none"):
             self.stats["filters"] += 1
@@ -1332,7 +1364,41 @@ class SvgImport:
         clip = st.get("clip-path")
         if clip not in (None, "none"):
             n = self.apply_clip(n, self.ref(clip))
+        mask = st.get("mask")
+        if mask not in (None, "none"):
+            mel = self.ref(mask)
+            if self.simple_mask(mel):
+                self.stats["masks_clip"] += 1
+                n = self.apply_clip(n, mel, mask=True)
         return n
+
+    def simple_mask(self, mel):
+        """3.28.2 : <mask> fait seulement de formes blanches (ou presque),
+        opaques, sans dégradé ni image : équivaut à une découpe."""
+        if mel is None or local(mel.tag) != "mask":
+            return False
+        if mel.get("maskContentUnits") == "objectBoundingBox":
+            return False
+        found = False
+        for c in mel.iter():
+            if c is mel or not isinstance(c.tag, str):
+                continue
+            tag = local(c.tag)
+            if tag in ("g", "use"):
+                continue
+            if tag not in SHAPES:
+                return False
+            st = self.style(c, {})
+            rgba = parse_color(st.get("fill", "black"), st.get("color"))
+            if rgba is None or min(rgba[:3]) < 0.9 or rgba[3] < 0.99:
+                return False
+            if parse_number(st.get("fill-opacity"), 1.0) < 0.99 or \
+               parse_number(st.get("opacity"), 1.0) < 0.99:
+                return False
+            if st.get("stroke") not in (None, "none"):
+                return False
+            found = True
+        return found
 
     def _aspect_ok(self, el):
         kids = [c for c in el if isinstance(c.tag, str) and local(c.tag) not in SKIP]
@@ -1440,13 +1506,14 @@ class SvgImport:
         name = names[0] if len(names) == 1 and names[0] else element_name(cp, "Découpe")
         return path_node(name, subs, {"type": "color", "rgba": (0.0, 0.0, 0.0, 1.0)}, None, nonzero)
 
-    def apply_clip(self, n, cp):
-        if cp is None or local(cp.tag) != "clipPath":
+    def apply_clip(self, n, cp, mask=False):
+        if cp is None or local(cp.tag) != ("mask" if mask else "clipPath"):
             return n
         shape = self.clip_shape(cp, n)
         if shape is None:
             return n
-        self.stats["clips"] += 1
+        if not mask:
+            self.stats["clips"] += 1
         if n.kind == "group" and not n.clip:
             n.clip = True
             n.children.append(shape)

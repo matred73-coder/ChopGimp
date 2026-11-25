@@ -1476,6 +1476,111 @@ try:
     except Exception:
         report(False, "3.28.1", traceback.format_exc().replace("\n", " | ")[:400])
 
+    # 3.28.2 : petits défauts (contours à l'échelle, sélection d'objets
+    # dans le XCF, convertir en maille, décomposer seulement la
+    # distorsion, ombre en mode Produit pixellisée en calque)
+    try:
+        import re
+
+        def vx3(layer):
+            r = run("chopgimp-vobjects-get-xml", layer=layer)
+            return r.index(1) if r is not None and r.index(0) == Gimp.PDBStatusType.SUCCESS else ""
+
+        im3 = Gimp.Image.new(300, 300, Gimp.ImageBaseType.RGB)
+        bg3 = Gimp.Layer.new(im3, "Fond", 300, 300, Gimp.ImageType.RGB_IMAGE, 100, Gimp.LayerMode.NORMAL)
+        im3.insert_layer(bg3, None, 0)
+        p3 = Gimp.Path.new(im3, "Rect")
+        im3.insert_path(p3, None, 0)
+        s3 = p3.bezier_stroke_new_moveto(50, 50)
+        for x, y in [(150, 50), (150, 150), (50, 150)]:
+            p3.bezier_stroke_lineto(s3, x, y)
+        p3.stroke_close(s3)
+        vl3 = Gimp.VectorLayer.new(im3, p3)
+        im3.insert_layer(vl3, None, 0)
+        vl3.set_enable_fill(True); vl3.set_enable_stroke(True); vl3.set_stroke_width(4)
+        vl3.refresh()
+        im3.set_selected_layers([vl3])
+
+        def c3(c):
+            r = run("chopgimp-vobjects-command", image=im3, command=c)
+            return r is not None and r.index(0) == Gimp.PDBStatusType.SUCCESS and r.index(1)
+
+        c3("split-new"); c3("select-all")
+        ws = lambda: [float(v) for v in re.findall(r'<stroke[^>]*?\swidth="([0-9.]+)"', vx3(vl3))]
+        w0 = ws()
+        c3("scale-strokes:0"); ok_sc = c3("scale-objects:2")
+        w1 = ws()
+        c3("scale-strokes:1"); c3("scale-objects:0.5")
+        w2 = ws()
+        report(ok_sc and w0 and w1 and abs(w1[0] - w0[0] / 2) < 1e-6 and abs(w2[0] - w1[0]) < 1e-6,
+               "Contours à l'échelle : option décochée, épaisseur conservée",
+               "%s → %s → %s" % (w0[:1], w1[:1], w2[:1]))
+
+        # sélection d'objets gardée par le XCF
+        x3p = os.path.join(TMP, "sel328.xcf")
+        Gimp.file_save(Gimp.RunMode.NONINTERACTIVE, im3, Gio.File.new_for_path(x3p), None)
+        im3b = Gimp.file_load(Gimp.RunMode.NONINTERACTIVE, Gio.File.new_for_path(x3p))
+        lb = [l for l in im3b.get_layers() if l.is_vector_layer()][0]
+        pb = lb.get_parasite("chopgimp-vobjects")
+        tb = bytes(pb.get_data()).decode() if pb else ""
+        msel = re.search(r'selection="([0-9 ]*)"', tb)
+        report(bool(msel and msel.group(1).strip()), "Sélection d'objets gardée par le XCF",
+               msel.group(0) if msel else "aucune")
+        im3b.delete()
+
+        # Déformation → Convertir en maille
+        c3("select-all")
+        ok_w = c3("distort-warp:arc:50")
+        ok_m = c3("distort-to-mesh")
+        xm = vx3(vl3)
+        report(ok_w and ok_m and "mode=mesh" in xm and "mode=warp" not in xm,
+               "Convertir la déformation en maille")
+
+        # Décomposer : la distorsion seulement, les autres effets restent
+        c3("distort-release")
+        o_lpe = run("chopgimp-vobjects-command", image=im3, command="distort-warp:flag:40")
+        xs = vx3(vl3)
+        # un effet vivant ajouté à la main (zigzag) sous la distorsion
+        xs2 = xs.replace("<lpe>", "<lpe>[9]\ntype=roughen\nsize=2\nseed=1\n", 1)
+        ok_set = run("chopgimp-vobjects-set-xml", layer=vl3, xml=xs2) if xs2 != xs else None
+        c3("select-all")
+        ok_e = c3("distort-expand")
+        xe = vx3(vl3)
+        report(ok_e and "distort" not in xe and ("roughen" in xe or xs2 == xs),
+               "Décomposer : seulement la distorsion",
+               "effet restant : %s" % ("roughen" in xe))
+        im3.delete()
+
+        # Ombre portée en mode Produit : pixelliser → un calque en Produit
+        im4 = Gimp.Image.new(200, 200, Gimp.ImageBaseType.RGB)
+        b4 = Gimp.Layer.new(im4, "Fond", 200, 200, Gimp.ImageType.RGB_IMAGE, 100, Gimp.LayerMode.NORMAL)
+        im4.insert_layer(b4, None, 0)
+        l4 = Gimp.Layer.new(im4, "Forme", 200, 200, Gimp.ImageType.RGBA_IMAGE, 100, Gimp.LayerMode.NORMAL)
+        im4.insert_layer(l4, None, 0)
+        l4.fill(Gimp.FillType.TRANSPARENT)
+        im4.select_rectangle(Gimp.ChannelOps.REPLACE, 60, 60, 60, 60)
+        Gimp.context_set_foreground(Gegl.Color.new("red"))
+        l4.edit_fill(Gimp.FillType.FOREGROUND)
+        Gimp.Selection.none(im4)
+        f4 = Gimp.DrawableFilter.new(l4, "gegl:dropshadow", "Ombre portée")
+        cf = f4.get_config()
+        cf.set_property("x", 10.0); cf.set_property("y", 10.0)
+        try:
+            cf.set_property("blend-mode", "multiply")
+        except Exception:
+            pass
+        f4.set_blend_mode(Gimp.LayerMode.REPLACE)
+        f4.update()
+        l4.append_filter(f4)
+        l4.merge_filters()
+        modes = [(l.get_name(), l.get_mode()) for l in im4.get_layers()]
+        report(len(modes) == 3 and any(m == Gimp.LayerMode.MULTIPLY for _, m in modes),
+               "Pixelliser : l'ombre en Produit devient un calque en Produit",
+               ", ".join("%s/%s" % (n, m.value_nick if hasattr(m, "value_nick") else m) for n, m in modes))
+        im4.delete()
+    except Exception:
+        report(False, "3.28.2", traceback.format_exc().replace("\n", " | ")[:400])
+
     # 4. Réglages d'usine présents (thème, icônes, menus, raccourcis)
     data = Gimp.data_directory()
     sysconf = Gimp.sysconf_directory()

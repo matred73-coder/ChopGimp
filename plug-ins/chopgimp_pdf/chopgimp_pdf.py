@@ -1003,6 +1003,11 @@ def import_svg(image, path, opts, report, fonts):
                    "ou déformation)" % st["gradients_approx"] if st["gradients_approx"] else ""))
     if st["clips"]:
         report.add("  %d masque(s) d'écrêtage." % st["clips"])
+    if st.get("masks_clip"):
+        report.add("  %d masque(s) de fusion simples (formes blanches) repris en masques "
+                   "d'écrêtage." % st["masks_clip"])
+    if st.get("patterns_approx"):
+        report.add("  %d motif(s) approché(s) par leur couleur moyenne." % st["patterns_approx"])
     lost = []
     for key, label in (("masks", "masques de fusion"), ("filters", "filtres"), ("patterns", "motifs"),
                        ("lost_clips", "découpes de calques"),

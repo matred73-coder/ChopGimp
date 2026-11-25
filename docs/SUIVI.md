@@ -726,3 +726,36 @@ Objectif : rester proche de Photoshop, une seule place par commande, plus de dou
 - **Corrigé en passant** : un chemin ouvert produit par le moteur géométrique (contours, segments…) recevait un segment de retour vers son début.
 - Vérifié : tests automatiques (15 nouveaux : 4 zones d'un rectangle coupé par une croix, pot sur une seule zone, segment, zones qui suivent un tracé déplacé, écarts, aller-retour XCF, décomposer ; symbole, occurrence, occurrence modifiée de l'extérieur qui quitte le symbole, modification dans « Modifier le symbole » propagée, XCF, rompre, supprimer, import SVG) ; banc graphique : outil K (zone soulignée, Alt+clic prend le rouge, clic remplit la zone), panneau Symboles (vignette, Placer), outil Enveloppe après Distorsion libre (cadre serré sur l'objet, coin tiré en perspective).
 - Limites : la zone survolée est soulignée avec la couleur de surbrillance de GIMP, pas en rouge ; pas de glisser-déposer du panneau Symboles vers le canevas (bouton ou double-clic) ; une occurrence placée deux fois au centre se superpose à la précédente ; la Sélection de peinture dynamique ne sélectionne pas d'un double-clic les zones voisines de même couleur ; Ajouter au groupe ne prend que des objets du même niveau que le groupe ; un très grand nombre de tracés croisés rend le recalcul lent (chaque déplacement recalcule l'arrangement) ; double-clic / Suppr de l'outil Largeur et enregistrement d'un profil depuis l'interface : couverts par les tests automatiques (PDB) de la 3.27.6, pas revus au banc.
+
+## 3.28.2 — Petits défauts restants
+
+Correctifs des « Limites » notées de 3.26.1 à 3.28.1 (patch 0141).
+- **Vectoriel** :
+  - **Plume** : un nouvel objet et son premier point = une seule étape d'annulation (« Ajouter un objet »).
+  - **« Mettre à l'échelle les contours et effets »** (comme Illustrator) : case « Contours à l'échelle » dans la barre d'options du mode objet et Préférences > Options des outils > Objets vectoriels (`chopgimprc [vector] scale-strokes`, cochée par défaut = comportement d'avant). Décochée, un objet redimensionné garde l'épaisseur de son contour (et le décalage des tirets). Les effets de calque ne sont pas concernés.
+  - **Sélection d'objets gardée par le XCF** (attribut `selection` du parasite `chopgimp-vobjects`, ids vérifiés au chargement).
+  - **Déplacer tout un calque multi-objets** : **Ctrl+Maj+glisser** avec l'outil Déplacement (l'outil Déplacement de GIMP prend le relais).
+- **Aspect et couleurs** :
+  - **Couleurs globales** : glisser une nuance du panneau sur un objet du canevas = son fond la suit (Maj au dépôt : son contour) ; glisser une nuance sur une autre = la réordonner.
+  - **Profils d'épaisseur** : ils suivent maintenant l'**alignement** (intérieur / extérieur) et les **tirets** du contour (rendu et zone de clic). Export SVG : toujours un contour plein centré.
+  - **Import SVG** : un **masque simple** (formes blanches opaques) devient un masque d'écrêtage ; un **motif** devient sa couleur moyenne (pondérée par l'aire), signalé « approché » dans le rapport. Les filtres SVG et les masques en dégradé restent signalés « non repris ».
+- **Distorsion** :
+  - **Décomposer** ne fige plus que la distorsion : les autres effets vivants de l'objet restent modifiables (ils s'appliquent désormais après elle).
+  - **Convertir en maille** (Vecteur > Distorsion, barre d'options de l'outil Enveloppe) : une Déformation devient une enveloppe 4 × 4 passant par les mêmes points, modifiable avec l'outil Enveloppe (approchée entre les points).
+  - **Plusieurs objets tournés distordus ensemble** : leur transformation passe d'abord dans leur tracé (même étape d'annulation), la boîte commune est donc juste. Pas pour l'aperçu de la fenêtre Déformation (approché pour des objets tournés).
+- **Peinture dynamique et Symboles** :
+  - Survol du **Pot de peinture dynamique en rouge** (couleur propre d'un élément du canevas, `chopgimp-rgb`).
+  - **Glisser un symbole du panneau sur le canevas** = une occurrence à l'endroit du dépôt ; une occurrence placée au centre là où il y en a déjà une est **décalée de 10 px**.
+  - **Double-clic de la Sélection de peinture dynamique** : les zones (ou segments) voisines de même couleur.
+  - **Ajouter au groupe** accepte des objets de niveaux différents.
+  - **Recalcul** : boîtes des tracés triées (balayage) et grille pour les sommets au lieu de comparaisons de toutes les paires ; pendant qu'on déplace un tracé d'un gros groupe (calcul > 60 ms), recalcul au plus toutes les 2 × sa durée, puis une dernière fois (`CHOPGIMP_LP_NO_THROTTLE=1` pour couper). Mesure (avant) : 60 + 60 tracés croisés, 3 481 zones en 0,44 s.
+  - **Outil Largeur**, testé au banc : le **double-clic** sur un point n'ouvrait pas ses largeurs (doubles-clics non demandés à GIMP) → corrigé ; **Suppr** supprimait tout l'objet au lieu du point → il retire d'abord le point sélectionné ; **Enregistrer…** un profil : vérifié (fichier `chopgimp-width-profiles`).
+- **Styles de calque** :
+  - **Pipette** : case « Calque avec effets » (cochée par défaut, comme Photoshop), active quand « Échantillonner sur tous les calques » est décochée : la couleur du calque tel qu'il est affiché (ombre, contour, lueur…).
+  - **Fenêtre Style de calque ouverte** : une action faite ailleurs sur l'image (menu, panneau…) ferme d'abord l'étape « Style de calque » et reste séparée. Dans ce cas, Annuler dans la fenêtre ne retire plus les réglages faits avant cette action (Ctrl+Z les retire).
+  - **Pixelliser le style de calque** : une ombre portée ou une lueur externe dans son propre mode (Produit, Écran…) devient **un calque à part, dans ce mode**, sous le calque (comme « Créer des calques » de Photoshop) au lieu d'être figée en Normal (`CHOPGIMP_NO_BEHIND_LAYERS=1` pour l'ancien comportement). Fusionner des calques : non modifié.
+- **Corrigé en passant** : la source d'une vectorisation dynamique était enregistrée en PNG par gdk-pixbuf, qui passe dans le runtime GNOME 51 par les chargeurs glycin (processus à part, qui échouent parfois) : la vectorisation n'était alors pas dynamique (15 tests en échec par intermittence). PNG par cairo désormais.
+- **PDB** `chopgimp-vobjects-command` : `distort-to-mesh`, `scale-strokes:0|1`, `scale-objects:<facteur>`.
+- Vérifié : 158 tests (5 nouveaux : épaisseur conservée, sélection dans le XCF, convertir en maille, décomposer seulement la distorsion, ombre en Produit pixellisée en calque Produit) ; banc graphique : outil Largeur (point posé et élargi, double-clic, Suppr, enregistrer un profil), case « Contours à l'échelle ».
+- Non vérifié au banc : glisser-déposer des couleurs globales et des symboles, surbrillance rouge, double-clic de la Sélection de peinture dynamique, Ctrl+Maj+glisser, pipette avec effets, garde d'annulation de la fenêtre Style de calque.
+- Limites : avec l'outil Largeur et un objet sélectionné, le profil de largeur passe dans « ⋯ » de la barre d'options (place) ; « Fusionner les calques » avec une ombre en Produit : non vérifié.

@@ -316,7 +316,8 @@ VECTEUR_MENU = [
      ("D_istorsion", [["layers-vobjects-distort-warp", "layers-vobjects-distort-mesh",
                        "layers-vobjects-distort-top", "layers-vobjects-distort-free"],
                       ["layers-vobjects-distort-edit-envelope",
-                       "layers-vobjects-distort-edit-contents"],
+                       "layers-vobjects-distort-edit-contents",
+                       "layers-vobjects-distort-to-mesh"],
                       ["layers-vobjects-distort-expand", "layers-vobjects-distort-release"]])],
     # 3.28.1 (lot V6 points 6 et 7) : Peinture dynamique, Symboles
     [("_Peinture dynamique", [["layers-vobjects-livepaint-make", "layers-vobjects-livepaint-add"],
