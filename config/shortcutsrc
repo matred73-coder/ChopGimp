@@ -72,6 +72,10 @@
 (action "tools-dodge-burn" "o")
 # Plume
 (action "tools-path" "p")
+# Courbure (Illustrator)
+(action "tools-curvature" "<Shift>p")
+# Crayon vectoriel (Illustrator)
+(action "tools-vpencil" "n")
 # Texte
 (action "tools-text" "t")
 # Forme (rectangle, ellipse, polygone, étoile, ligne)
@@ -288,6 +292,8 @@
 (action "layers-vobjects-distort-mesh" "<Primary><Shift><Alt>m")
 # Distorsion : d'après l'objet du dessus
 (action "layers-vobjects-distort-top" "<Primary><Shift><Alt>c")
+# Transformer chaque
+(action "layers-vobjects-transform-each" "<Primary><Alt>d")
 
 # ── Sélection ───────────────────────────────────────────────────
 # Tout sélectionner
@@ -350,6 +356,8 @@
 (action "dialogs-layers" "F7")
 # Infos
 (action "dialogs-cursor" "F8")
+# Transformation (Illustrator)
+(action "dialogs-transform" "<Shift>F8")
 # Historique
 (action "dialogs-undo-history" "<Alt>F9")
 

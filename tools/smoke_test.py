@@ -1614,6 +1614,94 @@ try:
     except Exception:
         report(False, "3.28.3", traceback.format_exc().replace("\n", " | ")[:400])
 
+    # 3.29.0 (vectoriel « complet », blocs 1 et 2) : angles dynamiques,
+    # Ciseaux, Jonction, Cutter, objet clé, Aligner sur, Répéter la
+    # transformation, Transformer chaque, panneau Transformation
+    try:
+        import re
+
+        def vx9(layer):
+            r = run("chopgimp-vobjects-get-xml", layer=layer)
+            return r.index(1) if r is not None and r.index(0) == Gimp.PDBStatusType.SUCCESS else ""
+
+        im9 = Gimp.Image.new(320, 320, Gimp.ImageBaseType.RGB)
+        b9 = Gimp.Layer.new(im9, "Fond", 320, 320, Gimp.ImageType.RGB_IMAGE, 100, Gimp.LayerMode.NORMAL)
+        im9.insert_layer(b9, None, 0)
+        p9 = Gimp.Path.new(im9, "Formes")
+        im9.insert_path(p9, None, 0)
+        for pts9, closed in [([(50, 50), (150, 50), (150, 150), (50, 150)], True),
+                             ([(200, 50), (280, 50), (280, 130), (200, 130)], True),
+                             ([(20, 250), (100, 250)], False),
+                             ([(103, 250), (180, 250)], False)]:
+            st9 = p9.bezier_stroke_new_moveto(*pts9[0])
+            for x, y in pts9[1:]:
+                p9.bezier_stroke_lineto(st9, x, y)
+            if closed:
+                p9.stroke_close(st9)
+        vl9 = Gimp.VectorLayer.new(im9, p9)
+        im9.insert_layer(vl9, None, 0)
+        vl9.set_enable_fill(True); vl9.set_enable_stroke(True); vl9.set_stroke_width(2)
+        vl9.refresh()
+        im9.set_selected_layers([vl9])
+
+        def c9(c):
+            r = run("chopgimp-vobjects-command", image=im9, command=c)
+            return bool(r is not None and r.index(0) == Gimp.PDBStatusType.SUCCESS and r.index(1))
+
+        n9 = lambda: vx9(vl9).count("<path ")
+        c9("split-new")
+        n0 = n9()
+
+        c9("select-all")
+        ok_c = c9("corners:8:round")
+        x_c = vx9(vl9)
+        ok_c0 = c9("corners:0")
+        report(ok_c and "type=corners" in x_c and "type=corners" not in vx9(vl9),
+               "Angles dynamiques : ajoutés puis retirés", "%d objets" % n0)
+
+        ok_cut = c9("cut-at:60:250")
+        n_cut = n9()
+        ok_join = c9("join-at:101.5:250:6")
+        n_join = n9()
+        report(ok_cut and n_cut == n0 + 1 and ok_join and n_join == n0,
+               "Ciseaux puis Jonction", "%d → %d → %d objets" % (n0, n_cut, n_join))
+
+        c9("select-none")
+        ok_k = c9("knife:100:30:100:170")
+        report(ok_k and n9() == n0 + 1, "Cutter : le carré tranché en deux", "%d objets" % n9())
+
+        c9("select-all")
+        ok_key = c9("key:0")
+        ok_al = c9("align-left")
+        ok_to = c9("align-to:artboard") and c9("key-none") and c9("align-top")
+        c9("align-to:selection")
+        report(ok_key and ok_al and ok_to, "Objet clé et « Aligner sur le plan de travail »")
+
+        c9("select-all")
+        n_sel = n9()
+        ok_rec = c9("transform-record:1:0:0:1:10:0:1")
+        ok_again = c9("transform-again")
+        report(ok_rec and ok_again and n9() == 2 * n_sel,
+               "Répéter la transformation (copie)", "%d → %d objets" % (n_sel, n9()))
+
+        ok_each = c9("transform-each:150:150:0:0:30:0:0:4:1")
+        report(ok_each and n9() > 2 * n_sel, "Transformer chaque (copie)", "%d objets" % n9())
+
+        c9("select-all")
+        ok_box = c9("box:0:10:10:120:120:15:0")
+        ok_flip = c9("flip-h:4")
+        report(ok_box and ok_flip, "Panneau Transformation : taille, angle, retournement")
+        im9.delete()
+
+        sysconf = Gimp.sysconf_directory()
+        toolrc = os.path.join(sysconf, "toolrc")
+        tr = open(toolrc).read() if os.path.exists(toolrc) else ""
+        report(all(t in tr for t in ["gimp-curvature-tool", "gimp-vpencil-tool", "gimp-vsmooth-tool",
+                                     "gimp-vscissors-tool", "gimp-vknife-tool", "gimp-vjoin-tool"]),
+               "Outils Courbure, Crayon, Lissage, Ciseaux, Cutter, Jonction dans la boîte à outils")
+    except Exception:
+        report(False, "3.29.0", traceback.format_exc().replace("\n", " | ")[:400])
+
     # 4. Réglages d'usine présents (thème, icônes, menus, raccourcis)
     data = Gimp.data_directory()
     sysconf = Gimp.sysconf_directory()

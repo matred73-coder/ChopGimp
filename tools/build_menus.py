@@ -78,7 +78,7 @@ outils = ["      <section>"] + ["  " + l for l in get["_Tools"]] + ["      </sec
 # « Fenêtres ancrables ».
 PANNEAUX = [["dialogs-layers", "dialogs-channels", "dialogs-paths",
              "dialogs-appearance", "dialogs-stroke", "dialogs-global-colors",
-             "dialogs-symbols"],
+             "dialogs-symbols", "dialogs-transform"],
             ["dialogs-colors", "dialogs-palettes", "dialogs-gradients", "dialogs-patterns",
              "dialogs-brushes", "dialogs-fonts"],
             ["dialogs-character", "dialogs-paragraph", "dialogs-glyphs", "dialogs-text-styles",
@@ -285,7 +285,14 @@ VECTEUR_MENU = [
      ("_Aligner", [["layers-vobjects-align-left", "layers-vobjects-align-hcenter",
                     "layers-vobjects-align-right", "layers-vobjects-align-top",
                     "layers-vobjects-align-vcenter", "layers-vobjects-align-bottom"],
-                   ["layers-vobjects-distribute-h", "layers-vobjects-distribute-v"]])],
+                   ["layers-vobjects-distribute-h", "layers-vobjects-distribute-v"],
+                   # 3.29.0 : Aligner sur (sélection, objet clé, plan de travail)
+                   ["layers-vobjects-align-to-selection", "layers-vobjects-align-to-key",
+                    "layers-vobjects-align-to-artboard", "layers-vobjects-key-none"]]),
+     # 3.29.0 (vectoriel « complet », bloc 2) : Transformer
+     ("_Transformer", [["layers-vobjects-transform-again", "layers-vobjects-transform-each"],
+                       ["layers-vobjects-flip-h", "layers-vobjects-flip-v"],
+                       ["layers-vobjects-corners-reset"], ["dialogs-transform"]])],
     [(None, [["layers-vobjects-lock", "layers-vobjects-unlock-all",
               "layers-vobjects-hide", "layers-vobjects-show-all"]])],
     [("_Masque d'écrêtage", [["layers-vobjects-clip-make", "layers-vobjects-clip-release"]]),
@@ -328,7 +335,8 @@ VECTEUR_MENU = [
                      "layers-vobjects-symbol-break"], ["dialogs-symbols"]])],
     # 3.27.2 (lot V3) : panneaux Aspect et Contour ; (lot V6.2) Couleurs globales
     [(None, [["dialogs-appearance", "dialogs-stroke", "dialogs-global-colors",
-              "dialogs-symbols", "layers-vobjects-style-picker", "layers-vobjects-recolor"]])],
+              "dialogs-symbols", "dialogs-transform", "layers-vobjects-style-picker",
+              "layers-vobjects-recolor"]])],
     # 3.27.3 (lot V5 et V6 point 4) : Vectorisation dynamique
     [("_Vectorisation", [["layers-image-trace", "layers-image-trace-options",
                           "layers-image-trace-expand"]]),

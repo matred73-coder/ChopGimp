@@ -180,6 +180,19 @@
             (visible yes))
         (GimpToolInfo "gimp-direct-select-tool"
             (icon-name "chopgimp-tool-direct-select")
+            (visible yes))
+        (GimpToolInfo "gimp-curvature-tool"
+            (icon-name "chopgimp-tool-curvature")
+            (visible yes))))
+(GimpToolGroup "tool group"
+    (visible yes)
+    (active-tool "gimp-vpencil-tool")
+    (children
+        (GimpToolInfo "gimp-vpencil-tool"
+            (icon-name "chopgimp-tool-vpencil")
+            (visible yes))
+        (GimpToolInfo "gimp-vsmooth-tool"
+            (icon-name "chopgimp-tool-vsmooth")
             (visible yes))))
 (GimpToolInfo "gimp-text-tool"
     (icon-name "gimp-tool-text")
@@ -203,6 +216,19 @@
             (visible yes))
         (GimpToolInfo "gimp-envelope-tool"
             (icon-name "chopgimp-tool-envelope")
+            (visible yes))))
+(GimpToolGroup "tool group"
+    (visible yes)
+    (active-tool "gimp-vscissors-tool")
+    (children
+        (GimpToolInfo "gimp-vscissors-tool"
+            (icon-name "chopgimp-tool-vscissors")
+            (visible yes))
+        (GimpToolInfo "gimp-vknife-tool"
+            (icon-name "chopgimp-tool-vknife")
+            (visible yes))
+        (GimpToolInfo "gimp-vjoin-tool"
+            (icon-name "chopgimp-tool-vjoin")
             (visible yes))))
 (GimpToolGroup "tool group"
     (visible yes)

@@ -32,10 +32,12 @@ TOOLBOX = [
     ("spot-heal", "heal"),                                    # J
     ("clone", "perspective-clone"),                           # S
     # ── Vectoriel / texte ────────────────────────────────────────────
-    ("path", "direct-select"),                                # P / A
+    ("path", "direct-select", "curvature"),                   # P / A / Maj+P (3.29.0)
+    ("vpencil", "vsmooth"),                                   # N (3.29.0 : crayon vectoriel, lissage)
     ("text",),                                                # T
     ("shape", "shape-builder"),                               # U / Maj+Alt+M
     ("width", "envelope"),                                    # Maj+W
+    ("vscissors", "vknife", "vjoin"),                         # 3.29.0 : ciseaux, cutter, jonction
     ("live-paint-bucket", "live-paint-select"),               # K / Maj+K
     # ── Navigation ───────────────────────────────────────────────────
     ("hand", "rotate-view"),                                  # H / R
@@ -53,7 +55,10 @@ ICON = {"dodge-burn": "gimp-tool-dodge", "convolve": "gimp-tool-blur",
         "width": "chopgimp-tool-width", "envelope": "chopgimp-tool-envelope",
         "live-paint-bucket": "chopgimp-tool-live-paint-bucket",
         "live-paint-select": "chopgimp-tool-live-paint-select",
-        "magnetic-lasso": "chopgimp-tool-magnetic-lasso"}
+        "magnetic-lasso": "chopgimp-tool-magnetic-lasso",
+        "curvature": "chopgimp-tool-curvature", "vpencil": "chopgimp-tool-vpencil",
+        "vsmooth": "chopgimp-tool-vsmooth", "vscissors": "chopgimp-tool-vscissors",
+        "vknife": "chopgimp-tool-vknife", "vjoin": "chopgimp-tool-vjoin"}
 
 
 def info(tool, visible=True, indent=""):

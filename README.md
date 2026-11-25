@@ -138,6 +138,12 @@ Ils sont produits automatiquement par GitHub Actions à chaque tag `v*`
   toutes les occurrences suivent les modifications ; `<symbol>` / `<use>` repris à
   l'import SVG.
 - **Gomme vectorielle**, texte déformé, texte sur tracé et texte dans une forme.
+- **Outils de dessin** (3.29.0) : Courbure, Crayon vectoriel et Lissage, Ciseaux, Cutter
+  et Jonction ; angles dynamiques (arrondi, inversé, chanfrein) ; formes spirale, arc,
+  grilles rectangulaire et polaire.
+- **Transformations précises** (3.29.0) : panneau Transformation (point de référence à
+  9 cases), Répéter la transformation (Ctrl+D), Transformer chaque, objet clé et
+  « Aligner sur ».
 
 ### Texte
 - **Outil Texte refait** : surlignage par ligne, poignées (texte de point ou de
@@ -203,6 +209,7 @@ Ils sont produits automatiquement par GitHub Actions à chaque tag `v*`
 | 3.25 – 3.26 | Passe de performance, barre d'options compacte, curseurs et panneaux modernisés |
 | 3.27 | Objets vectoriels, panneaux Objets / Aspect / Contour, Vectoriser, fenêtre d'accueil |
 | 3.28 | Menus réorganisés comme Photoshop (menu Vecteur…), Peinture dynamique et Symboles (3.28.1), petits défauts : contours à l'échelle, convertir en maille, pipette avec effets, ombres pixellisées dans leur mode (3.28.2), Lasso magnétique, Sélection rapide, boîte à outils par familles (3.28.3) |
+| 3.29 | Vectoriel « complet » : outils Courbure, Crayon vectoriel, Lissage, Ciseaux, Cutter et Jonction, angles dynamiques, spirale / arc / grilles, panneau Transformation, Ctrl+D, Transformer chaque, objet clé (3.29.0) |
 
 Le détail de chaque version (ce qui est fait, vérifié, et ce qui reste) se trouve
 dans [`docs/SUIVI.md`](docs/SUIVI.md). Le plan du chantier vectoriel est dans

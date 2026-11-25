@@ -62,6 +62,11 @@ PS_MAP = [
     ("Outils", "tools-smudge",             [S + A + "r"],    "Doigt"),
     ("Outils", "tools-dodge-burn",         ["o"],            "Densité − / +"),
     ("Outils", "tools-path",               ["p"],            "Plume"),
+    # 3.29.0 : Courbure (Maj+~ dans Illustrator, absent des claviers
+    # AZERTY : Maj+P, libre) et Crayon vectoriel (N comme Illustrator ;
+    # le crayon de GIMP garde Maj+B)
+    ("Outils", "tools-curvature",          [S + "p"],        "Courbure (Illustrator)"),
+    ("Outils", "tools-vpencil",            ["n"],            "Crayon vectoriel (Illustrator)"),
     ("Outils", "tools-text",               ["t"],            "Texte"),
     ("Outils", "tools-shape",              ["u"],            "Forme (rectangle, ellipse, polygone, étoile, ligne)"),
     ("Outils", "tools-shape-builder",      [S + A + "m"],    "Bâtisseur de formes (Illustrator)"),
@@ -180,6 +185,10 @@ PS_MAP = [
     ("Vecteur", "layers-vobjects-distort-warp", [P + S + A + "a"], "Distorsion : déformation"),
     ("Vecteur", "layers-vobjects-distort-mesh", [P + S + A + "m"], "Distorsion : d'après une maille"),
     ("Vecteur", "layers-vobjects-distort-top",  [P + S + A + "c"], "Distorsion : d'après l'objet du dessus"),
+    # 3.29.0 : Transformer chaque (Alt+Maj+Ctrl+D dans Illustrator, déjà pris
+    # par Dupliquer l'image) ; Répéter la transformation passe par Ctrl+D
+    # (Désélectionner) quand aucune sélection de pixels n'est active
+    ("Vecteur", "layers-vobjects-transform-each", [P + A + "d"], "Transformer chaque"),
 
     # ── Sélection ──────────────────────────────────────────────────────
     ("Sélection", "select-all",            [P + "a"],        "Tout sélectionner"),
@@ -215,6 +224,7 @@ PS_MAP = [
     ("Fenêtre", "dialogs-colors",          ["F6"],           "Couleur"),
     ("Fenêtre", "dialogs-layers",          ["F7"],           "Calques"),
     ("Fenêtre", "dialogs-cursor",         ["F8"],           "Infos"),
+    ("Fenêtre", "dialogs-transform",      [S + "F8"],       "Transformation (Illustrator)"),
     ("Fenêtre", "dialogs-undo-history",    [A + "F9"],       "Historique"),
 ]
 
@@ -235,7 +245,7 @@ def main():
 
     # 1. actions valides
     for _, act, _, _ in PS_MAP:
-        if act not in defaults and not act.startswith(("photogimp-", "chopgimp-", "tools-opacity-ps-", "tools-hand", "tools-rotate-view", "tools-shape", "tools-spot-heal", "windows-hide-right-docks", "tools-shape-builder", "tools-direct-select", "tools-width", "tools-envelope", "tools-live-paint-", "layers-vobjects-")):
+        if act not in defaults and not act.startswith(("photogimp-", "chopgimp-", "tools-opacity-ps-", "tools-hand", "tools-rotate-view", "tools-shape", "tools-spot-heal", "windows-hide-right-docks", "tools-shape-builder", "tools-direct-select", "tools-width", "tools-envelope", "tools-live-paint-", "layers-vobjects-", "tools-curvature", "tools-vpencil", "tools-vsmooth", "tools-vscissors", "tools-vknife", "tools-vjoin", "dialogs-transform")):
             errors.append("action inconnue de GIMP 3.2.8 : %s" % act)
 
     # 2. aucune touche attribuée deux fois dans PS_MAP

@@ -963,6 +963,72 @@ def _symbols():
     return s
 
 
+
+# ─── 3.29.0 : outils de dessin vectoriel (Illustrator) ───────────────────
+@icon("chopgimp-tool-curvature")
+def _curvature_tool():
+    # Une courbe lisse passant par trois points (ronds)
+    p = []
+    for i in range(0, 25):
+        t = i / 24.0
+        p.append((1.8 + 12.4 * t, 11.5 - 7.5 * math.sin(math.pi * t) + 2.0 * t))
+    s = polyline(p, W)
+    for x, y in [(1.8, 11.5), (8.0, 5.0), (14.2, 13.5)]:
+        s += ring(x, y, 1.6, 0.9)
+    return s
+
+
+@icon("chopgimp-tool-vpencil")
+def _vpencil_tool():
+    # Un crayon en biais et un tracé ondulé
+    s = polygon([(9.5, 2.0), (13.8, 6.3), (6.5, 13.6), (2.2, 9.3)], 0.85)
+    s += polygon([(2.2, 9.3), (6.5, 13.6), (1.2, 14.8)])
+    s += polyline([(9.0, 15.0), (11.0, 13.6), (13.0, 14.6), (15.0, 13.2)], 0.9)
+    return s
+
+
+@icon("chopgimp-tool-vsmooth")
+def _vsmooth_tool():
+    # Un crayon et un tracé lissé (ondes amorties)
+    s = polygon([(9.5, 2.0), (13.8, 6.3), (8.5, 11.6), (4.2, 7.3)], 0.85)
+    s += polygon([(4.2, 7.3), (8.5, 11.6), (3.4, 12.8)])
+    p = []
+    for i in range(0, 25):
+        t = i / 24.0
+        p.append((1.0 + 14.0 * t, 14.2 + 1.0 * math.sin(6 * math.pi * t) * (1 - t)))
+    s += polyline(p, 0.9)
+    return s
+
+
+@icon("chopgimp-tool-vscissors")
+def _vscissors_tool():
+    # Des ciseaux ouverts sur un tracé coupé
+    s = ring(4.0, 12.0, 2.2, 1.0) + ring(10.0, 13.0, 2.2, 1.0)
+    s += line(5.4, 10.4, 13.0, 2.0, 1.1) + line(9.0, 11.2, 6.0, 2.0, 1.1)
+    s += line(1.0, 6.0, 4.6, 6.0, 1.0) + line(10.6, 6.0, 15.0, 6.0, 1.0)
+    return s
+
+
+@icon("chopgimp-tool-vknife")
+def _vknife_tool():
+    # Une lame de cutter au-dessus d'une forme tranchée
+    s = polygon([(9.0, 1.5), (14.5, 7.0), (12.5, 9.0), (7.0, 3.5)])
+    s += polygon([(7.0, 3.5), (12.5, 9.0), (10.8, 10.7), (5.3, 5.2)], 0.6)
+    s += polygon([(1.5, 9.0), (6.0, 9.0), (4.0, 14.5), (1.5, 14.5)], 0.85)
+    s += polygon([(7.2, 9.0), (11.5, 9.0), (11.5, 14.5), (5.2, 14.5)], 0.85)
+    return s
+
+
+@icon("chopgimp-tool-vjoin")
+def _vjoin_tool():
+    # Deux tracés qui se rejoignent en un point, un gribouillis de frottement
+    s = polyline([(1.5, 3.0), (5.0, 6.5), (8.0, 9.0)], W)
+    s += polyline([(14.5, 3.0), (11.0, 6.5), (8.0, 9.0)], W)
+    s += circle(8.0, 9.0, 1.4)
+    s += polyline([(5.0, 13.0), (7.0, 11.8), (8.0, 13.6), (9.4, 11.8), (11.0, 13.2)], 0.8)
+    return s
+
+
 def main():
     os.makedirs(OUT, exist_ok=True)
     for name, fn in sorted(ICONS.items()):

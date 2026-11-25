@@ -795,3 +795,71 @@ Correctifs des « Limites » notées de 3.26.1 à 3.28.1 (patch 0141).
   - Lasso magnétique : des mouvements de souris très rapides (sauts de plus de 100 px) peuvent poser des points hors du bord, que Retour arrière retire ;
   - dans la Sélection directe sur plusieurs objets, un nouveau sous-tracé dessiné à la Plume n'appartient à aucun objet et n'est pas gardé ;
   - le raccourci L active le Lasso libre (action de l'outil), pas l'outil affiché du groupe.
+
+## 3.29.0 — Vectoriel « complet » I : outils de dessin et transformations précises
+
+Blocs 1 et 2 validés par l'utilisateur le 2026-11-25 (dessin et édition,
+transformations précises), comme Illustrator.
+
+- **Outil Courbure** (Maj+P, groupe Plume, `app/tools/chopgimp-vpentools.c`) :
+  chaque clic pose un point, la courbe passe par tous en douceur (poignées de
+  Catmull-Rom) ; Alt+clic : point d'angle ; double-clic sur un point : lisse ↔
+  angle ; glisser un point le déplace ; clic sur le premier : fermer ; Entrée /
+  Échap : terminer ; Retour arrière : retirer le dernier point ; changer d'outil
+  garde la courbe. Le résultat est un objet du calque vectoriel actif (option
+  « Ajouter au calque vectoriel actif ») ou un nouveau calque vectoriel.
+- **Crayon vectoriel** (N, groupe avec Lissage) : tracé à main levée ajusté en
+  courbes de Bézier (algorithme de Schneider de lib2geom, option « Fidélité »)
+  ; partir de l'extrémité du tracé sélectionné le prolonge (« Garder la
+  sélection »), finir sur le point de départ le ferme. Le crayon de GIMP garde
+  Maj+B.
+- **Lissage** : frotter les objets sélectionnés lisse leur tracé autour du
+  pointeur (options Rayon et Force), une étape d'annulation par geste.
+- **Ciseaux** (groupe Ciseaux / Cutter / Jonction, sans raccourci : C est au
+  Recadrage) : un clic coupe un tracé (fermé : ouvert à cet endroit ; ouvert
+  et seul : deux objets).
+- **Cutter** : glisser à main levée tranche les formes traversées en morceaux
+  fermés (arrangement planaire de la Peinture dynamique), même style.
+- **Jonction** : frotter par-dessus deux extrémités ouvertes les relie (bouts
+  confondus à moins de 0,5 px, sinon un segment) ; deux objets deviennent un.
+- **Angles dynamiques** : avec l'outil Déplacement en mode objets, un seul
+  objet sélectionné montre un petit cercle dans chaque angle ; le tirer vers
+  l'intérieur arrondit tous les angles (Alt : seulement celui-ci). Effet vivant
+  « corners » par objet (arrondi, arrondi inversé, chanfrein ; rayon commun et
+  rayons par angle), gardé par le XCF, aplati à l'export SVG. Vecteur >
+  Transformer > Retirer les angles dynamiques.
+- **Nouvelles formes** (outil Forme) : Spirale (tours, décroissance), Arc
+  (ouvert ou fermé, convexe ou concave), Grille rectangulaire (lignes,
+  colonnes, cadre), Grille polaire (cercles, séparateurs) ; tracées sans fond.
+- **Panneau Transformation** (Fenêtres, Maj+F8) : point de référence à 9 cases,
+  X / Y (coordonnées de ce point), L / H avec proportions liées, angle et
+  inclinaison (d'un objet seul ; saisir une valeur tourne ou incline de la
+  différence), « Contours à l'échelle », retournements H / V ; une étape
+  d'annulation par saisie.
+- **Répéter la transformation** (Vecteur > Transformer, et Ctrl+D quand aucune
+  sélection de pixels n'est active) : refait le dernier déplacement, la
+  dernière mise à l'échelle ou rotation d'objets ; après Alt+glisser, une
+  série de copies.
+- **Transformer chaque…** (Ctrl+Alt+D ; Alt+Maj+Ctrl+D est déjà « Dupliquer
+  l'image ») : échelle H / V, déplacement H / V, rotation, symétries X / Y,
+  point de référence, aléatoire, copier, aperçu.
+- **Objet clé** : en mode objets, un clic sur un objet déjà sélectionné en fait
+  l'objet clé (contour et cadre en surbrillance) ; Aligner s'aligne sur lui
+  sans le bouger ; nouveau clic ou Vecteur > Aligner > Annuler l'objet clé
+  pour le retirer. **Aligner sur** : la sélection, l'objet clé, le plan de
+  travail (l'image).
+- **PDB** (`chopgimp-vobjects-command`) : transform-again, transform-record,
+  transform-each, key, key-none, align-to, box, flip-h / flip-v, corners,
+  cut-at, knife, join-at.
+- Vérifié : 170 tests (8 nouveaux : angles dynamiques, Ciseaux + Jonction, Cutter, objet clé et Aligner sur, Répéter, Transformer chaque, panneau, outils présents) ; banc graphique : Courbure (4 clics → courbe lisse, objet « Courbure »), Crayon vectoriel (tracé à main levée ajusté en courbes), Ciseaux puis Jonction (2 objets → 1), Cutter (rectangle tranché en 2 objets), angles dynamiques (poignée tirée → angle arrondi), Spirale, Arc, grilles rectangulaire et polaire, panneau Transformation (point de référence en haut à gauche, L = 70 → mise à l'échelle proportionnelle ancrée en haut à gauche), glisser puis Ctrl+D ×2 (3 pas identiques), Alt+glisser puis Ctrl+D ×2 (série de 3 copies), Ctrl+D avec une sélection de pixels (désélectionne, objets immobiles), Transformer chaque (rotation 30° de chaque objet en aperçu, Annuler rend l'état d'origine), objet clé (contour doré) et Aligner à gauche sur lui.
+- Corrigé à l'intégration : compilation (`End` déjà défini → `VJoinEnd`, appel ambigu de `is_corner`, `Geom::Rect::expandedBy` absent de lib2geom 1.4) ; **Lissage** sans effet visible (moyenne des voisins immédiats d'échantillons serrés) : rééchantillonnage régulier du tracé (1,5 px), puis moyenne glissante sur 0,4 × le rayon le long du tracé (pas de cassure au bord de la brosse), 1 à 9 passes selon la Force ; vérifié au banc : une crête frottée s'aplatit.
+- Limites connues : les angles dynamiques ne s'affichent pas en
+  Sélection directe (A), seulement en mode objets (V) ; leur rayon n'est pas
+  dans la barre d'options (poignées et Retirer seulement) ; un objet sans
+  effets propres qui suivait les effets du calque (parasite « chopgimp-lpe »)
+  ne les suit plus une fois ses angles arrondis ; « Aligner sur l'objet clé »
+  sans objet clé aligne sur la sélection ; le Cutter ignore les tracés
+  ouverts ; Répéter refait la transformation autour du même point de l'image
+  (rotation de copies autour d'un centre : la série tourne bien autour de lui) ;
+  la poignée d'un angle dynamique reste au sommet de l'angle (elle ne suit pas le
+  rayon pendant qu'on la tire).
