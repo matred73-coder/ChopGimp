@@ -1986,6 +1986,9 @@ try:
         r = run("chopgimp-vobjects-command", image=im14, command="select-same-fill")
         report(r is not None and r.index(0) == Gimp.PDBStatusType.SUCCESS,
                "Sélectionner > Même couleur de fond")
+        r = run("chopgimp-vobjects-command", image=im14, command="select-next-above")
+        report(r is not None and r.index(0) == Gimp.PDBStatusType.SUCCESS,
+               "Objet suivant dessus (Ctrl+Alt+])")
         r = run("chopgimp-vobjects-command", image=im14, command="simplify:1.5")
         report(r is not None and r.index(0) == Gimp.PDBStatusType.SUCCESS and
                vx14().count("<path ") == 3, "Simplifier (sans perte d'objet)")

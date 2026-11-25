@@ -181,6 +181,8 @@ PS_MAP = [
     ("Vecteur", "layers-vobjects-clip-make",    [P + "7"],       "Créer un masque d'écrêtage"),
     ("Vecteur", "layers-vobjects-clip-release", [P + A + "7"],   "Libérer le masque d'écrêtage"),
     # 3.29.3 (Illustrator : Ctrl+Alt+Maj+2 / 3 = verrouiller / masquer les autres)
+    ("Vecteur", "layers-vobjects-select-next-above", [P + A + "bracketright"], "Objet suivant dessus"),
+    ("Vecteur", "layers-vobjects-select-next-below", [P + A + "bracketleft"],  "Objet suivant dessous"),
     ("Vecteur", "layers-vobjects-lock-others",  [P + S + A + "2"], "Verrouiller les autres objets"),
     ("Vecteur", "layers-vobjects-hide-others",  [P + S + A + "3"], "Masquer les autres objets"),
     # 3.28.1 : raccourcis d'Illustrator, avec Maj en plus quand la touche

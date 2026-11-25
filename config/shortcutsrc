@@ -286,6 +286,10 @@
 (action "layers-vobjects-clip-make" "<Primary>7")
 # Libérer le masque d'écrêtage
 (action "layers-vobjects-clip-release" "<Primary><Alt>7")
+# Objet suivant dessus
+(action "layers-vobjects-select-next-above" "<Primary><Alt>bracketright")
+# Objet suivant dessous
+(action "layers-vobjects-select-next-below" "<Primary><Alt>bracketleft")
 # Verrouiller les autres objets
 (action "layers-vobjects-lock-others" "<Primary><Shift><Alt>2")
 # Masquer les autres objets

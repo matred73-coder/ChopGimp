@@ -358,6 +358,7 @@ VECTEUR_MENU = [
                       "layers-vobjects-decompose", "photogimp-split-shapes"]])],
     # 3.29.3 : sélection par couleur / taille, nettoyage, couleurs
     [("_Sélectionner", [["layers-vobjects-select-all", "layers-vobjects-select-inverse"],
+                         ["layers-vobjects-select-next-above", "layers-vobjects-select-next-below"],
                          ["layers-vobjects-select-same-fill", "layers-vobjects-select-same-stroke",
                           "layers-vobjects-select-same-color"],
                          ["layers-vobjects-select-smaller"]]),
