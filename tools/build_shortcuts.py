@@ -36,6 +36,10 @@ PS_MAP = [
     # premier plan reste dans le groupe W de la boîte à outils.
     ("Outils", "tools-foreground-select",  [],               "Sélection d'objet / rapide (premier plan)"),
     ("Outils", "tools-width",              [S + "w"],        "Largeur (Illustrator)"),
+    # 3.28.1 : Peinture dynamique. K comme Illustrator ; la sélection de
+    # peinture dynamique prend Maj+K (Maj+L reste au lasso magnétique).
+    ("Outils", "tools-live-paint-bucket",  ["k"],            "Pot de peinture dynamique (Illustrator)"),
+    ("Outils", "tools-live-paint-select",  [S + "k"],        "Sélection de peinture dynamique"),
     ("Outils", "tools-by-color-select",    [S + A + "w"],    "Plage de couleurs"),
     ("Outils", "tools-crop",               ["c"],            "Recadrage"),
     ("Outils", "tools-perspective",        [S + "c"],        "Perspective (transformation)"),
@@ -168,6 +172,14 @@ PS_MAP = [
     ("Vecteur", "layers-vobjects-show-all",     [P + A + "3"],   "Tout afficher"),
     ("Vecteur", "layers-vobjects-clip-make",    [P + "7"],       "Créer un masque d'écrêtage"),
     ("Vecteur", "layers-vobjects-clip-release", [P + A + "7"],   "Libérer le masque d'écrêtage"),
+    # 3.28.1 : raccourcis d'Illustrator, avec Maj en plus quand la touche
+    # d'Illustrator est déjà prise par Photoshop (Ctrl+Alt+X Recadrer,
+    # Ctrl+Alt+M Masque, Ctrl+Alt+C Taille de la zone de travail,
+    # Ctrl+Maj+Alt+W Exporter sous)
+    ("Vecteur", "layers-vobjects-livepaint-make", [P + S + A + "x"], "Créer une peinture dynamique"),
+    ("Vecteur", "layers-vobjects-distort-warp", [P + S + A + "a"], "Distorsion : déformation"),
+    ("Vecteur", "layers-vobjects-distort-mesh", [P + S + A + "m"], "Distorsion : d'après une maille"),
+    ("Vecteur", "layers-vobjects-distort-top",  [P + S + A + "c"], "Distorsion : d'après l'objet du dessus"),
 
     # ── Sélection ──────────────────────────────────────────────────────
     ("Sélection", "select-all",            [P + "a"],        "Tout sélectionner"),
@@ -223,7 +235,7 @@ def main():
 
     # 1. actions valides
     for _, act, _, _ in PS_MAP:
-        if act not in defaults and not act.startswith(("photogimp-", "chopgimp-", "tools-opacity-ps-", "tools-hand", "tools-rotate-view", "tools-shape", "tools-spot-heal", "windows-hide-right-docks", "tools-shape-builder", "tools-direct-select", "tools-width", "tools-envelope", "layers-vobjects-")):
+        if act not in defaults and not act.startswith(("photogimp-", "chopgimp-", "tools-opacity-ps-", "tools-hand", "tools-rotate-view", "tools-shape", "tools-spot-heal", "windows-hide-right-docks", "tools-shape-builder", "tools-direct-select", "tools-width", "tools-envelope", "tools-live-paint-", "layers-vobjects-")):
             errors.append("action inconnue de GIMP 3.2.8 : %s" % act)
 
     # 2. aucune touche attribuée deux fois dans PS_MAP

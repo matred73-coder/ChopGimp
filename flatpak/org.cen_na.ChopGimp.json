@@ -1171,7 +1171,8 @@
                         "../patches/gimp-3.2.8/0136-ChopGimp-3.27.4-welcome-Cr-er-page-laid-out-like-Pho.patch",
                         "../patches/gimp-3.2.8/0137-ChopGimp-3.27.5-Vectoriser-fixes-no-seams-between-ab.patch",
                         "../patches/gimp-3.2.8/0138-ChopGimp-3.27.6-Width-tool-Shift-W-width-points-on-a.patch",
-                        "../patches/gimp-3.2.8/0139-ChopGimp-menu-path-mappings-for-the-Photoshop-menu-l.patch"
+                        "../patches/gimp-3.2.8/0139-ChopGimp-menu-path-mappings-for-the-Photoshop-menu-l.patch",
+                        "../patches/gimp-3.2.8/0140-ChopGimp-3.28.1-Live-Paint-Vecteur-Peinture-dynamiqu.patch"
                     ]
                 }
             ],

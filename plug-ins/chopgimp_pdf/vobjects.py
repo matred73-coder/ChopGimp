@@ -52,7 +52,7 @@ KAPPA = 0.5522847498307936
 class VNode:
     """Objet d'un calque vectoriel : « path » (sous-chemins) ou « group »."""
     __slots__ = ("kind", "name", "transform", "opacity", "mode", "visible", "locked", "clip",
-                 "children", "subpaths", "fill", "stroke", "nonzero", "entries")
+                 "children", "subpaths", "fill", "stroke", "nonzero", "entries", "symbol")
 
     def __init__(self, kind, name=""):
         self.kind = kind
@@ -63,6 +63,7 @@ class VNode:
         self.visible = True
         self.locked = False
         self.clip = False              # groupe : l'enfant du dessus découpe les autres
+        self.symbol = None             # 3.28.1 : groupe, occurrence du symbole (id)
         self.children = []
         self.subpaths = []             # [(fermé, [(entrée, ancre, sortie)])]
         self.fill = {"type": "color", "rgba": (0.0, 0.0, 0.0, 1.0)}
@@ -575,6 +576,8 @@ def to_xml(nodes, progress=None):
             for kind, e in entries_of(n):
                 _paint_xml(out, kind, e, e if kind == "stroke" else None)
         else:
+            if getattr(n, "symbol", None):
+                a.append(' symbol=%s' % quoteattr(_clean(n.symbol)))
             a.append(' clip="1">\n' if n.clip else ">\n")
             out.append("".join(a))
             for c in n.children:
@@ -1302,6 +1305,8 @@ class SvgImport:
             try:
                 n = VNode("group", element_name(el))
                 if local(target.tag) == "symbol":
+                    # 3.28.1 : occurrence d'un symbole ChopGimp (vérifiée à l'import)
+                    n.symbol = "svg-" + (target.get("id") or "symbole")
                     for c in target:
                         if isinstance(c.tag, str) and local(c.tag) not in SKIP:
                             cn = self.convert(c, st)
@@ -1740,3 +1745,48 @@ def pdf_nodes(objs, stats, start=1):
         (stack[-1][1].children if stack else root).append(cairo_node(o, n, stats))
     close_to(0)
     return root
+
+
+def collect_symbols(items):
+    """3.28.1 : les occurrences <use> d'un <symbol> du plan d'import →
+    {id: (nom, xml des objets)} quand toutes les occurrences d'un symbole ont
+    les mêmes objets (sinon ce ne sont plus des occurrences : style hérité
+    différent). Les marques des autres sont retirées."""
+    found = {}
+
+    def walk(nodes):
+        for n in nodes:
+            if n.kind != "group":
+                continue
+            if getattr(n, "symbol", None):
+                found.setdefault(n.symbol, []).append(n)
+            walk(n.children)
+
+    def walk_items(its):
+        for it in its:
+            if it.get("kind") == "vector":
+                walk(it["nodes"])
+            elif it.get("kind") == "group":
+                walk_items(it["items"])
+
+    walk_items(items)
+    defs = {}
+    for sid, occ in found.items():
+        texts = set(re.sub(r' id="[0-9]+"', "", to_xml(o.children)) for o in occ)
+        if len(texts) == 1:
+            defs[sid] = (sid[4:] if sid.startswith("svg-") else sid, texts.pop())
+        else:
+            for o in occ:
+                o.symbol = None
+    return defs
+
+
+def symbols_parasite_text(old_text, defs):
+    """Ajoute les définitions au texte du parasite « chopgimp-symbols »."""
+    body = "".join('<symbol id=%s name=%s><![CDATA[%s]]></symbol>\n'
+                   % (quoteattr(_clean(sid)), quoteattr(_clean(name)), xml)
+                   for sid, (name, xml) in defs.items()
+                   if not old_text or ('id="%s"' % sid) not in old_text)
+    if old_text and "</chopgimp-symbols>" in old_text:
+        return old_text.replace("</chopgimp-symbols>", body + "</chopgimp-symbols>")
+    return '<chopgimp-symbols version="1">\n' + body + "</chopgimp-symbols>\n"

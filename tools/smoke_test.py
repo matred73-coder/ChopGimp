@@ -1308,6 +1308,174 @@ try:
     except Exception:
         report(False, "3.27.6", traceback.format_exc().replace("\n", " | ")[:400])
 
+    # 3.28.1 : Peinture dynamique et Symboles
+    try:
+        import re
+
+        def vxml2(layer):
+            r = run("chopgimp-vobjects-get-xml", layer=layer)
+            return r.index(1) if r is not None and r.index(0) == Gimp.PDBStatusType.SUCCESS else ""
+
+        def px(l, x, y):
+            ok, x0, y0 = l.get_offsets()
+            return tuple(round(c * 255) for c in l.get_pixel(x - x0, y - y0).get_rgba_with_space(None))
+
+        iml = Gimp.Image.new(300, 300, Gimp.ImageBaseType.RGB)
+        bgl = Gimp.Layer.new(iml, "Fond", 300, 300, Gimp.ImageType.RGB_IMAGE, 100, Gimp.LayerMode.NORMAL)
+        iml.insert_layer(bgl, None, 0)
+        pl = Gimp.Path.new(iml, "Croix")
+        iml.insert_path(pl, None, 0)
+        s0 = pl.bezier_stroke_new_moveto(50, 50)
+        for x, y in [(250, 50), (250, 250), (50, 250)]:
+            pl.bezier_stroke_lineto(s0, x, y)
+        pl.stroke_close(s0)
+        s1 = pl.bezier_stroke_new_moveto(50, 150); pl.bezier_stroke_lineto(s1, 250, 150)
+        s2 = pl.bezier_stroke_new_moveto(150, 50); pl.bezier_stroke_lineto(s2, 150, 250)
+        vl2 = Gimp.VectorLayer.new(iml, pl)
+        iml.insert_layer(vl2, None, 0)
+        vl2.set_enable_fill(False); vl2.set_enable_stroke(True); vl2.set_stroke_width(2)
+        vl2.refresh()
+        iml.set_selected_layers([vl2])
+
+        def lcmd(c):
+            r = run("chopgimp-vobjects-command", image=iml, command=c)
+            return r is not None and r.index(0) == Gimp.PDBStatusType.SUCCESS and r.index(1)
+
+        lcmd("split-new"); lcmd("select-all")
+        ok_mk = lcmd("livepaint-make")
+        x = vxml2(vl2)
+        nf = x.count('livepaint="face"')
+        report(ok_mk and 'livepaint="group' in x and nf == 4 and x.count('livepaint="edge') >= 8,
+               "Peinture dynamique : 4 zones et les segments d'un rectangle coupé par une croix",
+               "%d zones, %d segments" % (nf, x.count('livepaint="edge')))
+        ok_f = lcmd("livepaint-fill:100:100:#ff0000")
+        p1 = px(vl2, 100, 100); p2 = px(vl2, 200, 100)
+        report(ok_f and p1[:3] == (255, 0, 0) and p1[3] == 255 and p2[3] == 0,
+               "Peinture dynamique : le pot remplit une seule zone", "%s / %s" % (p1, p2))
+        ok_s = lcmd("livepaint-stroke:150:100:#0000ff")
+        report(ok_s and 'color="0 0 1 1"' in vxml2(vl2), "Peinture dynamique : peindre un segment")
+
+        # la ligne verticale bouge (-30 px) : les zones suivent, le rouge reste à sa zone
+        x = vxml2(vl2)
+        src = x.index('livepaint="sources"')
+        # le sous-chemin vertical x = 150 passe à x = 120 (dans le groupe masqué des tracés)
+        def mv(m):
+            d = m.group(0)
+            return re.sub(r'M 150 50 C 150 50 150 250 150 250', 'M 120 50 C 120 50 120 250 120 250', d)
+        x2 = x[:src] + re.sub(r' d="[^"]*"', mv, x[src:])
+        report(x2 != x, "Peinture dynamique : tracé vertical trouvé pour le déplacer")
+        run("chopgimp-vobjects-set-xml", layer=vl2, xml=x2)
+        x3 = vxml2(vl2)
+        q1 = px(vl2, 80, 100); q2 = px(vl2, 135, 100)
+        report(x3.count('livepaint="face"') == 4 and q1[:3] == (255, 0, 0) and q1[3] == 255 and q2[3] == 0,
+               "Peinture dynamique : les zones suivent un tracé déplacé", "%s / %s" % (q1, q2))
+        lcmd("livepaint-select:80:100")
+        ok_g = lcmd("livepaint-gap:5")
+        report(ok_g and "gap=5" in vxml2(vl2), "Peinture dynamique : options d'écarts")
+
+        xcf = os.path.join(TMP, "peinture-dynamique.xcf")
+        Gimp.file_save(Gimp.RunMode.NONINTERACTIVE, iml, Gio.File.new_for_path(xcf), None)
+        imx = Gimp.file_load(Gimp.RunMode.NONINTERACTIVE, Gio.File.new_for_path(xcf))
+        vx = [l for l in imx.get_layers() if l.is_vector_layer()]
+        xx = vxml2(vx[0]) if vx else ""
+        report(xx.count('livepaint="face"') == 4 and 'color="1 0 0 1"' in xx,
+               "Peinture dynamique : aller-retour XCF")
+        imx.delete()
+
+        lcmd("livepaint-select:80:100")
+        ok_e = lcmd("livepaint-expand")
+        xe = vxml2(vl2)
+        report(ok_e and "livepaint" not in xe and 'color="1 0 0 1"' in xe,
+               "Peinture dynamique : décomposer", "%d objets" % xe.count("<path "))
+        iml.delete()
+
+        # Symboles
+        ims = Gimp.Image.new(400, 300, Gimp.ImageBaseType.RGB)
+        bgs = Gimp.Layer.new(ims, "Fond", 400, 300, Gimp.ImageType.RGB_IMAGE, 100, Gimp.LayerMode.NORMAL)
+        ims.insert_layer(bgs, None, 0)
+        ps = Gimp.Path.new(ims, "Fleur")
+        ims.insert_path(ps, None, 0)
+        ps.bezier_stroke_new_ellipse(60, 60, 30, 20, 0)
+        ps.bezier_stroke_new_ellipse(120, 60, 20, 30, 0)
+        vs = Gimp.VectorLayer.new(ims, ps)
+        ims.insert_layer(vs, None, 0)
+        vs.set_enable_fill(True); vs.set_enable_stroke(False)
+        vs.refresh()
+        ims.set_selected_layers([vs])
+
+        def scmd(c):
+            r = run("chopgimp-vobjects-command", image=ims, command=c)
+            return r is not None and r.index(0) == Gimp.PDBStatusType.SUCCESS and r.index(1)
+
+        scmd("split-new"); scmd("select-all")
+        ok_n = scmd("symbol-new:Fleur")
+        par = ims.get_parasite("chopgimp-symbols")
+        ptxt = bytes(par.get_data()).decode() if par else ""
+        report(ok_n and 'name="Fleur"' in ptxt and 'symbol="s1"' in vxml2(vs),
+               "Symboles : nouveau symbole (définition dans l'image, première occurrence)")
+        ok_p = scmd("symbol-place:s1")
+        xs = vxml2(vs)
+        report(ok_p and xs.count('symbol="s1"') == 2, "Symboles : placer une occurrence",
+               "%d occurrence(s)" % xs.count('symbol="s1"'))
+        # modifier une occurrence hors de « Modifier le symbole » : elle seule quitte le symbole
+        m = re.search(r'<fill type="color" color="[^"]*"', xs)
+        xs_out = xs[:m.start()] + '<fill type="color" color="0 0 1 1"' + xs[m.end():] if m else xs
+        run("chopgimp-vobjects-set-xml", layer=vs, xml=xs_out)
+        xo = vxml2(vs)
+        report(xo.count('symbol="s1"') == 1 and xo.count('color="0 0 1 1"') == 1,
+               "Symboles : une occurrence modifiée hors du mode « Modifier le symbole » quitte le symbole",
+               "%d occurrence(s)" % xo.count('symbol="s1"'))
+        run("chopgimp-vobjects-set-xml", layer=vs, xml=xs)
+        # dans « Modifier le symbole » (occurrence ouverte, ses objets sélectionnés) : un
+        # alignement de ses objets change le symbole et l'autre occurrence suit
+        par = ims.get_parasite("chopgimp-symbols")
+        p_before = bytes(par.get_data()).decode() if par else ""
+        ok_ed = scmd("symbol-edit:s1")
+        ok_al = scmd("align-left")
+        xs3 = vxml2(vs)
+        par = ims.get_parasite("chopgimp-symbols")
+        ptxt = bytes(par.get_data()).decode() if par else ""
+        occs = re.findall(r'<group [^>]*symbol="s1"[^>]*>(.*?)</group>', xs3, re.S)
+        occs = [re.sub(r' id="[0-9]+"', "", o) for o in occs]
+        report(ok_ed and ok_al and len(occs) == 2 and occs[0] == occs[1] and ptxt != p_before,
+               "Symboles : modifier le symbole met à jour toutes les occurrences",
+               "%d occurrence(s), symbole %s" % (len(occs), "modifié" if ptxt != p_before else "inchangé"))
+        xcf = os.path.join(TMP, "symboles.xcf")
+        Gimp.file_save(Gimp.RunMode.NONINTERACTIVE, ims, Gio.File.new_for_path(xcf), None)
+        imx = Gimp.file_load(Gimp.RunMode.NONINTERACTIVE, Gio.File.new_for_path(xcf))
+        px2 = imx.get_parasite("chopgimp-symbols")
+        vx = [l for l in imx.get_layers() if l.is_vector_layer()]
+        report(px2 is not None and vx and vxml2(vx[0]).count('symbol="s1"') == 2,
+               "Symboles : aller-retour XCF")
+        imx.delete()
+        run("chopgimp-vobjects-set-xml", layer=vs, xml=vxml2(vs))   # sort de l'occurrence ouverte
+        scmd("select-all")
+        ok_b = scmd("symbol-break")
+        report(ok_b and vxml2(vs).count('symbol="s1"') == 0, "Symboles : rompre le lien")
+        # import SVG : <symbol> / <use> → symbole et occurrences
+        svgp = os.path.join(TMP, "symboles.svg")
+        open(svgp, "w").write('<svg xmlns="http://www.w3.org/2000/svg" '
+                              'xmlns:xlink="http://www.w3.org/1999/xlink" width="200" height="100">'
+                              '<defs><symbol id="carre"><rect x="0" y="0" width="30" height="30" '
+                              'fill="#00ff00"/></symbol></defs>'
+                              '<use xlink:href="#carre" x="10" y="10"/>'
+                              '<use xlink:href="#carre" x="120" y="40"/></svg>')
+        imsv = Gimp.file_load(Gimp.RunMode.NONINTERACTIVE, Gio.File.new_for_path(svgp))
+        psv = imsv.get_parasite("chopgimp-symbols")
+        tsv = bytes(psv.get_data()).decode() if psv else ""
+        vsv = [l for l in imsv.get_layers() if l.is_vector_layer()]
+        nsv = sum(vxml2(l).count('symbol="svg-carre"') for l in vsv)
+        report('id="svg-carre"' in tsv and nsv == 2, "Symboles : import SVG <symbol> / <use>",
+               "%d occurrence(s)" % nsv)
+        imsv.delete()
+        ok_d = scmd("symbol-delete:s1")
+        par = ims.get_parasite("chopgimp-symbols")
+        ptxt = bytes(par.get_data()).decode() if par else ""
+        report(ok_d and "<symbol " not in ptxt, "Symboles : supprimer")
+        ims.delete()
+    except Exception:
+        report(False, "3.28.1", traceback.format_exc().replace("\n", " | ")[:400])
+
     # 4. Réglages d'usine présents (thème, icônes, menus, raccourcis)
     data = Gimp.data_directory()
     sysconf = Gimp.sysconf_directory()

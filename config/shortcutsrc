@@ -24,6 +24,10 @@
 (action "tools-foreground-select")
 # Largeur (Illustrator)
 (action "tools-width" "<Shift>w")
+# Pot de peinture dynamique (Illustrator)
+(action "tools-live-paint-bucket" "k")
+# Sélection de peinture dynamique
+(action "tools-live-paint-select" "<Shift>k")
 # Plage de couleurs
 (action "tools-by-color-select" "<Shift><Alt>w")
 # Recadrage
@@ -261,7 +265,7 @@
 # Ancrer la sélection flottante
 (action "layers-anchor" "<Primary><Alt>h")
 
-# ── Objet ───────────────────────────────────────────────────────
+# ── Vecteur ─────────────────────────────────────────────────────
 # Dissocier (Illustrator)
 (action "layers-vobjects-ungroup" "<Primary><Shift>g")
 # Verrouiller la sélection
@@ -276,6 +280,14 @@
 (action "layers-vobjects-clip-make" "<Primary>7")
 # Libérer le masque d'écrêtage
 (action "layers-vobjects-clip-release" "<Primary><Alt>7")
+# Créer une peinture dynamique
+(action "layers-vobjects-livepaint-make" "<Primary><Shift><Alt>x")
+# Distorsion : déformation
+(action "layers-vobjects-distort-warp" "<Primary><Shift><Alt>a")
+# Distorsion : d'après une maille
+(action "layers-vobjects-distort-mesh" "<Primary><Shift><Alt>m")
+# Distorsion : d'après l'objet du dessus
+(action "layers-vobjects-distort-top" "<Primary><Shift><Alt>c")
 
 # ── Sélection ───────────────────────────────────────────────────
 # Tout sélectionner
@@ -364,6 +376,8 @@
 (action "paths-selection-from-paths")
 # était : <shift>L
 (action "tools-handle-transform")
+# était : K
+(action "tools-ink")
 # était : <shift>W
 (action "tools-transform-3d")
 # était : <shift>J

@@ -27,7 +27,8 @@ TOOLBOX = [
     ("dodge-burn",),                                          # O
     ("path", "direct-select"),                                # P / A
     ("text",),                                                # T
-    ("shape", "shape-builder", "width", "envelope"),          # U / Maj+Alt+M / Maj+W
+    ("shape", "shape-builder", "live-paint-bucket", "live-paint-select",
+     "width", "envelope"),                                    # U / Maj+Alt+M / K / Maj+K / Maj+W
     ("unified-transform", "scale", "rotate", "shear", "flip",
      "transform-3d", "handle-transform", "warp", "cage", "offset"),  # Ctrl+T
     ("hand", "rotate-view"),                                  # H / R
@@ -42,7 +43,9 @@ ICON = {"dodge-burn": "gimp-tool-dodge", "convolve": "gimp-tool-blur",
         "spot-heal": "chopgimp-tool-spot-heal",
         "direct-select": "chopgimp-tool-direct-select",
         "shape-builder": "chopgimp-tool-shape-builder",
-        "width": "chopgimp-tool-width", "envelope": "chopgimp-tool-envelope"}
+        "width": "chopgimp-tool-width", "envelope": "chopgimp-tool-envelope",
+        "live-paint-bucket": "chopgimp-tool-live-paint-bucket",
+        "live-paint-select": "chopgimp-tool-live-paint-select"}
 
 
 def info(tool, visible=True, indent=""):
@@ -114,7 +117,8 @@ def workspace_books(name):
                            dockable("gimp-path-list", tab="name", preview=32)]))
     if name == "illustration":
         return (book(None, [dockable("gimp-color-editor"), dockable("gimp-palette-editor"),
-                            dockable("chopgimp-global-colors"), dockable("gimp-gradient-list")]),
+                            dockable("chopgimp-global-colors"), dockable("chopgimp-symbols"),
+                            dockable("gimp-gradient-list")]),
                 # 3.27.2 : Aspect et Contour des objets vectoriels en tête
                 book(250, [dockable("chopgimp-appearance"), dockable("chopgimp-stroke"),
                            dockable("gimp-path-list", tab="name", preview=32),

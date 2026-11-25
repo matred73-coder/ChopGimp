@@ -77,7 +77,8 @@ outils = ["      <section>"] + ["  " + l for l in get["_Tools"]] + ["      </sec
 # qu'on rouvre un panneau fermé. La liste complète reste dans le sous-menu
 # « Fenêtres ancrables ».
 PANNEAUX = [["dialogs-layers", "dialogs-channels", "dialogs-paths",
-             "dialogs-appearance", "dialogs-stroke", "dialogs-global-colors"],
+             "dialogs-appearance", "dialogs-stroke", "dialogs-global-colors",
+             "dialogs-symbols"],
             ["dialogs-colors", "dialogs-palettes", "dialogs-gradients", "dialogs-patterns",
              "dialogs-brushes", "dialogs-fonts"],
             ["dialogs-character", "dialogs-paragraph", "dialogs-glyphs", "dialogs-text-styles",
@@ -317,9 +318,16 @@ VECTEUR_MENU = [
                       ["layers-vobjects-distort-edit-envelope",
                        "layers-vobjects-distort-edit-contents"],
                       ["layers-vobjects-distort-expand", "layers-vobjects-distort-release"]])],
+    # 3.28.1 (lot V6 points 6 et 7) : Peinture dynamique, Symboles
+    [("_Peinture dynamique", [["layers-vobjects-livepaint-make", "layers-vobjects-livepaint-add"],
+                              ["layers-vobjects-livepaint-gap"],
+                              ["layers-vobjects-livepaint-expand",
+                               "layers-vobjects-livepaint-release"]]),
+     ("S_ymboles", [["layers-vobjects-symbol-new", "layers-vobjects-symbol-edit",
+                     "layers-vobjects-symbol-break"], ["dialogs-symbols"]])],
     # 3.27.2 (lot V3) : panneaux Aspect et Contour ; (lot V6.2) Couleurs globales
     [(None, [["dialogs-appearance", "dialogs-stroke", "dialogs-global-colors",
-              "layers-vobjects-style-picker", "layers-vobjects-recolor"]])],
+              "dialogs-symbols", "layers-vobjects-style-picker", "layers-vobjects-recolor"]])],
     # 3.27.3 (lot V5 et V6 point 4) : Vectorisation dynamique
     [("_Vectorisation", [["layers-image-trace", "layers-image-trace-options",
                           "layers-image-trace-expand"]]),

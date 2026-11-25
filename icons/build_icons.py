@@ -904,6 +904,45 @@ def _shape():
     return s
 
 
+
+# ─── 3.27.7 : peinture dynamique, symboles ─────────────────────────────
+@icon("chopgimp-tool-live-paint-bucket")
+def _live_paint_bucket():
+    # Deux traits croisés, une zone remplie, une petite goutte
+    s = polygon([(2, 9), (8, 9), (8, 14), (2, 14)], 0.55)
+    s += line(1.5, 9, 14.5, 9, 1.0) + line(8, 2, 8, 14.5, 1.0)
+    s += circle(12, 4.5, 2.2) + polygon([(10.2, 3.6), (12, 0.8), (13.8, 3.6)])
+    return s
+
+
+@icon("chopgimp-tool-live-paint-select")
+def _live_paint_select():
+    # Deux traits croisés, une zone en pointillés, une flèche
+    s = line(1.5, 7, 12, 7, 1.0) + line(6, 1.5, 6, 12, 1.0)
+    for x in (1.5, 4):
+        s += rect(x, 1.5, 1.3, 1.1)
+    s += polygon([(8.5, 8.5), (8.5, 15.5), (10.4, 13.6), (11.8, 15.8), (13, 15.1),
+                  (11.6, 12.9), (14.2, 12.6)])
+    return s
+
+
+@icon("chopgimp-livepaint")
+def _livepaint():
+    # Un cercle et un carré qui se chevauchent, l'intersection remplie
+    s = ring(6, 6, 4.3, 1.0) + rect_outline(6, 6, 8.5, 8.5, 1.0)
+    s += polygon([(6.2, 6.2), (10.2, 6.2), (9.5, 8.8), (8.8, 9.5), (6.2, 10.2)], 0.7)
+    return s
+
+
+@icon("chopgimp-symbols")
+def _symbols():
+    # Un trèfle (symbole) et ses deux copies plus petites
+    s = circle(6, 4.2, 2.3) + circle(3.8, 7.6, 2.3) + circle(8.2, 7.6, 2.3)
+    s += line(6, 7, 6, 11.5, 1.0)
+    s += circle(12.5, 10, 1.4, 0.7) + circle(11.2, 12.2, 1.4, 0.7) + circle(13.8, 12.2, 1.4, 0.7)
+    return s
+
+
 def main():
     os.makedirs(OUT, exist_ok=True)
     for name, fn in sorted(ICONS.items()):

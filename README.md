@@ -124,6 +124,13 @@ Ils sont produits automatiquement par GitHub Actions à chaque tag `v*`
 - **Vecteur > Distorsion** : Déformation (15 modèles : arc, drapeau, onde, poisson…),
   Enveloppe à maille ou d'après l'objet du dessus, Distorsion libre en perspective,
   avec l'outil Enveloppe ; modifiable jusqu'à « Décomposer ».
+- **Peinture dynamique** (Vecteur > Peinture dynamique, Ctrl+Maj+Alt+X) : les zones et
+  les segments formés par des tracés qui se croisent se colorient séparément, sans
+  opération booléenne, avec le Pot de peinture dynamique (K) et la Sélection de
+  peinture dynamique (Maj+K) ; les couleurs suivent quand on déplace un tracé.
+- **Symboles** (panneau Symboles, Vecteur > Symboles) : des objets réutilisables dont
+  toutes les occurrences suivent les modifications ; `<symbol>` / `<use>` repris à
+  l'import SVG.
 - **Gomme vectorielle**, texte déformé, texte sur tracé et texte dans une forme.
 
 ### Texte

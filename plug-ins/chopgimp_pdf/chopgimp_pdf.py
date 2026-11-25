@@ -984,7 +984,15 @@ def import_svg(image, path, opts, report, fonts):
     ctx = {"report": report, "merge": opts.get("merge", False), "fonts": fonts, "text": opts["text"],
            "dir": os.path.dirname(path), "total": max(1, n_objs), "done": 0,
            "counts": {"vector": 0, "objects": 0, "groups": 0, "image": 0, "text": 0}}
+    symbols = vobjects.collect_symbols(items) if vobjects_available() else {}
     build_svg_items(image, items, None, ctx)
+    if symbols:
+        par = image.get_parasite("chopgimp-symbols")
+        old_text = bytes(par.get_data()).decode("utf-8", "replace") if par else ""
+        text = vobjects.symbols_parasite_text(old_text, symbols)
+        image.attach_parasite(Gimp.Parasite.new("chopgimp-symbols", 3, list(text.encode("utf-8"))))
+        report.add("SVG : %d symbole(s) (<symbol> / <use>) repris dans le panneau Symboles."
+                   % len(symbols))
 
     c, st = ctx["counts"], imp.stats
     report.add("SVG : %d objets vectoriels (%d groupes) en %d calque(s) vectoriel(s), %d images, "

@@ -154,6 +154,12 @@
         (GimpToolInfo "gimp-shape-builder-tool"
             (icon-name "chopgimp-tool-shape-builder")
             (visible yes))
+        (GimpToolInfo "gimp-live-paint-bucket-tool"
+            (icon-name "chopgimp-tool-live-paint-bucket")
+            (visible yes))
+        (GimpToolInfo "gimp-live-paint-select-tool"
+            (icon-name "chopgimp-tool-live-paint-select")
+            (visible yes))
         (GimpToolInfo "gimp-width-tool"
             (icon-name "chopgimp-tool-width")
             (visible yes))
