@@ -51,6 +51,7 @@ jobs:
         id: ver
         shell: pwsh
         run: |
+          Start-Transcript -Append -Path "$env:RUNNER_TEMP\steps.log" | Out-Null
           $v = (Get-Content VERSION -TotalCount 1).Trim()
           if ($env:GITHUB_REF_TYPE -eq 'tag' -and $env:GITHUB_REF_NAME -ne "v$v") {
             Write-Host "::error::Le tag $env:GITHUB_REF_NAME ne correspond pas au fichier VERSION ($v)"; exit 1
@@ -78,6 +79,7 @@ jobs:
       - name: Variables MSYS2
         shell: pwsh
         run: |
+          Start-Transcript -Append -Path "$env:RUNNER_TEMP\steps.log" | Out-Null
           $m = '${{ steps.msys2.outputs.msys2-location }}' -replace '\\','/'
           "MSYS_ROOT=$m" >> $env:GITHUB_ENV
           New-Item -ItemType Directory -Force $env:ROOT, $env:CCACHE_DIR | Out-Null
@@ -93,6 +95,7 @@ jobs:
       - name: Sources babl, GEGL, GIMP 3.2.8 + patchs ChopGimp
         shell: pwsh
         run: |
+          Start-Transcript -Append -Path "$env:RUNNER_TEMP\steps.log" | Out-Null
           Set-Location $env:ROOT
           function apply_dir ($repo, $dir) {
             foreach ($p in Get-ChildItem "$env:GITHUB_WORKSPACE\patches\$dir\*.patch" -ErrorAction SilentlyContinue | Sort-Object Name) {
@@ -115,6 +118,7 @@ jobs:
       - name: babl, GEGL, exiv2 (1_build-deps-msys2.ps1)
         shell: pwsh
         run: |
+          Start-Transcript -Append -Path "$env:RUNNER_TEMP\steps.log" | Out-Null
           $PSNativeCommandArgumentPassing = 'Legacy'
           $PKGCONF_RELOCATABLE_OPTION = '-Dpkgconfig.relocatable=true'
           Set-Location "$env:ROOT\gimp"
@@ -142,6 +146,7 @@ jobs:
       - name: Configurer ChopGimp (mode installateur)
         shell: pwsh
         run: |
+          Start-Transcript -Append -Path "$env:RUNNER_TEMP\steps.log" | Out-Null
           $PSNativeCommandArgumentPassing = 'Legacy'
           Set-Location "$env:ROOT\gimp"
           & "$env:MSYS_ROOT/clang64/bin/python3.exe" -I "$env:GITHUB_WORKSPACE\tools\windows_branding.py" ico "$env:ROOT\gimp"
@@ -160,6 +165,7 @@ jobs:
       - name: Compiler ChopGimp (2_build-gimp-msys2.ps1)
         shell: pwsh
         run: |
+          Start-Transcript -Append -Path "$env:RUNNER_TEMP\steps.log" | Out-Null
           $PSNativeCommandArgumentPassing = 'Legacy'
           Set-Location "$env:ROOT\gimp"
           .\build\windows\2_build-gimp-msys2.ps1
@@ -185,6 +191,7 @@ jobs:
       - name: Refaire le dossier autonome (avec Resynthesizer)
         shell: pwsh
         run: |
+          Start-Transcript -Append -Path "$env:RUNNER_TEMP\steps.log" | Out-Null
           $PSNativeCommandArgumentPassing = 'Legacy'
           Set-Location "$env:ROOT\gimp"
           .\build\windows\2_build-gimp-msys2.ps1
@@ -203,6 +210,7 @@ jobs:
       - name: Compléments du dossier autonome (windows_bundle_extras.py)
         shell: pwsh
         run: |
+          Start-Transcript -Append -Path "$env:RUNNER_TEMP\steps.log" | Out-Null
           & "$env:MSYS_ROOT/clang64/bin/python3.exe" "$env:GITHUB_WORKSPACE\tools\windows_bundle_extras.py" `
             "$env:ROOT\gimp\gimp-clang64" "$env:ROOT\gimp" "$env:MSYS_ROOT/clang64"
           if ($LASTEXITCODE) { exit 1 }
@@ -228,6 +236,7 @@ jobs:
       - name: Version portable
         shell: pwsh
         run: |
+          Start-Transcript -Append -Path "$env:RUNNER_TEMP\steps.log" | Out-Null
           pwsh "$env:GITHUB_WORKSPACE\tools\make_windows_portable.ps1" `
             -Bundle "$env:ROOT\gimp\gimp-clang64" -OutDir "$env:ROOT\portable" -Version '${{ steps.ver.outputs.version }}'
           if ($LASTEXITCODE) { exit 1 }
@@ -237,6 +246,18 @@ jobs:
             "$((Get-FileHash $_.Name -Algorithm SHA256).Hash.ToLower()) *$($_.Name)"
           } | Set-Content -Encoding ascii SHA256SUMS.txt
           Get-ChildItem
+
+      # Annotations lisibles sans compte GitHub : fin du journal à l'échec
+      - name: Journal de l'échec (annotations)
+        if: failure()
+        shell: pwsh
+        run: |
+          foreach ($f in @("$env:RUNNER_TEMP\steps.log", "$env:ROOT\gimp\_build-clang64\meson-logs\meson-log.txt")) {
+            if (Test-Path $f) {
+              $t = (Get-Content $f -Tail 60 | ForEach-Object { $_.Substring(0, [Math]::Min(300, $_.Length)) }) -join '%0A'
+              Write-Host "::error title=$(Split-Path $f -Leaf)::$($t -replace '%(?!0A)','%25')"
+            }
+          }
 
       - uses: actions/upload-artifact@v4
         with:

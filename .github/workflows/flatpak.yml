@@ -64,13 +64,25 @@ jobs:
       - name: Compilation
         working-directory: flatpak
         run: |
+          set -o pipefail
           flatpak-builder --user --ccache --disable-rofiles-fuse --force-clean \
             --install-deps-from=flathub --state-dir=.flatpak-builder \
             --repo=repo --default-branch=stable \
             --subject="ChopGimp ${{ steps.ver.outputs.version }}" \
-            build-dir org.cen_na.ChopGimp.json
+            build-dir org.cen_na.ChopGimp.json 2>&1 | tee "$RUNNER_TEMP/build.log"
           # le cache ne garde que sources et ccache (pas les étages de build)
           rm -rf .flatpak-builder/build .flatpak-builder/rofiles build-dir
+
+      # Les annotations sont lisibles sans compte GitHub (API publique) :
+      # la fin du journal y est recopiée quand la compilation échoue.
+      - name: Journal de l'échec (annotations)
+        if: failure()
+        run: |
+          f="$RUNNER_TEMP/build.log"; [ -f "$f" ] || exit 0
+          grep -n -i -E "error|erreur|failed|fatal" "$f" | tail -15 | sed 's/%/%25/g' | \
+            awk 'BEGIN{ORS="%0A"} {print}' | sed 's/^/::error title=Lignes en erreur::/' ; echo
+          tail -60 "$f" | cut -c1-300 | sed 's/%/%25/g' | awk 'BEGIN{ORS="%0A"} {print}' | \
+            sed 's/^/::error title=Fin du journal::/' ; echo
 
       - name: Bundle
         run: |
