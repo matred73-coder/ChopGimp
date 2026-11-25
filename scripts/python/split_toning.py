@@ -128,7 +128,7 @@ class SplitToning(Gimp.PlugIn):
                                        Gimp.ProcedureSensitivityMask.DRAWABLES)
         procedure.set_menu_label("Virage partiel…")
         procedure.set_icon_name("gimp-tool-color-balance")
-        procedure.add_menu_path("<Image>/Colors")
+        # barre de menus : placé par tools/build_menus.py (app.<procédure>)
         procedure.set_documentation(
             "Virage partiel",
             "Teinte les ombres et les hautes lumières (façon Lightroom) avec deux calques "

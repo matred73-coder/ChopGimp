@@ -37,8 +37,11 @@ try:                        # accélère les options de fusion « Si » (faculta
 except Exception:
     np = None
 
-FILL = "<Image>/Layer/Nouveau calque de remplissage"
-SNAP = "<Image>/Image/Instantané"
+# Calque > Nouveau calque de remplissage : placé par tools/build_menus.py
+# (app.<procédure>), pas de chemin ici (sinon en double)
+FILL = None
+# Image > Instantané : placé par tools/build_menus.py
+SNAP = None
 PROCS = {
     "chopgimp-fill-color": ("Couleur unie…", FILL),
     "chopgimp-fill-gradient": ("Dégradé…", FILL),
@@ -467,7 +470,8 @@ class ChopGimpStudio(Gimp.PlugIn):
         p = Gimp.ImageProcedure.new(self, name, Gimp.PDBProcType.PLUGIN, self.run, None)
         p.set_image_types("*")
         p.set_menu_label(label)
-        p.add_menu_path(menu)
+        if menu:
+            p.add_menu_path(menu)
         p.set_documentation(label.rstrip("…"), label.rstrip("…"), name)
         p.set_attribution("ChopGimp", "ChopGimp", "2026")
         if name in ("chopgimp-camera-raw", "chopgimp-blend-if"):

@@ -30,12 +30,13 @@ AUTHOR = "ChopGimp"
 YEAR = "2026"
 LPE_PARASITE = "chopgimp-lpe"
 
-PF = "<Image>/Layer/Pathfinder"
+# Barre de menus : ces commandes sont placées dans le menu Vecteur par
+# tools/build_menus.py (app.<procédure>) ; pas de chemin « <Image>/… » ici,
+# sinon elles apparaîtraient deux fois. Le clic droit du panneau Calques
+# garde ses sous-menus.
+PF = CT = ND = TRACE = None
 PF_L = "<Layers>/Layers Menu/Pathfinder"
-CT = "<Image>/Layer/Contours"
 CT_L = "<Layers>/Layers Menu/Contours"
-ND = "<Image>/Layer/Nœuds"
-TRACE = "<Image>/Layer/Effets de tracé"
 TRACE_L = "<Layers>/Layers Menu/Effets de tracé"
 
 
@@ -553,7 +554,8 @@ class ChopGimpVector(Gimp.PlugIn):
         p.set_attribution(AUTHOR, AUTHOR, YEAR)
         p.set_menu_label(label)
         for path in paths:
-            p.add_menu_path(path)
+            if path:
+                p.add_menu_path(path)
         p.set_documentation(label.rstrip("…"), label.rstrip("…"), name)
         p.set_sensitivity_mask(Gimp.ProcedureSensitivityMask.DRAWABLE |
                                Gimp.ProcedureSensitivityMask.DRAWABLES |

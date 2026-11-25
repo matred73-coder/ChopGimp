@@ -161,13 +161,13 @@ PS_MAP = [
     # commandes les groupent et les disposent (vector-objects-commands.c).
     # Suppr supprime les objets sélectionnés (edit-clear). Les autres
     # touches sont celles d'Illustrator, libres dans ChopGimp.
-    ("Objet", "layers-vobjects-ungroup",      [P + S + "g"],   "Dissocier (Illustrator)"),
-    ("Objet", "layers-vobjects-lock",         [P + "2"],       "Verrouiller la sélection"),
-    ("Objet", "layers-vobjects-unlock-all",   [P + A + "2"],   "Tout déverrouiller"),
-    ("Objet", "layers-vobjects-hide",         [P + "3"],       "Masquer la sélection"),
-    ("Objet", "layers-vobjects-show-all",     [P + A + "3"],   "Tout afficher"),
-    ("Objet", "layers-vobjects-clip-make",    [P + "7"],       "Créer un masque d'écrêtage"),
-    ("Objet", "layers-vobjects-clip-release", [P + A + "7"],   "Libérer le masque d'écrêtage"),
+    ("Vecteur", "layers-vobjects-ungroup",      [P + S + "g"],   "Dissocier (Illustrator)"),
+    ("Vecteur", "layers-vobjects-lock",         [P + "2"],       "Verrouiller la sélection"),
+    ("Vecteur", "layers-vobjects-unlock-all",   [P + A + "2"],   "Tout déverrouiller"),
+    ("Vecteur", "layers-vobjects-hide",         [P + "3"],       "Masquer la sélection"),
+    ("Vecteur", "layers-vobjects-show-all",     [P + A + "3"],   "Tout afficher"),
+    ("Vecteur", "layers-vobjects-clip-make",    [P + "7"],       "Créer un masque d'écrêtage"),
+    ("Vecteur", "layers-vobjects-clip-release", [P + A + "7"],   "Libérer le masque d'écrêtage"),
 
     # ── Sélection ──────────────────────────────────────────────────────
     ("Sélection", "select-all",            [P + "a"],        "Tout sélectionner"),

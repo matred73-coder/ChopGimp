@@ -35,7 +35,10 @@ try:                        # accélère la lecture/écriture des pixels (facult
 except Exception:
     np = None
 
-MENU = "<Image>/Image"
+# Image > Recadrage en perspective, Redresser, Mise à l'échelle selon le
+# contenu : placés par tools/build_menus.py (app.<procédure>), pas de
+# chemin ici (sinon en double)
+MENU = None
 
 PROCS = {
     "chopgimp-perspective-crop": "Recadrage en perspective…",
@@ -333,7 +336,8 @@ class ChopGimpBase(Gimp.PlugIn):
         p = Gimp.ImageProcedure.new(self, name, Gimp.PDBProcType.PLUGIN, self.run, None)
         p.set_image_types("*")
         p.set_menu_label(PROCS[name])
-        p.add_menu_path(MENU)
+        if MENU:
+            p.add_menu_path(MENU)
         p.set_documentation(PROCS[name].rstrip("…"), __doc__.strip().split("\n")[0], name)
         p.set_attribution("ChopGimp", "ChopGimp", "2026")
         if name == "chopgimp-liquid-rescale":

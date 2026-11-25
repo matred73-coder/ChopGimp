@@ -117,9 +117,9 @@ class AutoAdjustments(Gimp.PlugIn):
                 _("Auto Levels (Photoshop-style)"),
                 _("Etirer l'histogramme sur toute la plage par couche, comme les Niveaux auto de Photoshop."),
                 name)
-            procedure.set_menu_label(_("_Niveaux auto"))
+            procedure.set_menu_label(_("_Tons auto"))
             procedure.set_attribution("PhotoGIMP Pro", "GPL v3+", "2026")
-            procedure.add_menu_path("<Image>/Image/Reglages auto")
+            # barre de menus : placé par tools/build_menus.py (app.<procédure>)
 
         elif name == 'python-fu-auto-contrast':
             procedure = Gimp.ImageProcedure.new(self, name,
@@ -132,9 +132,9 @@ class AutoAdjustments(Gimp.PlugIn):
                 _("Auto Contrast"),
                 _("Normaliser le contraste sans decalage de couleur — etire uniquement la luminosite."),
                 name)
-            procedure.set_menu_label(_("_Contrastee auto"))
+            procedure.set_menu_label(_("_Contraste auto"))
             procedure.set_attribution("PhotoGIMP Pro", "GPL v3+", "2026")
-            procedure.add_menu_path("<Image>/Image/Reglages auto")
+            # barre de menus : placé par tools/build_menus.py (app.<procédure>)
 
         elif name == 'python-fu-auto-color':
             procedure = Gimp.ImageProcedure.new(self, name,
@@ -149,7 +149,7 @@ class AutoAdjustments(Gimp.PlugIn):
                 name)
             procedure.set_menu_label(_("Cou_leur auto"))
             procedure.set_attribution("PhotoGIMP Pro", "GPL v3+", "2026")
-            procedure.add_menu_path("<Image>/Image/Reglages auto")
+            # barre de menus : placé par tools/build_menus.py (app.<procédure>)
 
         else:
             return None

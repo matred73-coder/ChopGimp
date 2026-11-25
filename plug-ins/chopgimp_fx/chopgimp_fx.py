@@ -763,7 +763,9 @@ def layer_style_dialog(image, layer, focus=None):
 
 
 # ─── Déclaration des procédures ─────────────────────────────────────────
-TRACE = "<Image>/Layer/Effets de tracé"
+# Effets de tracé : placés dans le menu Vecteur par tools/build_menus.py
+# (app.<procédure>), pas de chemin « <Image>/… » (sinon en double)
+TRACE = None
 TRACE_L = "<Layers>/Layers Menu/Effets de tracé"
 STYLE = "<Image>/Layer/Style de calque"
 STYLE_L = "<Layers>/Layers Menu/Style de calque"
@@ -932,7 +934,8 @@ class ChopGimpFx(Gimp.PlugIn):
         p.set_attribution(AUTHOR, AUTHOR, YEAR)
         p.set_menu_label(label)
         for path in paths:
-            p.add_menu_path(path)
+            if path:
+                p.add_menu_path(path)
         p.set_documentation(label.rstrip("…"), label.rstrip("…"), name)
         p.set_sensitivity_mask(Gimp.ProcedureSensitivityMask.DRAWABLE |
                                Gimp.ProcedureSensitivityMask.DRAWABLES)

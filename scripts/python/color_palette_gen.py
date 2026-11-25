@@ -167,7 +167,8 @@ class ColorPaletteGen(Gimp.PlugIn):
         elif name == "photogimp-palette-harmony":
             procedure = Gimp.ImageProcedure.new(self, name, Gimp.PDBProcType.PLUGIN, palette_harmony, None)
             procedure.set_menu_label("Harmonie des couleurs…")
-            procedure.add_menu_path("<Image>/Colors/Info")
+            # pas de menu : doublon de Image > Réglages > Informations >
+            # Harmonies de couleurs… (ChopGimp) ; reste appelable par script
             procedure.set_image_types("*")
             procedure.set_sensitivity_mask(Gimp.ProcedureSensitivityMask.ALWAYS)
             procedure.set_documentation("Harmonie des couleurs",

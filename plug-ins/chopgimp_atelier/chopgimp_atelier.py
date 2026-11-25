@@ -39,17 +39,18 @@ from chopgimp_common import (ok, fail, srgb as color, walk_layers, pdb_call,
 
 BD = "<Image>/Filters/BD"
 PROCS = {
-    "chopgimp-sketch-layer": ("Nouveau calque de croquis", "<Image>/Layer"),
+    # None : placé par tools/build_menus.py (Calque, Vecteur), pas de chemin ici
+    "chopgimp-sketch-layer": ("Nouveau calque de croquis", None),
     "chopgimp-sketch-toggle": ("Croquis : afficher / masquer", "<Image>/View"),
-    "chopgimp-flats": ("Aplats sous l'encrage…", "<Image>/Layer"),
+    "chopgimp-flats": ("Aplats sous l'encrage…", None),
     "chopgimp-comic-panels": ("Cases…", BD),
     "chopgimp-comic-balloon": ("Bulle", BD),
     "chopgimp-screentone": ("Trame (demi-teintes)…", BD),
     "chopgimp-speed-lines": ("Lignes de vitesse…", BD),
     "chopgimp-focus-lines": ("Lignes concentriques…", BD),
-    "chopgimp-vector-eraser": ("Gomme vectorielle (retirer la sélection)", "<Image>/Layer/Effets de tracé"),
+    "chopgimp-vector-eraser": ("Gomme vectorielle (retirer la sélection)", None),
     "chopgimp-perspective-guides": ("Guides de perspective…", "<Image>/View"),
-    "chopgimp-harmonies": ("Harmonies de couleurs…", "<Image>/Colors"),
+    "chopgimp-harmonies": ("Harmonies de couleurs…", "<Image>/Image/Réglages/Info"),
     "chopgimp-references": ("Références…", "<Image>/Windows"),
     "chopgimp-timelapse-export": ("Exporter le timelapse…", "<Image>/File/Export"),
 }
@@ -607,7 +608,8 @@ class ChopGimpAtelier(Gimp.PlugIn):
         p = Gimp.ImageProcedure.new(self, name, Gimp.PDBProcType.PLUGIN, self.run, None)
         p.set_image_types("*")
         p.set_menu_label(label)
-        p.add_menu_path(menu)
+        if menu:
+            p.add_menu_path(menu)
         p.set_documentation(label.rstrip("…"), label.rstrip("…"), name)
         p.set_attribution("ChopGimp", "ChopGimp", "2026")
         p.set_sensitivity_mask(Gimp.ProcedureSensitivityMask.DRAWABLE |

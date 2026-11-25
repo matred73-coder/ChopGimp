@@ -144,7 +144,7 @@ class ChopGimpSmart(Gimp.PlugIn):
         p = Gimp.ImageProcedure.new(self, name, Gimp.PDBProcType.PLUGIN, self.run, None)
         p.set_image_types("*")
         p.set_menu_label(PROCS[name])
-        p.add_menu_path(MENU)
+        # barre de menus : Calque > Objet dynamique placé par tools/build_menus.py
         p.add_menu_path(MENU_L)
         p.set_documentation(PROCS[name].rstrip("…"), PROCS[name].rstrip("…"), name)
         p.set_attribution("ChopGimp", "ChopGimp", "2026")

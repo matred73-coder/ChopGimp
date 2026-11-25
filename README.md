@@ -62,8 +62,11 @@ Ils sont produits automatiquement par GitHub Actions à chaque tag `v*`
   « ⋯ ». Elle n'a pas de barre de défilement.
 - **Curseurs façon Photoshop** partout : libellé, piste fine, valeur avec son unité,
   Maj pour un réglage fin. Croix de visée sur les petites brosses.
-- **Menus** : les cases à cocher laissent le menu ouvert. Un menu **Objet** est
-  ajouté. Environ 650 libellés de menus et de filtres sont traduits.
+- **Menus** dans l'ordre de Photoshop, une seule place par commande : le menu
+  Couleurs est fondu dans **Image > Réglages**, les créations de calques sont en
+  tête du menu Calque, et un menu **Vecteur** réunit tout le vectoriel. Les cases à
+  cocher laissent le menu ouvert. Environ 650 libellés de menus et de filtres sont
+  traduits.
 - **Les outils de peinture ne sont jamais aimantés**, comme dans Photoshop : plus de
   « paliers » dans les traits.
 
@@ -118,7 +121,7 @@ Ils sont produits automatiquement par GitHub Actions à chaque tag `v*`
 - **Outil Largeur** (Maj+W) : on tire sur le contour d'un objet pour faire varier
   son épaisseur, d'un seul côté avec Alt ; les profils de largeur s'enregistrent
   et se réutilisent (barre d'options, panneau Contour).
-- **Objet > Distorsion** : Déformation (15 modèles : arc, drapeau, onde, poisson…),
+- **Vecteur > Distorsion** : Déformation (15 modèles : arc, drapeau, onde, poisson…),
   Enveloppe à maille ou d'après l'objet du dessus, Distorsion libre en perspective,
   avec l'outil Enveloppe ; modifiable jusqu'à « Décomposer ».
 - **Gomme vectorielle**, texte déformé, texte sur tracé et texte dans une forme.

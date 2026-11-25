@@ -1,0 +1,71 @@
+From 1599c9de0196189a48610084cc315ee07fd6b1fc Mon Sep 17 00:00:00 2001
+From: ChopGimp <mathieu.redon@proton.me>
+Date: Wed, 25 Nov 2026 06:52:29 +0100
+Subject: [PATCH] ChopGimp: menu path mappings for the Photoshop menu layout
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+The Colors menu is merged into Image > Réglages, Image > Guides moves
+to View and the [Arrange] section to Layer (tools/build_menus.py).
+Plug-ins and scripts registering at the old places are mapped to the
+new ones instead of re-creating the old menus. Menu paths read back
+from an existing pluginrc are mapped too.
+---
+ app/plug-in/plug-in-menu-path.c | 10 ++++++++++
+ app/plug-in/plug-in-rc.c        | 11 +++++++++++
+ 2 files changed, 21 insertions(+)
+
+diff --git a/app/plug-in/plug-in-menu-path.c b/app/plug-in/plug-in-menu-path.c
+index 1b69546..21bf8df 100644
+--- a/app/plug-in/plug-in-menu-path.c
++++ b/app/plug-in/plug-in-menu-path.c
+@@ -45,6 +45,16 @@ static const MenuPathMapping menu_path_mappings[] =
+   { "<Image>/File/Acquire",             NULL, "<Image>/File/Create/Acquire"       },
+   { "<Image>/File/New",                 NULL, "<Image>/File/Create"               },
+   { "<Image>/Image/Mode/Color Profile", NULL, "<Image>/Image/Color Management"    },
++
++  /* ChopGimp: Photoshop menu layout (tools/build_menus.py). The Colors
++   * menu is merged into Image > Réglages, Image > Guides moves to View
++   * and the layer arrangement commands to Layer: plug-ins and scripts
++   * registering at the old places follow them instead of re-creating
++   * the old menus.
++   */
++  { "<Image>/Colors",                   NULL, "<Image>/Image/R\303\251glages"     },
++  { "<Image>/Image/Guides",             NULL, "<Image>/View/Guides"               },
++  { "<Image>/Image/[Arrange]",          NULL, "<Image>/Layer/[Arrange]"           },
+   { NULL, NULL, NULL }
+ };
+ 
+diff --git a/app/plug-in/plug-in-rc.c b/app/plug-in/plug-in-rc.c
+index 6dd59e0..7414970 100644
+--- a/app/plug-in/plug-in-rc.c
++++ b/app/plug-in/plug-in-rc.c
+@@ -35,6 +35,7 @@
+ 
+ #include "gimpplugindef.h"
+ #include "gimppluginprocedure.h"
++#include "plug-in-menu-path.h"
+ #include "plug-in-rc.h"
+ 
+ #include "gimp-intl.h"
+@@ -507,6 +508,16 @@ plug_in_menu_path_deserialize (GScanner            *scanner,
+   if (! gimp_scanner_parse_string (scanner, &menu_path))
+     return G_TOKEN_STRING;
+ 
++  /* ChopGimp: a pluginrc written before a menu path mapping was added
++   * keeps the old paths; map them like newly registered ones.
++   */
++  {
++    gchar *mapped = plug_in_menu_path_map (menu_path, NULL);
++
++    g_free (menu_path);
++    menu_path = mapped;
++  }
++
+   proc->menu_paths = g_list_append (proc->menu_paths, menu_path);
+ 
+   if (! gimp_scanner_parse_token (scanner, G_TOKEN_RIGHT_PAREN))
+-- 
+2.54.0.windows.1
+

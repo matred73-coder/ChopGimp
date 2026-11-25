@@ -124,11 +124,13 @@ class PhotoGimpPS(Gimp.PlugIn):
             doc = "Calque de réglage %s appliqué aux calques situés dessous" % label
         else:
             label = OTHER[name]
-            paths = {"photogimp-clipping-toggle": ["<Image>/Layer", "<Layers>/Layers Menu"],
+            paths = {"photogimp-clipping-toggle": ["<Layers>/Layers Menu"],
                      "photogimp-style-clear": ["<Image>/Layer/Style de calque",
                                                "<Layers>/Layers Menu/Style de calque"],
-                     "photogimp-stamp-visible": ["<Image>/Layer"],
-                     "photogimp-split-shapes": ["<Image>/Layer", "<Layers>/Layers Menu"]}[name]
+                     # barre de menus : placés par tools/build_menus.py
+                     # (Calque ; Vecteur > Convertir)
+                     "photogimp-stamp-visible": [],
+                     "photogimp-split-shapes": ["<Layers>/Layers Menu"]}[name]
             doc = label
         p.set_menu_label(label)
         for path in paths:

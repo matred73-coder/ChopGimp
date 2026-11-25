@@ -48,8 +48,9 @@ SEG_MODELS = ("u2netp", "silueta", "isnet")
 
 PROCS = {
     "chopgimp-ia-select-subject": ("Sujet (IA)", "<Image>/Select"),
-    "chopgimp-ia-remove-background": ("Supprimer l'arrière-plan (IA)", "<Image>/Image"),
-    "chopgimp-ia-upscale": ("Agrandir (IA)…", "<Image>/Image"),
+    # None : placés dans Image par tools/build_menus.py
+    "chopgimp-ia-remove-background": ("Supprimer l'arrière-plan (IA)", None),
+    "chopgimp-ia-upscale": ("Agrandir (IA)…", None),
     "chopgimp-ia-denoise": ("Réduire le bruit…", "<Image>/Filters/Enhance"),
     "chopgimp-ia-models": ("Modèles d'IA…", "<Image>/File"),
 }
@@ -417,7 +418,8 @@ class ChopGimpIA(Gimp.PlugIn):
         p = Gimp.ImageProcedure.new(self, name, Gimp.PDBProcType.PLUGIN, self.run, None)
         p.set_image_types("RGB*, GRAY*")
         p.set_menu_label(label)
-        p.add_menu_path(menu)
+        if menu:
+            p.add_menu_path(menu)
         p.set_documentation(label.rstrip("…"), __doc__.strip().split("\n")[0], name)
         p.set_attribution("ChopGimp", "ChopGimp", "2026")
         if name == "chopgimp-ia-upscale":
