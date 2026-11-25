@@ -189,6 +189,7 @@ Ils sont produits automatiquement par GitHub Actions à chaque tag `v*`
 | 3.17 – 3.24 | Apparence, outil Texte refait, PSD, PDF / AI / EPS / SVG, bases Photoshop, IA locale, dessin, revue finale |
 | 3.25 – 3.26 | Passe de performance, barre d'options compacte, curseurs et panneaux modernisés |
 | 3.27 | Objets vectoriels, panneaux Objets / Aspect / Contour, Vectoriser, fenêtre d'accueil |
+| 3.28 | Menus réorganisés comme Photoshop : menu Vecteur, Couleurs fondu dans Image > Réglages, créations de calques en tête de Calque |
 
 Le détail de chaque version (ce qui est fait, vérifié, et ce qui reste) se trouve
 dans [`docs/SUIVI.md`](docs/SUIVI.md). Le plan du chantier vectoriel est dans
