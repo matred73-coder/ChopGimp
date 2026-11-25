@@ -180,6 +180,9 @@ PS_MAP = [
     ("Vecteur", "layers-vobjects-show-all",     [P + A + "3"],   "Tout afficher"),
     ("Vecteur", "layers-vobjects-clip-make",    [P + "7"],       "Créer un masque d'écrêtage"),
     ("Vecteur", "layers-vobjects-clip-release", [P + A + "7"],   "Libérer le masque d'écrêtage"),
+    # 3.29.3 (Illustrator : Ctrl+Alt+Maj+2 / 3 = verrouiller / masquer les autres)
+    ("Vecteur", "layers-vobjects-lock-others",  [P + S + A + "2"], "Verrouiller les autres objets"),
+    ("Vecteur", "layers-vobjects-hide-others",  [P + S + A + "3"], "Masquer les autres objets"),
     # 3.28.1 : raccourcis d'Illustrator, avec Maj en plus quand la touche
     # d'Illustrator est déjà prise par Photoshop (Ctrl+Alt+X Recadrer,
     # Ctrl+Alt+M Masque, Ctrl+Alt+C Taille de la zone de travail,

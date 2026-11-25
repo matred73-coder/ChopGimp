@@ -171,15 +171,15 @@
         (GimpToolInfo "gimp-perspective-clone-tool"
             (icon-name "gimp-tool-perspective-clone")
             (visible yes))))
+(GimpToolInfo "gimp-direct-select-tool"
+    (icon-name "chopgimp-tool-direct-select")
+    (visible yes))
 (GimpToolGroup "tool group"
     (visible yes)
     (active-tool "gimp-path-tool")
     (children
         (GimpToolInfo "gimp-path-tool"
             (icon-name "gimp-tool-path")
-            (visible yes))
-        (GimpToolInfo "gimp-direct-select-tool"
-            (icon-name "chopgimp-tool-direct-select")
             (visible yes))
         (GimpToolInfo "gimp-curvature-tool"
             (icon-name "chopgimp-tool-curvature")
@@ -194,18 +194,21 @@
         (GimpToolInfo "gimp-vsmooth-tool"
             (icon-name "chopgimp-tool-vsmooth")
             (visible yes))))
-(GimpToolInfo "gimp-text-tool"
-    (icon-name "gimp-tool-text")
+(GimpToolInfo "gimp-shape-tool"
+    (icon-name "chopgimp-tool-shape")
     (visible yes))
 (GimpToolGroup "tool group"
     (visible yes)
-    (active-tool "gimp-shape-tool")
+    (active-tool "gimp-shape-builder-tool")
     (children
-        (GimpToolInfo "gimp-shape-tool"
-            (icon-name "chopgimp-tool-shape")
-            (visible yes))
         (GimpToolInfo "gimp-shape-builder-tool"
             (icon-name "chopgimp-tool-shape-builder")
+            (visible yes))
+        (GimpToolInfo "gimp-live-paint-bucket-tool"
+            (icon-name "chopgimp-tool-live-paint-bucket")
+            (visible yes))
+        (GimpToolInfo "gimp-live-paint-select-tool"
+            (icon-name "chopgimp-tool-live-paint-select")
             (visible yes))))
 (GimpToolGroup "tool group"
     (visible yes)
@@ -232,16 +235,6 @@
             (visible yes))))
 (GimpToolGroup "tool group"
     (visible yes)
-    (active-tool "gimp-live-paint-bucket-tool")
-    (children
-        (GimpToolInfo "gimp-live-paint-bucket-tool"
-            (icon-name "chopgimp-tool-live-paint-bucket")
-            (visible yes))
-        (GimpToolInfo "gimp-live-paint-select-tool"
-            (icon-name "chopgimp-tool-live-paint-select")
-            (visible yes))))
-(GimpToolGroup "tool group"
-    (visible yes)
     (active-tool "gimp-vmesh-tool")
     (children
         (GimpToolInfo "gimp-vmesh-tool"
@@ -250,6 +243,9 @@
         (GimpToolInfo "gimp-vblend-tool"
             (icon-name "chopgimp-tool-blend")
             (visible yes))))
+(GimpToolInfo "gimp-text-tool"
+    (icon-name "gimp-tool-text")
+    (visible yes))
 (GimpToolGroup "tool group"
     (visible yes)
     (active-tool "gimp-hand-tool")

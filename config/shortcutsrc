@@ -286,6 +286,10 @@
 (action "layers-vobjects-clip-make" "<Primary>7")
 # Libérer le masque d'écrêtage
 (action "layers-vobjects-clip-release" "<Primary><Alt>7")
+# Verrouiller les autres objets
+(action "layers-vobjects-lock-others" "<Primary><Shift><Alt>2")
+# Masquer les autres objets
+(action "layers-vobjects-hide-others" "<Primary><Shift><Alt>3")
 # Créer une peinture dynamique
 (action "layers-vobjects-livepaint-make" "<Primary><Shift><Alt>x")
 # Distorsion : déformation

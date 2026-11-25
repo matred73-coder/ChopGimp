@@ -356,6 +356,15 @@ VECTEUR_MENU = [
                           "layers-image-trace-expand"]]),
      ("C_onvertir", [["layers-vobjects-merge", "layers-vobjects-split",
                       "layers-vobjects-decompose", "photogimp-split-shapes"]])],
+    # 3.29.3 : sélection par couleur / taille, nettoyage, couleurs
+    [("_Sélectionner", [["layers-vobjects-select-all", "layers-vobjects-select-inverse"],
+                         ["layers-vobjects-select-same-fill", "layers-vobjects-select-same-stroke",
+                          "layers-vobjects-select-same-color"],
+                         ["layers-vobjects-select-smaller"]]),
+     ("_Nettoyer", [["layers-vobjects-delete-smaller", "layers-vobjects-merge-same-color"]]),
+     ("Co_uleurs", [["layers-vobjects-swap-fill-stroke", "layers-vobjects-fill-none",
+                     "layers-vobjects-stroke-none"]])],
+    [(None, [["layers-vobjects-lock-others", "layers-vobjects-hide-others"]])],
     [(None, [["layers-vobjects-select-all", "layers-vobjects-delete"]])],
 ]
 

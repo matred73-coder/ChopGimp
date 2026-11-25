@@ -1954,6 +1954,52 @@ try:
     except Exception:
         report(False, "3.29.2", traceback.format_exc().replace("\n", " | ")[:400])
 
+    # 3.29.3 : nettoyage et sélection par couleur (Illustrator)
+    try:
+        im14 = Gimp.Image.new(300, 300, Gimp.ImageBaseType.RGB)
+        b14 = Gimp.Layer.new(im14, "Fond", 300, 300, Gimp.ImageType.RGB_IMAGE, 100, Gimp.LayerMode.NORMAL)
+        im14.insert_layer(b14, None, 0)
+        p14 = Gimp.Path.new(im14, "Formes")
+        im14.insert_path(p14, None, 0)
+        for x0, y0, w in ((20, 20, 80), (120, 20, 80), (20, 150, 80), (250, 250, 4)):
+            st = p14.bezier_stroke_new_moveto(x0, y0)
+            for x, y in ((x0 + w, y0), (x0 + w, y0 + w), (x0, y0 + w)):
+                p14.bezier_stroke_lineto(st, x, y)
+            p14.stroke_close(st)
+        vl14 = Gimp.VectorLayer.new(im14, p14)
+        im14.insert_layer(vl14, None, 0)
+        vl14.set_enable_fill(True); vl14.set_enable_stroke(False)
+        vl14.refresh()
+        im14.set_selected_layers([vl14])
+        run("chopgimp-vobjects-command", image=im14, command="split-new")
+
+        def vx14():
+            r = run("chopgimp-vobjects-get-xml", layer=vl14)
+            return r.index(1) if r is not None and r.index(0) == Gimp.PDBStatusType.SUCCESS else ""
+
+        n0 = vx14().count("<path ")
+        r = run("chopgimp-vobjects-command", image=im14, command="delete-smaller:100")
+        n1 = vx14().count("<path ")
+        report(r is not None and r.index(0) == Gimp.PDBStatusType.SUCCESS and n0 == 4 and n1 == 3,
+               "Supprimer les petits objets (côté < 10 px)", "%d → %d objets" % (n0, n1))
+        run("chopgimp-vobjects-command", image=im14, command="select-at:60:60")
+        r = run("chopgimp-vobjects-command", image=im14, command="select-same-fill")
+        report(r is not None and r.index(0) == Gimp.PDBStatusType.SUCCESS,
+               "Sélectionner > Même couleur de fond")
+        r = run("chopgimp-vobjects-command", image=im14, command="merge-same-color")
+        n2 = vx14().count("<path ")
+        report(r is not None and r.index(0) == Gimp.PDBStatusType.SUCCESS and n2 == 1,
+               "Fusionner les formes de même couleur", "%d objet(s)" % n2)
+        im14.delete()
+
+        tr = open(os.path.join(Gimp.sysconf_directory(), "toolrc")).read()
+        pos = [tr.find('"gimp-%s-tool"' % t) for t in ("direct-select", "path", "vpencil", "shape",
+                                                       "shape-builder", "width", "vscissors", "vmesh", "text")]
+        report(all(p >= 0 for p in pos) and pos == sorted(pos),
+               "Boîte à outils : bloc vectoriel rangé par intention", "positions : %s" % pos)
+    except Exception:
+        report(False, "3.29.3", traceback.format_exc().replace("\n", " | ")[:400])
+
     # 4. Réglages d'usine présents (thème, icônes, menus, raccourcis)
     data = Gimp.data_directory()
     sysconf = Gimp.sysconf_directory()

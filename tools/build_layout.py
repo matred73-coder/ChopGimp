@@ -32,14 +32,16 @@ TOOLBOX = [
     ("spot-heal", "heal"),                                    # J
     ("clone", "perspective-clone"),                           # S
     # ── Vectoriel / texte ────────────────────────────────────────────
-    ("path", "direct-select", "curvature"),                   # P / A / Maj+P (3.29.0)
-    ("vpencil", "vsmooth"),                                   # N (3.29.0 : crayon vectoriel, lissage)
+    # 3.29.3 : rangé par intention (ordre d'usage), raccourcis inchangés
+    ("direct-select",),                                       # A (seule, toujours visible)
+    ("path", "curvature"),                                    # P / Maj+P : tracés précis
+    ("vpencil", "vsmooth"),                                   # N : main levée
+    ("shape",),                                               # U : formes
+    ("shape-builder", "live-paint-bucket", "live-paint-select"),  # Maj+Alt+M / K / Maj+K : construire et colorier des zones
+    ("width", "envelope"),                                    # Maj+W : déformer
+    ("vscissors", "vknife", "vjoin"),                         # couper et assembler (la Gomme vectorielle est une commande, menu Vecteur)
+    ("vmesh", "vblend"),                                      # Maj+U : couleur et matière
     ("text",),                                                # T
-    ("shape", "shape-builder"),                               # U / Maj+Alt+M
-    ("width", "envelope"),                                    # Maj+W
-    ("vscissors", "vknife", "vjoin"),                         # 3.29.0 : ciseaux, cutter, jonction
-    ("live-paint-bucket", "live-paint-select"),               # K / Maj+K
-    ("vmesh", "vblend"),                                      # Maj+U (3.29.1 : filet, transition)
     # ── Navigation ───────────────────────────────────────────────────
     ("hand", "rotate-view"),                                  # H / R
     ("zoom",),                                                # Z
