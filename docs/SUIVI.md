@@ -696,7 +696,6 @@ Restent à traiter (identiques avec ou sans effets) : blocages au déplacement, 
 - **Corrigé en passant** : les effets vivants sur un tracé ouvert (onde, zigzag, profils de largeur…) ajoutaient un segment de retour vers le début (lib2geom compte le segment de fermeture même sur un tracé ouvert).
 - **Raccourci** : Maj+W passe à l'outil Largeur (comme Illustrator) ; la Sélection de premier plan n'a plus de raccourci (groupe W de la boîte à outils, menu Outils).
 - Vérifié : 137 tests (11 nouveaux : profil asymétrique, profil enregistré, 15 déformations, distorsion gardée et aplatie, maille, distorsion libre, XCF, Décomposer, d'après l'objet du dessus, filet qui suit le fond, vectorisation suivie après déplacement des objets) ; banc graphique : outil Largeur (point posé et tiré), fenêtre Déformation (aperçu puis Valider), Distorsion libre et outil Enveloppe (coin tiré, perspective).
-- Limites : le réglage « Angles » par défaut (75 %) donne des cercles en polygones (correspondance angles → alphamax de potrace à revoir) ; une vectorisation dynamique ne suit pas une mise à l'échelle de l'image (la source garde sa taille) ; « 1 couleurs » (pluriel) dans les statistiques ; Pixel art refusé au-delà de 1 Mpx ; une photo en haute fidélité peut dépasser 700 000 points (⚠ dans la fenêtre).
 
 ## 3.28.0 — Réorganisation des menus I : Vecteur, Calque, Image / Couleurs
 
