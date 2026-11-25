@@ -70,6 +70,11 @@ Ils sont produits automatiquement par GitHub Actions à chaque tag `v*`
 - **Les outils de peinture ne sont jamais aimantés**, comme dans Photoshop : plus de
   « paliers » dans les traits.
 
+- **Lasso magnétique** et **Sélection rapide** comme dans Photoshop : le tracé suit
+  les bords pendant qu'on bouge la souris, ou on peint et la sélection s'étend
+  jusqu'aux bords. **Boîte à outils par familles** (gomme sous le pinceau) et
+  **croix au centre de la brosse** réglable.
+
 ### Apparence et espaces de travail
 - **Thème « ChopGimp »** en 7 variantes, avec couleur d'accent, densité, polices
   Inter et Source Sans 3, et taille de l'interface en rem. Le tout est réglable à
@@ -105,7 +110,8 @@ Ils sont produits automatiquement par GitHub Actions à chaque tag `v*`
   de contours (couleur, dégradé, motif, opacité, mode), sa transformation, ses
   verrous et ses groupes. L'enregistrement est dans le XCF, et un GIMP standard voit
   les pixels.
-- **Sélection (V) et Sélection directe (A) en mode objets**, avec **repères
+- **Sélection (V) et Sélection directe (A) en mode objets** (un rectangle de la
+  Sélection directe prend les points de plusieurs objets), avec **repères
   commentés** (aimantation aux bords, centres et nœuds, distances, espacements
   égaux).
 - **Panneaux** Objets, Aspect et Contour (tirets, flèches, profils d'épaisseur).
@@ -196,7 +202,7 @@ Ils sont produits automatiquement par GitHub Actions à chaque tag `v*`
 | 3.17 – 3.24 | Apparence, outil Texte refait, PSD, PDF / AI / EPS / SVG, bases Photoshop, IA locale, dessin, revue finale |
 | 3.25 – 3.26 | Passe de performance, barre d'options compacte, curseurs et panneaux modernisés |
 | 3.27 | Objets vectoriels, panneaux Objets / Aspect / Contour, Vectoriser, fenêtre d'accueil |
-| 3.28 | Menus réorganisés comme Photoshop (menu Vecteur…), Peinture dynamique et Symboles (3.28.1), petits défauts : contours à l'échelle, convertir en maille, pipette avec effets, ombres pixellisées dans leur mode (3.28.2) |
+| 3.28 | Menus réorganisés comme Photoshop (menu Vecteur…), Peinture dynamique et Symboles (3.28.1), petits défauts : contours à l'échelle, convertir en maille, pipette avec effets, ombres pixellisées dans leur mode (3.28.2), Lasso magnétique, Sélection rapide, boîte à outils par familles (3.28.3) |
 
 Le détail de chaque version (ce qui est fait, vérifié, et ce qui reste) se trouve
 dans [`docs/SUIVI.md`](docs/SUIVI.md). Le plan du chantier vectoriel est dans

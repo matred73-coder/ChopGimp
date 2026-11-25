@@ -1581,6 +1581,39 @@ try:
     except Exception:
         report(False, "3.28.2", traceback.format_exc().replace("\n", " | ")[:400])
 
+    # 3.28.3 : croix de la brosse, Sélection rapide, Lasso magnétique,
+    # boîte à outils par familles
+    try:
+        try:
+            v = Gimp.gimprc_query("brush-crosshair")
+        except Exception as e:
+            v = "erreur : %s" % e
+        report(str(v).strip() in ("0", "always"),
+               "Croix au centre de la brosse : Toujours par défaut", "valeur : %s" % v)
+        # l'opération doit exister dans le cœur de GIMP (outil enregistré
+        # seulement si gegl_has_operation) : un filtre inconnu est refusé
+        imq = Gimp.Image.new(64, 64, Gimp.ImageBaseType.RGB)
+        lq = Gimp.Layer.new(imq, "q", 64, 64, Gimp.ImageType.RGB_IMAGE, 100, Gimp.LayerMode.NORMAL)
+        imq.insert_layer(lq, None, 0)
+        try:
+            fq = Gimp.DrawableFilter.new(lq, "gegl:paint-select", "test")
+            okq = fq is not None
+        except Exception as e:
+            okq = False
+        imq.delete()
+        report(okq, "Sélection rapide : opération gegl:paint-select présente")
+        rc = open(os.path.join(Gimp.sysconf_directory(), "toolrc")).read()
+        order = [rc.find('"gimp-%s-tool"' % t) for t in
+                 ("move", "magnetic-lasso", "paint-select", "paintbrush", "eraser",
+                  "heal", "clone", "path", "shape", "width", "live-paint-bucket", "zoom")]
+        report(all(p >= 0 for p in order) and order == sorted(order),
+               "Boîte à outils par familles (Lasso magnétique, Sélection rapide, Gomme sous le pinceau…)",
+               "positions : %s" % order)
+        report('(active-tool "gimp-magnetic-lasso-tool")' in rc,
+               "Lasso magnétique : outil affiché du groupe L")
+    except Exception:
+        report(False, "3.28.3", traceback.format_exc().replace("\n", " | ")[:400])
+
     # 4. Réglages d'usine présents (thème, icônes, menus, raccourcis)
     data = Gimp.data_directory()
     sysconf = Gimp.sysconf_directory()

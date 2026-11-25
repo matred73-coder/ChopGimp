@@ -270,6 +270,15 @@ if not vanilla:
     m["modules"][gi:gi] = GEOM_MODULES + LQR_MODULES + POTRACE_MODULES + IA_MODULES
     # Correctifs GEGL (plantage multi-thread des tuiles mipmap, cf. patches/gegl-0.4.72)
     gegl = next(x for x in m["modules"] if isinstance(x, dict) and x["name"] == "gegl")
+    # 3.28.3 : opérations « workshop » de GEGL, pour gegl:paint-select (avec
+    # maxflow) qu'utilise l'outil Sélection rapide (Paint Select de GIMP)
+    gegl["config-opts"] = gegl.get("config-opts", []) + ["-Dworkshop=true"]
+    # … mais on ne garde que paint-select : les autres opérations
+    # expérimentales créeraient des entrées de menu (« Colors ») non voulues
+    gegl["cleanup"] = gegl.get("cleanup", []) + [
+        "/lib/gegl-0.4/%s.so" % n for n in (
+            "gegl-workshop", "average", "blend-reflect", "ctx-script", "line-profile",
+            "negation", "soft-burn", "soft-dodge", "subtractive", "v4l2", "voroni_diagram")]
     for p in sorted(glob.glob(os.path.join(ROOT, "patches", "gegl-0.4.72", "*.patch"))):
         gegl["sources"].append({"type": "patch", "path": os.path.relpath(p, FP)})
     # Correctifs babl (extraction directe de l'alpha, verrou de la conversion

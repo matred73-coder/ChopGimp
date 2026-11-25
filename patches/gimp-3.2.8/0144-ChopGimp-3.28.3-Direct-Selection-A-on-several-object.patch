@@ -1,0 +1,318 @@
+From 4b5e8ba92676ef68597a960f5a563c3d03ff561b Mon Sep 17 00:00:00 2001
+From: ChopGimp <mathieu.redon@proton.me>
+Date: Wed, 25 Nov 2026 11:19:53 +0100
+Subject: [PATCH 144/144] ChopGimp 3.28.3: Direct Selection (A) on several
+ objects (Illustrator): a rectangle from the void, even with no object being
+ edited, selects the nodes of all the visible, unlocked path objects of the
+ active vector layer; they move together in one undo step and go back into
+ each object; Shift adds, Alt removes, a click in the void deselects
+
+---
+ app/display/gimptoolpath.c |   6 +-
+ app/tools/gimppathtool.c   | 209 ++++++++++++++++++++++++++++++++++++-
+ app/tools/gimppathtool.h   |   2 +
+ 3 files changed, 211 insertions(+), 6 deletions(-)
+
+diff --git a/app/display/gimptoolpath.c b/app/display/gimptoolpath.c
+index b58a2e8..8b8d0cb 100644
+--- a/app/display/gimptoolpath.c
++++ b/app/display/gimptoolpath.c
+@@ -996,6 +996,8 @@ gimp_tool_path_button_release (GimpToolWidget        *widget,
+           gdouble     y2 = MAX (private->rb_y0, private->rb_y1);
+           gboolean    extend = (private->saved_state &
+                                 gimp_get_extend_selection_mask ()) != 0;
++          /*  ChopGimp 3.28.3: Alt + rectangle deselects (Illustrator)  */
++          gboolean    subtract = (private->saved_state & GDK_MOD1_MASK) != 0;
+           GimpStroke *stroke = NULL;
+ 
+           gimp_path_freeze (private->path);
+@@ -1016,8 +1018,8 @@ gimp_tool_path_button_release (GimpToolWidget        *widget,
+                         a->position.y >= y1 && a->position.y <= y2);
+ 
+                   if (in)
+-                    a->selected = TRUE;
+-                  else if (! extend)
++                    a->selected = ! subtract;
++                  else if (! extend && ! subtract)
+                     a->selected = FALSE;
+                 }
+             }
+diff --git a/app/tools/gimppathtool.c b/app/tools/gimppathtool.c
+index f3a7e94..4f1a3b7 100644
+--- a/app/tools/gimppathtool.c
++++ b/app/tools/gimppathtool.c
+@@ -43,6 +43,7 @@
+ #include "paint/gimppaintoptions.h" /* GIMP_PAINT_OPTIONS_CONTEXT_MASK */
+ 
+ #include "path/gimppath.h"
++#include "path/gimpstroke.h"
+ #include "path/gimpvectorlayer.h"
+ #include "path/gimpvectorlayeroptions.h"
+ #include "path/chopgimp-vobject.h"
+@@ -316,6 +317,101 @@ gimp_path_tool_vobj_detach (GimpPathTool *path_tool)
+     }
+ 
+   path_tool->vobj_id = 0;
++
++  if (path_tool->vobj_multi)
++    {
++      g_array_free (path_tool->vobj_multi, TRUE);
++      path_tool->vobj_multi = NULL;
++    }
++}
++
++/*  ChopGimp 3.28.3: Direct Selection on several objects at once (a
++ *  rectangle from the void, Illustrator): the edited path holds the
++ *  strokes of all the objects, each one marked with its object's id,
++ *  and goes back into each object when it changes
++ */
++#define CHOPGIMP_VOBJ_ID_KEY "chopgimp-vobj-id"
++
++static void
++gimp_path_tool_vobj_fill_multi (GimpPathTool *path_tool,
++                                GimpPath     *combined)
++{
++  guint i;
++
++  for (i = 0; i < path_tool->vobj_multi->len; i++)
++    {
++      guint            id = g_array_index (path_tool->vobj_multi, guint, i);
++      ChopGimpVObject *o  = chopgimp_vlayer_get_object (path_tool->vobj_layer, id);
++      GimpPath        *world;
++      GimpStroke      *s = NULL;
++
++      if (! o || o->kind != CHOPGIMP_VOBJECT_PATH)
++        continue;
++
++      world = chopgimp_vobject_get_world_path (path_tool->vobj_layer, o, FALSE);
++      g_object_ref_sink (world);
++
++      while ((s = gimp_path_stroke_get_next (world, s)))
++        {
++          GimpStroke *copy = gimp_stroke_duplicate (s);
++
++          g_object_set_data (G_OBJECT (copy), CHOPGIMP_VOBJ_ID_KEY,
++                             GUINT_TO_POINTER (id));
++          gimp_path_stroke_add (combined, copy);
++          g_object_unref (copy);
++        }
++
++      g_object_unref (world);
++    }
++}
++
++static void
++gimp_path_tool_vobj_thaw_multi (GimpPath     *path,
++                                GimpPathTool *path_tool)
++{
++  GimpImage *image = gimp_item_get_image (GIMP_ITEM (path_tool->vobj_layer));
++  guint      i;
++
++  path_tool->vobj_writing = TRUE;
++  chopgimp_vlayer_freeze (path_tool->vobj_layer);
++
++  for (i = 0; i < path_tool->vobj_multi->len; i++)
++    {
++      guint            id = g_array_index (path_tool->vobj_multi, guint, i);
++      ChopGimpVObject *o  = chopgimp_vlayer_get_object (path_tool->vobj_layer, id);
++      GimpPath        *part;
++      GimpPath        *local;
++      GimpStroke      *s = NULL;
++
++      if (! o || o->kind != CHOPGIMP_VOBJECT_PATH)
++        continue;
++
++      part = gimp_path_new (image, o->name);
++      g_object_ref_sink (part);
++
++      while ((s = gimp_path_stroke_get_next (path, s)))
++        {
++          if (GPOINTER_TO_UINT (g_object_get_data (G_OBJECT (s),
++                                                   CHOPGIMP_VOBJ_ID_KEY)) == id)
++            {
++              GimpStroke *copy = gimp_stroke_duplicate (s);
++
++              gimp_path_stroke_add (part, copy);
++              g_object_unref (copy);
++            }
++        }
++
++      local = chopgimp_vobjects_path_to_local (o, part);
++      chopgimp_vlayer_set_path (path_tool->vobj_layer, id, local, FALSE);
++
++      g_object_unref (local);
++      g_object_unref (part);
++    }
++
++  chopgimp_vlayer_thaw (path_tool->vobj_layer);
++  path_tool->vobj_writing = FALSE;
++
++  gimp_image_flush (image);
+ }
+ 
+ /*  the edited copy changed (a node moved…): into the object  */
+@@ -329,6 +425,12 @@ gimp_path_tool_vobj_thaw (GimpPath     *path,
+   if (path_tool->vobj_writing || ! path_tool->vobj_layer)
+     return;
+ 
++  if (path_tool->vobj_multi)
++    {
++      gimp_path_tool_vobj_thaw_multi (path, path_tool);
++      return;
++    }
++
+   o = chopgimp_vlayer_get_object (path_tool->vobj_layer, path_tool->vobj_id);
+   if (! o || o->kind != CHOPGIMP_VOBJECT_PATH)
+     return;
+@@ -357,6 +459,21 @@ gimp_path_tool_vobj_changed (GimpVectorLayer *layer,
+   if (path_tool->vobj_writing || ! path_tool->vobj_path)
+     return;
+ 
++  /*  ChopGimp 3.28.3: several objects: rebuild the edited strokes  */
++  if (path_tool->vobj_multi)
++    {
++      path_tool->vobj_writing = TRUE;
++      gimp_path_freeze (path_tool->vobj_path);
++
++      while ((s = gimp_path_stroke_get_next (path_tool->vobj_path, NULL)))
++        gimp_path_stroke_remove (path_tool->vobj_path, s);
++
++      gimp_path_tool_vobj_fill_multi (path_tool, path_tool->vobj_path);
++      gimp_path_thaw (path_tool->vobj_path);
++      path_tool->vobj_writing = FALSE;
++      return;
++    }
++
+   o = chopgimp_vlayer_get_object (layer, path_tool->vobj_id);
+ 
+   if (! o || o->kind != CHOPGIMP_VOBJECT_PATH)
+@@ -414,6 +531,75 @@ gimp_path_tool_vobj_edit (GimpPathTool    *path_tool,
+   chopgimp_vlayer_set_selection (layer, &object->id, 1);
+ }
+ 
++/*  ChopGimp 3.28.3: the nodes of all the visible, unlocked path objects
++ *  of @layer, for a rectangle drawn from the void; FALSE if none
++ */
++static gboolean
++gimp_path_tool_vobj_edit_multi (GimpPathTool    *path_tool,
++                                GimpVectorLayer *layer)
++{
++  GimpImage *image = gimp_item_get_image (GIMP_ITEM (layer));
++  GArray    *ids   = g_array_new (FALSE, FALSE, sizeof (guint));
++  GList     *leaves;
++  GList     *list;
++  GimpPath  *combined;
++
++  leaves = chopgimp_vlayer_get_leaves (layer);
++
++  for (list = leaves; list; list = list->next)
++    {
++      ChopGimpVObject *o = list->data;
++
++      if (o->kind == CHOPGIMP_VOBJECT_PATH     &&
++          chopgimp_vobject_is_visible (o)      &&
++          ! chopgimp_vobject_is_locked (o))
++        g_array_append_val (ids, o->id);
++    }
++
++  g_list_free (leaves);
++
++  if (ids->len == 0)
++    {
++      g_array_free (ids, TRUE);
++      return FALSE;
++    }
++
++  combined = gimp_path_new (image, "Objets");
++  g_object_ref_sink (combined);
++
++  gimp_path_tool_set_layer (path_tool, NULL);
++  gimp_path_tool_set_path (path_tool, NULL, NULL);
++
++  /*  fill_multi() reads the layer and the ids from the tool  */
++  path_tool->vobj_layer = layer;
++  path_tool->vobj_multi = ids;
++  gimp_path_tool_vobj_fill_multi (path_tool, combined);
++  path_tool->vobj_layer = NULL;
++  path_tool->vobj_multi = NULL;
++
++  gimp_path_tool_set_path (path_tool, NULL, combined);
++  g_object_unref (combined);
++
++  if (path_tool->path != combined)
++    {
++      g_array_free (ids, TRUE);
++      return FALSE;
++    }
++
++  path_tool->vobj_path  = combined;
++  path_tool->vobj_layer = layer;
++  path_tool->vobj_id    = 0;
++  path_tool->vobj_multi = ids;
++  g_object_add_weak_pointer (G_OBJECT (layer), (gpointer *) &path_tool->vobj_layer);
++
++  g_signal_connect_after (combined, "thaw",
++                          G_CALLBACK (gimp_path_tool_vobj_thaw), path_tool);
++  g_signal_connect (layer, "objects-changed",
++                    G_CALLBACK (gimp_path_tool_vobj_changed), path_tool);
++
++  return TRUE;
++}
++
+ /*  TRUE when the press was used  */
+ static gboolean
+ gimp_path_tool_vobj_press (GimpPathTool     *path_tool,
+@@ -440,7 +626,8 @@ gimp_path_tool_vobj_press (GimpPathTool     *path_tool,
+                                    3.0 / MAX (shell->scale_x, 1e-6),
+                                    CHOPGIMP_HIT_LEAF);
+ 
+-  if (leaf && (leaf->id != path_tool->vobj_id || path_tool->vobj_layer != layer))
++  if (leaf && (leaf->id != path_tool->vobj_id || path_tool->vobj_layer != layer ||
++               path_tool->vobj_multi))
+     {
+       gimp_path_tool_vobj_edit (path_tool, layer, leaf);
+       gimp_image_flush (image);
+@@ -451,10 +638,24 @@ gimp_path_tool_vobj_press (GimpPathTool     *path_tool,
+       return FALSE;   /* the press goes on to the nodes */
+     }
+ 
+-  /*  in the void: a selection rectangle on the edited object's nodes,
+-   *  never a new path
++  /*  in the void: a selection rectangle on the nodes of ALL the objects
++   *  of the layer (ChopGimp 3.28.3, Illustrator), never a new path
+    */
+-  return (path_tool->vobj_layer != layer || ! path_tool->widget);
++  if (path_tool->vobj_layer != layer || ! path_tool->widget ||
++      ! path_tool->vobj_multi)
++    {
++      if (! gimp_path_tool_vobj_edit_multi (path_tool, layer))
++        return TRUE;
++
++      gimp_image_flush (image);
++
++      if (! path_tool->widget)
++        return TRUE;
++
++      gimp_tool_widget_hover (path_tool->widget, coords, state, TRUE);
++    }
++
++  return FALSE;
+ }
+ 
+ static void
+diff --git a/app/tools/gimppathtool.h b/app/tools/gimppathtool.h
+index c8d8bef..530bbad 100644
+--- a/app/tools/gimppathtool.h
++++ b/app/tools/gimppathtool.h
+@@ -59,6 +59,8 @@ struct _GimpPathTool
+   GimpPath        *vobj_path;      /* == path while editing the object */
+   gboolean         vobj_writing;
+   gboolean         vobj_new_group;  /* 3.28.2: « Ajouter un objet » undo group open */
++  GArray          *vobj_multi;      /* 3.28.3: ids of the objects whose nodes
++                                     * are edited together (guint), or NULL */
+ };
+ 
+ struct _GimpPathToolClass
+-- 
+2.53.0
+

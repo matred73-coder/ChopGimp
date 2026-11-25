@@ -1,0 +1,45 @@
+From 9d57ec62c84505c5763cc3ea64aa5efb52407ab8 Mon Sep 17 00:00:00 2001
+From: ChopGimp <mathieu.redon@proton.me>
+Date: Wed, 25 Nov 2026 11:55:16 +0100
+Subject: [PATCH] =?UTF-8?q?ChopGimp=203.28.3:=20GEGL=20operations=20follow?=
+ =?UTF-8?q?=20the=20menu=20path=20mappings=20of=20the=20plug-ins=20(gegl:l?=
+ =?UTF-8?q?ocal-threshold=20=C2=AB=20<Image>/Colors=20=C2=BB=20goes=20to?=
+ =?UTF-8?q?=20Image=20>=20R=C3=A9glages=20instead=20of=20re-creating=20an?=
+ =?UTF-8?q?=20English=20=C2=AB=20Colors=20=C2=BB=20menu)?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+---
+ app/menus/filters-menu.c | 8 +++++++-
+ 1 file changed, 7 insertions(+), 1 deletion(-)
+
+diff --git a/app/menus/filters-menu.c b/app/menus/filters-menu.c
+index 6b3b00e..2d5e2ec 100644
+--- a/app/menus/filters-menu.c
++++ b/app/menus/filters-menu.c
+@@ -28,6 +28,8 @@
+ #include "core/gimp.h"
+ #include "core/gimp-filter-history.h"
+ 
++#include "plug-in/plug-in-menu-path.h"
++
+ #include "widgets/gimpactiongroup.h"
+ #include "widgets/gimpstringaction.h"
+ #include "widgets/gimpuimanager.h"
+@@ -79,7 +81,11 @@ filters_menu_setup (GimpUIManager *manager,
+       if (path == NULL)
+         continue;
+ 
+-      path = g_strdup (path);
++      /*  ChopGimp: GEGL operations follow the same menu path mappings as
++       *  the plug-ins (e.g. gegl:local-threshold « <Image>/Colors » goes
++       *  to Image > Réglages instead of re-creating a « Colors » menu)
++       */
++      path = plug_in_menu_path_map (path, NULL);
+       root = strstr (path, "/");
+ 
+       if (root == NULL || root == path)
+-- 
+2.53.0
+

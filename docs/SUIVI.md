@@ -759,3 +759,39 @@ Correctifs des « Limites » notées de 3.26.1 à 3.28.1 (patch 0141).
 - Vérifié : 158 tests (5 nouveaux : épaisseur conservée, sélection dans le XCF, convertir en maille, décomposer seulement la distorsion, ombre en Produit pixellisée en calque Produit) ; banc graphique : outil Largeur (point posé et élargi, double-clic, Suppr, enregistrer un profil), case « Contours à l'échelle ».
 - Non vérifié au banc : glisser-déposer des couleurs globales et des symboles, surbrillance rouge, double-clic de la Sélection de peinture dynamique, Ctrl+Maj+glisser, pipette avec effets, garde d'annulation de la fenêtre Style de calque.
 - Limites : avec l'outil Largeur et un objet sélectionné, le profil de largeur passe dans « ⋯ » de la barre d'options (place) ; « Fusionner les calques » avec une ombre en Produit : non vérifié.
+
+## 3.28.3 — Boîte à outils par familles, Lasso magnétique, Sélection rapide, croix de la brosse, Sélection directe sur plusieurs objets
+
+- **Boîte à outils réorganisée par familles** (`tools/build_layout.py`) :
+  - Sélection / composition : Déplacement, Rectangle, **Lasso (magnétique par défaut)**, Baguette / **Sélection rapide**, Recadrage, Transformation, Pipette ;
+  - Peinture : Pinceau, **Gomme juste dessous**, Dégradé, Goutte d'eau, Densité ;
+  - Retouche : Correcteurs, Tampons ;
+  - Vectoriel / texte : Plume, Texte, Forme, Largeur, Peinture dynamique, en 3 groupes ;
+  - Navigation : Main, Zoom.
+  
+  Les raccourcis ne changent pas. Pas de trait entre les familles : la palette de GIMP range ses outils dans un seul groupe, par position.
+- **Lasso magnétique** (L, outil `gimp-magnetic-lasso-tool`, les Ciseaux intelligents de GIMP en mode magnétique) :
+  - un clic pose le départ, puis le tracé suit le bord pendant qu'on déplace la souris, sans bouton ;
+  - des points sont posés tout seuls selon la **Fréquence** ; options **Largeur** et **Contraste** (10, 10, 57 par défaut, comme Photoshop), dans la barre d'options ;
+  - un clic force un point, Retour arrière retire le dernier, double-clic, Entrée ou clic sur le départ ferment **et sélectionnent**, Échap annule, Alt trace un segment droit ;
+  - les Ciseaux intelligents restent dans le groupe ; leur recherche du bord est maintenant centrée sur le pointeur aussi au bord de l'image (identique ailleurs).
+- **Sélection rapide** (W) : l'outil Paint Select de GIMP n'est plus expérimental.
+  - On peint et la sélection s'étend jusqu'aux bords ; Alt retire ; `[` et `]` changent la taille ; croix au centre de la brosse.
+  - Options : **Échantillonner tous les calques**, **Améliorer le contour** (flou de 1,2 px puis seuil), **Calcul autour du trait** (graphe limité à la zone du trait), bouton **Sélectionner et masquer…**.
+  - GEGL est compilé avec ses opérations « workshop » pour `gegl:paint-select` (avec maxflow) ; les autres opérations expérimentales sont retirées du paquet.
+- **Croix au centre de la brosse** : Préférences > Périphériques d'entrée > Outils de peinture, **Toujours** (par défaut), Petites brosses seulement (3.24.10) ou Jamais (`brush-crosshair` dans le gimprc, appliqué à chaud).
+- **Sélection directe (A) sur plusieurs objets** : un rectangle tracé depuis le vide, même sans objet en cours, sélectionne les points de **tous** les objets visibles et non verrouillés du calque vectoriel actif ; ils se déplacent ensemble en **une** étape d'annulation. Maj ajoute, Alt retire, un clic dans le vide désélectionne.
+- **Corrigé en passant (reste de la 3.28.0)** : les opérations GEGL suivent maintenant les mêmes redirections de menus que les greffons. `gegl:local-threshold` recréait un menu anglais « Colors » ; « Seuil local… » est désormais dans Image > Réglages.
+- Vérifié : 162 tests (4 nouveaux : croix réglée sur Toujours, `gegl:paint-select` présent, ordre de la boîte à outils, Lasso magnétique affiché dans le groupe L). Banc graphique :
+  - boîte à outils dans le nouvel ordre, groupe W (Baguette, Sélection rapide, Premier plan, Par couleur) ;
+  - croix au centre d'une brosse de 51 px ;
+  - Lasso magnétique : le tracé suit le bord d'un cercle, Retour arrière, double-clic qui ferme et sélectionne (corrigé : le double-clic n'arrivait pas à l'outil), barre d'options (ajoutée : elle était vide) ;
+  - Sélection rapide : un petit trait sélectionne tout un rectangle, Alt+trait le retire ;
+  - Sélection directe : rectangle sur 2 objets, déplacement des deux, une seule annulation ;
+  - restes de la 3.28.2 : Ctrl+Maj+glisser déplace tout le calque vectoriel (le calque pris est celui sous le pointeur, comme Ctrl = sélection automatique), survol rouge du Pot de peinture dynamique ;
+  - menu Image > Réglages avec « Seuil local… », plus de menu « Colors ».
+- Non vérifié au banc : glisser-déposer des couleurs globales et des symboles, pipette avec effets (vérifiés par les tests automatiques de la 3.28.2).
+- Limites :
+  - Lasso magnétique : des mouvements de souris très rapides (sauts de plus de 100 px) peuvent poser des points hors du bord, que Retour arrière retire ;
+  - dans la Sélection directe sur plusieurs objets, un nouveau sous-tracé dessiné à la Plume n'appartient à aucun objet et n'est pas gardé ;
+  - le raccourci L active le Lasso libre (action de l'outil), pas l'outil affiché du groupe.

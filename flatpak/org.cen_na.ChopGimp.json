@@ -819,11 +819,23 @@
             "config-opts": [
                 "-Dgi-docgen=disabled",
                 "-Ddocs=false",
+                "-Dworkshop=true",
                 "-Db_lto=true"
             ],
             "cleanup": [
                 "/bin/gegl-imgcmp",
-                "/share/gegl*"
+                "/share/gegl*",
+                "/lib/gegl-0.4/gegl-workshop.so",
+                "/lib/gegl-0.4/average.so",
+                "/lib/gegl-0.4/blend-reflect.so",
+                "/lib/gegl-0.4/ctx-script.so",
+                "/lib/gegl-0.4/line-profile.so",
+                "/lib/gegl-0.4/negation.so",
+                "/lib/gegl-0.4/soft-burn.so",
+                "/lib/gegl-0.4/soft-dodge.so",
+                "/lib/gegl-0.4/subtractive.so",
+                "/lib/gegl-0.4/v4l2.so",
+                "/lib/gegl-0.4/voroni_diagram.so"
             ],
             "build-options": {
                 "cflags": "-O3 -fomit-frame-pointer -fno-semantic-interposition",
@@ -1173,7 +1185,11 @@
                         "../patches/gimp-3.2.8/0138-ChopGimp-3.27.6-Width-tool-Shift-W-width-points-on-a.patch",
                         "../patches/gimp-3.2.8/0139-ChopGimp-menu-path-mappings-for-the-Photoshop-menu-l.patch",
                         "../patches/gimp-3.2.8/0140-ChopGimp-3.28.1-Live-Paint-Vecteur-Peinture-dynamiqu.patch",
-                        "../patches/gimp-3.2.8/0141-ChopGimp-3.28.2-minor-defects-Plume-new-object-in-on.patch"
+                        "../patches/gimp-3.2.8/0141-ChopGimp-3.28.2-minor-defects-Plume-new-object-in-on.patch",
+                        "../patches/gimp-3.2.8/0142-ChopGimp-3.28.3-Lasso-magn-tique-Photoshop-L-the-Sci.patch",
+                        "../patches/gimp-3.2.8/0143-ChopGimp-3.28.3-Croix-au-centre-de-la-brosse-prefere.patch",
+                        "../patches/gimp-3.2.8/0144-ChopGimp-3.28.3-Direct-Selection-A-on-several-object.patch",
+                        "../patches/gimp-3.2.8/0145-ChopGimp-3.28.3-GEGL-operations-follow-the-menu-path.patch"
                     ]
                 }
             ],

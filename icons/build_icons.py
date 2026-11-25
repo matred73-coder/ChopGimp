@@ -255,6 +255,26 @@ def _paint_select():
     return s
 
 
+@icon("chopgimp-tool-magnetic-lasso")
+def _magnetic_lasso():
+    # Boucle de lasso (comme le Lasso) + petit aimant en fer à cheval
+    p = []
+    for i in range(0, 300, 12):
+        a = math.radians(i - 200)
+        p.append((7.6 + 5.4 * math.cos(a), 6.0 + 3.7 * math.sin(a)))
+    s = polyline(p, W)
+    x0, y0 = p[-1]
+    s += polyline([(x0, y0), (4.8, 9.4), (3.8, 11.0)], W)
+    # aimant : U ouvert vers le bas, pôles pleins
+    u = []
+    for i in range(0, 181, 15):
+        a = math.radians(180 + i)
+        u.append((12.0 + 2.4 * math.cos(a), 12.4 + 2.4 * math.sin(a)))
+    s += polyline([(9.6, 15.2)] + u + [(14.4, 15.2)], 1.1)
+    s += rect(9.0, 14.2, 1.3, 1.6) + rect(13.8, 14.2, 1.3, 1.6)
+    return s
+
+
 @icon("gimp-tool-iscissors")
 def _scissors():
     s = ring(4.2, 12.0, 2.3, 1.1) + ring(11.8, 12.0, 2.3, 1.1)

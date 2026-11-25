@@ -12,25 +12,32 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 # Boîte à outils : ordre et groupes de la barre d'outils Photoshop.
 # Un tuple = un groupe (le 1er est l'outil affiché), une chaîne = outil seul.
 TOOLBOX = [
+    # ── Sélection / composition ──────────────────────────────────────
     ("move", "align"),                                        # V
     ("rect-select", "ellipse-select"),                        # M
-    ("free-select", "iscissors"),                             # L
-    ("fuzzy-select", "foreground-select", "by-color-select"), # W
+    ("magnetic-lasso", "free-select", "iscissors"),           # L (3.28.3 : lasso magnétique)
+    ("fuzzy-select", "paint-select", "foreground-select",
+     "by-color-select"),                                      # W (3.28.3 : sélection rapide)
     ("crop", "perspective"),                                  # C
+    ("unified-transform", "scale", "rotate", "shear", "flip",
+     "transform-3d", "handle-transform", "warp", "cage", "offset"),  # Ctrl+T
     ("color-picker", "measure"),                              # I
-    ("spot-heal", "heal"),                                    # J
+    # ── Peinture ─────────────────────────────────────────────────────
     ("paintbrush", "pencil", "airbrush", "mypaint-brush", "ink"),  # B
-    ("clone", "perspective-clone"),                           # S
-    ("eraser",),                                              # E
+    ("eraser",),                                              # E (sous le pinceau)
     ("gradient", "bucket-fill"),                              # G
     ("convolve", "smudge"),                                   # Goutte d'eau / Doigt
     ("dodge-burn",),                                          # O
+    # ── Retouche ─────────────────────────────────────────────────────
+    ("spot-heal", "heal"),                                    # J
+    ("clone", "perspective-clone"),                           # S
+    # ── Vectoriel / texte ────────────────────────────────────────────
     ("path", "direct-select"),                                # P / A
     ("text",),                                                # T
-    ("shape", "shape-builder", "live-paint-bucket", "live-paint-select",
-     "width", "envelope"),                                    # U / Maj+Alt+M / K / Maj+K / Maj+W
-    ("unified-transform", "scale", "rotate", "shear", "flip",
-     "transform-3d", "handle-transform", "warp", "cage", "offset"),  # Ctrl+T
+    ("shape", "shape-builder"),                               # U / Maj+Alt+M
+    ("width", "envelope"),                                    # Maj+W
+    ("live-paint-bucket", "live-paint-select"),               # K / Maj+K
+    # ── Navigation ───────────────────────────────────────────────────
     ("hand", "rotate-view"),                                  # H / R
     ("zoom",),                                                # Z
 ]
@@ -45,7 +52,8 @@ ICON = {"dodge-burn": "gimp-tool-dodge", "convolve": "gimp-tool-blur",
         "shape-builder": "chopgimp-tool-shape-builder",
         "width": "chopgimp-tool-width", "envelope": "chopgimp-tool-envelope",
         "live-paint-bucket": "chopgimp-tool-live-paint-bucket",
-        "live-paint-select": "chopgimp-tool-live-paint-select"}
+        "live-paint-select": "chopgimp-tool-live-paint-select",
+        "magnetic-lasso": "chopgimp-tool-magnetic-lasso"}
 
 
 def info(tool, visible=True, indent=""):
