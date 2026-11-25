@@ -863,3 +863,118 @@ transformations précises), comme Illustrator.
   (rotation de copies autour d'un centre : la série tourne bien autour de lui) ;
   la poignée d'un angle dynamique reste au sommet de l'angle (elle ne suit pas le
   rayon pendant qu'on la tire).
+
+## 3.29.1 — Vectoriel « complet » II : couleur et matière
+
+Bloc 3 validé par l'utilisateur le 2026-11-25, comme Illustrator. Le moteur est
+dans `app/path/chopgimp-vmaterial.c`, et les fenêtres dans
+`app/dialogs/chopgimp-material-dialogs.c`.
+
+- **Transition** :
+  - commande Vecteur > Transition > Créer (Ctrl+Maj+Alt+B), et outil
+    Transition : un clic sur un objet, puis un clic sur un autre ;
+  - les objets clés d'un groupe reçoivent des étapes intermédiaires. Les
+    formes sont interpolées point par point quand elles ont la même
+    structure, sinon rééchantillonnées sur 64 points. Les couleurs unies, les
+    épaisseurs et les opacités sont interpolées aussi ;
+  - espacement : couleur lissée (un pas par 1/128 d'écart de couleur, ou un
+    par 4 px), nombre d'étapes, ou distance ;
+  - la transition est **dynamique** : les étapes sont recalculées quand un
+    objet clé change, comme la peinture dynamique (signature des clés) ;
+  - commandes Libérer, Décomposer, Inverser l'ordre, Options… ;
+  - attribut XML `blend` sur le groupe, `blend="step"` sur les étapes, qui
+    sont verrouillées.
+- **Filet de dégradé** :
+  - peinture `mesh` : une grille de points colorés, rendue en patchs de Coons
+    par cairo ;
+  - Vecteur > Filet et dégradés > Créer un filet de dégradé… : rangées,
+    colonnes, aspect plat, vers le centre ou vers le bord, lumière ;
+  - **outil Filet** (Maj+U) : glisser un point pour le déplacer, Maj+clic pour
+    lui donner la couleur de premier plan, clic ailleurs pour ajouter une
+    rangée et une colonne. Un objet de couleur unie devient un filet au
+    premier clic.
+- **Dégradé libre** : peinture `freeform`, des points de couleur posés
+  librement, interpolés par pondération inverse de la distance et rendus en
+  maillage fin. On le crée par Vecteur > Filet et dégradés > Dégradé libre ; on
+  le modifie **avec l'outil Filet**, pas avec l'outil Dégradé : clic pour
+  ajouter un point, glisser pour le déplacer, Maj+clic pour le colorer,
+  Alt+clic pour le retirer.
+- **Dégradé du contour** : dans le contour, le long du contour, ou en travers.
+  Le réglage est dans le panneau Aspect (ligne « Dégradé ») et dans le menu
+  Vecteur > Filet et dégradés.
+- **Masque d'opacité** :
+  - Vecteur > Masque d'opacité > Créer, Libérer, Découpe, Inverser le masque ;
+  - l'objet du dessus masque les autres par sa luminance : le blanc montre, le
+    noir cache. La découpe est active par défaut, comme dans Illustrator ;
+  - attribut XML `opmask` ; l'export SVG écrit un `<mask>`.
+- **Motifs vectoriels** :
+  - Vecteur > Motif > Créer un motif : les objets sélectionnés deviennent un
+    motif, rangé dans la liste de l'image (parasite `chopgimp-vpatterns`, gardé
+    par le XCF) ;
+  - Options de motif… : pavage en grille, briques par ligne ou par colonne, ou
+    hexagonal ; taille de tuile, espacement (un espacement négatif fait
+    chevaucher), copies estompées, avec un aperçu ;
+  - Appliquer un motif… ;
+  - Modifier le motif, Terminer le motif : mode isolé, puis mise à jour des
+    objets du calque qui utilisent le motif ;
+  - peinture `vpattern`, pavée dans l'espace de l'image. Le texte de la
+    peinture contient les objets du motif, donc une copie dans une autre image
+    garde son motif.
+- **Restes de la 3.29.0** :
+  - poignées d'angles dynamiques en Sélection directe (A), pour l'objet en
+    cours de modification (Alt : un seul angle) ;
+  - champ « Rayon » dans la barre d'options du mode objets.
+- **PDB** (`chopgimp-vobjects-command`) : select-at, select-add-at, blend-*
+  (dont blend-spine), mesh-make, mesh-insert, freeform-make, stroke-gradient,
+  opmask-*, pattern-*.
+
+- **Finition (avant livraison)** :
+  - **Transition** : les dégradés sont interpolés aussi (arrêts mélangés un à
+    un s'ils sont en même nombre, sinon échantillonnés aux arrêts du dégradé le
+    plus riche ; une couleur unie face à un dégradé devient un dégradé) ;
+    **Vecteur > Transition > Remplacer le tracé de base** : le tracé
+    sélectionné hors du groupe devient le tracé de base, les étapes suivent sa
+    courbe (écart du tracé à sa corde, les objets clés restent en place), le
+    tracé, échantillonné en polyligne, est enregistré dans l'attribut `blend`
+    (`spine=`) et n'existe plus comme objet séparé.
+  - **Dégradé du contour** sur un contour à profil de largeur, à tirets ou
+    aligné à l'intérieur / extérieur : le dégradé est peint dans un groupe qui
+    sert de source au dessin habituel du contour, qui garde donc sa forme.
+  - **Export SVG** : motifs vectoriels en vrai `<pattern>` (objets du motif une
+    fois, `<use>` pour les copies, pavage grille / briques / hexagonal comme le
+    rendu) ; option « Inverser » du masque d'opacité (filtre `feColorMatrix`
+    qui inverse la luminance) ; espace de noms `xlink` déclaré.
+  - **Restes de la 3.29.0** : la poignée d'un angle dynamique suit le rayon
+    pendant qu'on la tire (mode objets et Sélection directe) ; un objet aux
+    angles arrondis suit toujours les effets du calque (après ses angles) ; le
+    **Cutter** tranche aussi les tracés ouverts (morceaux entre les
+    croisements).
+  - Corrigés : après « Créer un masque d'opacité », le groupe reste
+    sélectionné (Inverser / Libérer agissent dessus) ; `pattern-type` trouve le
+    motif dans les feuilles d'un groupe sélectionné.
+
+**Limites**
+
+- Export SVG : le filet de dégradé et le dégradé libre restent écrits avec leur
+  couleur principale (SVG 1.1 n'a pas de filet ; le `<meshgradient>` de SVG 2
+  n'est lu ni par les navigateurs ni de façon fiable par Inkscape).
+- Le dégradé libre se modifie avec l'outil Filet, pas avec l'outil Dégradé, et
+  n'a que le mode Points (pas de mode Lignes).
+- Les lignes du filet sont droites : pas de poignées de tangente.
+- Transition : un groupe comme objet clé n'est pas interpolé ; le tracé de base
+  ne déplace pas les objets clés eux-mêmes (ils restent où ils sont) ; l'option
+  « orienter le long du tracé » ne fait pas tourner les étapes.
+- Dégradé « en travers » d'un contour à profil : il suit l'épaisseur moyenne,
+  pas l'épaisseur locale.
+- Poignées d'angles dynamiques : vérifiées à l'écran en mode objets (V), où
+  elles suivent le rayon ; en Sélection directe (A), seuls les nœuds du tracé
+  se sont affichés au banc (poignées d'angles non vues, à revoir). Le champ
+  « Rayon » de la barre d'options passe dans le menu « ⋯ » à 1600 px.
+
+**Vérifié** : 180 tests automatiques sur 180 (dont tracé de base de la
+transition et Cutter sur un tracé ouvert) ; scène de démonstration rendue et
+relue (transition cercle rouge → carré bleu en 5 étapes, filet 3 × 3 avec un
+nœud recoloré et déplacé, dégradé libre, dégradé le long d'un contour épais et
+d'un contour à tirets, masque d'opacité noir → blanc, motif en briques, angles
+arrondis) ; export SVG relu (`<pattern>` avec `<use>`, `<mask>`) ; banc
+graphique : poignées d'angles en mode objets.

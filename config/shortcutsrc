@@ -74,6 +74,8 @@
 (action "tools-path" "p")
 # Courbure (Illustrator)
 (action "tools-curvature" "<Shift>p")
+# Filet (Illustrator)
+(action "tools-vmesh" "<Shift>u")
 # Crayon vectoriel (Illustrator)
 (action "tools-vpencil" "n")
 # Texte
@@ -294,6 +296,8 @@
 (action "layers-vobjects-distort-top" "<Primary><Shift><Alt>c")
 # Transformer chaque
 (action "layers-vobjects-transform-each" "<Primary><Alt>d")
+# Transition : créer
+(action "layers-vobjects-blend-make" "<Primary><Shift><Alt>b")
 
 # ── Sélection ───────────────────────────────────────────────────
 # Tout sélectionner

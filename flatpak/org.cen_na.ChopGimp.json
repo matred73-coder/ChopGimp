@@ -1190,7 +1190,8 @@
                         "../patches/gimp-3.2.8/0143-ChopGimp-3.28.3-Croix-au-centre-de-la-brosse-prefere.patch",
                         "../patches/gimp-3.2.8/0144-ChopGimp-3.28.3-Direct-Selection-A-on-several-object.patch",
                         "../patches/gimp-3.2.8/0145-ChopGimp-3.28.3-GEGL-operations-follow-the-menu-path.patch",
-                        "../patches/gimp-3.2.8/0146-ChopGimp-3.29.0-vector-drawing-and-precise-transform.patch"
+                        "../patches/gimp-3.2.8/0146-ChopGimp-3.29.0-vector-drawing-and-precise-transform.patch",
+                        "../patches/gimp-3.2.8/0147-ChopGimp-3.29.1-couleur-et-mati-re-Transition-blend-.patch"
                     ]
                 }
             ],

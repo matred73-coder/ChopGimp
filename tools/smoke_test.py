@@ -1702,6 +1702,194 @@ try:
     except Exception:
         report(False, "3.29.0", traceback.format_exc().replace("\n", " | ")[:400])
 
+    # 3.29.1 (vectoriel « complet », bloc 3 « couleur et matière ») :
+    # Transition, filet de dégradé, dégradé libre, dégradé du contour,
+    # masque d'opacité, motifs vectoriels
+    try:
+        def vx10(layer):
+            r = run("chopgimp-vobjects-get-xml", layer=layer)
+            return r.index(1) if r is not None and r.index(0) == Gimp.PDBStatusType.SUCCESS else ""
+
+        im10 = Gimp.Image.new(400, 300, Gimp.ImageBaseType.RGB)
+        b10 = Gimp.Layer.new(im10, "Fond", 400, 300, Gimp.ImageType.RGB_IMAGE, 100, Gimp.LayerMode.NORMAL)
+        im10.insert_layer(b10, None, 0)
+        p10 = Gimp.Path.new(im10, "Formes")
+        im10.insert_path(p10, None, 0)
+        for pts10 in [[(20, 20), (80, 20), (80, 80), (20, 80)],
+                      [(300, 20), (380, 20), (380, 100), (300, 100)],
+                      [(20, 180), (140, 180), (140, 280), (20, 280)],
+                      [(60, 200), (200, 200), (200, 260), (60, 260)]]:
+            st10 = p10.bezier_stroke_new_moveto(*pts10[0])
+            for x, y in pts10[1:]:
+                p10.bezier_stroke_lineto(st10, x, y)
+            p10.stroke_close(st10)
+        vl10 = Gimp.VectorLayer.new(im10, p10)
+        im10.insert_layer(vl10, None, 0)
+        vl10.set_enable_fill(True); vl10.set_enable_stroke(True); vl10.set_stroke_width(2)
+        vl10.refresh()
+        im10.set_selected_layers([vl10])
+
+        def c10(c):
+            r = run("chopgimp-vobjects-command", image=im10, command=c)
+            return bool(r is not None and r.index(0) == Gimp.PDBStatusType.SUCCESS and r.index(1))
+
+        c10("split-new")
+
+        # Transition entre les quatre carrés (objets clés, dans l'ordre)
+        ok_s = c10("select-at:50:50")
+        c10("select-all")
+        n_all = vx10(vl10).count("<path ")
+        ok_b = c10("blend-make")
+        x_b = vx10(vl10)
+        ok_st = c10("blend-steps:5")
+        x_s = vx10(vl10)
+        report(ok_s and ok_b and 'blend="blend' in x_b and ok_st and
+               x_s.count('blend="step"') == 5 * (n_all - 1),
+               "Transition : étapes générées puis 5 étapes par paire",
+               "%d objets clés, %d étapes" % (n_all, x_s.count('blend="step"')))
+        ok_rv = c10("blend-reverse")
+        ok_ex = c10("blend-expand")
+        x_e = vx10(vl10)
+        report(ok_rv and ok_ex and "blend=" not in x_e and x_e.count("<path ") == n_all + 5 * (n_all - 1),
+               "Transition : inverser puis décomposer", "%d objets" % x_e.count("<path "))
+        im10.delete()
+
+        # Filet, dégradé libre, dégradé du contour, masque d'opacité, motif
+        im11 = Gimp.Image.new(400, 300, Gimp.ImageBaseType.RGB)
+        b11 = Gimp.Layer.new(im11, "Fond", 400, 300, Gimp.ImageType.RGB_IMAGE, 100, Gimp.LayerMode.NORMAL)
+        im11.insert_layer(b11, None, 0)
+        p11 = Gimp.Path.new(im11, "Formes")
+        im11.insert_path(p11, None, 0)
+        for pts11 in [[(20, 20), (120, 20), (120, 120), (20, 120)],
+                      [(60, 60), (180, 60), (180, 180), (60, 180)],
+                      [(250, 20), (380, 20), (380, 150), (250, 150)],
+                      [(250, 200), (300, 200), (300, 250), (250, 250)]]:
+            st11 = p11.bezier_stroke_new_moveto(*pts11[0])
+            for x, y in pts11[1:]:
+                p11.bezier_stroke_lineto(st11, x, y)
+            p11.stroke_close(st11)
+        vl11 = Gimp.VectorLayer.new(im11, p11)
+        im11.insert_layer(vl11, None, 0)
+        vl11.set_enable_fill(True); vl11.set_enable_stroke(True); vl11.set_stroke_width(3)
+        vl11.refresh()
+        im11.set_selected_layers([vl11])
+
+        def c11(c):
+            r = run("chopgimp-vobjects-command", image=im11, command=c)
+            return bool(r is not None and r.index(0) == Gimp.PDBStatusType.SUCCESS and r.index(1))
+
+        c11("split-new")
+
+        ok_sel = c11("select-at:300:80")
+        ok_m = c11("mesh-make:2:3:1:0.8")
+        ok_mi = c11("mesh-insert:0.5:0.5:#ff0000")
+        x_m = vx10(vl11)
+        report(ok_sel and ok_m and 'type="mesh"' in x_m and ok_mi and 'material="3 4;' in x_m,
+               "Filet de dégradé : créé (2 × 3) puis une rangée et une colonne ajoutées")
+
+        c11("select-at:275:225")
+        ok_f = c11("freeform-make")
+        ok_g = c11("stroke-gradient:1")
+        x_f = vx10(vl11)
+        report(ok_f and 'type="freeform"' in x_f and ok_g and 'stroke-gradient="1"' in x_f,
+               "Dégradé libre et dégradé le long du contour")
+
+        # masque d'opacité : les deux carrés qui se chevauchent
+        c11("select-none")
+        c11("select-all")
+        ok_om = c11("opmask-make")
+        x_o = vx10(vl11)
+        ok_ot = c11("opmask-toggle:4")
+        x_o2 = vx10(vl11)
+        ok_or = c11("opmask-release")
+        report(ok_om and 'opmask="3"' in x_o and ok_ot and 'opmask="7"' in x_o2 and ok_or and
+               "opmask=" not in vx10(vl11),
+               "Masque d'opacité : créé (découpe), inversé, libéré")
+
+        # motif : le petit carré devient un motif, appliqué au grand
+        c11("select-at:275:225")
+        ok_pm = c11("pattern-make:Damier")
+        c11("select-at:300:80")
+        ok_pa = c11("pattern-apply:Damier")
+        ok_pt = c11("pattern-type:hex")
+        x_p = vx10(vl11)
+        report(ok_pm and ok_pa and 'type="vpattern"' in x_p and ok_pt and "type=hex" in x_p,
+               "Motif vectoriel : créé, appliqué, pavage hexagonal")
+
+        # rendu : le calque n'est pas vide après tout ça
+        vl11.refresh() if hasattr(vl11, "refresh") else None
+        report(vl11.get_width() > 0 and vl11.get_height() > 0, "Rendu des matières (calque non vide)")
+        im11.delete()
+
+        # finition 3.29.1 : transition qui suit un tracé de base, Cutter
+        # sur un tracé ouvert
+        import re as re12
+        im12 = Gimp.Image.new(400, 300, Gimp.ImageBaseType.RGB)
+        b12 = Gimp.Layer.new(im12, "Fond", 400, 300, Gimp.ImageType.RGB_IMAGE, 100, Gimp.LayerMode.NORMAL)
+        im12.insert_layer(b12, None, 0)
+        p12 = Gimp.Path.new(im12, "Formes")
+        im12.insert_path(p12, None, 0)
+        for pts12, closed12 in [([(20, 100), (60, 100), (60, 140), (20, 140)], True),
+                                ([(320, 100), (360, 100), (360, 140), (320, 140)], True),
+                                ([(40, 120), (190, 20), (340, 120)], False)]:
+            st12 = p12.bezier_stroke_new_moveto(*pts12[0])
+            for x, y in pts12[1:]:
+                p12.bezier_stroke_lineto(st12, x, y)
+            if closed12:
+                p12.stroke_close(st12)
+        vl12 = Gimp.VectorLayer.new(im12, p12)
+        im12.insert_layer(vl12, None, 0)
+        vl12.set_enable_fill(True); vl12.set_enable_stroke(True); vl12.set_stroke_width(2)
+        vl12.refresh()
+        im12.set_selected_layers([vl12])
+
+        def c12(c):
+            r = run("chopgimp-vobjects-command", image=im12, command=c)
+            return bool(r is not None and r.index(0) == Gimp.PDBStatusType.SUCCESS and r.index(1))
+
+        c12("split-new")
+        ok12 = c12("select-at:25:105") and c12("select-add-at:355:105") and c12("blend-make")
+        c12("blend-steps:3")
+        ok12s = c12("select-at:25:105") and c12("select-add-at:190:20") and c12("blend-spine")
+        x12 = vx10(vl12)
+        ys12 = []
+        for blk in re12.findall(r'blend="step"[^>]*d="([^"]*)"', x12):
+            nums = [float(t) for t in re12.findall(r'-?[0-9.]+', blk)]
+            ys12 += nums[1::2]
+        report(ok12 and ok12s and "spine=" in x12 and ys12 and min(ys12) < 80,
+               "Transition : remplacer le tracé de base (les étapes suivent la courbe)",
+               "y min des étapes : %s" % (min(ys12) if ys12 else "—"))
+        im12.delete()
+
+        im13 = Gimp.Image.new(300, 300, Gimp.ImageBaseType.RGB)
+        b13 = Gimp.Layer.new(im13, "Fond", 300, 300, Gimp.ImageType.RGB_IMAGE, 100, Gimp.LayerMode.NORMAL)
+        im13.insert_layer(b13, None, 0)
+        p13 = Gimp.Path.new(im13, "Trait")
+        im13.insert_path(p13, None, 0)
+        st13 = p13.bezier_stroke_new_moveto(20, 150)
+        p13.bezier_stroke_lineto(st13, 280, 150)
+        vl13 = Gimp.VectorLayer.new(im13, p13)
+        im13.insert_layer(vl13, None, 0)
+        vl13.set_enable_fill(False); vl13.set_enable_stroke(True); vl13.set_stroke_width(4)
+        vl13.refresh()
+        im13.set_selected_layers([vl13])
+        run("chopgimp-vobjects-command", image=im13, command="split-new")
+        run("chopgimp-vobjects-command", image=im13, command="select-all")
+        r13 = run("chopgimp-vobjects-command", image=im13, command="knife:150:50:150:250")
+        x13 = vx10(vl13)
+        report(r13 is not None and r13.index(0) == Gimp.PDBStatusType.SUCCESS and
+               x13.count("<path ") == 2,
+               "Cutter : un tracé ouvert tranché en deux", "%d objets" % x13.count("<path "))
+        im13.delete()
+
+        sysconf = Gimp.sysconf_directory()
+        toolrc = os.path.join(sysconf, "toolrc")
+        tr = open(toolrc).read() if os.path.exists(toolrc) else ""
+        report("gimp-vmesh-tool" in tr and "gimp-vblend-tool" in tr,
+               "Outils Filet et Transition dans la boîte à outils")
+    except Exception:
+        report(False, "3.29.1", traceback.format_exc().replace("\n", " | ")[:400])
+
     # 4. Réglages d'usine présents (thème, icônes, menus, raccourcis)
     data = Gimp.data_directory()
     sysconf = Gimp.sysconf_directory()

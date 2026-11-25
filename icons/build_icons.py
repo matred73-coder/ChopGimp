@@ -1029,6 +1029,28 @@ def _vjoin_tool():
     return s
 
 
+
+# ─── 3.29.1 : transition, filet de dégradé ──────────────────────────────
+@icon("chopgimp-tool-blend")
+def _blend_tool():
+    # Un petit carré, trois étapes de plus en plus claires, un grand rond
+    s = rect(1.0, 9.5, 4.0, 4.0)
+    s += circle(6.6, 10.6, 2.4, 0.75) + circle(9.3, 9.4, 2.9, 0.5) + circle(12.4, 8.0, 3.2, 0.3)
+    s += ring(12.4, 8.0, 3.2, 0.9)
+    return s
+
+
+@icon("chopgimp-tool-mesh")
+def _mesh_tool():
+    # Une forme arrondie traversée par un filet courbe, un point plein
+    s = ring(8.0, 8.0, 6.6, 1.0)
+    p1 = [(1.6 + 12.8 * i / 16.0, 8.0 + 2.2 * math.sin(math.pi * i / 16.0)) for i in range(17)]
+    p2 = [(8.0 - 2.2 * math.sin(math.pi * i / 16.0), 1.6 + 12.8 * i / 16.0) for i in range(17)]
+    s += polyline(p1, 0.9) + polyline(p2, 0.9)
+    s += circle(5.9, 9.8, 1.7)
+    return s
+
+
 def main():
     os.makedirs(OUT, exist_ok=True)
     for name, fn in sorted(ICONS.items()):

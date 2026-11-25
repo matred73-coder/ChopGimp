@@ -66,6 +66,9 @@ PS_MAP = [
     # AZERTY : Maj+P, libre) et Crayon vectoriel (N comme Illustrator ;
     # le crayon de GIMP garde Maj+B)
     ("Outils", "tools-curvature",          [S + "p"],        "Courbure (Illustrator)"),
+    # 3.29.1 : outil Filet (U dans Illustrator, pris par l'outil Forme : Maj+U) ;
+    # l'outil Transition (W dans Illustrator, pris) reste sans raccourci
+    ("Outils", "tools-vmesh",              [S + "u"],        "Filet (Illustrator)"),
     ("Outils", "tools-vpencil",            ["n"],            "Crayon vectoriel (Illustrator)"),
     ("Outils", "tools-text",               ["t"],            "Texte"),
     ("Outils", "tools-shape",              ["u"],            "Forme (rectangle, ellipse, polygone, étoile, ligne)"),
@@ -189,6 +192,9 @@ PS_MAP = [
     # par Dupliquer l'image) ; Répéter la transformation passe par Ctrl+D
     # (Désélectionner) quand aucune sélection de pixels n'est active
     ("Vecteur", "layers-vobjects-transform-each", [P + A + "d"], "Transformer chaque"),
+    # 3.29.1 : Transition > Créer (Ctrl+Alt+B dans Illustrator, pris par le
+    # pinceau MyPaint : avec Maj en plus)
+    ("Vecteur", "layers-vobjects-blend-make", [P + S + A + "b"], "Transition : créer"),
 
     # ── Sélection ──────────────────────────────────────────────────────
     ("Sélection", "select-all",            [P + "a"],        "Tout sélectionner"),
@@ -245,7 +251,7 @@ def main():
 
     # 1. actions valides
     for _, act, _, _ in PS_MAP:
-        if act not in defaults and not act.startswith(("photogimp-", "chopgimp-", "tools-opacity-ps-", "tools-hand", "tools-rotate-view", "tools-shape", "tools-spot-heal", "windows-hide-right-docks", "tools-shape-builder", "tools-direct-select", "tools-width", "tools-envelope", "tools-live-paint-", "layers-vobjects-", "tools-curvature", "tools-vpencil", "tools-vsmooth", "tools-vscissors", "tools-vknife", "tools-vjoin", "dialogs-transform")):
+        if act not in defaults and not act.startswith(("photogimp-", "chopgimp-", "tools-opacity-ps-", "tools-hand", "tools-rotate-view", "tools-shape", "tools-spot-heal", "windows-hide-right-docks", "tools-shape-builder", "tools-direct-select", "tools-width", "tools-envelope", "tools-live-paint-", "layers-vobjects-", "tools-curvature", "tools-vpencil", "tools-vsmooth", "tools-vscissors", "tools-vknife", "tools-vjoin", "dialogs-transform", "tools-vmesh", "tools-vblend")):
             errors.append("action inconnue de GIMP 3.2.8 : %s" % act)
 
     # 2. aucune touche attribuée deux fois dans PS_MAP

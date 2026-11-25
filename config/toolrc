@@ -242,6 +242,16 @@
             (visible yes))))
 (GimpToolGroup "tool group"
     (visible yes)
+    (active-tool "gimp-vmesh-tool")
+    (children
+        (GimpToolInfo "gimp-vmesh-tool"
+            (icon-name "chopgimp-tool-mesh")
+            (visible yes))
+        (GimpToolInfo "gimp-vblend-tool"
+            (icon-name "chopgimp-tool-blend")
+            (visible yes))))
+(GimpToolGroup "tool group"
+    (visible yes)
     (active-tool "gimp-hand-tool")
     (children
         (GimpToolInfo "gimp-hand-tool"

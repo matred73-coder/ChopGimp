@@ -39,6 +39,7 @@ TOOLBOX = [
     ("width", "envelope"),                                    # Maj+W
     ("vscissors", "vknife", "vjoin"),                         # 3.29.0 : ciseaux, cutter, jonction
     ("live-paint-bucket", "live-paint-select"),               # K / Maj+K
+    ("vmesh", "vblend"),                                      # Maj+U (3.29.1 : filet, transition)
     # ── Navigation ───────────────────────────────────────────────────
     ("hand", "rotate-view"),                                  # H / R
     ("zoom",),                                                # Z
@@ -58,7 +59,8 @@ ICON = {"dodge-burn": "gimp-tool-dodge", "convolve": "gimp-tool-blur",
         "magnetic-lasso": "chopgimp-tool-magnetic-lasso",
         "curvature": "chopgimp-tool-curvature", "vpencil": "chopgimp-tool-vpencil",
         "vsmooth": "chopgimp-tool-vsmooth", "vscissors": "chopgimp-tool-vscissors",
-        "vknife": "chopgimp-tool-vknife", "vjoin": "chopgimp-tool-vjoin"}
+        "vknife": "chopgimp-tool-vknife", "vjoin": "chopgimp-tool-vjoin",
+        "vmesh": "chopgimp-tool-mesh", "vblend": "chopgimp-tool-blend"}
 
 
 def info(tool, visible=True, indent=""):
