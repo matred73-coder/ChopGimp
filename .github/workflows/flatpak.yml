@@ -46,6 +46,9 @@ jobs:
 
       - name: flatpak et flatpak-builder
         run: |
+          # Ubuntu 24.04 : AppArmor interdit les espaces de noms utilisateur
+          # non privilégiés, dont bwrap (isolation de flatpak-builder) a besoin
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
           sudo apt-get update -q
           sudo apt-get install -y -q flatpak flatpak-builder ccache
           flatpak remote-add --user --if-not-exists flathub \
