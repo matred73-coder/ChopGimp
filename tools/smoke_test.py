@@ -1986,6 +1986,12 @@ try:
         r = run("chopgimp-vobjects-command", image=im14, command="select-same-fill")
         report(r is not None and r.index(0) == Gimp.PDBStatusType.SUCCESS,
                "Sélectionner > Même couleur de fond")
+        r = run("chopgimp-vobjects-command", image=im14, command="simplify:1.5")
+        report(r is not None and r.index(0) == Gimp.PDBStatusType.SUCCESS and
+               vx14().count("<path ") == 3, "Simplifier (sans perte d'objet)")
+        r = run("chopgimp-vobjects-command", image=im14, command="fill-holes:100")
+        report(r is not None and r.index(0) == Gimp.PDBStatusType.SUCCESS,
+               "Remplir les petits trous")
         r = run("chopgimp-vobjects-command", image=im14, command="merge-same-color")
         n2 = vx14().count("<path ")
         report(r is not None and r.index(0) == Gimp.PDBStatusType.SUCCESS and n2 == 1,
