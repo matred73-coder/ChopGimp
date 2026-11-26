@@ -52,6 +52,13 @@ Exécution d'une traite, lot après lot, sans arrêt entre les lots.
 - **Plans de travail** : plusieurs pages ou formats par fichier, avec un export par plan.
 - **Export PDF et EPS vectoriels.**
 - **Grille de perspective** à laquelle les formes s'accrochent.
+- **Export PSD façon Photoshop**, ajouté le 2026-11-26 à la demande de l'utilisateur :
+  - calques, groupes, masques, modes de fusion et opacités ;
+  - **effets de calque convertis en styles Photoshop** (descripteurs lfx2) : ombre portée, ombre interne, lueurs, biseau, contour, incrustations couleur, dégradé et motif, satin. Un effet sans équivalent est pixellisé dans un calque séparé et signalé dans un rapport ;
+  - calques vectoriels → **calques de forme** (masque vectoriel et fond), à défaut des pixels plus un masque vectoriel ;
+  - calques texte → **texte modifiable** (TySh) ;
+  - ré-import dans ChopGimp sans perte ; à vérifier dans un lecteur PSD de référence.
+- **Export PDF en calques** : calques PDF (OCG) visibles dans Acrobat et Illustrator, avec le vectoriel conservé ; les effets sans équivalent PDF sont pixellisés par calque.
 
 ## Lot 5 — 3.32.0 : interface
 - **Lots D, E et F** : icônes de la boîte à outils, barre d'état, onglets, styles d'interface.
