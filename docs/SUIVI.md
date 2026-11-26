@@ -1168,6 +1168,74 @@ bancs et livraison au lot 6). VERSION inchangée (3.29.4).
 - **Limites acceptées** : contours de profil préparés pour rien quand moins de
   8 objets sont à dessiner (rendu alors un par un).
 
+## 3.31.0 (non compilé) — partie 2 : exports PDF, EPS et PSD (lot 4b du plan final)
+
+Patch 0163. Code écrit, relu et vérifié à la syntaxe (gcc -fsyntax-only dans le SDK
+GNOME), **ni compilé ni testé dans ChopGimp** (compilation, tests et livraison au lot 6).
+Les formats écrits ont été relus hors du paquet : descripteurs d'effets, tracés,
+contours et EngineData par psd-tools, calques PDF par pypdf et Ghostscript. VERSION
+inchangée.
+
+- **Restes du lot 4a** :
+  - Alt+glisser un plan de travail copie aussi les objets vectoriels qu'il contient
+    (copies au-dessus des originaux, une étape d'annulation) ;
+  - Sélection de perspective : un calque de pixels déplacé plusieurs fois est
+    recalculé depuis son original (parasite `chopgimp-persp-source` : pixels
+    d'origine compressés et matrice cumulée, invalidé si les pixels ont changé),
+    aussi par la commande PDB (`CHOPGIMP_NO_PERSP_SOURCE`) ;
+  - le canevas ne redessine que la zone des plans de travail et de la grille avant et
+    après le changement (`CHOPGIMP_FULL_REDRAW=1` : toute la vue).
+- **Export PDF vectoriel** (Fichier > Exporter, PDF) : les objets des calques
+  vectoriels sont dessinés par cairo en vecteurs (tracés, groupes avec opacité et mode,
+  découpes, fonds et contours de toute sorte : couleur, dégradés linéaires et radiaux,
+  filets et dégradés libres en maillages PDF, motifs vectoriels en motifs PDF, motifs
+  GIMP, alignement du contour, tirets, profils de largeur, pointes de flèche) ; textes
+  en texte (polices incorporées) ; modes de fusion des calques en modes PDF, opacité,
+  masques, groupes. Seuls les masques d'opacité (luminance) sont pixellisés (cairo n'a
+  que des masques alpha). Les effets sont pixellisés calque par calque par les options
+  d'export (ombres « derrière » en calques à part).
+- **Plans de travail** : « Image entière », « Une page par plan de travail » (défaut)
+  ou « Un fichier par plan de travail » (`nom-01-Plan.pdf`) ; Fichier > Exporter les
+  plans de travail propose aussi PDF et EPS.
+- **Calques PDF** (option, défaut oui) : chaque calque est un calque PDF (OCG), les
+  groupes imbriqués, les calques masqués présents mais éteints, le panneau Calques
+  ouvert à l'ouverture (Acrobat, Illustrator). cairo n'écrit pas d'OCG : l'export
+  dessine chaque calque sur une page d'un PDF 1.4 intermédiaire, puis la procédure
+  `chopgimp-pdf-ocg-layers` (plug-in chopgimp_pdf, module `ocg.py`, sans dépendance :
+  pikepdf n'est pas nécessaire) en fait des XObjects marqués `/OC`, groupes de
+  transparence pour l'opacité et le mode des groupes. En cas d'échec : PDF sans
+  calques. `CHOPGIMP_NO_PDF_VECTOR=1` : l'export PDF de GIMP.
+- **Export EPS vectoriel** (`file-chopgimp-eps-export`, prioritaire sur l'EPS de
+  GIMP) : même dessin sur une surface PostScript, un fichier par plan de travail ;
+  cairo pixellise ce que PostScript ne sait pas faire (transparence, modes).
+- **Export PSD façon Photoshop** :
+  - **styles de calque** : Ombre portée, Lueur externe, Ombre interne, Lueur interne,
+    Contour, Biseau et estampage, Incrustation couleur et Incrustation de dégradé
+    (le calque écrêté de chopgimp_fx devient l'effet) en effets Photoshop (lfx2) :
+    modes, couleurs, opacités, angle, distance, taille et étendue / grossi, contours
+    prédéfinis, bruit, effets désactivés gardés ;
+  - un style sans équivalent (second effet du même type, mode inconnu, contour en
+    dégradé…) est **pixellisé dans un calque séparé** (sous le calque, ou au-dessus
+    et écrêté) ; les autres filtres (flou, couleurs…) sont fusionnés dans les pixels,
+    l'original étant gardé masqué ; tout est noté dans un **rapport** (fenêtre en
+    mode interactif, parasite `chopgimp-psd-export-report`) ;
+  - **calques de forme** (vmsk, vscg SoCo ou GdFl, vstk) quand un fond et un contour
+    dessinent tous les objets ; sinon pixels avec masque vectoriel (désactivé si un
+    contour dépasse) ;
+  - **textes modifiables** (TySh, EngineData : polices, tailles, couleurs par
+    passage, paragraphes, approche, interligne) ; texte vertical ou au contour : en
+    pixels, signalé, le texte gardé dans le calque ;
+  - **retour sans perte dans ChopGimp** : blocs privés ignorés par Photoshop (cgFX
+    filtres exacts, cgVX objets, cgTX texte, cgPX calques faits par l'export) ; l'import
+    PSD (chopgimp_psd) les relit, retire les calques d'effets pixellisés et remet les
+    originaux ; pour les PSD de Photoshop, les styles deviennent les filtres de la
+    fenêtre Style de calque (contour en `chopgimp:stroke`, modes, étendue, contours).
+- **Tests** : 11 tests ajoutés à `tools/smoke_test.py` (source de perspective, PDF
+  par plan, calques PDF, vecteurs et texte, fichiers par plan, EPS, PSD exporté et
+  relu, rapport) ; `tools/dev/check_psd_tools.py`, lancé par `tools/dev/smoke.sh`,
+  relit le PSD avec **psd-tools** (environnement virtuel de `$CHOPGIMP_DEV`).
+- Points à vérifier : `docs/dev/A-VERIFIER-4.0.md`, section « Lot 4b ».
+
 ## 3.31.0 (non compilé) — partie 1 : plans de travail et grille de perspective (lot 4a du plan final)
 
 Patch 0162. Code écrit, relu et vérifié à la syntaxe (gcc -fsyntax-only dans le SDK

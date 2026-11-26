@@ -45,6 +45,7 @@ gi.require_foreign("cairo")
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 import cairoscript  # noqa: E402
+import ocg  # noqa: E402
 import vobjects  # noqa: E402
 from chopgimp_common import (pdb_run, srgb, set_parasite_text, dialog_box, vbox,  # noqa: E402
                              spin_scale, form_grid, frame)
@@ -55,6 +56,8 @@ PROC_PS = "file-chopgimp-eps-load"
 PROC_SVG = "file-chopgimp-svg-load"
 PROC_PS_THUMB = "file-chopgimp-eps-load-thumb"
 PROC_SVG_THUMB = "file-chopgimp-svg-load-thumb"
+# 3.31.0 (lot 4b) : calques PDF (OCG) de l'export PDF (file-pdf-export, module ocg)
+PROC_OCG = "chopgimp-pdf-ocg-layers"
 MAX_SIDE = 16384          # côté maximal d'un rendu en pixels (la résolution est réduite)
 MAX_OBJECTS = 50000       # au-delà, la page est importée en image
 
@@ -1175,12 +1178,42 @@ def thumbnail_svg(procedure, file, size, config, data):
         GObject.Value(GObject.TYPE_INT, 1)])
 
 
+def ocg_export_layers(procedure, config, data):
+    """PDF intermédiaire de file-pdf-export (un calque par page) → PDF à calques."""
+    try:
+        src = config.get_property("input").get_path()
+        dst = config.get_property("output").get_path()
+        ocg.make_layers_file(src, dst, config.get_property("spec"))
+    except Exception as e:  # noqa: BLE001 — l'export se rabat sur un PDF sans calques
+        return procedure.new_return_values(
+            Gimp.PDBStatusType.EXECUTION_ERROR,
+            GLib.Error.new_literal(GLib.quark_from_string("chopgimp"),
+                                   "Calques PDF : %s" % e, 0))
+    return procedure.new_return_values(Gimp.PDBStatusType.SUCCESS, GLib.Error())
+
+
 class ChopGimpPDF(Gimp.PlugIn):
     def do_query_procedures(self):
         # la vignette d'abord : GIMP refuse un chargeur de vignette pas encore déclaré
-        return [PROC_THUMB, PROC_PS_THUMB, PROC_SVG_THUMB, PROC, PROC_PS, PROC_SVG]
+        return [PROC_THUMB, PROC_PS_THUMB, PROC_SVG_THUMB, PROC, PROC_PS, PROC_SVG, PROC_OCG]
 
     def do_create_procedure(self, name):
+        if name == PROC_OCG:
+            p = Gimp.Procedure.new(self, name, Gimp.PDBProcType.PLUGIN, ocg_export_layers, None)
+            p.set_documentation("Calques PDF (OCG) d'un export PDF",
+                                "Compose le PDF intermédiaire de file-pdf-export (un calque par "
+                                "page, PDF 1.4 de cairo) en pages à calques PDF (contenu "
+                                "optionnel), d'après la description JSON des pages.", name)
+            p.set_attribution("ChopGimp", "ChopGimp", "2026")
+            p.add_file_argument("input", "PDF intermédiaire", "PDF intermédiaire",
+                                Gimp.FileChooserAction.OPEN, False, None,
+                                GObject.ParamFlags.READWRITE)
+            p.add_file_argument("output", "PDF à calques", "PDF à écrire",
+                                Gimp.FileChooserAction.SAVE, False, None,
+                                GObject.ParamFlags.READWRITE)
+            p.add_string_argument("spec", "Description", "Pages et calques (JSON)", "",
+                                  GObject.ParamFlags.READWRITE)
+            return p
         if name in (PROC_THUMB, PROC_PS_THUMB, PROC_SVG_THUMB):
             p = Gimp.ThumbnailProcedure.new(self, name, Gimp.PDBProcType.PLUGIN,
                                             thumbnail_svg if name == PROC_SVG_THUMB else thumbnail, None)

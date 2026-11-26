@@ -5,6 +5,7 @@ ChopGimp — test de fonctionnement exécuté DANS le paquet Flatpak :
 Résultats : <SMOKE_OUT> (une ligne « OK|ÉCHEC  test  détail » par test).
 """
 import os
+import re
 import traceback
 import time
 
@@ -2672,6 +2673,160 @@ try:
         report('(action "tools-artboard" "<Shift>o")' in sc, "3.31.0 Raccourci Maj+O : Plan de travail")
     except Exception:
         report(False, "3.31.0", traceback.format_exc().replace("\n", " | ")[:400])
+
+    # 3.31.0 partie 2 (lot 4b) : restes du lot 4a, exports PDF / EPS
+    # vectoriels et calques PDF, export PSD façon Photoshop (relu par
+    # psd-tools hors du paquet : tools/dev/check_psd_tools.py)
+    try:
+        import zlib
+
+        def cmd2(proc, im, c, item=None):
+            kw = {"image": im, "command": c}
+            if item is not None:
+                kw["item"] = item
+            r = run(proc, **kw)
+            ok = r is not None and r.index(0) == Gimp.PDBStatusType.SUCCESS and r.index(1)
+            return ok, (r.index(2) if r is not None else "")
+
+        def streams(data):
+            out = []
+            for m in re.finditer(rb"stream\r?\n", data):
+                end = data.find(b"endstream", m.end())
+                try:
+                    out.append(zlib.decompress(data[m.end():end]))
+                except zlib.error:
+                    out.append(data[m.end():end])
+            return out
+
+        # Sélection de perspective : deux déplacements, l'original gardé
+        im = Gimp.Image.new(800, 600, Gimp.ImageBaseType.RGB)
+        cmd2("chopgimp-perspective-command", im,
+             "set:type=2;visible=1;snap=0;active=2;origin=400,480;vl=-200,270;vr=1000,270;cell=40")
+        ly = Gimp.Layer.new(im, "Carré", 100, 100, Gimp.ImageType.RGBA_IMAGE, 100, Gimp.LayerMode.NORMAL)
+        im.insert_layer(ly, None, 0)
+        Gimp.context_set_foreground(color(1, 0, 0))
+        ly.edit_fill(Gimp.FillType.FOREGROUND)
+        ok1, _ = cmd2("chopgimp-perspective-command", im, "drag:0:0:400:470", ly)
+        ok2, _ = cmd2("chopgimp-perspective-command", im, "drag:450:420:520:430", ly)
+        par = ly.get_parasite("chopgimp-persp-source")
+        head = bytes(par.get_data()).split(b"\n")[0] if par else b""
+        report(ok1 and ok2 and head.startswith(b"1|100|100|0|0|"),
+               "3.31.0 Sélection de perspective : recalcul depuis l'original (source gardée)",
+               head[:60].decode("latin-1"))
+        im.delete()
+
+        # document de test : fond, calque vectoriel (objets), texte, 2 plans
+        im = Gimp.Image.new(600, 400, Gimp.ImageBaseType.RGB)
+        bg = Gimp.Layer.new(im, "Fond", 600, 400, Gimp.ImageType.RGB_IMAGE, 100, Gimp.LayerMode.NORMAL)
+        im.insert_layer(bg, None, 0)
+        Gimp.context_set_foreground(color(1, 1, 1))
+        bg.edit_fill(Gimp.FillType.FOREGROUND)
+        pa = Gimp.Path.new(im, "Ellipse")
+        im.insert_path(pa, None, 0)
+        pa.bezier_stroke_new_ellipse(150, 200, 100, 80, 0)
+        vl = Gimp.VectorLayer.new(im, pa)
+        im.insert_layer(vl, None, 0)
+        vl.set_name("Ellipse")
+        vl.set_enable_fill(True)
+        vl.set_fill_color(color(0.9, 0.2, 0.2))
+        vl.refresh()
+        font = Gimp.Font.get_by_name("Sans-serif") or Gimp.context_get_font()
+        tl = Gimp.TextLayer.new(im, "Titre ChopGimp", font, 40.0, Gimp.Unit.pixel())
+        im.insert_layer(tl, None, 0)
+        tl.set_name("Titre")
+        tl.set_offsets(320, 50)
+        cmd2("chopgimp-artboards-command", im, "add:0:0:300:400:Gauche")
+        cmd2("chopgimp-artboards-command", im, "add:300:0:300:400:Droite")
+
+        # PDF : une page par plan, calques PDF
+        pdf = os.path.join(TMP, "vec.pdf")
+        r = run("file-pdf-export", **{"run-mode": Gimp.RunMode.NONINTERACTIVE, "image": im,
+                                      "file": Gio.File.new_for_path(pdf)})
+        data = open(pdf, "rb").read() if os.path.exists(pdf) else b""
+        pages = len(re.findall(rb"/Type /Page[^s]", data))
+        report(r.index(0) == Gimp.PDBStatusType.SUCCESS and data.startswith(b"%PDF-1.5") and pages == 2,
+               "3.31.0 Export PDF : une page par plan de travail", "%d page(s)" % pages)
+        report(b"/OCProperties" in data and b"(Ellipse)" in data and b"(Titre)" in data
+               and b"/UseOC" in data,
+               "3.31.0 Export PDF : calques PDF (OCG) nommés comme les calques")
+        st = streams(data)
+        report(any(b" c\n" in x or b" c " in x for x in st) and any(b"BT" in x for x in st),
+               "3.31.0 Export PDF : tracés et texte en vecteurs (courbes, BT)")
+
+        # PDF : un fichier par plan ; sans calques PDF
+        pdf2 = os.path.join(TMP, "vec2.pdf")
+        r = run("file-pdf-export", **{"run-mode": Gimp.RunMode.NONINTERACTIVE, "image": im,
+                                      "file": Gio.File.new_for_path(pdf2), "artboards": "files",
+                                      "pdf-layers": False})
+        f1, f2 = (os.path.join(TMP, "vec2-0%d-%s.pdf" % (i + 1, n)) for i, n in enumerate(("Gauche", "Droite")))
+        report(os.path.exists(f1) and os.path.exists(f2) and b"/OCProperties" not in open(f1, "rb").read(),
+               "3.31.0 Export PDF : un fichier par plan de travail", os.path.basename(f1))
+
+        # EPS vectoriel : un fichier par plan
+        eps = os.path.join(TMP, "vec.eps")
+        r = run("file-chopgimp-eps-export", **{"run-mode": Gimp.RunMode.NONINTERACTIVE, "image": im,
+                                               "file": Gio.File.new_for_path(eps)})
+        e1 = os.path.join(TMP, "vec-01-Gauche.eps")
+        head = open(e1, "rb").read(40) if os.path.exists(e1) else b""
+        report(r.index(0) == Gimp.PDBStatusType.SUCCESS and head.startswith(b"%!PS-Adobe-3.0 EPSF"),
+               "3.31.0 Export EPS vectoriel (un fichier par plan)", head[:24].decode("latin-1"))
+
+        # PSD : styles de calque, forme, texte, filtre fusionné
+        sq = Gimp.Layer.new(im, "Forme", 600, 400, Gimp.ImageType.RGBA_IMAGE, 100, Gimp.LayerMode.NORMAL)
+        im.insert_layer(sq, None, 0)
+        sq.fill(Gimp.FillType.TRANSPARENT)
+        im.select_rectangle(Gimp.ChannelOps.REPLACE, 400, 200, 120, 120)
+        Gimp.context_set_foreground(color(0.2, 0.6, 0.2))
+        sq.edit_fill(Gimp.FillType.FOREGROUND)
+        Gimp.Selection.none(im)
+        for op, name, props in (("gegl:dropshadow", "Ombre portée",
+                                 {"x": 6.0, "y": 6.0, "radius": 4.0, "opacity": 0.8, "blend-mode": "multiply"}),
+                                ("chopgimp:stroke", "Contour", {"width": 4.0, "color": color(0, 0, 1)})):
+            f = Gimp.DrawableFilter.new(sq, op, name)
+            cfg = f.get_config()
+            for k, v in props.items():
+                try:
+                    cfg.set_property(k, v)
+                except Exception:
+                    pass
+            f.update()
+            sq.append_filter(f)
+        fl = Gimp.Layer.new(im, "Flou", 200, 100, Gimp.ImageType.RGBA_IMAGE, 100, Gimp.LayerMode.NORMAL)
+        im.insert_layer(fl, None, 0)
+        fl.set_offsets(20, 20)
+        Gimp.context_set_foreground(color(0.1, 0.1, 0.8))
+        fl.edit_fill(Gimp.FillType.FOREGROUND)
+        fb = Gimp.DrawableFilter.new(fl, "gegl:gaussian-blur", "Flou")
+        fb.update()
+        fl.append_filter(fb)
+        psd = os.path.join(TMP, "psd-tools.psd")       # relu par tools/dev/check_psd_tools.py
+        r = run("file-psd-export", **{"run-mode": Gimp.RunMode.NONINTERACTIVE, "image": im,
+                                      "file": Gio.File.new_for_path(psd)})
+        raw = open(psd, "rb").read() if os.path.exists(psd) else b""
+        keys = [k for k in (b"lfx2", b"DrSh", b"FrFX", b"TySh", b"vmsk", b"vscg", b"cgFX", b"cgVX", b"cgTX")
+                if k not in raw]
+        report(r.index(0) == Gimp.PDBStatusType.SUCCESS and not keys,
+               "3.31.0 Export PSD : styles, calque de forme, texte modifiable", "manque %s" % keys)
+        rp = im.get_parasite("chopgimp-psd-export-report")
+        rtext = bytes(rp.get_data()).decode("utf-8", "replace") if rp else ""
+        report("Flou" in rtext and "fusionn" in rtext, "3.31.0 Export PSD : rapport (filtre fusionné)",
+               rtext.replace("\n", " | ")[:120])
+
+        im2 = Gimp.file_load(Gimp.RunMode.NONINTERACTIVE, Gio.File.new_for_path(psd))
+        every = list(walk_all(im2.get_layers()))
+        by = {l.get_name(): l for l in every}
+        ops = [f.get_operation_name() for f in (by["Forme"].get_filters() or [])] if "Forme" in by else []
+        report("gegl:dropshadow" in ops and "chopgimp:stroke" in ops,
+               "3.31.0 PSD relu : styles de calque repris", ", ".join(ops))
+        report(isinstance(by.get("Titre"), Gimp.TextLayer) and isinstance(by.get("Ellipse"), Gimp.VectorLayer),
+               "3.31.0 PSD relu : texte et calque vectoriel modifiables")
+        fops = [f.get_operation_name() for f in (by["Flou"].get_filters() or [])] if "Flou" in by else []
+        report("gegl:gaussian-blur" in fops and not any("original" in n for n in by),
+               "3.31.0 PSD relu : calque d'origine et filtre repris", ", ".join(fops))
+        im2.delete()
+        im.delete()
+    except Exception:
+        report(False, "3.31.0 partie 2", traceback.format_exc().replace("\n", " | ")[:400])
 
     # 4. Réglages d'usine présents (thème, icônes, menus, raccourcis)
     data = Gimp.data_directory()

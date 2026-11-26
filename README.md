@@ -181,11 +181,19 @@ Ils sont produits automatiquement par GitHub Actions à chaque tag `v*`
   - À l'import, les textes et les formes restent modifiables, les masques
     vectoriels, les effets, les calques de réglage et les objets dynamiques
     sont repris, avec un rapport d'import.
-  - L'export conserve les formes et les textes.
+  - L'export, façon Photoshop (3.31.0, non compilé) : les effets de calque deviennent
+    des styles Photoshop (ombres, lueurs, biseau, contour, incrustations couleur et
+    dégradé), les calques vectoriels des calques de forme, les textes des calques de
+    texte modifiables ; ce qui n'a pas d'équivalent est pixellisé à part et signalé
+    dans un rapport ; ChopGimp relit le fichier sans perte (vérifié aussi avec
+    psd-tools).
 - **PDF, Illustrator, EPS et SVG** importés en calques modifiables : un objet par
   forme, avec les groupes, les dégradés et les masques d'écrêtage.
 - **Export SVG** : un `<path>` par objet, compatible avec les calques Inkscape,
   aller-retour testé.
+- **Export PDF et EPS vectoriels** (3.31.0, non compilé) : objets, dégradés, filets,
+  motifs et textes en vecteurs, modes de fusion et masques gardés ; une page ou un
+  fichier par plan de travail ; **calques PDF** (visibles dans Acrobat et Illustrator).
 - **Export pour le web** (aperçu avec le poids du fichier), **traitement par lots**,
   **génération de ressources**.
 - **Enregistrement automatique et récupération** après plantage.
@@ -237,6 +245,7 @@ Ils sont produits automatiquement par GitHub Actions à chaque tag `v*`
 | 3.29 | Vectoriel « complet » : outils Courbure, Crayon vectoriel, Lissage, Ciseaux, Cutter et Jonction, angles dynamiques, spirale / arc / grilles, panneau Transformation, Ctrl+D, Transformer chaque, objet clé (3.29.0) ; Transition, filet de dégradé, dégradé libre, masques d'opacité, motifs vectoriels (3.29.1) ; vectoriel rapide (3.29.2) ; sélection directe, nettoyage et couleurs du dessin façon Illustrator (3.29.3) ; rendu vectoriel accéléré (3.29.4) ; finitions vectorielles — transitions de groupes et le long d'un tracé, dégradé libre en lignes à l'outil Dégradé, peinture dynamique incrémentale (3.29.5, non compilé) ; performance vectorielle complète (3.29.6, non compilé) |
 | 3.30 | Pinceau goutte, formes de pinceau (calligraphique, Art, Motif, Dispersion), répétitions radiale / grille / miroir modifiables (3.30.0, non compilé) |
 | 3.31 | Plans de travail (outil, panneau, export par plan), grille de perspective à 1, 2 ou 3 points de fuite et Sélection de perspective (3.31.0 partie 1, non compilé) |
+| 3.31 | Export PDF / EPS vectoriel par plan de travail, calques PDF, export PSD façon Photoshop (styles, formes, textes) (3.31.0 partie 2, non compilé) |
 
 Le détail de chaque version (ce qui est fait, vérifié, et ce qui reste) se trouve
 dans [`docs/SUIVI.md`](docs/SUIVI.md). Le plan du chantier vectoriel est dans

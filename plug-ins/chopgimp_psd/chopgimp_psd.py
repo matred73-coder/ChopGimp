@@ -25,6 +25,7 @@ import os
 import re
 import subprocess
 import sys
+import urllib.parse
 
 import gi
 gi.require_version("Gimp", "3.0")
@@ -410,7 +411,10 @@ def _first(fx, key, multi):
     return None, 0
 
 
-def apply_effects(image, L, layer, fx, psd, report):
+def apply_effects(image, L, layer, fx, psd, report, cg_only=False):
+    """Effets lfx2 → styles ChopGimp. cg_only : les filtres viennent du bloc
+    cgFX (export ChopGimp) ; seule l'incrustation de dégradé (un calque
+    écrêté dans ChopGimp) est encore à faire."""
     mod = fx_module()
     if mod is None:
         report.ignore(L.name, "effets (plug-in de styles absent)")
@@ -418,9 +422,104 @@ def apply_effects(image, L, layer, fx, psd, report):
     if not fx.get("masterFXSwitch", True):
         return
     scale = float(fx.get("Scl ", 100.0)) / 100.0
-    chosen = {}
-    done = []
 
+    def num(e, k, default=0.0):
+        try:
+            return float(e.get(k, default))
+        except (TypeError, ValueError):
+            return default
+
+    def opacity(e):
+        return num(e, "Opct", 75.0) / 100.0
+
+    # 3.31.0 (lot 4b) : les filtres des styles de ChopGimp (ceux de la
+    # fenêtre Style de calque), avec mode de fusion, grossissement
+    # (Étendue / Grossi), contour et bruit ; l'export PSD fait l'inverse
+    # (plug-ins/file-psd/psd-chopgimp.c)
+    if not cg_only:
+        made = lfx2_filters(layer, fx, psd, scale, report, L.name)
+        if made:
+            report.ok(L.name, "effets : " + ", ".join(made))
+
+    e, _ = _first(fx, "GrFl", "gradientFillMulti")
+    if e:
+        grad = e.get("Grad", {})
+        stops = [s for s in (grad.get("Clrs", []) if isinstance(grad, dict) else []) if isinstance(s, dict)]
+        trns = [s for s in (grad.get("Trns", []) if isinstance(grad, dict) else []) if isinstance(s, dict)]
+        c1 = psdparse._color(stops[0]) if stops else None
+        c2 = psdparse._color(stops[-1]) if stops else None
+        if c1 and c2:
+            a1 = num(trns[0], "Opct", 100.0) / 100.0 if trns else 1.0
+            a2 = num(trns[-1], "Opct", 100.0) / 100.0 if trns else 1.0
+            # l'angle de Photoshop tourne dans l'autre sens (y vers le haut)
+            ang = -num(e, "Angl", 90.0)
+            g = gradient_overlay_layer(image, mod, layer, ang, bool(e.get("Rvrs", False)),
+                                       gegl_color(c1, a1), gegl_color(c2, a2))
+            g.set_opacity(opacity(e) * 100.0 if "Opct" in e else 100.0)
+            mode = BLEND_NICKS.get(str(e.get("Md  ", "Nrml")), "normal")
+            g.set_mode(layer_mode(mode))
+            report.ok(L.name, "incrustation de dégradé (calque écrêté, modifiable)")
+            if len(stops) > 2:
+                report.approximate(L.name, "dégradé à %d couleurs ramené à 2" % len(stops))
+        else:
+            report.ignore(L.name, "incrustation de dégradé illisible")
+    for key, label in (("ChFX", "satin"), ("patternFill", "incrustation de motif")):
+        e = fx.get(key)
+        if isinstance(e, dict) and e.get("enab", False):
+            report.ignore(L.name, label + " (sans équivalent dans ChopGimp)")
+
+
+# ─── 3.31.0 (lot 4b) : styles Photoshop → filtres de styles ChopGimp ────
+
+# BlnM de Photoshop → nom des modes (GEGL, GIMP)
+BLEND_NICKS = {
+    "Nrml": "normal", "Dslv": "dissolve", "Drkn": "darken-only", "Mltp": "multiply",
+    "CBrn": "burn", "linearBurn": "linear-burn", "darkerColor": "luma-darken-only",
+    "Lghn": "lighten-only", "Scrn": "screen", "CDdg": "dodge", "linearDodge": "addition",
+    "lighterColor": "luma-lighten-only", "Ovrl": "overlay", "SftL": "softlight",
+    "HrdL": "hardlight", "vividLight": "vivid-light", "linearLight": "linear-light",
+    "pinLight": "pin-light", "hardMix": "hard-mix", "Dfrn": "difference", "Xclu": "exclusion",
+    "blendSubtraction": "subtract", "blendDivide": "divide", "H   ": "hsv-hue",
+    "Strt": "hsv-saturation", "Clr ": "hsl-color", "Lmns": "luminance",
+}
+CONTOURS = {"Linear": "linear", "Cone": "cone", "Cone - Inverted": "cone-inverted",
+            "Gaussian": "gaussian", "Half Round": "half-round", "Ring": "ring",
+            "Ring - Double": "ring-double"}
+
+
+def contour_position(n):
+    """GimpContourPosition : 0 extérieur, 1 centré, 2 intérieur."""
+    enum = getattr(Gimp, "ContourPosition", None)
+    return enum(n) if enum is not None else n
+
+
+def layer_mode(nick):
+    return getattr(Gimp.LayerMode, nick.upper().replace("-", "_"), Gimp.LayerMode.NORMAL)
+
+
+def style_filter(layer, op, name, props, mode=None, opacity=None, visible=True):
+    f = Gimp.DrawableFilter.new(layer, op, name)
+    cfg = f.get_config()
+    for k, v in props.items():
+        try:
+            cfg.set_property(k, v)
+        except (TypeError, ValueError):
+            pass
+    if mode is not None:
+        f.set_blend_mode(mode)
+    if opacity is not None:
+        f.set_opacity(opacity)
+    f.update()
+    layer.append_filter(f)
+    if not visible:
+        f.set_visible(False)
+    return f
+
+
+def lfx2_filters(layer, fx, psd, scale, report, lname):
+    """Ombres, lueurs, contour, biseau, incrustation couleur (lfx2) → les
+    filtres de la fenêtre Style de calque. Taille S et étendue p (%) de
+    Photoshop → grossi S·p/100 et flou S·(1 − p/100)/2 de GEGL."""
     def num(e, k, default=0.0):
         try:
             return float(e.get(k, default))
@@ -430,74 +529,222 @@ def apply_effects(image, L, layer, fx, psd, report):
     def angle(e):
         return float(psd.global_angle) if e.get("uglg", False) else num(e, "lagl", 120.0)
 
-    def color(e, default=(0, 0, 0)):
-        return gegl_color(psdparse._color(e) or default)
+    def color(e, key="Clr ", default=(0, 0, 0)):
+        c = psdparse._color({"Clr ": e[key]}) if isinstance(e.get(key), dict) else None
+        return gegl_color(c or default)
 
-    def opacity(e):
-        return num(e, "Opct", 75.0) / 100.0
+    def blend(e, key="Md  ", default="Nrml"):
+        return BLEND_NICKS.get(str(e.get(key, default)), "normal")
 
-    for key, multi, style, label in (("DrSh", "dropShadowMulti", "drop-shadow", "ombre portée"),
-                                     ("IrSh", "innerShadowMulti", "inner-shadow", "ombre interne")):
-        e, n = _first(fx, key, multi)
-        if e:
-            chosen[style] = ({"dist": num(e, "Dstn") * scale, "radius": num(e, "blur") * scale / 2.0,
-                              "angle": angle(e)}, color(e), opacity(e))
-            done.append(label + (" (%d, seule la 1re)" % n if n > 1 else ""))
+    def contour(e):
+        t = e.get("TrnS")
+        return CONTOURS.get(str(t.get("Nm  ", "")) if isinstance(t, dict) else "", "linear")
 
-    e, _ = _first(fx, "OrGl", "outerGlowMulti")
-    if e:
-        chosen["outer-glow"] = ({"radius": num(e, "blur") * scale / 2.0}, color(e, (1, 0.93, 0.6)), opacity(e))
-        done.append("lueur externe")
-    e, _ = _first(fx, "IrGl", "innerGlowMulti")
-    if e:
-        chosen["inner-glow"] = ({"radius": num(e, "blur") * scale / 2.0}, color(e, (1, 1, 0.75)), opacity(e))
-        done.append("lueur interne")
-    e, _ = _first(fx, "ebbl", "bevelEmbossMulti")
-    if e:
-        chosen["bevel"] = ({"radius": max(1.0, num(e, "blur", 5.0) * scale),
-                            "depth": max(1, min(100, int(num(e, "srgR", 100.0) / 5.0))),
-                            "angle": angle(e)}, color((), (1, 1, 1)), 1.0)
-        done.append("biseau")
-    e, _ = _first(fx, "SoFi", "solidFillMulti")
-    if e:
-        chosen["overlay"] = ({}, color(e), opacity(e))
-        done.append("incrustation couleur")
-    e, _ = _first(fx, "FrFX", "frameFXMulti")
-    if e:
-        if str(e.get("PntT", "SClr")) != "SClr":
-            report.approximate(L.name, "contour en dégradé ou motif rendu en couleur unie")
-        if str(e.get("Styl", "OutF")) != "OutF":
-            report.approximate(L.name, "contour intérieur ou centré rendu à l'extérieur")
-        chosen["stroke"] = ({"size": num(e, "Sz  ", 3.0) * scale}, color(e), opacity(e))
-        done.append("contour")
+    def grow_blur(e):
+        size = num(e, "blur", 5.0) * scale
+        p = max(0.0, min(100.0, num(e, "Ckmt", 0.0))) / 100.0
+        return size * p, size * (1.0 - p) / 2.0
 
-    # les anciens effets (lrFX) éventuellement posés par l'import de GIMP
-    # font doublon avec les effets modernes : on les retire
-    if chosen:
+    made = []
+    keys = (("DrSh", "dropShadowMulti"), ("OrGl", "outerGlowMulti"), ("IrSh", "innerShadowMulti"),
+            ("IrGl", "innerGlowMulti"), ("ebbl", "bevelEmbossMulti"), ("SoFi", "solidFillMulti"),
+            ("FrFX", "frameFXMulti"))
+    # les anciens effets (lrFX) posés par l'import de GIMP font doublon
+    if any(_all(fx, k, m) for k, m in keys):
         for f in list(layer.get_filters() or []):
             f.delete()
-        mod.apply_styles(layer, chosen)
-        mod.parasite_set(layer, mod.STYLE_PARASITE, mod.style_to_json(chosen))
-        report.ok(L.name, "effets : " + ", ".join(done))
+    for key, multi in (("DrSh", "dropShadowMulti"), ("OrGl", "outerGlowMulti")):
+        for e in _all(fx, key, multi):
+            grow, blur = grow_blur(e)
+            if key == "DrSh":
+                a, d = math.radians(angle(e)), num(e, "Dstn", 5.0) * scale
+                x, y, name, mode = -math.cos(a) * d, math.sin(a) * d, "Ombre portée", blend(e, default="Mltp")
+            else:
+                x, y, name, mode = 0.0, 0.0, "Lueur externe", blend(e, default="Scrn")
+            style_filter(layer, "gegl:dropshadow", name,
+                         {"x": x, "y": y, "radius": blur, "grow-radius": grow, "grow-shape": "circle",
+                          "color": color(e), "opacity": num(e, "Opct", 75.0) / 100.0,
+                          "blend-mode": mode, "contour": contour(e),
+                          "noise": num(e, "Nose", 0.0) / 100.0,
+                          "range": max(0.01, num(e, "Inpr", 100.0) / 100.0)},
+                         visible=e.get("enab", True))
+            made.append(name.lower())
+    for key, multi in (("IrSh", "innerShadowMulti"), ("IrGl", "innerGlowMulti")):
+        for e in _all(fx, key, multi):
+            grow, blur = grow_blur(e)
+            if key == "IrSh":
+                a, d = math.radians(angle(e)), num(e, "Dstn", 5.0) * scale
+                x, y, name, mode = -math.cos(a) * d, math.sin(a) * d, "Ombre interne", blend(e, default="Mltp")
+            else:
+                x, y, name, mode = 0.0, 0.0, "Lueur interne", blend(e, default="Scrn")
+            style_filter(layer, "gegl:inner-glow", name,
+                         {"x": x, "y": y, "radius": blur, "grow-radius": grow,
+                          "value": color(e), "opacity": num(e, "Opct", 75.0) / 100.0,
+                          "contour": contour(e), "noise": num(e, "Nose", 0.0) / 100.0},
+                         mode=layer_mode(mode), visible=e.get("enab", True))
+            made.append(name.lower())
+    for e in _all(fx, "ebbl", "bevelEmbossMulti"):
+        style_filter(layer, "gegl:bevel", "Biseautage",
+                     {"type": "chamfer" if str(e.get("bvlT", "SfBL")) in ("PrBL", "Slmt") else "bump",
+                      "radius": max(1.0, num(e, "blur", 5.0) * scale),
+                      "depth": int(max(1, min(100, num(e, "srgR", 100.0) / 5.0))),
+                      "azimuth": angle(e), "elevation": num(e, "Lald", 30.0)},
+                     visible=e.get("enab", True))
+        made.append("biseau")
+    for e in _all(fx, "SoFi", "solidFillMulti"):
+        style_filter(layer, "gegl:color-overlay", "Incrustation couleur", {"value": color(e)},
+                     mode=layer_mode(blend(e)), opacity=num(e, "Opct", 100.0) / 100.0,
+                     visible=e.get("enab", True))
+        made.append("incrustation couleur")
+    for e in _all(fx, "FrFX", "frameFXMulti"):
+        styl = str(e.get("Styl", "OutF"))
+        if str(e.get("PntT", "SClr")) != "SClr":
+            report.approximate(lname, "contour en dégradé ou motif rendu en couleur unie")
+        style_filter(layer, "chopgimp:stroke", "Contour",
+                     {"position": contour_position({"CtrF": 1, "InsF": 2}.get(styl, 0)),
+                      "width": max(0.5, num(e, "Sz  ", 3.0) * scale), "color": color(e),
+                      "opacity": num(e, "Opct", 100.0) / 100.0,
+                      "mode": layer_mode(blend(e)),
+                      "overprint": bool(e.get("overprint", False))},
+                     visible=e.get("enab", True))
+        made.append("contour")
+    return made
 
-    e, _ = _first(fx, "GrFl", "gradientFillMulti")
-    if e:
-        grad = e.get("Grad", {})
-        stops = [s for s in (grad.get("Clrs", []) if isinstance(grad, dict) else []) if isinstance(s, dict)]
-        c1 = psdparse._color(stops[0]) if stops else None
-        c2 = psdparse._color(stops[-1]) if stops else None
-        if c1 and c2:
-            mod.gradient_overlay(image, layer, num(e, "Angl", 90.0), bool(e.get("Rvrs", False)),
-                                 gegl_color(c1), gegl_color(c2))
-            report.ok(L.name, "incrustation de dégradé (calque écrêté)")
-            if len(stops) > 2:
-                report.approximate(L.name, "dégradé à %d couleurs ramené à 2" % len(stops))
-        else:
-            report.ignore(L.name, "incrustation de dégradé illisible")
-    for key, label in (("ChFX", "satin"), ("patternFill", "incrustation de motif")):
-        e = fx.get(key)
-        if isinstance(e, dict) and e.get("enab", False):
-            report.ignore(L.name, label)
+
+def _all(fx, key, multi):
+    """Tous les effets d'un type (les listes « …Multi » de Photoshop CC)."""
+    if multi in fx and isinstance(fx[multi], list):
+        return [e for e in fx[multi] if isinstance(e, dict) and e.get("present", True)]
+    e = fx.get(key)
+    return [e] if isinstance(e, dict) and e.get("present", True) else []
+
+
+CLIP_GROUP_PREFIX = "⧉ "     # groupes d'écrêtage de photogimp_ps
+
+
+def gradient_overlay_layer(image, mod, base, angle, reverse, c1, c2):
+    """Incrustation de dégradé de chopgimp_fx sur « base » ; dans un groupe
+    d'écrêtage existant, le calque y est ajouté (sans refaire le groupe).
+    Les réglages sont gardés (parasite chopgimp-fx) : elle reste modifiable."""
+    parent = base.get_parent()
+    if parent is not None and parent.get_name().startswith(CLIP_GROUP_PREFIX):
+        g = Gimp.Layer.new(image, "Incrustation de dégradé", base.get_width(), base.get_height(),
+                           Gimp.ImageType.RGBA_IMAGE, 100, Gimp.LayerMode.NORMAL)
+        image.insert_layer(g, parent, image.get_item_position(base))
+        mod.gradient_overlay(image, base, angle, reverse, c1, c2, target=g)
+        g.set_composite_mode(Gimp.LayerCompositeMode.CLIP_TO_BACKDROP)
+    else:
+        g = mod.gradient_overlay(image, base, angle, reverse, c1, c2)
+    mod.parasite_set(g, mod.FX_PARASITE, {
+        "proc": "chopgimp-fx-gradient-overlay",
+        "args": {"angle": angle, "reverse": reverse, "color1": mod.rgba(c1), "color2": mod.rgba(c2)},
+        "src-tattoo": base.get_tattoo()})
+    return g
+
+
+# ─── 3.31.0 (lot 4b) : blocs privés de l'export ChopGimp ────────────────
+# cgFX : filtres exacts ; cgVX : objets vectoriels ; cgTX : calque de
+# texte ; cgPX : calque fait par l'export (effet pixellisé, original)
+
+def apply_cgfx(layer, data):
+    """Les filtres du calque, tels qu'ils étaient (bas → haut)."""
+    for f in list(layer.get_filters() or []):
+        f.delete()
+    n = 0
+    for line in data.decode("utf-8", "replace").splitlines():
+        parts = line.split("\t")
+        if len(parts) < 6:
+            continue
+        op, name, vis, mode, opac, props = parts[:6]
+        try:
+            f = Gimp.DrawableFilter.new(layer, urllib.parse.unquote(op), urllib.parse.unquote(name))
+        except Exception:
+            continue
+        cfg = f.get_config()
+        for kv in props.split(";"):
+            if "=" not in kv:
+                continue
+            k, _, tv = kv.partition("=")
+            t, _, v = tv.partition(":")
+            v = urllib.parse.unquote(v)
+            try:
+                if t == "d":
+                    val = float(v)
+                elif t in ("i", "e"):
+                    val = int(float(v))
+                elif t == "b":
+                    val = v == "1"
+                elif t == "c":
+                    r, g, b, a = (float(x) for x in v.split(","))
+                    val = srgb(r, g, b, a)
+                else:
+                    val = v
+                cfg.set_property(k, val)
+            except Exception:
+                pass
+        try:
+            f.set_blend_mode(Gimp.LayerMode(int(mode)))
+            f.set_opacity(float(opac))
+        except (TypeError, ValueError):
+            pass
+        f.update()
+        layer.append_filter(f)
+        if vis == "0":
+            f.set_visible(False)
+        n += 1
+    return n
+
+
+def parse_kv(data):
+    out = {}
+    for line in data.decode("utf-8", "replace").splitlines():
+        k, _, v = line.partition("=")
+        out[k] = v
+    return out
+
+
+UNITS = {"px": "pixel", "pt": "point", "mm": "mm", "in": "inch", "pc": "pica"}
+
+
+def build_cgtx(image, L, data):
+    """Calque de texte refait tel qu'il était dans ChopGimp."""
+    kv = parse_kv(data)
+    q = urllib.parse.unquote
+    font = Gimp.Font.get_by_name(q(kv.get("font", ""))) if kv.get("font") else None
+    unit = getattr(Gimp.Unit, UNITS.get(q(kv.get("unit", "px")), "pixel"))()
+    text = q(kv.get("text", "")) or " "
+    tl = Gimp.TextLayer.new(image, text, font or Gimp.context_get_font(),
+                            float(kv.get("size", "12")), unit)
+    image.insert_layer(tl, L.gimp.get_parent(), image.get_item_position(L.gimp))
+    if kv.get("markup"):
+        tl.set_markup(q(kv["markup"]))
+    try:
+        r, g, b, a = (float(x) for x in kv.get("color", "0,0,0,1").split(","))
+        tl.set_color(srgb(r, g, b, a))
+    except ValueError:
+        pass
+    tl.set_justification(Gimp.TextJustification(int(kv.get("justify", "0"))))
+    tl.set_letter_spacing(float(kv.get("letter-spacing", "0")))
+    tl.set_line_spacing(float(kv.get("line-spacing", "0")))
+    tl.set_indent(float(kv.get("indent", "0")))
+    tl.set_base_direction(Gimp.TextDirection(int(kv.get("direction", "0"))))
+    tl.set_offsets(int(kv.get("x", "0")), int(kv.get("y", "0")))
+    w, h = int(kv.get("w", "0")), int(kv.get("h", "0"))
+    if w > 0 and h > 0 and (tl.get_width(), tl.get_height()) != (w, h):
+        tl.resize(w, h)                     # cadre de paragraphe
+    return tl
+
+
+def build_cgvx(image, L, sh, xml):
+    """Calque vectoriel refait avec ses objets (chopgimp-vobjects-set-xml)."""
+    path = make_path(image, L.name, sh.paths if sh else [])
+    vl = Gimp.VectorLayer.new(image, path)
+    image.insert_layer(vl, L.gimp.get_parent(), image.get_item_position(L.gimp))
+    res = pdb_run("chopgimp-vobjects-set-xml", layer=vl, xml=xml.decode("utf-8", "replace"))
+    if res is None or res.index(0) != Gimp.PDBStatusType.SUCCESS:
+        image.remove_layer(vl)
+        return None
+    return vl
 
 
 # ─── calques de réglage → filtres modifiables ───────────────────────────
@@ -743,6 +990,25 @@ def copy_props(src, dst):
         pass
 
 
+def transfer_mask(image, layer, new):
+    mask = layer.get_mask()
+    if mask is not None and new.get_mask() is None:
+        nm = new.create_mask(Gimp.AddMaskType.WHITE)
+        new.add_mask(nm)
+        image.select_item(Gimp.ChannelOps.REPLACE, mask)
+        try:
+            Gimp.Selection.invert(image)
+            if not Gimp.Selection.is_empty(image):
+                Gimp.context_push()
+                try:
+                    Gimp.context_set_foreground(gegl_color((0, 0, 0)))
+                    nm.edit_fill(Gimp.FillType.FOREGROUND)
+                finally:
+                    Gimp.context_pop()
+        finally:
+            Gimp.Selection.none(image)
+
+
 class Originals:
     """Groupe masqué où sont rangés les calques remplacés."""
 
@@ -756,22 +1022,7 @@ class Originals:
             self.image.insert_layer(self.group, None, 0)
             self.group.set_visible(False)
         # le masque de calque et l'écrêtage restent sur la version modifiable
-        mask = layer.get_mask()
-        if mask is not None and new.get_mask() is None:
-            nm = new.create_mask(Gimp.AddMaskType.WHITE)
-            new.add_mask(nm)
-            self.image.select_item(Gimp.ChannelOps.REPLACE, mask)
-            try:
-                Gimp.Selection.invert(self.image)
-                if not Gimp.Selection.is_empty(self.image):
-                    Gimp.context_push()
-                    try:
-                        Gimp.context_set_foreground(gegl_color((0, 0, 0)))
-                        nm.edit_fill(Gimp.FillType.FOREGROUND)
-                    finally:
-                        Gimp.context_pop()
-            finally:
-                Gimp.Selection.none(self.image)
+        transfer_mask(self.image, layer, new)
         self.stash(layer)
 
     def stash(self, layer):
@@ -782,6 +1033,31 @@ class Originals:
         self.image.reorder_item(layer, self.group, 0)
         layer.set_visible(True)
         layer.set_name("⟲ " + layer.get_name())
+
+
+def replace_exact(image, old, new):
+    """Un calque refait exactement (blocs cg*) : l'ancien (pixels de
+    l'import) est retiré, son masque et son écrêtage passent au nouveau."""
+    try:
+        new.set_composite_mode(old.get_composite_mode())
+    except Exception:
+        pass
+    transfer_mask(image, old, new)
+    image.remove_layer(old)
+
+
+def unwrap_gimp_group(image, group):
+    """Le groupe d'écrêtage ajouté par l'import de GIMP, vide de ses calques
+    écrêtés (effets pixellisés retirés) : ses calques remontent."""
+    if group is None or group.get_name() != "Group added by GIMP":
+        return
+    children = list(group.get_children())
+    if len(children) > 1:
+        return
+    parent, pos = group.get_parent(), image.get_item_position(group)
+    for c in reversed(children):
+        image.reorder_item(c, parent, pos)
+    image.remove_layer(group)
 
 
 def convert(image, path, run_mode, report):
@@ -812,11 +1088,13 @@ def convert(image, path, run_mode, report):
             so = L.smart_object()
             fill = any(k in L.blocks for k in ("SoCo", "GdFl", "PtFl")) and not (sh and sh.is_shape)
             fx = L.effects()
+            # 3.31.0 (lot 4b) : blocs privés de l'export ChopGimp
+            cg = {k: L.blocks[k] for k in ("cgFX", "cgVX", "cgTX", "cgPX") if k in L.blocks}
         except Exception as e:
             report.ignore(L.name, "informations illisibles (%s)" % e)
             continue
-        if t or sh or fx or so or fill:
-            todo.append((L, t, sh, fx, so, fill))
+        if t or sh or fx or so or fill or cg:
+            todo.append((L, t, sh, fx, so, fill, cg))
     if not todo and not adjustments:
         return psd
 
@@ -846,10 +1124,38 @@ def convert(image, path, run_mode, report):
     digest = hashlib.sha1(os.path.abspath(path).encode("utf-8", "surrogateescape")).hexdigest()[:8]
     cache_dir = os.path.join(Gimp.directory(), "psd-objets",
                              "%s_%s" % (re.sub(r"[^\w.\- ]", "_", os.path.basename(path)), digest))
-    for L, t, sh, fx, so, fill in todo:
+    # calques faits par l'export ChopGimp : effets pixellisés (retirés, le
+    # filtre revient sur son calque) et originaux des calques dont les
+    # filtres ont été fusionnés (ils reprennent leur place)
+    cg_by_id = {L.id: rest[-1] for L, *rest in todo}
+    with_cgfx = {i for i, cg in cg_by_id.items() if "cgFX" in cg}
+    effect_layers, originals = [], {}
+    for L, *rest in todo:
+        mark = rest[-1].get("cgPX", b"").decode("latin-1", "replace").split()
+        if len(mark) == 2 and mark[1].isdigit() and int(mark[1]) in with_cgfx:
+            if mark[0] == "effect":
+                effect_layers.append(L)
+            elif mark[0] == "original":
+                originals[int(mark[1])] = L
+    final = {}
+
+    for L, t, sh, fx, so, fill, cg in todo:
+        if L in effect_layers:
+            continue
         new = None
+        exact = False
         try:
-            if t:
+            if "cgTX" in cg:
+                new = build_cgtx(image, L, cg["cgTX"])
+                exact = True
+            elif "cgVX" in cg:
+                new = build_cgvx(image, L, sh, cg["cgVX"])
+                exact = new is not None
+                if exact:
+                    report.ok(L.name, "objets vectoriels ChopGimp repris")
+            if new is not None:
+                pass
+            elif t:
                 new = build_text(image, L, t, fonts, report, res)
             elif so:
                 if files is None:
@@ -859,21 +1165,56 @@ def convert(image, path, run_mode, report):
                 new = build_shape(image, L, sh, report)
             elif fill:
                 new = build_fill(image, L, report)
-            if sh and not sh.is_shape:
+            if sh and not sh.is_shape and not exact:
                 apply_vector_mask(image, L, sh, report)
         except Exception as e:      # un calque raté ne bloque pas les autres
             report.ignore(L.name, "conversion impossible (%s)" % e)
             new = None
+            exact = False
         target = new or L.gimp
         if new is not None:
             copy_props(L.gimp, new)
-            keep.keep(L.gimp, new)
+            if exact:
+                replace_exact(image, L.gimp, new)
+            else:
+                keep.keep(L.gimp, new)
             new.set_name(L.name)
-        if fx:
-            try:
-                apply_effects(image, L, target, fx, psd, report)
-            except Exception as e:
-                report.ignore(L.name, "effets (%s)" % e)
+        final[L.id] = target
+        if L.id in originals:
+            continue                # les filtres vont sur l'original (plus bas)
+        try:
+            if "cgFX" in cg:
+                n = apply_cgfx(target, cg["cgFX"])
+                report.ok(L.name, "%d filtre(s) ChopGimp repris tels quels" % n)
+            if fx:
+                apply_effects(image, L, target, fx, psd, report, cg_only="cgFX" in cg)
+        except Exception as e:
+            report.ignore(L.name, "effets (%s)" % e)
+
+    for L in effect_layers:
+        lay = by_id.get(L.id)
+        if lay is not None:
+            parent = lay.get_parent()
+            image.remove_layer(lay)
+            unwrap_gimp_group(image, parent)
+    for base_id, O in originals.items():
+        B = next((x for x, *_ in todo if x.id == base_id), None)
+        base, orig = final.get(base_id), final.get(O.id)
+        if B is None or base is None or orig is None:
+            continue
+        try:
+            image.reorder_item(orig, base.get_parent(), image.get_item_position(base))
+            copy_props(base, orig)
+            orig.set_composite_mode(base.get_composite_mode())
+            orig.set_name(B.name)
+            apply_cgfx(orig, cg_by_id[base_id]["cgFX"])
+            fxb = B.effects()
+            if fxb:
+                apply_effects(image, B, orig, fxb, psd, report, cg_only=True)
+            image.remove_layer(base)
+            report.ok(B.name, "calque d'origine et ses filtres repris (pixels fusionnés retirés)")
+        except Exception as e:
+            report.ignore(B.name, "original (%s)" % e)
 
     # réglages en dernier, du bas vers le haut : chacun regroupe ce qui est
     # en dessous de lui (y compris les réglages déjà convertis)
