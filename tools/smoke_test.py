@@ -2341,6 +2341,167 @@ try:
     except Exception:
         report(False, "3.29.6", traceback.format_exc().replace("\n", " | ")[:400])
 
+    # 3.30.0 : blocs vectoriels 4 et 5 (Pinceau goutte, formes de pinceau,
+    # répétitions modifiables)
+    try:
+        import re as re18
+
+        def vx18(layer):
+            r = run("chopgimp-vobjects-get-xml", layer=layer)
+            return r.index(1) if r is not None and r.index(0) == Gimp.PDBStatusType.SUCCESS else ""
+
+        def a18(layer, x, y):
+            ox, oy = layer.get_offsets()[1:]
+            if x < ox or y < oy or x >= ox + layer.get_width() or y >= oy + layer.get_height():
+                return 0
+            b = layer.get_buffer()
+            return bytes(b.get(Gegl.Rectangle.new(x - ox, y - oy, 1, 1), 1.0,
+                               "R'G'B'A u8", Gegl.AbyssPolicy.NONE))[3]
+
+        def scene18(w, h, shapes, fill=True, stroke=False, sw=4):
+            im = Gimp.Image.new(w, h, Gimp.ImageBaseType.RGB)
+            pa = Gimp.Path.new(im, "Formes")
+            im.insert_path(pa, None, 0)
+            for pts, closed in shapes:
+                st = pa.bezier_stroke_new_moveto(*pts[0])
+                for x, y in pts[1:]:
+                    pa.bezier_stroke_lineto(st, x, y)
+                if closed:
+                    pa.stroke_close(st)
+            vl = Gimp.VectorLayer.new(im, pa)
+            im.insert_layer(vl, None, 0)
+            vl.set_enable_fill(fill); vl.set_enable_stroke(stroke); vl.set_stroke_width(sw)
+            vl.refresh()
+            im.set_selected_layers([vl])
+            def c(cmd):
+                r = run("chopgimp-vobjects-command", image=im, command=cmd)
+                return bool(r is not None and r.index(0) == Gimp.PDBStatusType.SUCCESS and r.index(1))
+            c("split-new")
+            return im, vl, c
+
+        def sq18(x, y, s):
+            return ([(x, y), (x + s, y), (x + s, y + s), (x, y + s)], True)
+
+        # répétition radiale : 6 exemplaires autour d'un centre, puis grille,
+        # miroir (la même répétition, modifiée), décomposer
+        im, vl, c = scene18(400, 400, [sq18(180, 40, 40)])
+        c("select-all")
+        ok_r = c("repeat-radial:6")
+        x = vx18(vl)
+        n_r = x.count('blend="rinst"')
+        report(ok_r and 'blend="repeat type=radial' in x and n_r == 5 and a18(vl, 200, 180) > 0,
+               "3.30.0 Répétition radiale (6 exemplaires, l'opposé dessiné)",
+               "%d instances, alpha (200,180)=%d" % (n_r, a18(vl, 200, 180)))
+        # la source change (couleur) : les instances suivent
+        xr = re18.sub(r'(<fill type="color" color=")[^"]*"', r'\g<1>1 0 0 1"', x, count=1)
+        run("chopgimp-vobjects-set-xml", layer=vl, xml=xr)
+        x = vx18(vl)
+        report(x.count('color="1 0 0 1"') >= 6,
+               "3.30.0 Répétition modifiable : les instances suivent la source",
+               "%d fonds rouges" % x.count('color="1 0 0 1"'))
+        c("select-all")
+        ok_g = c("repeat-grid:2:3")
+        x = vx18(vl)
+        ok_g = ok_g and 'type=grid' in x and x.count('blend="rinst"') == 5
+        c("select-all")
+        ok_m = c("repeat-mirror")
+        x = vx18(vl)
+        ok_m = ok_m and 'type=mirror' in x and x.count('blend="rinst"') == 1
+        c("select-all")
+        ok_e = c("repeat-expand")
+        x = vx18(vl)
+        report(ok_g and ok_m and ok_e and "repeat " not in x and "rinst" not in x and
+               x.count("<path ") == 2,
+               "3.30.0 Répétition en grille, miroir, décomposer",
+               "grille %s miroir %s décomposer %s" % (ok_g, ok_m, ok_e))
+        im.delete()
+
+        # libérer : la source seule reprend sa place
+        im, vl, c = scene18(400, 400, [sq18(180, 40, 40)])
+        c("select-all"); c("repeat-radial:4"); c("select-all")
+        ok_l = c("repeat-release")
+        x = vx18(vl)
+        report(ok_l and "repeat" not in x and "rinst" not in x and x.count("<path ") == 1,
+               "3.30.0 Répétition : libérer")
+        im.delete()
+
+        # formes de pinceau : calligraphique (plume ronde de 20 px)
+        im, vl, c = scene18(400, 200, [([(50, 100), (350, 100)], False)], fill=False, stroke=True)
+        c("select-all")
+        ok_c = c("brush-callig:0:100:20")
+        x = vx18(vl)
+        report(ok_c and 'blend="brush type=calligraphic' in x and 'blend="bpart"' in x and
+               a18(vl, 200, 108) > 0 and a18(vl, 200, 116) == 0,
+               "3.30.0 Forme calligraphique (plume ronde de 20 px)",
+               "alpha (200,108)=%d (200,116)=%d" % (a18(vl, 200, 108), a18(vl, 200, 116)))
+        # le contour du tracé change de couleur : la forme suit
+        xr = re18.sub(r'(<stroke type="color" color=")[^"]*"', r'\g<1>1 0 0 1"', x, count=1)
+        run("chopgimp-vobjects-set-xml", layer=vl, xml=xr)
+        x = vx18(vl)
+        report(x.count('color="1 0 0 1"') >= 2,
+               "3.30.0 Forme de pinceau modifiable : suit la couleur du contour")
+        oks = []
+        for cmd, t in (("brush-art", "art"), ("brush-pattern", "pattern"), ("brush-scatter:150", "scatter")):
+            c("select-all")
+            ok = c(cmd)
+            x = vx18(vl)
+            oks.append(ok and ('type=%s' % t) in x and x.count('blend="bpart"') == 1 and
+                       a18(vl, 200, 100) + a18(vl, 120, 100) + a18(vl, 280, 100) > 0)
+        report(all(oks), "3.30.0 Formes Art, Motif et Dispersion", "%s" % oks)
+        c("select-all")
+        ok_rel = c("brush-release")
+        x = vx18(vl)
+        report(ok_rel and "brush" not in x and "bpart" not in x and x.count("<path ") == 1 and
+               a18(vl, 200, 100) > 0,
+               "3.30.0 Retirer la forme : le contour ordinaire revient")
+        c("select-all"); c("brush-callig:45:30:12"); c("select-all")
+        ok_ex = c("brush-expand")
+        x = vx18(vl)
+        report(ok_ex and "brush" not in x and "bpart" not in x and x.count("<path ") == 1,
+               "3.30.0 Décomposer l'aspect (forme calligraphique)")
+        im.delete()
+
+        # illustration définie : un triangle sert de forme Art
+        im, vl, c = scene18(400, 300, [([(50, 200), (350, 200)], False),
+                                       ([(20, 20), (60, 20), (40, 40)], True)],
+                            fill=True, stroke=True)
+        c("select-at:40:25")
+        ok_d = c("brush-define")
+        c("select-at:200:200")
+        ok_a = c("brush-art")
+        x = vx18(vl)
+        report(ok_d and ok_a and " art=" in x and 'type=art' in x,
+               "3.30.0 Définir l'illustration d'une forme Art")
+        # export SVG : la spec du groupe dynamique est gardée
+        out18 = os.path.join(TMP, "formes-3300.svg")
+        Gimp.file_save(Gimp.RunMode.NONINTERACTIVE, im, Gio.File.new_for_path(out18), None)
+        t18 = open(out18, encoding="utf-8").read()
+        report('chopgimp:dynamic="brush type=art' in t18,
+               "3.30.0 Export SVG : forme de pinceau (chopgimp:dynamic)")
+        im.delete()
+
+        # Pinceau goutte : fusion avec la forme de même couleur, pas avec
+        # une forme éloignée
+        im, vl, c = scene18(400, 400, [sq18(100, 100, 60)])
+        x = vx18(vl)
+        m = re18.search(r'<fill type="color" color="([^"]+)"', x)
+        rgb = [float(v) for v in m.group(1).split()[:3]] if m else [0, 0, 0]
+        hexc = "#%02x%02x%02x" % tuple(int(round(v * 255)) for v in rgb)
+        ok_b1 = c("blob:20:120,130;220,130:%s" % hexc)
+        x1 = vx18(vl)
+        ok_b2 = c("blob:10:320,320;340,330:%s" % hexc)
+        x2 = vx18(vl)
+        report(ok_b1 and ok_b2 and x1.count("<path ") == 1 and x2.count("<path ") == 2 and
+               a18(vl, 215, 130) > 0,
+               "3.30.0 Pinceau goutte : fusionne avec la forme touchée, pas avec l'autre",
+               "%d puis %d objets" % (x1.count("<path "), x2.count("<path ")))
+        im.delete()
+
+        tr = open(os.path.join(Gimp.sysconf_directory(), "toolrc")).read()
+        report('"gimp-vblob-tool"' in tr, "3.30.0 Pinceau goutte dans la boîte à outils")
+    except Exception:
+        report(False, "3.30.0", traceback.format_exc().replace("\n", " | ")[:400])
+
     # 4. Réglages d'usine présents (thème, icônes, menus, raccourcis)
     data = Gimp.data_directory()
     sysconf = Gimp.sysconf_directory()

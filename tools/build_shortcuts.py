@@ -70,6 +70,8 @@ PS_MAP = [
     # l'outil Transition (W dans Illustrator, pris) reste sans raccourci
     ("Outils", "tools-vmesh",              [S + "u"],        "Filet (Illustrator)"),
     ("Outils", "tools-vpencil",            ["n"],            "Crayon vectoriel (Illustrator)"),
+    # 3.30.0 : Pinceau goutte (Maj+B dans Illustrator) : Maj+B est pris par le
+    # Crayon de GIMP (outil ci-dessus) : pas de raccourci, outil du groupe N
     ("Outils", "tools-text",               ["t"],            "Texte"),
     ("Outils", "tools-shape",              ["u"],            "Forme (rectangle, ellipse, polygone, étoile, ligne)"),
     ("Outils", "tools-shape-builder",      [S + A + "m"],    "Bâtisseur de formes (Illustrator)"),
@@ -256,7 +258,7 @@ def main():
 
     # 1. actions valides
     for _, act, _, _ in PS_MAP:
-        if act not in defaults and not act.startswith(("photogimp-", "chopgimp-", "tools-opacity-ps-", "tools-hand", "tools-rotate-view", "tools-shape", "tools-spot-heal", "windows-hide-right-docks", "tools-shape-builder", "tools-direct-select", "tools-width", "tools-envelope", "tools-live-paint-", "layers-vobjects-", "tools-curvature", "tools-vpencil", "tools-vsmooth", "tools-vscissors", "tools-vknife", "tools-vjoin", "dialogs-transform", "tools-vmesh", "tools-vblend")):
+        if act not in defaults and not act.startswith(("photogimp-", "chopgimp-", "tools-opacity-ps-", "tools-hand", "tools-rotate-view", "tools-shape", "tools-spot-heal", "windows-hide-right-docks", "tools-shape-builder", "tools-direct-select", "tools-width", "tools-envelope", "tools-live-paint-", "layers-vobjects-", "tools-curvature", "tools-vpencil", "tools-vsmooth", "tools-vscissors", "tools-vknife", "tools-vjoin", "dialogs-transform", "tools-vmesh", "tools-vblend", "tools-vblob")):
             errors.append("action inconnue de GIMP 3.2.8 : %s" % act)
 
     # 2. aucune touche attribuée deux fois dans PS_MAP

@@ -193,6 +193,9 @@
             (visible yes))
         (GimpToolInfo "gimp-vsmooth-tool"
             (icon-name "chopgimp-tool-vsmooth")
+            (visible yes))
+        (GimpToolInfo "gimp-vblob-tool"
+            (icon-name "chopgimp-tool-vblob")
             (visible yes))))
 (GimpToolInfo "gimp-shape-tool"
     (icon-name "chopgimp-tool-shape")

@@ -340,6 +340,15 @@ VECTEUR_MENU = [
      ("_Motif", [["layers-vobjects-pattern-make", "layers-vobjects-pattern-apply",
                   "layers-vobjects-pattern-options"],
                  ["layers-vobjects-pattern-edit", "layers-vobjects-pattern-finish"]])],
+    # 3.30.0 (blocs vectoriels 4 et 5) : Répétition, Formes de pinceau
+    [("Ré_pétition", [["layers-vobjects-repeat-radial", "layers-vobjects-repeat-grid",
+                       "layers-vobjects-repeat-mirror", "layers-vobjects-repeat-options"],
+                      ["layers-vobjects-repeat-release", "layers-vobjects-repeat-expand"]]),
+     ("Formes de pi_nceau", [["layers-vobjects-brush-calligraphic", "layers-vobjects-brush-art",
+                              "layers-vobjects-brush-pattern", "layers-vobjects-brush-scatter",
+                              "layers-vobjects-brush-options"],
+                             ["layers-vobjects-brush-define"],
+                             ["layers-vobjects-brush-release", "layers-vobjects-brush-expand"]])],
     # 3.28.1 (lot V6 points 6 et 7) : Peinture dynamique, Symboles
     [("_Peinture dynamique", [["layers-vobjects-livepaint-make", "layers-vobjects-livepaint-add"],
                               ["layers-vobjects-livepaint-gap"],

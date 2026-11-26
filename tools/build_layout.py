@@ -35,7 +35,7 @@ TOOLBOX = [
     # 3.29.3 : rangé par intention (ordre d'usage), raccourcis inchangés
     ("direct-select",),                                       # A (seule, toujours visible)
     ("path", "curvature"),                                    # P / Maj+P : tracés précis
-    ("vpencil", "vsmooth"),                                   # N : main levée
+    ("vpencil", "vsmooth", "vblob"),                          # N : main levée (3.30.0 : Pinceau goutte)
     ("shape",),                                               # U : formes
     ("shape-builder", "live-paint-bucket", "live-paint-select"),  # Maj+Alt+M / K / Maj+K : construire et colorier des zones
     ("width", "envelope"),                                    # Maj+W : déformer
@@ -62,7 +62,8 @@ ICON = {"dodge-burn": "gimp-tool-dodge", "convolve": "gimp-tool-blur",
         "curvature": "chopgimp-tool-curvature", "vpencil": "chopgimp-tool-vpencil",
         "vsmooth": "chopgimp-tool-vsmooth", "vscissors": "chopgimp-tool-vscissors",
         "vknife": "chopgimp-tool-vknife", "vjoin": "chopgimp-tool-vjoin",
-        "vmesh": "chopgimp-tool-mesh", "vblend": "chopgimp-tool-blend"}
+        "vmesh": "chopgimp-tool-mesh", "vblend": "chopgimp-tool-blend",
+        "vblob": "chopgimp-tool-vblob"}
 
 
 def info(tool, visible=True, indent=""):

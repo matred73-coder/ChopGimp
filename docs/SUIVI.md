@@ -1167,3 +1167,44 @@ bancs et livraison au lot 6). VERSION inchangée (3.29.4).
   16 bits, annuler, rendu complet) et test de charge du rendu parallèle.
 - **Limites acceptées** : contours de profil préparés pour rien quand moins de
   8 objets sont à dessiner (rendu alors un par un).
+
+## 3.30.0 (non compilé) — Blocs vectoriels 4 et 5 (lot 3 du plan final)
+
+Patch 0160. Code écrit et relu, **ni compilé ni testé** (compilation, tests,
+bancs et livraison au lot 6). VERSION inchangée (3.29.4).
+
+- **Pinceau goutte** (outil `gimp-vblob-tool`, groupe N de la boîte à outils) :
+  chaque coup (pinceau rond de la taille choisie, lissé par « Fidélité »)
+  devient une forme remplie de la couleur de fond des options, fusionnée avec
+  les objets libres de même fond uni et sans contour qu'il touche (option
+  « Fusionner avec la sélection », « Garder la sélection ») ; sans calque
+  vectoriel actif, un nouveau calque. Maj+B (Illustrator) est pris par le
+  Crayon de GIMP : pas de raccourci (`CHOPGIMP_NO_BLOB_MERGE` : jamais de
+  fusion).
+- **Formes de pinceau** (Vecteur > Formes de pinceau) : Calligraphique (plume
+  elliptique angle / arrondi / taille, somme exacte faite comme le contour rond
+  du tracé dans l'espace de la plume), Art (illustration étirée le long du
+  tracé), Motif (tuiles répétées, étirées pour tomber juste), Dispersion
+  (copies semées : espacement, écart, rotation, variation de taille, tirage
+  fixe). Le tracé devient la clé d'un groupe dynamique (comme la Transition) :
+  son contour, masqué, pilote la forme (couleur, épaisseur), qui est refaite
+  dès que le tracé ou les options changent ; « Définir l'illustration » (la
+  sélection, gardée dans la spec), Teintes, Options, Retirer, Décomposer
+  l'aspect (`CHOPGIMP_NO_VBRUSHES`).
+- **Répétitions** (Vecteur > Répétition) : radiale, en grille (retournement
+  d'une rangée / colonne sur deux), en miroir ; la source reste modifiable
+  (entrer dans le groupe), les instances suivent ; Options, Libérer,
+  Décomposer (`CHOPGIMP_NO_REPEAT`).
+- **Clic sur une forme ou une instance** : sélectionne le groupe ; Sélection
+  directe sur une forme de pinceau édite son tracé (`CHOPGIMP_NO_PART_HIT`).
+- **XCF et export SVG** : groupes ordinaires avec leur spec (attribut
+  `blend` du XML, `chopgimp:dynamic` en SVG).
+- **Tests** : 13 tests ajoutés à `tools/smoke_test.py` (commandes PDB
+  `repeat-*`, `brush-*`, `blob:`).
+- **À vérifier à la compilation (lot 6)** : docs/dev/A-VERIFIER-4.0.md,
+  section « Lot 3 ».
+- **Limites acceptées** : formes Motif sans tuiles d'angle ni de début / fin ;
+  calligraphique sans variation aléatoire ni pression ; illustration définie
+  gardée pour la session (et dans chaque tracé qui l'utilise), pas de panneau
+  Formes ; pas de poignées sur le canevas pour les répétitions (fenêtre
+  Options).

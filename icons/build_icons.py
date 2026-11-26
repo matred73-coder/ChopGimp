@@ -1051,6 +1051,48 @@ def _mesh_tool():
     return s
 
 
+
+# ─── 3.30.0 : Pinceau goutte, répétitions ───────────────────────────────
+@icon("chopgimp-tool-vblob")
+def _vblob_tool():
+    # Un pinceau en biais au-dessus d'une goutte pleine (forme fusionnée)
+    s = brush(11.0, 5.0, 40, 0.75)
+    p = [(5.5 + 4.2 * math.cos(2 * math.pi * i / 24.0),
+          11.0 + 3.6 * math.sin(2 * math.pi * i / 24.0)) for i in range(24)]
+    s += polygon(p)
+    s += circle(2.6, 13.2, 1.8)
+    return s
+
+
+@icon("chopgimp-repeat-radial")
+def _repeat_radial():
+    # Six pétales autour d'un centre
+    s = ""
+    for k in range(6):
+        a = 2 * math.pi * k / 6.0 - math.pi / 2
+        s += circle(8.0 + 4.6 * math.cos(a), 8.0 + 4.6 * math.sin(a), 1.9, 1.0 if k == 0 else 0.55)
+    return s
+
+
+@icon("chopgimp-repeat-grid")
+def _repeat_grid():
+    # Une grille de 3 × 3 carrés, le premier plein
+    s = ""
+    for j in range(3):
+        for i in range(3):
+            s += rect(1.5 + 4.6 * i, 1.5 + 4.6 * j, 3.6, 3.6, 0, 1.0 if i == 0 and j == 0 else 0.55)
+    return s
+
+
+@icon("chopgimp-repeat-mirror")
+def _repeat_mirror():
+    # Une forme et son reflet de part et d'autre d'un axe pointillé
+    s = polygon([(1.5, 13.5), (6.5, 2.5), (6.5, 13.5)])
+    s += polygon([(14.5, 13.5), (9.5, 2.5), (9.5, 13.5)], 0.55)
+    for y in (1.0, 4.5, 8.0, 11.5):
+        s += rect(7.5, y, 1.0, 2.2)
+    return s
+
 def main():
     os.makedirs(OUT, exist_ok=True)
     for name, fn in sorted(ICONS.items()):
