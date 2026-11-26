@@ -1,0 +1,221 @@
+From 0f424adb6e6ae54a3d61af55e303f761a64bc3e2 Mon Sep 17 00:00:00 2001
+From: ChopGimp <mathieu.redon@proton.me>
+Date: Thu, 26 Nov 2026 08:46:35 +0100
+Subject: [PATCH 151/152] =?UTF-8?q?ChopGimp=203.29.4:=20vector=20objects?=
+ =?UTF-8?q?=20rasterized=20in=20parallel=20(the=20leaves=20without=20cache?=
+ =?UTF-8?q?=20that=20a=20rendering=20is=20about=20to=20draw=20are=20drawn?=
+ =?UTF-8?q?=20beforehand=20into=20their=20caches=20by=20GEGL's=20threads;?=
+ =?UTF-8?q?=20flat=20colors=20and=20linear=20/=20radial=20gradients,=20uni?=
+ =?UTF-8?q?form=20strokes=20without=20arrows;=20effective=20path=20and=20B?=
+ =?UTF-8?q?=C3=A9zier=20description=20made=20first;=20CHOPGIMP=5FNO=5FPAR?=
+ =?UTF-8?q?=5FRENDER)?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ app/path/chopgimp-vobject.c | 170 ++++++++++++++++++++++++++++++++++++
+ 1 file changed, 170 insertions(+)
+
+diff --git a/app/path/chopgimp-vobject.c b/app/path/chopgimp-vobject.c
+index 0fa79d9..51ec456 100644
+--- a/app/path/chopgimp-vobject.c
++++ b/app/path/chopgimp-vobject.c
+@@ -4136,9 +4136,176 @@ leaf_cache (GimpVectorLayer     *layer,
+   return o->cache;
+ }
+ 
++
++/*  3.29.4: the leaves that composite() is about to draw for the first time
++ *  (no cache yet) are rasterized beforehand, in parallel, into their
++ *  caches.  Same surfaces, same drawing: the result is the same.  Only the
++ *  leaves whose drawing reads nothing shared but the object itself are
++ *  taken (flat colors and linear / radial gradients, fills and strokes of
++ *  uniform width without arrows nor gradient along the stroke); their
++ *  effective path and its Bézier description are made first, here, since
++ *  both are made on demand.  CHOPGIMP_NO_PAR_RENDER=1: one by one.
++ */
++static gboolean
++par_render_enabled (void)
++{
++  static gint enabled = -1;
++
++  if (enabled < 0)
++    enabled = (g_getenv ("CHOPGIMP_NO_PAR_RENDER") == NULL);
++
++  return enabled;
++}
++
+ /*  3.29.2: objects left out of composite() (the « rest » of a drag)  */
+ static GHashTable *composite_skip = NULL;
+ 
++static gboolean
++paint_par_safe (const ChopGimpPaint *p)
++{
++  return (p->type == CHOPGIMP_PAINT_COLOR ||
++          p->type == CHOPGIMP_PAINT_LINEAR_GRADIENT ||
++          p->type == CHOPGIMP_PAINT_RADIAL_GRADIENT);
++}
++
++static gboolean
++leaf_par_safe (const ChopGimpVObject *o)
++{
++  const ChopGimpVStyle *st = &o->style;
++
++  for (gint k = 0; k < chopgimp_vstyle_get_n_entries (st); k++)
++    {
++      const ChopGimpVEntry *e = chopgimp_vstyle_get_entry (st, k);
++      const ChopGimpVEntry *f;
++
++      if (! chopgimp_ventry_is_painted (e))
++        continue;
++
++      f = e->follow_fill ? chopgimp_vstyle_get_fill (st) : NULL;
++
++      if (! paint_par_safe (&e->paint) || (f && ! paint_par_safe (&f->paint)))
++        return FALSE;
++
++      if (e->kind == CHOPGIMP_VENTRY_STROKE &&
++          (e->stroke_gradient > 0 || ! profile_is_uniform (e->profile) ||
++           entry_has_arrows (e)))
++        return FALSE;
++    }
++
++  return TRUE;
++}
++
++typedef struct
++{
++  GimpVectorLayer *layer;
++  const Babl      *space;
++  GPtrArray       *leaves;
++  GArray          *rects;
++  cairo_surface_t **surfs;
++  gint             next;
++} ParJob;
++
++static void
++par_collect (ParJob              *job,
++             ChopGimpVObject     *o,
++             const GeglRectangle *region)
++{
++  if (! o->visible || o->opacity <= 0.0)
++    return;
++
++  if (composite_skip && g_hash_table_contains (composite_skip, o))
++    return;
++
++  if (o->kind == CHOPGIMP_VOBJECT_GROUP)
++    {
++      for (guint i = 0; i < o->children->len; i++)
++        par_collect (job, g_ptr_array_index (o->children, i), region);
++    }
++  else
++    {
++      GeglRectangle ib;
++      GimpPath     *path;
++
++      if (o->cache || ! leaf_ibounds (job->layer, o, &ib) ||
++          ! gegl_rectangle_intersect (NULL, &ib, region) ||
++          (gint64) ib.width * ib.height > CACHE_MAX_PIXELS ||
++          ! leaf_par_safe (o))
++        return;
++
++      path = vobj_effective (job->layer, o);
++      if (! path || gimp_path_get_n_strokes (path) == 0)
++        return;
++      gimp_path_get_bezier (path);   /* made on demand */
++
++      g_ptr_array_add (job->leaves, o);
++      g_array_append_val (job->rects, ib);
++    }
++}
++
++static void
++par_draw (gint     i,
++          gint     n,
++          gpointer user_data)
++{
++  ParJob *job = user_data;
++  gint    k;
++
++  while ((k = g_atomic_int_add (&job->next, 1)) < (gint) job->leaves->len)
++    {
++      const GeglRectangle *ib   = &g_array_index (job->rects, GeglRectangle, k);
++      cairo_surface_t     *surf = cairo_image_surface_create (CAIRO_FORMAT_ARGB32,
++                                                              ib->width, ib->height);
++      cairo_t             *cr   = cairo_create (surf);
++
++      cairo_translate (cr, -ib->x, -ib->y);
++      draw_leaf (cr, job->layer, g_ptr_array_index (job->leaves, k), job->space);
++      cairo_destroy (cr);
++      cairo_surface_flush (surf);
++
++      job->surfs[k] = surf;
++    }
++}
++
++static void
++cache_leaves_parallel (GimpVectorLayer     *layer,
++                       ChopGimpVObject     *root,
++                       const GeglRectangle *region,
++                       const Babl          *space)
++{
++  ParJob job = { layer, space, NULL, NULL, NULL, 0 };
++
++  if (! par_render_enabled () || ! root || g_get_num_processors () < 2)
++    return;
++
++  job.leaves = g_ptr_array_new ();
++  job.rects  = g_array_new (FALSE, FALSE, sizeof (GeglRectangle));
++
++  par_collect (&job, root, region);
++
++  if (job.leaves->len >= 8)
++    {
++      job.surfs = g_new0 (cairo_surface_t *, job.leaves->len);
++
++      gegl_parallel_distribute (-1, par_draw, &job);
++
++      for (guint k = 0; k < job.leaves->len; k++)
++        {
++          ChopGimpVObject     *o  = g_ptr_array_index (job.leaves, k);
++          const GeglRectangle *ib = &g_array_index (job.rects, GeglRectangle, k);
++
++          o->cache    = job.surfs[k];
++          o->cache_x  = ib->x;
++          o->cache_y  = ib->y;
++          o->cache_fx = o->cache_fy = 0.0;
++        }
++
++      g_free (job.surfs);
++    }
++
++  g_ptr_array_free (job.leaves, TRUE);
++  g_array_free (job.rects, TRUE);
++}
++
+ static void
+ composite (cairo_t             *cr,
+            GimpVectorLayer     *layer,
+@@ -4440,6 +4607,8 @@ render_rect (GimpVectorLayer     *layer,
+ 
+   band_h = MAX (1, MIN (rect->height, BAND_MAX_PIXELS / MAX (1, rect->width)));
+ 
++  cache_leaves_parallel (layer, vl->root, rect, space);
++
+   for (gint y = rect->y; y < rect->y + rect->height; y += band_h)
+     {
+       GeglRectangle    band = { rect->x, y, rect->width,
+@@ -6320,6 +6489,7 @@ sprite_begin (GimpVectorLayer *layer,
+   cr = cairo_create (vl->rest);
+   cairo_translate (cr, -vl->rest_r.x, -vl->rest_r.y);
+   composite_skip = set;
++  cache_leaves_parallel (layer, vl->root, &vl->rest_r, space);
+   composite (cr, layer, vl->root, &vl->rest_r, space);
+   composite_skip = NULL;
+   cairo_destroy (cr);
+-- 
+2.53.0
+

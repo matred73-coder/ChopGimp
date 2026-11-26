@@ -154,6 +154,10 @@ Ils sont produits automatiquement par GitHub Actions à chaque tag `v*`
   isolation, clic droit = menu Vecteur ; Vecteur > Sélectionner / Nettoyer (Simplifier avec
   aperçu, petits objets, petits trous, fusion par couleur) / Couleurs (panneau « Couleurs du
   dessin ») ; tangentes du filet et export SVG en `<meshgradient>`.
+- **Rendu vectoriel accéléré** (3.29.4) : conversion rapide des rendus cairo vers les calques
+  8 bits (les calques 16 / 32 bits gardent babl) et rastérisation des objets en parallèle :
+  glisser ×27 sur une grosse vectorisation (374 → 14 ms par image), recolorer ×3, rendu
+  complet ×1,8 (`CHOPGIMP_NO_FAST_BABL=1`, `CHOPGIMP_NO_PAR_RENDER=1` pour revenir).
 - **Masques d'opacité** et **motifs vectoriels** (grille, briques, hexagonal, mode de
   modification, exportés en `<pattern>` SVG).
 
@@ -221,7 +225,7 @@ Ils sont produits automatiquement par GitHub Actions à chaque tag `v*`
 | 3.25 – 3.26 | Passe de performance, barre d'options compacte, curseurs et panneaux modernisés |
 | 3.27 | Objets vectoriels, panneaux Objets / Aspect / Contour, Vectoriser, fenêtre d'accueil |
 | 3.28 | Menus réorganisés comme Photoshop (menu Vecteur…), Peinture dynamique et Symboles (3.28.1), petits défauts : contours à l'échelle, convertir en maille, pipette avec effets, ombres pixellisées dans leur mode (3.28.2), Lasso magnétique, Sélection rapide, boîte à outils par familles (3.28.3) |
-| 3.29 | Vectoriel « complet » : outils Courbure, Crayon vectoriel, Lissage, Ciseaux, Cutter et Jonction, angles dynamiques, spirale / arc / grilles, panneau Transformation, Ctrl+D, Transformer chaque, objet clé (3.29.0) ; Transition, filet de dégradé, dégradé libre, masques d'opacité, motifs vectoriels (3.29.1) ; vectoriel rapide (3.29.2) ; sélection directe, nettoyage et couleurs du dessin façon Illustrator (3.29.3) |
+| 3.29 | Vectoriel « complet » : outils Courbure, Crayon vectoriel, Lissage, Ciseaux, Cutter et Jonction, angles dynamiques, spirale / arc / grilles, panneau Transformation, Ctrl+D, Transformer chaque, objet clé (3.29.0) ; Transition, filet de dégradé, dégradé libre, masques d'opacité, motifs vectoriels (3.29.1) ; vectoriel rapide (3.29.2) ; sélection directe, nettoyage et couleurs du dessin façon Illustrator (3.29.3) ; rendu vectoriel accéléré (3.29.4) |
 
 Le détail de chaque version (ce qui est fait, vérifié, et ce qui reste) se trouve
 dans [`docs/SUIVI.md`](docs/SUIVI.md). Le plan du chantier vectoriel est dans

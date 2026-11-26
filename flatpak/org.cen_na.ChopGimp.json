@@ -1193,7 +1193,10 @@
                         "../patches/gimp-3.2.8/0146-ChopGimp-3.29.0-vector-drawing-and-precise-transform.patch",
                         "../patches/gimp-3.2.8/0147-ChopGimp-3.29.1-couleur-et-mati-re-Transition-blend-.patch",
                         "../patches/gimp-3.2.8/0148-ChopGimp-3.29.2-fast-vector-objects-interactive-drag.patch",
-                        "../patches/gimp-3.2.8/0149-ChopGimp-3.29.3-Direct-Selection-A-like-Illustrator-.patch"
+                        "../patches/gimp-3.2.8/0149-ChopGimp-3.29.3-Direct-Selection-A-like-Illustrator-.patch",
+                        "../patches/gimp-3.2.8/0150-ChopGimp-3.29.4-fast-cairo-ARGB32-to-layer-conversio.patch",
+                        "../patches/gimp-3.2.8/0151-ChopGimp-3.29.4-vector-objects-rasterized-in-paralle.patch",
+                        "../patches/gimp-3.2.8/0152-ChopGimp-3.29.4-fast-cairo-ARGB32-conversion-limited.patch"
                     ]
                 }
             ],

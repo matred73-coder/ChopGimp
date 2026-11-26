@@ -1,4 +1,4 @@
-# Vectoriel rapide — mesures et suite (3.29.2)
+# Vectoriel rapide — mesures et suite (3.29.2, 3.29.4)
 
 Banc : `tools/dev/bench_vector.sh` (gimp-console, PDB). Cas A : image 2000 × 2000
 vectorisée en « Photo haute fidélité » (3 595 objets, 4,3 Mo de XML). Cas B :
@@ -33,13 +33,20 @@ vectorisée en « Photo haute fidélité » (3 595 objets, 4,3 Mo de XML). Cas B
 - Rendu identique au pixel près vérifié par 4 tests (glisser, annuler,
   rétablir, XCF rouvert).
 
+## Fait en 3.29.4
+Cas A : glisser **373,5 → 13,7 ms** par image (sous les 33 ms d'une image à
+30 i/s), recolorer 799 → 266, rendu complet 1 197 → 648, annuler 383 → 136.
+Cas B : recolorer 414 → 60, rendu complet 582 → 159 (« avant » = mêmes binaires,
+`CHOPGIMP_NO_FAST_BABL=1 CHOPGIMP_NO_PAR_RENDER=1` ; tableau complet : SUIVI 3.29.4).
+- **Conversion de pixels** : dépremultiplication maison (table, en parallèle)
+  vers R'G'B'A u8, **calques 8 bits seulement** ; 16 / 32 bits : babl comme avant.
+- **Rastérisation en parallèle** des objets sans cache (fils de GEGL).
+
 ## Reste (par impact)
-1. **Conversion de pixels** (cause n° 1 du glisser lourd, mesurée à l'échantillonneur) :
-   `gegl_buffer_set` de cairo-ARGB32 vers le format du calque passe par la
-   conversion de **référence** de babl (gamma par pixel). Ajouter une conversion
-   directe (patch babl, comme ceux de la 3.25.1) ou rendre dans le format natif :
-   gain attendu ×10 sur le glisser et le rendu complet.
-2. Recoloration et rendu complet : rasteriser les objets en parallèle (fils).
+1. Calques 16 / 32 bits : toujours la conversion de référence de babl
+   (conversion rapide en flottant, ou rendu cairo en RGBA128F).
+2. Rendu complet et ouverture : objets non couverts par la rastérisation
+   parallèle (filets, dégradés libres, motifs, flèches, contours variables).
 3. Annulation : n'enregistrer que les objets modifiés (au lieu de tout l'arbre),
    et ancien tracé réécrit paresseusement.
 4. Mesure au banc graphique (temps par image réel, liste Objets, repères).

@@ -1043,3 +1043,34 @@ tangentes du filet, export `<meshgradient>`) ; banc graphique : Sélection
 directe qui trace un rectangle dans le vide sans créer de point, ordre des
 outils vectoriels, sur des formes importées un objet recoloré (premier plan)
 puis un autre supprimé, info-bulle au survol.
+
+## 3.29.4 — Rendu vectoriel accéléré (performance)
+
+Patchs 0150 à 0152 (repris de la branche d'essai `next-babl`, puis corrigés).
+
+- **Conversion rapide cairo-ARGB32 → calque** : babl n'avait pas de conversion
+  directe et passait par sa conversion de référence (~300 ms par image de glisser).
+  Les pixels sont dépremultipliés sur place, en parallèle, par table, vers
+  R'G'B'A u8 de l'espace du calque (`CHOPGIMP_NO_FAST_BABL=1`).
+  **Correctif** : limité aux calques 8 bits ; les calques 16 et 32 bits gardent la
+  conversion babl (sinon leurs bords semi-transparents passaient par 8 bits).
+- **Rastérisation en parallèle** : les objets sans rendu en cache qu'un rendu va
+  dessiner sont d'abord rastérisés par les fils de GEGL (aplats, dégradés
+  linéaires / radiaux, contours uniformes sans flèches) (`CHOPGIMP_NO_PAR_RENDER=1`).
+
+Mesures (`tools/dev/bench_vector.sh`, ms ; « avant » = même paquet avec les deux
+interrupteurs coupés). Cas A : vectorisation 2000 × 2000, 3 595 objets ; cas B :
+2 000 triangles.
+
+| Mesure | A avant | A après | B avant | B après |
+|---|---|---|---|---|
+| Glisser, par image | 373,5 | **13,7** | 1,4 | 0,4 |
+| Déplacement non interactif | 413,0 | 179,6 | 30,9 | 15,2 |
+| Annuler | 383,1 | 136,0 | 346,1 | 23,4 |
+| Recolorer tout | 799,3 | 265,6 | 414,4 | 59,8 |
+| Rendu complet | 1 197,4 | 647,5 | 582,3 | 159,2 |
+| Ouverture du XCF | 1 149,1 | 832,9 | 522,2 | 154,7 |
+
+Tests : smoke 195 OK / 0 échec ; banc graphique : vectoriser, glisser un objet,
+recolorer, annuler deux fois, sans plantage.
+
