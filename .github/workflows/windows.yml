@@ -153,9 +153,14 @@ jobs:
           if ($LASTEXITCODE) { exit 1 }
           $GIMP_PREFIX = "$env:ROOT\_install"
           Invoke-Expression ((Get-Content .gitlab-ci.yml | Select-String 'win_environ\[' -Context 0,9) -replace '> ','' -replace '- ','')
-          meson setup _build-clang64 -Dprefix="$GIMP_PREFIX" `
-                -Drelocatable-bundle=yes -Dpkgconfig.relocatable=true -Dwindows-installer=true `
-                -Dgimpdir=ChopGimp -Denable-default-bin=enabled -Dbuild-id='org.gimp.GIMP_official'
+          # Options entre guillemets : sans eux, PowerShell coupe « -Dpkgconfig.relocatable=true »
+          # au point (meson reçoit « -Dpkgconfig » puis « .relocatable=true » et s'arrête aussitôt,
+          # avant meson-log.txt) — d'où la variable $PKGCONF_RELOCATABLE_OPTION des scripts GIMP.
+          # Sortie recopiée dans meson-setup.log pour les annotations d'échec.
+          meson setup _build-clang64 "-Dprefix=$GIMP_PREFIX" `
+                '-Drelocatable-bundle=yes' '-Dpkgconfig.relocatable=true' '-Dwindows-installer=true' `
+                '-Dgimpdir=ChopGimp' '-Denable-default-bin=enabled' '-Dbuild-id=org.gimp.GIMP_official' |
+            Tee-Object -FilePath "$env:RUNNER_TEMP\meson-setup.log"
           if ($LASTEXITCODE) { exit 1 }
           # Vectoriser sans potrace = moteur principal absent : on refuse
           if (-not (Select-String -Quiet 'Library potrace found: YES' _build-clang64\meson-logs\meson-log.txt)) {
@@ -252,7 +257,7 @@ jobs:
         if: failure()
         shell: pwsh
         run: |
-          foreach ($f in @("$env:RUNNER_TEMP\steps.log", "$env:ROOT\gimp\_build-clang64\meson-logs\meson-log.txt")) {
+          foreach ($f in @("$env:RUNNER_TEMP\steps.log", "$env:RUNNER_TEMP\meson-setup.log", "$env:ROOT\gimp\_build-clang64\meson-logs\meson-log.txt")) {
             if (Test-Path $f) {
               $t = (Get-Content $f -Tail 60 | ForEach-Object { $_.Substring(0, [Math]::Min(300, $_.Length)) }) -join '%0A'
               Write-Host "::error title=$(Split-Path $f -Leaf)::$($t -replace '%(?!0A)','%25')"

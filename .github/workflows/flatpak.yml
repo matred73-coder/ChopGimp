@@ -49,8 +49,15 @@ jobs:
           # Ubuntu 24.04 : AppArmor interdit les espaces de noms utilisateur
           # non privilégiés, dont bwrap (isolation de flatpak-builder) a besoin
           sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+          # flatpak-builder d'Ubuntu 24.04 = 1.4.2 : il ne passe pas encore
+          # CMAKE_INSTALL_LIBDIR=lib (ajouté en 1.4.3/1.4.4), donc les modules
+          # cmake (exiv2…) s'installent dans /app/lib64, hors du pkg-config de
+          # meson → « Dependency exiv2 not found » au module gexiv2. Le PPA
+          # flatpak/stable fournit 1.4.8, comme « make build » en local.
+          sudo add-apt-repository -y ppa:flatpak/stable
           sudo apt-get update -q
           sudo apt-get install -y -q flatpak flatpak-builder ccache
+          flatpak-builder --version
           flatpak remote-add --user --if-not-exists flathub \
             https://dl.flathub.org/repo/flathub.flatpakrepo
 

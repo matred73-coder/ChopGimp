@@ -69,3 +69,14 @@ Ubuntu 24.04, `flatpak-builder` sur le manifeste commité
 Release du tag, à côté du `.exe`. Penser à `make manifest` avant de taguer
 (le manifeste commité doit lister tous les patchs). Lancement manuel :
 Actions > Flatpak > Run workflow (artefact seulement, 14 jours).
+
+## Pièges connus (corrigés pour v3.29.3)
+
+- **Flatpak — « Dependency "exiv2" not found » au module gexiv2** : le
+  `flatpak-builder` d'Ubuntu 24.04 (1.4.2) ne passe pas `CMAKE_INSTALL_LIBDIR=lib`,
+  donc les modules cmake s'installent dans `/app/lib64`. Le workflow installe
+  `flatpak-builder` 1.4.8 depuis le PPA `flatpak/stable` (même version qu'en local).
+- **Windows — « Configurer ChopGimp » échoue en 1 s** : PowerShell coupe un
+  argument natif non cité comme `-Dpkgconfig.relocatable=true` au point. Toutes les
+  options `-D…` de `meson setup` sont donc entre guillemets ; la sortie de meson est
+  recopiée dans `meson-setup.log`, publié en annotation en cas d'échec.
