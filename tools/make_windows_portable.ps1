@@ -102,7 +102,11 @@ Sources : https://github.com/matred73-coder/ChopGimp
 
 # 4. Zip
 Push-Location $OutDir
-try { tar.exe -a -cf "$name.zip" $name; if ($LASTEXITCODE) { throw "tar a échoué" } } finally { Pop-Location }
+# tar de Windows (bsdtar, sait faire du zip) : celui de MSYS2, plus tôt dans le PATH
+# de la CI, ne connaît pas -a pour .zip
+$tar = Join-Path $env:SystemRoot 'System32\tar.exe'
+if (-not (Test-Path $tar)) { $tar = 'tar.exe' }
+try { & $tar -a -cf "$name.zip" $name; if ($LASTEXITCODE) { throw "tar a échoué ($LASTEXITCODE)" } } finally { Pop-Location }
 
 $size = (Get-ChildItem $dst -Recurse -File | Measure-Object Length -Sum).Sum
 "== $dst ($([math]::Round($size/1MB)) Mo)"

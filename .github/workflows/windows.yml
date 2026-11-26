@@ -261,9 +261,15 @@ jobs:
         shell: pwsh
         run: |
           Start-Transcript -Append -Path "$env:RUNNER_TEMP\steps.log" | Out-Null
-          pwsh "$env:GITHUB_WORKSPACE\tools\make_windows_portable.ps1" `
-            -Bundle "$env:ROOT\gimp\gimp-clang64" -OutDir "$env:ROOT\portable" -Version '${{ steps.ver.outputs.version }}'
-          if ($LASTEXITCODE) { exit 1 }
+          # dans ce processus (et non « pwsh » enfant) : le message d'une exception
+          # finit dans steps.log et dans une annotation
+          try {
+            & "$env:GITHUB_WORKSPACE\tools\make_windows_portable.ps1" `
+              -Bundle "$env:ROOT\gimp\gimp-clang64" -OutDir "$env:ROOT\portable" -Version '${{ steps.ver.outputs.version }}'
+          } catch {
+            Write-Host "::error title=Version portable::$($_.Exception.Message) $($_.InvocationInfo.PositionMessage)"
+            exit 1
+          }
           Move-Item "$env:ROOT\portable\*.zip" "$env:ROOT\out\"
           Set-Location "$env:ROOT\out"
           Get-ChildItem -File | ForEach-Object {
