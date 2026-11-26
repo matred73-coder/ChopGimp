@@ -404,7 +404,7 @@ class VectorAlign(Gimp.PlugIn):
 
     def do_create_procedure(self, name):
         Gegl.init(None)
-        menu_base = "<Image>/Filters/Vector/Align"
+        menu_base = "<Image>/Filters/Vectoriel/Aligner"
 
         if name == 'python-fu-align-left':
             procedure = Gimp.ImageProcedure.new(self, name,

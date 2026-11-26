@@ -260,7 +260,7 @@ class GridSystem(Gimp.PlugIn):
     def do_create_procedure(self, name):
         Gegl.init(None)
 
-        menu_base = "<Image>/Filters/Design/Systeme de grille"
+        menu_base = "<Image>/Filters/Mise en page/Système de grille"
 
         if name == 'python-fu-grid-columns':
             procedure = Gimp.ImageProcedure.new(self, name,

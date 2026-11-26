@@ -1,0 +1,70 @@
+From 554882c2f072c07a7f2839e89a86f314b9d9496f Mon Sep 17 00:00:00 2001
+From: ChopGimp <mathieu.redon@proton.me>
+Date: Thu, 26 Nov 2026 18:53:12 +0100
+Subject: [PATCH] ChopGimp 3.99.0: compile fixes (par_outlines declared before
+ use, gio/gdk-pixbuf includes in vrepeat / vbrush)
+
+---
+ app/path/chopgimp-vbrush.c  |  2 ++
+ app/path/chopgimp-vobject.c | 10 ++++++----
+ app/path/chopgimp-vrepeat.c |  2 ++
+ 3 files changed, 10 insertions(+), 4 deletions(-)
+
+diff --git a/app/path/chopgimp-vbrush.c b/app/path/chopgimp-vbrush.c
+index b69f23e..b91315d 100644
+--- a/app/path/chopgimp-vbrush.c
++++ b/app/path/chopgimp-vbrush.c
+@@ -17,6 +17,8 @@
+ #include <stdlib.h>
+ #include <string.h>
+ 
++#include <cairo.h>
++#include <gdk-pixbuf/gdk-pixbuf.h>
+ #include <gegl.h>
+ 
+ #include "libgimpbase/gimpbase.h"
+diff --git a/app/path/chopgimp-vobject.c b/app/path/chopgimp-vobject.c
+index 9de651c..8ab13b2 100644
+--- a/app/path/chopgimp-vobject.c
++++ b/app/path/chopgimp-vobject.c
+@@ -3873,7 +3873,13 @@ draw_arrows (cairo_t              *cr,
+     }
+ }
+ 
++/*  the precomputed outlines of the profiled strokes (entry → GimpPath),
++ *  only while cache_leaves_parallel() runs; read-only for the threads
++ */
++static GHashTable *par_outlines = NULL;
++
+ /*  one fill or stroke of the stack, at full opacity  */
++
+ static void
+ draw_entry (cairo_t              *cr,
+             const ChopGimpVStyle *st,
+@@ -4229,10 +4235,6 @@ par_ext_enabled (void)
+   return g_getenv ("CHOPGIMP_NO_PAR_RENDER_EXT") == NULL;
+ }
+ 
+-/*  the precomputed outlines of the profiled strokes (entry → GimpPath),
+- *  only while cache_leaves_parallel() runs; read-only for the threads
+- */
+-static GHashTable *par_outlines = NULL;
+ 
+ static void
+ par_outline_free (gpointer outline)
+diff --git a/app/path/chopgimp-vrepeat.c b/app/path/chopgimp-vrepeat.c
+index 172d8e6..256a8fa 100644
+--- a/app/path/chopgimp-vrepeat.c
++++ b/app/path/chopgimp-vrepeat.c
+@@ -16,6 +16,8 @@
+ #include <stdlib.h>
+ #include <string.h>
+ 
++#include <cairo.h>
++#include <gdk-pixbuf/gdk-pixbuf.h>
+ #include <gegl.h>
+ 
+ #include "libgimpbase/gimpbase.h"
+-- 
+2.53.0
+

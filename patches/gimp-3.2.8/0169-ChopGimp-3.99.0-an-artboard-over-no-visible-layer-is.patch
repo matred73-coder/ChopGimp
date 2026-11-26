@@ -1,0 +1,63 @@
+From 93d7a7b1f6753aea8fb187e25f370201d5c9b0da Mon Sep 17 00:00:00 2001
+From: ChopGimp <mathieu.redon@proton.me>
+Date: Thu, 26 Nov 2026 20:04:52 +0100
+Subject: [PATCH] ChopGimp 3.99.0: an artboard over no visible layer is
+ exported with an empty layer (the exporter's export_merge() failed)
+
+---
+ app/file/chopgimp-file-artboards.c | 32 ++++++++++++++++++++++++++++++
+ 1 file changed, 32 insertions(+)
+
+diff --git a/app/file/chopgimp-file-artboards.c b/app/file/chopgimp-file-artboards.c
+index e741f80..7afd18f 100644
+--- a/app/file/chopgimp-file-artboards.c
++++ b/app/file/chopgimp-file-artboards.c
+@@ -25,6 +25,9 @@
+ #include "core/gimpimage.h"
+ #include "core/gimpimage-crop.h"
+ #include "core/gimpimage-duplicate.h"
++#include "core/gimpitem.h"
++#include "core/gimplayer.h"
++#include "core/gimplayer-new.h"
+ #include "core/gimpprogress.h"
+ #include "core/chopgimp-artboards.h"
+ 
+@@ -125,6 +128,35 @@ chopgimp_artboards_export (GimpImage      *image,
+       gimp_image_crop (copy, context, GIMP_FILL_TRANSPARENT,
+                        b->x, b->y, b->width, b->height, FALSE);
+ 
++      /*  nothing visible on the artboard: an empty layer, so that the
++       *  exporter merges something (else export_merge() fails)
++       */
++      {
++        gboolean seen = FALSE;
++
++        for (GList *l = gimp_image_get_layer_iter (copy); l && ! seen; l = l->next)
++          {
++            GimpItem *it = l->data;
++            gint      ox, oy;
++
++            gimp_item_get_offset (it, &ox, &oy);
++            seen = (gimp_item_get_visible (it) &&
++                    ox < b->width && oy < b->height &&
++                    ox + gimp_item_get_width (it) > 0 &&
++                    oy + gimp_item_get_height (it) > 0);
++          }
++
++        if (! seen)
++          {
++            GimpLayer *empty = gimp_layer_new (copy, b->width, b->height,
++                                               gimp_image_get_layer_format (copy, TRUE),
++                                               b->name, GIMP_OPACITY_OPAQUE,
++                                               GIMP_LAYER_MODE_NORMAL);
++
++            gimp_image_add_layer (copy, empty, NULL, 0, FALSE);
++          }
++      }
++
+       /*  3.31.0 (4b): the copy is one page (the PDF / EPS exports would
+        *  otherwise make a page per artboard of the copy)
+        */
+-- 
+2.53.0
+

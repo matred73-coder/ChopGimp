@@ -158,11 +158,11 @@ Ils sont produits automatiquement par GitHub Actions à chaque tag `v*`
   8 bits (les calques 16 / 32 bits gardent babl) et rastérisation des objets en parallèle :
   glisser ×27 sur une grosse vectorisation (374 → 14 ms par image), recolorer ×3, rendu
   complet ×1,8 (`CHOPGIMP_NO_FAST_BABL=1`, `CHOPGIMP_NO_PAR_RENDER=1` pour revenir).
-- **Plans de travail et grille de perspective** (3.31.0, non compilé) : plusieurs pages
+- **Plans de travail et grille de perspective** (3.31.0, compilé en 3.99.0) : plusieurs pages
   ou formats dans un même fichier (outil Plan de travail Maj+O, panneau, export d'un
   fichier par plan) ; grille de perspective à 1, 2 ou 3 points de fuite avec ses widgets,
   outil Sélection de perspective, formes dessinées sur le plan actif.
-- **Pinceau goutte, formes de pinceau, répétitions** (3.30.0, non compilé) : outil Pinceau
+- **Pinceau goutte, formes de pinceau, répétitions** (3.30.0, compilé en 3.99.0) : outil Pinceau
   goutte (les coups de même couleur fusionnent en une forme) ; formes de pinceau
   Calligraphique (variations aléatoire et pression), Art, Motif (tuiles d'angle, de début
   et de fin) et Dispersion qui suivent le tracé, panneau Formes (bibliothèque gardée) ;
@@ -181,7 +181,7 @@ Ils sont produits automatiquement par GitHub Actions à chaque tag `v*`
   - À l'import, les textes et les formes restent modifiables, les masques
     vectoriels, les effets, les calques de réglage et les objets dynamiques
     sont repris, avec un rapport d'import.
-  - L'export, façon Photoshop (3.31.0, non compilé) : les effets de calque deviennent
+  - L'export, façon Photoshop (3.31.0, compilé en 3.99.0) : les effets de calque deviennent
     des styles Photoshop (ombres, lueurs, biseau, contour, incrustations couleur et
     dégradé), les calques vectoriels des calques de forme, les textes des calques de
     texte modifiables ; ce qui n'a pas d'équivalent est pixellisé à part et signalé
@@ -191,7 +191,7 @@ Ils sont produits automatiquement par GitHub Actions à chaque tag `v*`
   forme, avec les groupes, les dégradés et les masques d'écrêtage.
 - **Export SVG** : un `<path>` par objet, compatible avec les calques Inkscape,
   aller-retour testé.
-- **Export PDF et EPS vectoriels** (3.31.0, non compilé) : objets, dégradés, filets,
+- **Export PDF et EPS vectoriels** (3.31.0, compilé en 3.99.0) : objets, dégradés, filets,
   motifs et textes en vecteurs, modes de fusion et masques gardés ; une page ou un
   fichier par plan de travail ; **calques PDF** (visibles dans Acrobat et Illustrator).
 - **Export pour le web** (aperçu avec le poids du fichier), **traitement par lots**,
@@ -242,11 +242,12 @@ Ils sont produits automatiquement par GitHub Actions à chaque tag `v*`
 | 3.25 – 3.26 | Passe de performance, barre d'options compacte, curseurs et panneaux modernisés |
 | 3.27 | Objets vectoriels, panneaux Objets / Aspect / Contour, Vectoriser, fenêtre d'accueil |
 | 3.28 | Menus réorganisés comme Photoshop (menu Vecteur…), Peinture dynamique et Symboles (3.28.1), petits défauts : contours à l'échelle, convertir en maille, pipette avec effets, ombres pixellisées dans leur mode (3.28.2), Lasso magnétique, Sélection rapide, boîte à outils par familles (3.28.3) |
-| 3.29 | Vectoriel « complet » : outils Courbure, Crayon vectoriel, Lissage, Ciseaux, Cutter et Jonction, angles dynamiques, spirale / arc / grilles, panneau Transformation, Ctrl+D, Transformer chaque, objet clé (3.29.0) ; Transition, filet de dégradé, dégradé libre, masques d'opacité, motifs vectoriels (3.29.1) ; vectoriel rapide (3.29.2) ; sélection directe, nettoyage et couleurs du dessin façon Illustrator (3.29.3) ; rendu vectoriel accéléré (3.29.4) ; finitions vectorielles — transitions de groupes et le long d'un tracé, dégradé libre en lignes à l'outil Dégradé, peinture dynamique incrémentale (3.29.5, non compilé) ; performance vectorielle complète (3.29.6, non compilé) |
-| 3.30 | Pinceau goutte, formes de pinceau (calligraphique, Art, Motif, Dispersion), répétitions radiale / grille / miroir modifiables (3.30.0, non compilé) |
-| 3.31 | Plans de travail (outil, panneau, export par plan), grille de perspective à 1, 2 ou 3 points de fuite et Sélection de perspective (3.31.0 partie 1, non compilé) |
-| 3.31 | Export PDF / EPS vectoriel par plan de travail, calques PDF, export PSD façon Photoshop (styles, formes, textes) (3.31.0 partie 2, non compilé) |
-| 3.32 | Interface : icônes de la boîte à outils, barre d'état « Doc », onglets de documents façon Photoshop, menus Fichier / Édition / Sélection / Fenêtres sans doublon, styles Satin et Incrustation de motif (aussi en PSD) (3.32.0, non compilé) |
+| 3.29 | Vectoriel « complet » : outils Courbure, Crayon vectoriel, Lissage, Ciseaux, Cutter et Jonction, angles dynamiques, spirale / arc / grilles, panneau Transformation, Ctrl+D, Transformer chaque, objet clé (3.29.0) ; Transition, filet de dégradé, dégradé libre, masques d'opacité, motifs vectoriels (3.29.1) ; vectoriel rapide (3.29.2) ; sélection directe, nettoyage et couleurs du dessin façon Illustrator (3.29.3) ; rendu vectoriel accéléré (3.29.4) ; finitions vectorielles — transitions de groupes et le long d'un tracé, dégradé libre en lignes à l'outil Dégradé, peinture dynamique incrémentale (3.29.5, compilé en 3.99.0) ; performance vectorielle complète (3.29.6, compilé en 3.99.0) |
+| 3.30 | Pinceau goutte, formes de pinceau (calligraphique, Art, Motif, Dispersion), répétitions radiale / grille / miroir modifiables (3.30.0, compilé en 3.99.0) |
+| 3.31 | Plans de travail (outil, panneau, export par plan), grille de perspective à 1, 2 ou 3 points de fuite et Sélection de perspective (3.31.0 partie 1, compilé en 3.99.0) |
+| 3.31 | Export PDF / EPS vectoriel par plan de travail, calques PDF, export PSD façon Photoshop (styles, formes, textes) (3.31.0 partie 2, compilé en 3.99.0) |
+| 3.32 | Interface : icônes de la boîte à outils, barre d'état « Doc », onglets de documents façon Photoshop, menus Fichier / Édition / Sélection / Fenêtres sans doublon, styles Satin et Incrustation de motif (aussi en PSD) (3.32.0, compilé en 3.99.0) |
+| 3.99 | Lots 1 à 5 compilés, corrigés et vérifiés (272 tests, banc de performance, banc graphique) ; version intermédiaire avant la 4.0 (3.99.0) |
 
 Le détail de chaque version (ce qui est fait, vérifié, et ce qui reste) se trouve
 dans [`docs/SUIVI.md`](docs/SUIVI.md). Le plan du chantier vectoriel est dans

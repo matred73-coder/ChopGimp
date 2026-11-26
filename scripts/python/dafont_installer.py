@@ -285,7 +285,7 @@ class DaFontInstaller(Gimp.PlugIn):
                 name)
             procedure.set_menu_label(_("Parcourir _DaFont..."))
             procedure.set_attribution("PhotoGIMP Pro", "GPL v3+", "2026")
-            procedure.add_menu_path("<Image>/Filters/Typography")
+            procedure.add_menu_path("<Image>/Filters/Typographie")
             return procedure
 
         return None

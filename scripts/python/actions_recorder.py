@@ -290,7 +290,7 @@ class ActionsRecorder(Gimp.PlugIn):
                 name)
             procedure.set_menu_label(_("_Enregistrer une action..."))
             procedure.set_attribution("PhotoGIMP Pro", "GPL v3+", "2026")
-            procedure.add_menu_path("<Image>/Filters/Workflow")
+            procedure.add_menu_path("<Image>/Filters/Production")
 
             procedure.add_string_argument("action-name",
                                           _("_Nom de l'action"),
@@ -311,7 +311,7 @@ class ActionsRecorder(Gimp.PlugIn):
                 name)
             procedure.set_menu_label(_("_Rejouer une action..."))
             procedure.set_attribution("PhotoGIMP Pro", "GPL v3+", "2026")
-            procedure.add_menu_path("<Image>/Filters/Workflow")
+            procedure.add_menu_path("<Image>/Filters/Production")
 
             procedure.add_string_argument("action-name",
                                           _("_Nom de l'action"),
@@ -332,7 +332,7 @@ class ActionsRecorder(Gimp.PlugIn):
                 name)
             procedure.set_menu_label(_("_Gerer les actions"))
             procedure.set_attribution("PhotoGIMP Pro", "GPL v3+", "2026")
-            procedure.add_menu_path("<Image>/Filters/Workflow")
+            procedure.add_menu_path("<Image>/Filters/Production")
 
         else:
             return None

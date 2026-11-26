@@ -1,0 +1,125 @@
+From 5746414d02713f32bc10700ebac70aa9f7c75c15 Mon Sep 17 00:00:00 2001
+From: ChopGimp <mathieu.redon@proton.me>
+Date: Thu, 26 Nov 2026 19:08:52 +0100
+Subject: [PATCH] ChopGimp 3.99.0: smoke fixes: perspective project/unproject
+ output in the C locale; artboard export keeps the layers uncropped (an
+ artboard outside every layer crashed file-png); contour fill-type /
+ gradient-style and satin contour as GEGL enums (passed as strings to
+ plug-ins: libgimp could not deserialize GimpContourFillType, the PSD exporter
+ and DrawableFilter configs failed)
+
+---
+ app/file/chopgimp-file-artboards.c         |  6 +++++-
+ app/operations/gimpoperationcontour.c      | 24 +++++++++++-----------
+ app/operations/gimpoperationinnereffects.c | 14 ++++++-------
+ app/pdb/chopgimp-cmds.c                    |  9 +++++++-
+ 4 files changed, 32 insertions(+), 21 deletions(-)
+
+diff --git a/app/file/chopgimp-file-artboards.c b/app/file/chopgimp-file-artboards.c
+index 84cdeac..e741f80 100644
+--- a/app/file/chopgimp-file-artboards.c
++++ b/app/file/chopgimp-file-artboards.c
+@@ -118,8 +118,12 @@ chopgimp_artboards_export (GimpImage      *image,
+ 
+       copy = gimp_image_duplicate (image);
+ 
++      /*  3.99.0: layers are not cropped: an artboard outside every layer
++       *  would leave an image without layers, which crashed the exporters
++       *  (file-png); the export merges what the canvas shows anyway
++       */
+       gimp_image_crop (copy, context, GIMP_FILL_TRANSPARENT,
+-                       b->x, b->y, b->width, b->height, TRUE);
++                       b->x, b->y, b->width, b->height, FALSE);
+ 
+       /*  3.31.0 (4b): the copy is one page (the PDF / EPS exports would
+        *  otherwise make a page per artboard of the copy)
+diff --git a/app/operations/gimpoperationcontour.c b/app/operations/gimpoperationcontour.c
+index 6813b33..7041d41 100644
+--- a/app/operations/gimpoperationcontour.c
++++ b/app/operations/gimpoperationcontour.c
+@@ -414,15 +414,15 @@ gimp_operation_contour_class_init (GimpOperationContourClass *klass)
+                                                          G_PARAM_CONSTRUCT));
+ 
+   g_object_class_install_property (object_class, PROP_FILL_TYPE,
+-                                   g_param_spec_enum ("fill-type",
+-                                                      "Type de remplissage",
+-                                                      "Remplir le contour d'une "
+-                                                      "couleur, d'un dégradé ou "
+-                                                      "d'un motif",
+-                                                      GIMP_TYPE_CONTOUR_FILL_TYPE,
+-                                                      GIMP_CONTOUR_FILL_COLOR,
+-                                                      G_PARAM_READWRITE |
+-                                                      G_PARAM_CONSTRUCT));
++                                   gegl_param_spec_enum ("fill-type",
++                                                           "Type de remplissage",
++                                                           "Remplir le contour d'une "
++                                                           "couleur, d'un dégradé ou "
++                                                           "d'un motif",
++                                                           GIMP_TYPE_CONTOUR_FILL_TYPE,
++                                                           GIMP_CONTOUR_FILL_COLOR,
++                                                           G_PARAM_READWRITE |
++                                                           G_PARAM_CONSTRUCT));
+ 
+   /*  the gradient and the pattern are stored in the filter (XCF, presets)
+    *  as their file contents: the filter renders the same everywhere, even
+@@ -447,9 +447,9 @@ gimp_operation_contour_class_init (GimpOperationContourClass *klass)
+   gegl_param_spec_set_property_key (pspec, "visible", "fill-type {gradient}");
+   g_object_class_install_property (object_class, PROP_GRADIENT_REVERSE, pspec);
+ 
+-  pspec = g_param_spec_enum ("gradient-style",
+-                             "Style",
+-                             "Forme du dégradé ; « Éclat de forme » suit "
++  pspec = gegl_param_spec_enum ("gradient-style",
++                                  "Style",
++                                  "Forme du dégradé ; « Éclat de forme » suit "
+                              "l'épaisseur du contour, de l'intérieur vers "
+                              "l'extérieur",
+                              GIMP_TYPE_CONTOUR_GRADIENT_STYLE,
+diff --git a/app/operations/gimpoperationinnereffects.c b/app/operations/gimpoperationinnereffects.c
+index a217fe6..5d8cbd0 100644
+--- a/app/operations/gimpoperationinnereffects.c
++++ b/app/operations/gimpoperationinnereffects.c
+@@ -235,13 +235,13 @@ gimp_operation_satin_class_init (GimpOperationSatinClass *klass)
+                                                          G_PARAM_CONSTRUCT));
+ 
+   g_object_class_install_property (object_class, PROP_CONTOUR,
+-                                   g_param_spec_enum ("contour",
+-                                                      "Contour",
+-                                                      "Courbe appliquée au satin",
+-                                                      GIMP_TYPE_SATIN_CONTOUR,
+-                                                      GIMP_SATIN_CONTOUR_GAUSSIAN,
+-                                                      G_PARAM_READWRITE |
+-                                                      G_PARAM_CONSTRUCT));
++                                   gegl_param_spec_enum ("contour",
++                                                           "Contour",
++                                                           "Courbe appliquée au satin",
++                                                           GIMP_TYPE_SATIN_CONTOUR,
++                                                           GIMP_SATIN_CONTOUR_GAUSSIAN,
++                                                           G_PARAM_READWRITE |
++                                                           G_PARAM_CONSTRUCT));
+ }
+ 
+ static void
+diff --git a/app/pdb/chopgimp-cmds.c b/app/pdb/chopgimp-cmds.c
+index d0edb5a..b5e1d42 100644
+--- a/app/pdb/chopgimp-cmds.c
++++ b/app/pdb/chopgimp-cmds.c
+@@ -1880,7 +1880,14 @@ perspective_command_invoker (GimpProcedure         *procedure,
+              ? chopgimp_pgrid_from_plane (&g, atoi (v[1]), a, b, &x, &y)
+              : chopgimp_pgrid_to_plane   (&g, atoi (v[1]), a, b, &x, &y);
+       if (done)
+-        out = g_strdup_printf ("%.3f %.3f", x, y);
++        {
++          gchar bx[G_ASCII_DTOSTR_BUF_SIZE], by[G_ASCII_DTOSTR_BUF_SIZE];
++
++          /*  C locale: the result is parsed back by scripts  */
++          out = g_strdup_printf ("%s %s",
++                                 g_ascii_formatd (bx, sizeof bx, "%.3f", x),
++                                 g_ascii_formatd (by, sizeof by, "%.3f", y));
++        }
+     }
+   else if (n >= 1 && ! strcmp (v[0], "item-plane") && item)
+     {
+-- 
+2.53.0
+

@@ -1276,12 +1276,12 @@ def convert(image, path, run_mode, report):
             image.reorder_item(orig, base.get_parent(), image.get_item_position(base))
             copy_props(base, orig)
             orig.set_composite_mode(base.get_composite_mode())
-            orig.set_name(B.name)
             apply_cgfx(orig, cg_by_id[base_id]["cgFX"])
             fxb = B.effects()
             if fxb:
                 apply_effects(image, B, orig, fxb, psd, report, cg_only=True)
             image.remove_layer(base)
+            orig.set_name(B.name)       # après le retrait : sinon « Flou #1 »
             report.ok(B.name, "calque d'origine et ses filtres repris (pixels fusionnés retirés)")
         except Exception as e:
             report.ignore(B.name, "original (%s)" % e)

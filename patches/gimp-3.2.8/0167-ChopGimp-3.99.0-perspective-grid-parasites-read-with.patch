@@ -1,0 +1,48 @@
+From 0697512b564ea1a76f19d28cee46cffcb8f5d0df Mon Sep 17 00:00:00 2001
+From: ChopGimp <mathieu.redon@proton.me>
+Date: Thu, 26 Nov 2026 19:36:25 +0100
+Subject: [PATCH] ChopGimp 3.99.0: perspective grid parasites read with their
+ size set before g_strndup (unsequenced argument: the grid fell back to its
+ defaults at random)
+
+---
+ app/core/chopgimp-pgrid.c | 9 ++++++---
+ 1 file changed, 6 insertions(+), 3 deletions(-)
+
+diff --git a/app/core/chopgimp-pgrid.c b/app/core/chopgimp-pgrid.c
+index 69bedf3..ead1a0c 100644
+--- a/app/core/chopgimp-pgrid.c
++++ b/app/core/chopgimp-pgrid.c
+@@ -248,7 +248,8 @@ chopgimp_pgrid_get (GimpImage     *image,
+   if (p)
+     {
+       guint32  size;
+-      gchar   *text = g_strndup (gimp_parasite_get_data (p, &size), size);
++      const gchar *data = gimp_parasite_get_data (p, &size);  /* size set first */
++      gchar       *text = g_strndup (data, size);
+ 
+       if (chopgimp_pgrid_from_string (grid, text))
+         {
+@@ -674,7 +675,8 @@ chopgimp_pgrid_item_get_plane (GimpItem *item,
+   if (! p)
+     return CHOPGIMP_PLANE_NONE;
+ 
+-  text  = g_strndup (gimp_parasite_get_data (p, &size), size);
++  text  = (gchar *) gimp_parasite_get_data (p, &size);  /* size set before g_strndup */
++  text  = g_strndup (text, size);
+   lines = g_strsplit (text, "\n", -1);
+ 
+   for (gint i = 0; lines[i]; i++)
+@@ -716,7 +718,8 @@ chopgimp_pgrid_item_set_plane (GimpItem      *item,
+   if (p)
+     {
+       guint32  size;
+-      gchar   *text  = g_strndup (gimp_parasite_get_data (p, &size), size);
++      const gchar *data  = gimp_parasite_get_data (p, &size);  /* size set first */
++      gchar       *text  = g_strndup (data, size);
+       gchar  **lines = g_strsplit (text, "\n", -1);
+ 
+       for (gint i = 0; lines[i]; i++)
+-- 
+2.53.0
+

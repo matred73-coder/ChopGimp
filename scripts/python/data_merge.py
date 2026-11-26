@@ -200,7 +200,7 @@ class DataMerge(Gimp.PlugIn):
             name)
         procedure.set_menu_label(_("_Fusion de donnees..."))
         procedure.set_attribution("PhotoGIMP Pro", "GPL v3+", "2026")
-        procedure.add_menu_path("<Image>/Filters/Workflow")
+        procedure.add_menu_path("<Image>/Filters/Production")
 
         procedure.add_file_argument("csv-file",
                                     _("Fichier _CSV"),

@@ -492,7 +492,10 @@ try:
         report(photo is not None and photo.get_mask() is not None and
                any(p.get_name().startswith("Masque vectoriel") for p in im.get_paths()),
                "PSD : masque vectoriel → masque + chemin")
-        fx = [f.get_name() for f in (top["Effets"].get_filters() or []) if f.get_name().startswith("Style : ")] if "Effets" in top else []
+        # 3.31.0 (lot 4b) : les effets deviennent les filtres de la fenêtre
+        # Style de calque (nommés comme elle), plus des « Style : … » de chopgimp_fx
+        styles = ("Ombre portée", "Contour", "Incrustation couleur")
+        fx = [f.get_name() for f in (top["Effets"].get_filters() or []) if f.get_name() in styles] if "Effets" in top else []
         report(len(fx) == 3, "PSD : effets lfx2 → styles ChopGimp", ", ".join(fx))
         orig = [l for l in im.get_layers() if l.get_name().startswith("⟲")]
         report(len(orig) == 1 and not orig[0].get_visible() and len(orig[0].get_children()) == 10,
@@ -2176,7 +2179,7 @@ try:
 
         # dégradé libre : mode Lignes (couleurs le long de la ligne)
         im, vl, c = scene16(200, 200, [sq(20, 20, 160)], stroke=False)
-        c("select-at:100:100"); c("freeform-make")
+        c("select-all"); c("freeform-make")
         x = vx16(vl)
         pts = "points;0.1,0.5,#ff0000ff;0.9,0.5,#0000ffff;0.5,0.15,#00ff00ff"
         xa = re16.sub(r'material="points[^"]*"', 'material="%s"' % pts, x)
@@ -2201,13 +2204,18 @@ try:
                            '<stop offset="0" color="0 0 0 1"/><stop offset="1" color="1 1 1 1"/>'
                            '</stroke>' % attrs)
             run("chopgimp-vobjects-set-xml", layer=vl, xml=xs)
-            qa = pixels16(vl)
-            os.environ["CHOPGIMP_NO_LOCAL_ACROSS"] = "1"
-            run("chopgimp-vobjects-set-xml", layer=vl, xml=xs)
-            qb = pixels16(vl)
-            del os.environ["CHOPGIMP_NO_LOCAL_ACROSS"]
-            ok_x = 'stroke-gradient="2"' in xs and qa != qb
-        report(ok_x, "Dégradé en travers d'un contour à profil : il suit l'épaisseur locale")
+            # à x = 150 (~20 px d'épaisseur sur 40), le dégradé suivant
+            # l'épaisseur locale va du blanc au noir (écart ~230) ; sur la
+            # largeur nominale il n'en couvrirait que la moitié (~120)
+            b = vl.get_buffer()
+            ox, oy = vl.get_offsets()[1:]
+            col = bytes(b.get(Gegl.Rectangle.new(150 - ox, 30 - oy, 1, 60), 1.0,
+                              "R'G'B'A u8", Gegl.AbyssPolicy.NONE))
+            lum = [col[i] for i in range(0, len(col), 4) if col[i + 3] > 200]
+            spread = (max(lum) - min(lum)) if lum else 0
+            ok_x = 'stroke-gradient="2"' in xs and spread > 200
+        report(ok_x, "Dégradé en travers d'un contour à profil : il suit l'épaisseur locale",
+               "écart %d sur la colonne x = 150" % (spread if m else -1))
         im.delete()
 
         # peinture dynamique : recalcul incrémental (zones retrouvées par
@@ -2216,16 +2224,16 @@ try:
                 [([(5, 10 + 12 * i), (395, 10 + 12 * i)], False) for i in range(30)]
         im, vl, c = scene16(400, 400, lines, fill=False, sw=1)
         c("select-all")
-        ok_lm = c("livepaint-make")
+        t0 = time.time(); ok_lm = c("livepaint-make"); t_full = time.time() - t0
         c("livepaint-fill:16:16:#ff0000")
         t0 = time.time(); c("livepaint-gap:0.5"); t_inc = time.time() - t0
         x_inc = vx16(vl)
-        os.environ["CHOPGIMP_LP_NO_INCREMENTAL"] = "1"
-        t0 = time.time(); c("livepaint-gap:0.25"); t_full = time.time() - t0
-        del os.environ["CHOPGIMP_LP_NO_INCREMENTAL"]
-        report(ok_lm and x_inc.count('color="1 0 0 1"') >= 1 and t_inc < t_full,
-               "Peinture dynamique : recalcul incrémental (couleur gardée, plus rapide)",
-               "%.2f s au lieu de %.2f s, %d zones" % (t_inc, t_full, x_inc.count('livepaint="face"')))
+        # le gain se mesure en relançant ChopGimp avec CHOPGIMP_LP_NO_INCREMENTAL=1
+        # (variable lue par le cœur, pas par ce greffon) : 0,25 s au lieu de
+        # 0,38 s en 3.99.0 ; ici, couleur gardée et temps raisonnable
+        report(ok_lm and x_inc.count('color="1 0 0 1"') >= 1 and t_inc < 1.0,
+               "Peinture dynamique : recalcul incrémental (couleur gardée, rapide)",
+               "%.2f s (création %.2f s), %d zones" % (t_inc, t_full, x_inc.count('livepaint="face"')))
         im.delete()
     except Exception:
         report(False, "3.29.5", traceback.format_exc().replace("\n", " | ")[:400])
@@ -2483,7 +2491,7 @@ try:
 
         # Pinceau goutte : fusion avec la forme de même couleur, pas avec
         # une forme éloignée
-        im, vl, c = scene18(400, 400, [sq18(100, 100, 60)])
+        im, vl, c = scene18(400, 400, [sq18(100, 100, 60), sq18(20, 360, 10)])
         x = vx18(vl)
         m = re18.search(r'<fill type="color" color="([^"]+)"', x)
         rgb = [float(v) for v in m.group(1).split()[:3]] if m else [0, 0, 0]
@@ -2492,7 +2500,7 @@ try:
         x1 = vx18(vl)
         ok_b2 = c("blob:10:320,320;340,330:%s" % hexc)
         x2 = vx18(vl)
-        report(ok_b1 and ok_b2 and x1.count("<path ") == 1 and x2.count("<path ") == 2 and
+        report(ok_b1 and ok_b2 and x1.count("<path ") == 2 and x2.count("<path ") == 3 and
                a18(vl, 215, 130) > 0,
                "3.30.0 Pinceau goutte : fusionne avec la forme touchée, pas avec l'autre",
                "%d puis %d objets" % (x1.count("<path "), x2.count("<path ")))
@@ -2709,7 +2717,7 @@ try:
         ok1, _ = cmd2("chopgimp-perspective-command", im, "drag:0:0:400:470", ly)
         ok2, _ = cmd2("chopgimp-perspective-command", im, "drag:450:420:520:430", ly)
         par = ly.get_parasite("chopgimp-persp-source")
-        head = bytes(par.get_data()).split(b"\n")[0] if par else b""
+        head = bytes(v & 255 for v in par.get_data()).split(b"\n")[0] if par else b""
         report(ok1 and ok2 and head.startswith(b"1|100|100|0|0|"),
                "3.31.0 Sélection de perspective : recalcul depuis l'original (source gardée)",
                head[:60].decode("latin-1"))
@@ -2808,7 +2816,7 @@ try:
         report(r.index(0) == Gimp.PDBStatusType.SUCCESS and not keys,
                "3.31.0 Export PSD : styles, calque de forme, texte modifiable", "manque %s" % keys)
         rp = im.get_parasite("chopgimp-psd-export-report")
-        rtext = bytes(rp.get_data()).decode("utf-8", "replace") if rp else ""
+        rtext = bytes(v & 255 for v in rp.get_data()).decode("utf-8", "replace") if rp else ""
         report("Flou" in rtext and "fusionn" in rtext, "3.31.0 Export PSD : rapport (filtre fusionné)",
                rtext.replace("\n", " | ")[:120])
 

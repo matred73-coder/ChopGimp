@@ -183,7 +183,7 @@ class QuickColor(Gimp.PlugIn):
     def do_create_procedure(self, name):
         Gegl.init(None)
 
-        menu_base = "<Image>/Filters/Color"
+        menu_base = "<Image>/Filters/Couleur"
 
         if name == 'python-fu-quick-color':
             procedure = Gimp.ImageProcedure.new(self, name,

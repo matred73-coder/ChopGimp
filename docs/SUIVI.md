@@ -1075,7 +1075,7 @@ Tests : smoke 195 OK / 0 échec ; banc graphique : vectoriser, glisser un objet,
 recolorer, annuler deux fois, sans plantage.
 
 
-## 3.29.5 — Finitions vectorielles (lot 1 du plan final) — **non compilé**
+## 3.29.5 — Finitions vectorielles (lot 1 du plan final) — compilé et vérifié (3.99.0)
 
 Patchs 0153 à 0158. Code écrit et relu, **ni compilé ni testé** : la
 compilation, les tests (smoke, banc de performance, banc graphique) et la
@@ -1132,7 +1132,7 @@ livraison se feront en une fois au lot 6 (4.0.0). VERSION inchangée (3.29.4).
   gain mesuré de la peinture dynamique et `bench_vector.sh` sans régression.
 - **Limites acceptées** : aucune.
 
-## 3.29.6 — Performance vectorielle complète (lot 2 du plan final) — **non compilé**
+## 3.29.6 — Performance vectorielle complète (lot 2 du plan final) — compilé et vérifié (3.99.0)
 
 Patch 0159. Code écrit et relu, **ni compilé ni testé** (compilation, tests,
 bancs et livraison au lot 6). VERSION inchangée (3.29.4).
@@ -1168,7 +1168,7 @@ bancs et livraison au lot 6). VERSION inchangée (3.29.4).
 - **Limites acceptées** : contours de profil préparés pour rien quand moins de
   8 objets sont à dessiner (rendu alors un par un).
 
-## 3.32.0 (non compilé) — Interface (lot 5 du plan final)
+## 3.32.0 (compilé et vérifié en 3.99.0) — Interface (lot 5 du plan final)
 
 Patch 0164. Code écrit, relu et vérifié à la syntaxe (gcc -fsyntax-only dans le SDK
 GNOME), **ni compilé ni testé dans ChopGimp** (compilation, tests et livraison au lot 6).
@@ -1219,7 +1219,7 @@ VERSION inchangée.
   menus sans doublon et façon Photoshop, plug-ins sans chemin en double, icônes).
 - **À vérifier à la compilation (lot 6)** : docs/dev/A-VERIFIER-4.0.md, section « Lot 5 ».
 
-## 3.31.0 (non compilé) — partie 2 : exports PDF, EPS et PSD (lot 4b du plan final)
+## 3.31.0 (compilé et vérifié en 3.99.0) — partie 2 : exports PDF, EPS et PSD (lot 4b du plan final)
 
 Patch 0163. Code écrit, relu et vérifié à la syntaxe (gcc -fsyntax-only dans le SDK
 GNOME), **ni compilé ni testé dans ChopGimp** (compilation, tests et livraison au lot 6).
@@ -1287,7 +1287,7 @@ inchangée.
   relit le PSD avec **psd-tools** (environnement virtuel de `$CHOPGIMP_DEV`).
 - Points à vérifier : `docs/dev/A-VERIFIER-4.0.md`, section « Lot 4b ».
 
-## 3.31.0 (non compilé) — partie 1 : plans de travail et grille de perspective (lot 4a du plan final)
+## 3.31.0 (compilé et vérifié en 3.99.0) — partie 1 : plans de travail et grille de perspective (lot 4a du plan final)
 
 Patch 0162. Code écrit, relu et vérifié à la syntaxe (gcc -fsyntax-only dans le SDK
 GNOME), **ni compilé ni testé** (compilation, tests et livraison au lot 6). VERSION
@@ -1333,7 +1333,7 @@ inchangée.
   Fenêtres), `icons/build_icons.py` (4 icônes) ; tests smoke 3.31.0.
 - Points à vérifier : `docs/dev/A-VERIFIER-4.0.md`, section « Lot 4a ».
 
-## 3.30.0 (non compilé) — Blocs vectoriels 4 et 5 (lot 3 du plan final)
+## 3.30.0 (compilé et vérifié en 3.99.0) — Blocs vectoriels 4 et 5 (lot 3 du plan final)
 
 Patchs 0160 et 0161. Code écrit et relu, **ni compilé ni testé** (compilation,
 tests, bancs et livraison au lot 6). VERSION inchangée (3.29.4).
@@ -1382,3 +1382,59 @@ tests, bancs et livraison au lot 6). VERSION inchangée (3.29.4).
   `repeat-*`, `repeat-handle`, `brush-*`, `brush-lib-*`, `blob:`).
 - **À vérifier à la compilation (lot 6)** : docs/dev/A-VERIFIER-4.0.md,
   section « Lot 3 ».
+
+## 3.99.0 — Lots 1 à 5 compilés, corrigés et vérifiés (lot 6, partie 6a)
+
+Livraison intermédiaire avant la 4.0.0 (LTO + PGO et recette finale).
+
+- **Compilation** de tout ce qui avait été codé sans compiler (patchs 0153 à
+  0164) ; corrections en nouveaux patchs, sans réécrire les anciens :
+  - 0165 : `par_outlines` déclaré avant usage ; includes gio / gdk-pixbuf de
+    `chopgimp-vrepeat.c` et `chopgimp-vbrush.c` ;
+  - 0166 : `project` / `unproject` de la grille écrits en « C » (virgule
+    française) ; export des plans de travail sans recadrer les calques (un
+    plan hors de tout calque faisait planter file-png) ; type de remplissage
+    et style de dégradé du contour, contour du satin en énumérations GEGL
+    (illisibles par libgimp : export PSD et configs des filtres en échec) ;
+  - 0167 : grille de perspective relue avec la taille du parasite lue avant
+    `g_strndup` (argument non séquencé : la grille revenait au hasard à ses
+    valeurs par défaut) ;
+  - 0168 : onglets de documents à 20 caractères au moins (ils n'affichaient
+    que « … ») ;
+  - 0169 : plan de travail sans calque visible exporté avec un calque vide.
+- **Greffons** : import PSD, l'original repris garde son nom (plus de
+  « Flou #1 ») ; sous-menus de Filtres en français (Couleur, Mise en page,
+  Typographie, Production, Vectoriel).
+- **Tests** : 272 / 272 (smoke) ; tests faux corrigés (variables
+  d'environnement posées dans le greffon au lieu du cœur, octets signés des
+  parasites, calques d'un seul objet jamais modifié, positions de pixels,
+  noms des styles importés).
+- **Mesures** (`tools/dev/bench_vector.sh`, ms, vectorisation lourde de
+  3 595 objets ; 3.29.4 → 3.99.0) :
+
+| Mesure | 3.29.4 | 3.99.0 | 16 bits (2 886 objets) |
+|---|---|---|---|
+| Glisser, par image | 13,7 | **9,1** | 27,7 |
+| Recolorer | 266 | **171** | 161 |
+| Rendu complet | 648 | **552** | 505 |
+| Annuler | 136 | **66** | 95 |
+| Annulation partielle (un objet) | — | 75 (rétablir 112) | 94 (120) |
+| 40 annuler + 40 rétablir | — | 8 282, rendu identique | 10 099, rendu identique |
+
+  2 000 objets simples : glisser 0,3 ms / image, rendu complet 109 ms,
+  annuler 12 ms, rafale 1 309 ms (rendu identique).
+- **Vérifications** (docs/dev/A-VERIFIER-4.0.md, chaque point annoté) :
+  annulation partielle (opérations variées, tout annuler / rétablir,
+  alternances : XML et pixels identiques) ; 16 / 32 bits à 1 près du 8
+  bits ; plans et grille suivent rotation, miroir, échelle, recadrage ;
+  PDF vectoriel (courbes, textes en vecteurs, calques OCG) relu par
+  Ghostscript ; PSD relu par psd-tools ; banc graphique sur la
+  vectorisation lourde 8 / 16 bits, le PSD et le PDF : barre d'état
+  « Doc », onglets, menus, touches L / U, Pinceau goutte.
+- **Reste** : contrôle dans Photoshop / Acrobat / Illustrator ; 3
+  avertissements `gimp_image_undo_group_end` dans le journal du smoke
+  (origine non isolée, sans effet visible) et avertissements GTK de
+  file-pdf-export en mode console ; mémoire des caches d'objets (≈ 616 Mo
+  pour 3 595 objets sur 2 000 × 2 000) à alléger ; aperçu du Pinceau goutte
+  au style du canevas (pas à la couleur) ; un calque d'un seul objet jamais
+  modifié refuse le clic de sélection / le Pinceau goutte par la PDB.

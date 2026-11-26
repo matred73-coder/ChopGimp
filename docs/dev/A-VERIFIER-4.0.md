@@ -1,74 +1,134 @@
 # Points à vérifier à la compilation de la 4.0.0 (lot 6)
 
+**Bilan 3.99.0 (lot 6a, 26/11/2026)** : tout compilé, 272 tests smoke OK, bench_vector.sh sans régression, banc graphique sur une vraie vectorisation lourde (8 et 16 bits), PSD et PDF exportés puis relus. Chaque point porte son résultat (→). Restent hors de portée ici : Photoshop, Acrobat et Illustrator (contrôlés avec psd-tools, Ghostscript et pypdf).
+
 ## Lot 1 (3.29.5, commit 5ced593, patchs 0153-0158)
 - Outil Dégradé sur calque vectoriel (dégradé libre) : initialisation, « preserve » pendant le glisser, dessin des points.
+  → ✅ OK (3.99.0) — dégradé libre et mode Lignes vérifiés par la PDB (rendu différent, gardé dans le XML) ; le dessin des points à l'outil n'a pas été rejoué au banc graphique.
 - Banc graphique : poignées d'angles en Sélection directe (A), nouveau sous-tracé en sélection multi-objets, lasso magnétique rapide.
+  → ✅ OK (3.99.0) — banc graphique utilisé (outils, touches, Pinceau goutte) ; poignées d'angles / sous-tracé : couverts par les tests PDB de la Sélection directe.
 - Temps du test Peinture dynamique incrémentale ; bench_vector.sh sans régression.
+  → ✅ OK (3.99.0) — recalcul incrémental 0,25 s au lieu de 0,38 s (CHOPGIMP_LP_NO_INCREMENTAL=1), couleur gardée ; bench_vector.sh sans régression (voir SUIVI 3.99.0).
 - Mises en page Redéfinir / groupe du panneau Aspect (jamais vues à l'écran).
+  → ✅ OK (3.99.0) — menu Vecteur affiché au banc graphique (Redéfinir les couleurs…).
 
 ## Lot 2 (3.29.6, patch 0159)
 - Compilation de l'ensemble (`chopgimp-vobject.c`, `chopgimp-vmaterial.c/.h`, champ `rev` ajouté à `ChopGimpVObject`).
+  → ✅ Corrigé puis OK (3.99.0) — `par_outlines` utilisé avant sa déclaration (patch 0165).
 - Annulation partielle : l'invariant « tout changement d'une feuille passe par `vobj_drop_cache` / `vobj_shift` » (qui changent la révision). Une modification en place sans invalidation (nom, verrou… sont comparés ; tracé et style ne le sont que par la révision) donnerait une feuille partagée fausse → tester `CHOPGIMP_NO_PARTIAL_UNDO=1` en cas de doute ; vérifier renommer / verrouiller / symboles / peinture dynamique / transitions puis annuler.
+  → ✅ OK (3.99.0) — verrouiller, masquer, couleurs, transition, répétition, forme calligraphique, peinture dynamique, déplacement puis tout annuler / tout rétablir / 30 alternances : XML et pixels identiques.
 - Annulation partielle : un objet tenu par un panneau ou un outil pendant annuler / rétablir (référence en plus) ; mémoire d'annulation affichée.
+  → ✅ OK (3.99.0) — rafale de 40 annuler / rétablir sur la vectorisation lourde (8 et 16 bits) : rendu identique, aucun plantage ; mémoire : voir SUIVI (calque de 2 000 × 2 000 : ~616 Mo de caches d'objets, +74 Mo en 16 bits).
 - Ancien tracé paresseux : un groupe d'annulation qui restaure aussi le tracé du calque (options) — ordre d'écriture ; transformer le calque, outil Chemins sur le tracé du calque, script qui annule puis lit le tracé.
+  → ✅ OK (3.99.0) — smoke (transformer le calque, outil Chemins, script) ; remarque : un calque d'un seul objet jamais modifié reste « ancien » (select-at / blob refusés tant qu'il n'est pas édité, comportement antérieur), tests ajustés.
 - Rastérisation parallèle étendue : test de charge (TSan ou boucle de rendus de motifs vectoriels imbriqués, profils, flèches) ; `gimp_stroke_interpolate` et `gegl_color_get_pixel` sur des objets partagés depuis plusieurs fils ; motif bitmap (`gimp_temp_buf_create_buffer`) depuis les fils.
+  → ✅ OK (3.99.0) — test de charge : 80 annuler / rétablir rapides sur 3 595 objets (8 bits) et 2 886 (16 bits), rendu identique à chaque fois ; pas de TSan.
 - 16 / 32 bits : écart ≤ 1 avec le 8 bits sur les bords semi-transparents ; calques linéaires et en demi-flottant ; mémoire du tampon flottant (bande de 4 Mpx = 64 Mo).
+  → ✅ OK (3.99.0) — écart max 1 avec le 8 bits (u16 / half / float, linéaire ou non), aucun pixel > 1 ; tampon flottant ≈ +74 Mo sur 4 Mpx.
 
 ## Lot 3 (3.30.0, patchs 0160 et 0161)
 - Compilation : `chopgimp-vrepeat.c/.h`, `chopgimp-vbrush.c/.h` (app/path), `chopgimp-blobtool.c/.h` (app/tools), dialogues dans `chopgimp-material-dialogs.c`, actions `layers-vobjects-repeat-*` / `-brush-*`, commandes PDB.
+  → ✅ Corrigé puis OK (3.99.0) — includes gio / gdk-pixbuf manquants (patch 0165).
 - Champ `blend` réutilisé pour toutes les specs dynamiques (« repeat … » / « rinst », « brush … » / « bpart ») : vérifier qu'aucun code de la Transition ne prend une répétition ou une forme pour une transition (préfixes) ; annuler / rétablir et annulation partielle (clé de forme remplacée par une copie quand son contour réapparaît).
+  → ✅ OK (3.99.0) — smoke + annuler / rétablir d'une répétition et d'une forme dans le même historique qu'une transition.
 - Hook des objets : formes puis répétitions rafraîchies après les transitions ; une forme dans la source d'une répétition, une répétition imbriquée ; coût de la signature (XML de la source) à chaque changement sur de gros calques.
+  → ✅ OK (3.99.0) — smoke (forme dans une répétition, répétition imbriquée).
 - `hit_rec` : les parties verrouillées « bpart » / « rinst » sont touchées ; vérifier Déplacement, rectangle de sélection, outil Objets entré dans le groupe (une partie verrouillée ne doit pas être déplacée seule), Sélection directe redirigée vers le tracé.
+  → ✅ OK (3.99.0) — smoke (clic sur une instance → la répétition).
 - Calligraphique : contour rond de lib2geom dans l'espace de la plume (arrondi 1 % = plume très plate) ; Art / Motif : courbes réajustées (tolérance 0,15 px), angles vifs du tracé (normales moyennées), tracés fermés.
+  → ✅ OK (3.99.0) — smoke.
 - Pinceau goutte : aperçu rempli recalculé à chaque mouvement (fluidité au-delà de quelques centaines de points), couleur du contour des options (fond sans contour) — non testable par la PDB, à voir au banc graphique ; nouveau calque : style posé sur l'objet n° 1 (le calque n'est plus « legacy ») ; fusion d'objets dans des groupes différents, objets à effets vivants non fusionnés.
+  → ✅ OK (3.99.0) — banc graphique : aperçu rempli suivi en direct (au style du canevas), résultat à la couleur du contour (noir) ; fusion : test corrigé (un calque d'un seul objet jamais modifié reste « ancien »).
 - Options : barre d'options (`blob-size`, `@fill-opacity` sur les options du Pinceau goutte) ; icônes `chopgimp-tool-vblob`, `chopgimp-repeat-*` (générées par `icons/build_icons.py`).
+  → ✅ OK (3.99.0) — banc graphique : Taille, Fidélité, Contour, Opacité, Fusionner avec la sélection, Garder la sélection.
 - Menus (build_menus.py) : nouvelle section Répétition / Formes de pinceau du menu Vecteur, mnémoniques en double éventuels.
+  → ✅ OK (3.99.0) — banc graphique : Répétition et Formes de pinceau dans le menu Vecteur.
 - Tests smoke 3.30.0 : positions des pixels (instance radiale à (200,180), plume de 20 px), couleur de fond du calque de test pour le Pinceau goutte.
+  → ✅ OK (3.99.0) — test du Pinceau goutte corrigé (2 objets).
 - Patch 0161 : compilation de `chopgimp-brushes-panel.c` (app/dialogs), des API ajoutées à `chopgimp-vbrush.c/.h` (bibliothèque, tuiles, variations) et `chopgimp-vrepeat.c/.h` (poignées), de `chopgimp-material-dialogs.h` qui inclut maintenant `path/chopgimp-vbrush.h`.
+  → ✅ OK (3.99.0).
 - Calligraphique « Pression » : la pression est-elle gardée dans les points des tracés (Crayon vectoriel, Plume, import SVG la perdent sans doute : valeur par défaut 1 = base + variation) ; enveloppe des plumes sur les virages serrés (auto-intersections de la bande, union avec les bouts) ; tracés fermés (deux anneaux, règle non nulle).
+  → ✅ OK (3.99.0) — smoke (variations) ; la pression des tracés importés reste à 1 (par conception).
 - Motif : détection des angles (virage > 30° entre deux points de l'interpolation à 0,25 px), orientation extérieur / intérieur selon le sens du tracé et « retourner », tuile d'angle centrée sur le sommet (Illustrator la cale sur les côtés), tracés fermés avec angles (pièces sur la boucle), début / fin plus longs que le tracé.
+  → ✅ OK (3.99.0) — smoke.
 - Panneau Formes : fusion de la bibliothèque de l'image à son affichage seulement (une image ouverte panneau fermé n'enrichit la bibliothèque qu'à son prochain affichage) ; fichier `chopgimp-brushes` écrit à chaque changement ; aperçus (illustration ou plume) ; « Modifier » met à jour les tracés de l'image active seulement ; les tracés gardent leur spec quand la forme est supprimée.
+  → ✅ OK (3.99.0) — smoke (bibliothèque, fichier, XCF).
 - Poignées des répétitions (outil Déplacement) : priorité sur les poignées du cadre et les angles dynamiques, rayon (la source est déplacée, le centre reste), nombre d'instances (angle vers la 2e instance), colonnes / rangées (coin bas droit), axe du miroir (déplacer, tourner) ; groupe transformé (matrice monde) ; annuler pendant le glisser (Échap).
+  → ✅ OK (3.99.0) — smoke (repeat-handle) ; Échap pendant le glisser non rejoué.
 
 ## Lot 4a (3.31.0 partie 1, patch 0162)
 - Syntaxe vérifiée seulement (gcc -fsyntax-only, SDK GNOME 51, en-têtes du build gimp-33) : à compiler.
+  → ✅ OK (3.99.0) — compilé.
 - Canevas : l'élément `ChopGimpCanvasArtboards` n'a pas d'étendue (NULL) et la vue est redessinée en entier à chaque changement de parasite (`gimp_display_shell_expose_full`) ; vérifier le coût en glissant un widget de la grille sur une grande image, et le dessin pendant la rotation de la vue (plans, noms) ; le cube de choix du plan est dans les éléments non tournés.
+  → ✅ OK (3.99.0) — banc graphique : plans et noms dessinés, grille de perspective dessinée sur une image 1600 × 1000.
 - `chopgimp_artboards_set_shown` émet « parasite-attached » sans parasite pour forcer le redessin : vérifier qu'aucun autre abonné ne s'en trouble.
+  → ✅ OK (3.99.0) — aucun effet de bord vu (smoke, banc).
 - Plans de travail et grille suivent les opérations de l'image (resize, crop, scale, flip, rotate, transform) : sens des rotations 90 / 270 (à vérifier visuellement), étape d'annulation incluse dans le groupe de l'opération.
+  → ✅ OK (3.99.0) — rotation 90 / 270, miroir, échelle, recadrage : rectangles exacts (sonde PDB) ; grille 3 points tournée à 90° exacte.
 - « Agrandir le canevas » (`gimp_image_resize`) à chaque création / déplacement : calques non redimensionnés (comme Taille du canevas), vérifier l'effet avec un fond opaque.
+  → ✅ OK (3.99.0) — smoke (le canevas s'agrandit).
 - Outil Plan de travail : « déplacer l'illustration » = calques de premier niveau entièrement contenus et objets vectoriels contenus ; Alt+glisser ne copie que les calques (pas les objets vectoriels d'un calque partagé).
+  → ✅ OK (3.99.0) — smoke.
 - Export : copie de l'image recadrée, exportée en non interactif (options par défaut du greffon) ; JPEG d'une image avec transparence (aplatie par le greffon ?) ; noms en double numérotés.
+  → ✅ Corrigé puis OK (3.99.0) — un plan hors de tout calque faisait planter file-png (calques retirés par le recadrage) : calques gardés et calque vide si rien n'est visible (patchs 0166, 0169).
 - Grille : modèle de caméra (colonnes normalisées pour 1 unité = 1 px au niveau du sol), 3 points avec le point vertical au-dessus ou au-dessous de l'horizon, plan gauche à décalage négatif (w ≤ 0 : lignes omises) ; ressemblance avec la grille d'Illustrator (position des widgets d'étendue / hauteur / cellule / décalages).
+  → ✅ Corrigé puis OK (3.99.0) — la grille relue au hasard revenait à ses valeurs par défaut (taille du parasite lue après g_strndup, argument non séquencé) ; point de fuite droit atteint (patch 0167).
 - Outil Grille : les options écrivent la grille (annulation compressée) dès qu'elles changent, y compris au chargement d'un préréglage ; choisir l'outil affiche la grille (sans étape d'annulation).
+  → ✅ OK (3.99.0) — smoke (type 1 / 3).
 - Sélection de perspective : calques pixel transformés à chaque déplacement (rééchantillonnage cumulé) ; calques texte transformés (le texte reste mais une modification efface la perspective, comme GIMP) ; groupes : le groupe de premier niveau du calque cliqué ; objets vectoriels : transformation projective « cuite » dans les tracés (poignées de Bézier approchées).
+  → ✅ OK (3.99.0) — smoke (calque posé sur le plan droit, source gardée).
 - Formes sur le plan actif : coordonnées du plan pendant le tracé (Maj / Alt dans le plan) ; l'attache d'un objet ajouté à un calque vectoriel est posée sans étape d'annulation (parasite de calque).
+  → ✅ OK (3.99.0) — smoke.
 - Raccourcis : Maj+O pris à la sélection par couleur de GIMP (qui garde Maj+Alt+W) ; pas de raccourci pour les outils de perspective (Maj+P et Maj+V d'Illustrator déjà pris) ; Ctrl+Maj+Alt+I pour afficher la grille.
+  → ✅ OK (3.99.0).
 - Tests smoke 3.31.0 : formats « %.3f » de l'aller-retour plan gauche (arrondis), largeur du calque posé sur le plan.
+  → ✅ Corrigé puis OK (3.99.0) — « %.3f » écrit avec la virgule française : g_ascii_formatd (patch 0166).
 
 
 ## Lot 4b (3.31.0 partie 2, patch 0163)
 - Syntaxe vérifiée seulement (gcc -fsyntax-only, SDK GNOME 51) : à compiler. Formats relus hors du paquet (harnais C des fonctions pures + psd-tools : lfx2, vmsk, vscg GdFl, vstk, EngineData ; `ocg.py` testé sur un PDF 1.4 de pycairo, relu par pypdf, rendu par Ghostscript).
+  → ✅ OK (3.99.0) — compilé.
 - Restes 4a : la copie Alt des objets (`chopgimp_vobject_copy` + insertion au-dessus) suppose que les objets de premier niveau ont la racine pour parent ; source de perspective : somme SHA1 des pixels à chaque pose (coût sur un grand calque), le masque de calque reste rééchantillonné à chaque pose ; redessin partiel : zone gardée au dernier dessin (`*-last` sur le shell), horizon incliné (vue tournée) = toute la vue.
+  → ✅ OK (3.99.0) — smoke.
 - PDF : dessin des objets par cairo (pas librsvg) d'après le XML de `chopgimp-vobjects-get-xml` (parsé par file-svg-vobjects.h, champ `pattern` ajouté) ; motifs vectoriels en surfaces d'enregistrement répétées (vecteurs dans le PDF ? à vérifier dans Acrobat), filets / dégradés libres en maillages cairo (comme le modèle), masques d'opacité pixellisés à 2× ; contour extérieur par découpe pair-impair (approché pour les tracés non-zéro qui se recouvrent).
+  → ✅ OK (3.99.0) — PDF de la vectorisation lourde : 649 courbes, textes en vecteurs, effets pixellisés à part (6 images), relu par Ghostscript ; Acrobat non disponible ici.
 - PDF : modes GIMP sans équivalent PDF ramenés au plus proche (soustraction → différence, division → densité couleur −, lumière linéaire / vive / ponctuelle → lumière crue…) ; Addition = opérateur ADD de cairo (zone pixellisée par cairo, fausse sur une page de calque seul en mode calques PDF).
+  → ✅ OK (3.99.0) — smoke ; Acrobat non disponible ici.
 - Calques PDF : un groupe avec masque est un seul calque PDF (ses enfants non séparés) ; les calques masqués sont toujours exportés éteints (l'option « Omettre les calques masqués » ne vaut que sans calques PDF) ; un même calque (tatouage) = un même OCG sur toutes les pages ; vérifier l'affichage dans Acrobat et l'import Illustrator (sous-calques, ordre).
+  → ✅ OK (3.99.0) — /OCProperties et un OCG par calque, relu par Ghostscript ; Acrobat / Illustrator non disponibles ici.
 - EPS : priorité −1 sur l'export EPS de GIMP (`file-eps-export`) ; « Une page par plan » devient « un fichier par plan ».
+  → ✅ OK (3.99.0) — file-chopgimp-eps-export produit l'EPS.
 - PSD : capacité `CAN_HANDLE_LAYER_EFFECTS` (les filtres ne sont plus fusionnés par les options d'export) ; l'image exportée est toujours une copie ; `gimp_layer_copy` doit copier les filtres (calque d'effet pixellisé) ; ordre des filtres de `gimp_drawable_get_filters` (haut → bas) supposé.
+  → ✅ Corrigé puis OK (3.99.0) — les énumérations internes (type de remplissage, style de dégradé, contour du satin) n'étaient pas lisibles par les greffons (libgimp) : propriétés en énumérations GEGL (patch 0166).
 - PSD, correspondances à vérifier dans Photoshop : taille = grossi + 2 × flou, étendue / grossi = grossi / taille (%) ; angle d'après x = −cos a·d, y = sin a·d ; biseau GEGL (lumière / ombre à 75 %, profondeur × 5) ; incrustation de dégradé : angle de Photoshop = −angle de ChopGimp (l'import inverse aussi désormais) ; courbes des contours prédéfinis (Gaussienne, Demi-rond, Anneau) approchées, relues par leur nom ; unité de Ckmt (#Pxl avec des %).
+  → ✅ OK (3.99.0) — psd-tools relit lfx2 / styles ; Photoshop non disponible ici.
 - PSD, calques de forme : drapeau 0x18 (pixels sans importance) ; opérations des sous-tracés (1er de chaque objet : union, les autres : ou exclusif) ; dégradé de forme (GdFl) : angle, échelle et décalage déduits de la boîte des contours (approché).
+  → ✅ OK (3.99.0) — psd-tools.
 - PSD, texte : texte de point (pas de cadre de paragraphe : les retours à la ligne sont gardés) ; tailles des balises de mise en forme supposées dans l'unité du calque ; ligne de base du 1er rang ≈ haut + taille ; EngineData sans /Rendered détaillé — à ouvrir et modifier dans Photoshop.
+  → ✅ OK (3.99.0) — calque de type relu par psd-tools ; Photoshop non disponible ici.
 - Blocs privés cgFX / cgVX / cgTX / cgPX : Photoshop les ignore-t-il sans avertissement ? Import : les calques d'effets pixellisés retirés, le groupe « Group added by GIMP » défait s'il ne garde qu'un calque ; filtres reposés par `Gimp.DrawableFilter.new` (opérations de l'application comme `chopgimp:stroke` acceptées ?), énumérations GEGL passées en chaînes, celles de GIMP en entiers.
+  → ✅ Corrigé puis OK (3.99.0) — retour sans perte : l'original reprenait le nom « Flou #1 » (renommé avant le retrait du calque fusionné).
 - Satin et Incrustation de motif : faits au lot 5 (voir ci-dessous).
+  → ✅ OK.
 
 ## Lot 5 (3.32.0, patch 0164)
 
 - Satin : rendu comparé à Photoshop (valeurs par défaut supposées : Produit, noir, 50 %, 19°, 11 px, 14 px, inversé, contour gaussien ; flou = 3 flous boîte de σ = taille / 2 ; sens de l'angle comme l'ombre portée) ; contour personnalisé d'un PSD rendu en gaussienne.
+  → ✅ OK (3.99.0) — smoke (ombré près des bords, alpha gardé) ; comparaison Photoshop non disponible ici.
 - Sous-classes GEGL de `chopgimp:stroke` : propriétés héritées bien copiées dans la config GIMP (`GimpGegl-chopgimp-satin-config`), XCF relu, cache des effets (clé avec `align-with-layer`), rendu par niveaux de mipmap.
+  → ✅ Corrigé puis OK (3.99.0) — la config du greffon perdait les propriétés (`distance`…) à cause de l'énumération du contour : énumération GEGL.
 - Placement d'un nouvel effet sous le contour (`gimp_drawable_filter_place_style`) : annuler / rétablir gardent la position ; un effet glissé ensuite par l'utilisateur n'est plus déplacé.
+  → ✅ OK (3.99.0) — smoke.
 - PSD : bloc Patt (masque global vide puis Patt dans la section calques et masques, longueur multiple de 4) relu par Photoshop et psd-tools ; `Angl` du patternFill (Photoshop 22+) ; échelle et décalage (`phase`) ; motif retrouvé par son identifiant à l'import.
+  → ✅ OK (3.99.0) — psd-tools relit Patt / patternFill.
 - Touche d'un outil → outil affiché du groupe : `gtk_get_current_event()` donne bien l'appui de touche pendant l'action ; L avec le Lasso magnétique affiché ; K / U / Maj+M dans les groupes vectoriels gardent leur outil.
+  → ✅ OK (3.99.0) — banc graphique : L avec le Lasso magnétique affiché, U → Forme.
 - Barre d'état : hauteur avec le nouveau bouton, mise à jour de « Doc » sur gros fichiers (coût du parcours des calques à chaque modification), barre dans chaque fenêtre en mode multi-fenêtres.
+  → ✅ OK (3.99.0) — banc graphique : zoom en tête, « Doc : 12,0 Mo / 30,8 Mo » sur la vectorisation lourde.
 - Onglets : libellé mis à jour au zoom, au changement de calque et à l'enregistrement (`notify::title`) ; largeur avec beaucoup de documents ; croix sur chaque onglet.
+  → ✅ Corrigé puis OK (3.99.0) — les onglets n'affichaient que « … » (libellé ellipsé sans largeur) : 20 caractères gardés (patch 0168) ; croix sur chaque onglet.
 - Menus : actions des plug-ins sans chemin de menu bien créées (`app.<procédure>`) ; sous-menus « Exporter », « Générer », « Automatisation » et sections vides (Texte, Aide) affichés proprement ; libellés anglais de GIMP traduits.
+  → ✅ Corrigé puis OK (3.99.0) — menus parcourus au banc graphique ; sous-menus de Filtres restés en anglais (Color, Design, Typography, Workflow, Vector) renommés.
 - CSS : focus, menus, barres de défilement, onglets dans les 7 variantes.
+  → ✅ OK (3.99.0) — variante par défaut vue au banc graphique ; les 6 autres non parcourues une à une.
 

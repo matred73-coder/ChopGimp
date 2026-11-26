@@ -236,7 +236,7 @@ class SampleAverage(Gimp.PlugIn):
             name)
         procedure.set_menu_label(_("_Pipette moyenne..."))
         procedure.set_attribution("PhotoGIMP Pro", "GPL v3+", "2026")
-        procedure.add_menu_path("<Image>/Filters/Color")
+        procedure.add_menu_path("<Image>/Filters/Couleur")
 
         size_choice = Gimp.Choice.new()
         size_choice.add("1x1", 0, _("1x1 (pixel unique)"), "")

@@ -296,7 +296,7 @@ class TextStyles(Gimp.PlugIn):
                 name)
             procedure.set_menu_label(_("_Enregistrer style de texte"))
             procedure.set_attribution("PhotoGIMP Pro", "GPL v3+", "2026")
-            procedure.add_menu_path("<Image>/Filters/Typography")
+            procedure.add_menu_path("<Image>/Filters/Typographie")
 
             procedure.add_string_argument("style-name",
                                           _("_Nom du style"),
@@ -317,7 +317,7 @@ class TextStyles(Gimp.PlugIn):
                 name)
             procedure.set_menu_label(_("_Appliquer style de texte..."))
             procedure.set_attribution("PhotoGIMP Pro", "GPL v3+", "2026")
-            procedure.add_menu_path("<Image>/Filters/Typography")
+            procedure.add_menu_path("<Image>/Filters/Typographie")
 
             procedure.add_string_argument("style-name",
                                           _("_Nom du style"),
@@ -337,7 +337,7 @@ class TextStyles(Gimp.PlugIn):
                 name)
             procedure.set_menu_label(_("_Gerer les styles de texte"))
             procedure.set_attribution("PhotoGIMP Pro", "GPL v3+", "2026")
-            procedure.add_menu_path("<Image>/Filters/Typography")
+            procedure.add_menu_path("<Image>/Filters/Typographie")
 
             procedure.add_string_argument("delete-style",
                                           _("_Supprimer le style"),

@@ -1208,7 +1208,12 @@
                         "../patches/gimp-3.2.8/0161-ChopGimp-3.30.0-lot-3-completed-Blob-Brush-takes-the.patch",
                         "../patches/gimp-3.2.8/0162-ChopGimp-3.31.0-lot-4a-artboards-image-parasite-chop.patch",
                         "../patches/gimp-3.2.8/0163-ChopGimp-3.31.0-lot-4b-vector-PDF-export-ChopGimp-ob.patch",
-                        "../patches/gimp-3.2.8/0164-ChopGimp-3.32.0-lot-5-interface-Satin-chopgimp-satin.patch"
+                        "../patches/gimp-3.2.8/0164-ChopGimp-3.32.0-lot-5-interface-Satin-chopgimp-satin.patch",
+                        "../patches/gimp-3.2.8/0165-ChopGimp-3.99.0-compile-fixes-par_outlines-declared-.patch",
+                        "../patches/gimp-3.2.8/0166-ChopGimp-3.99.0-smoke-fixes-perspective-project-unpr.patch",
+                        "../patches/gimp-3.2.8/0167-ChopGimp-3.99.0-perspective-grid-parasites-read-with.patch",
+                        "../patches/gimp-3.2.8/0168-ChopGimp-3.99.0-document-tab-labels-keep-20-characte.patch",
+                        "../patches/gimp-3.2.8/0169-ChopGimp-3.99.0-an-artboard-over-no-visible-layer-is.patch"
                     ]
                 }
             ],

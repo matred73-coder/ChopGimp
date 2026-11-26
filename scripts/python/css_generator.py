@@ -335,7 +335,7 @@ class CssGenerator(Gimp.PlugIn):
                 name)
             procedure.set_menu_label(_("Generer _CSS..."))
             procedure.set_attribution("PhotoGIMP Pro", "GPL v3+", "2026")
-            procedure.add_menu_path("<Image>/Filters/Design")
+            procedure.add_menu_path("<Image>/Filters/Mise en page")
             return procedure
 
         return None

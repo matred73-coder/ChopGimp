@@ -191,7 +191,7 @@ class ContactSheet(Gimp.PlugIn):
             name)
         procedure.set_menu_label(_("_Planche contact..."))
         procedure.set_attribution("PhotoGIMP Pro", "GPL v3+", "2026")
-        procedure.add_menu_path("<Image>/Filters/Workflow")
+        procedure.add_menu_path("<Image>/Filters/Production")
 
         procedure.add_file_argument("input-folder",
                                     _("_Dossier source"),

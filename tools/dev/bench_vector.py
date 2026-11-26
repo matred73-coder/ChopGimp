@@ -6,6 +6,11 @@ Cas mesurés :
   A. vectorisation lourde : image détaillée 2000 × 2000 (cercles et
      dégradés aléatoires, graine fixe), préréglage « Photo haute fidélité »
   B. 2 000 objets simples dans un calque vectoriel
+  C. (3.99.0) le cas A dans une image 16 bits (calque vectoriel 16 bits)
+Mesures ajoutées en 3.99.0 : annulation partielle (un seul objet déplacé
+puis annulé), rafale de 40 annuler / rétablir (test de charge du rendu
+parallèle et de l'annulation partielle : le rendu final doit être
+identique au rendu de départ).
 Pour chaque cas : get_xml / set_xml, sélection au clic, glisser simulé
 (commande « drag-sim », temps par étape = image affichée pendant un
 glisser), déplacement non interactif, recoloration, annuler / rétablir,
@@ -99,6 +104,27 @@ def measure(tag, image, layer, click):
     ms, ok = timed(lambda: cmd(image, "bench-redo"))
     out(tag + ".retablir", ms if ok else -1, "" if ok else "bench-redo absent")
 
+    # 3.99.0 : annulation partielle (un seul objet modifié) et rafale
+    def pixels():
+        b = layer.get_buffer()
+        return hash(bytes(b.get(b.get_extent(), 1.0, "R'G'B'A u8", Gegl.AbyssPolicy.NONE)))
+    if cmd(image, "select-at:%d:%d" % click):
+        cmd(image, "transform-record:1:0:0:1:7:3")
+        cmd(image, "transform-again")
+        ms, ok = timed(lambda: cmd(image, "bench-undo"))
+        out(tag + ".annuler_partiel", ms if ok else -1, "un objet déplacé")
+        ms, ok = timed(lambda: cmd(image, "bench-redo"))
+        out(tag + ".retablir_partiel", ms if ok else -1)
+    ref = pixels()
+    t = time.perf_counter()
+    n_ok = 0
+    for i in range(40):
+        n_ok += bool(cmd(image, "bench-undo"))
+        n_ok += bool(cmd(image, "bench-redo"))
+    ms = (time.perf_counter() - t) * 1000.0
+    out(tag + ".rafale_40_annuler_retablir", ms,
+        "%d/80 réussis, rendu %s" % (n_ok, "identique" if pixels() == ref else "DIFFÉRENT"))
+
     # recoloration de tout le calque
     cmd(image, "select-all")
     out(tag + ".recolorer", timed(lambda: run("chopgimp-vobjects-recolor", image=image,
@@ -120,9 +146,11 @@ def measure(tag, image, layer, click):
         im2.delete()
 
 
-def case_trace():
+def case_trace(tag="A", precision=None):
     W = H = 2000
     image = Gimp.Image.new(W, H, Gimp.ImageBaseType.RGB)
+    if precision is not None:
+        image.convert_precision(precision)
     src = Gimp.Layer.new(image, "Source", W, H, Gimp.ImageType.RGB_IMAGE, 100,
                          Gimp.LayerMode.NORMAL)
     image.insert_layer(src, None, 0)
@@ -147,10 +175,11 @@ def case_trace():
     ms = (time.perf_counter() - t) * 1000.0
     layer = r.index(1) if r is not None and r.index(0) == Gimp.PDBStatusType.SUCCESS else None
     xml = get_xml(layer) if layer else ""
-    out("A.vectoriser", ms, "%d objets, %d Ko de XML" % (xml.count("<path"), len(xml) // 1024))
+    out(tag + ".vectoriser", ms, "%d objets, %d Ko de XML, %s" %
+        (xml.count("<path"), len(xml) // 1024, image.get_precision().value_nick if layer else ""))
     if layer:
         image.undo_enable()
-        measure("A", image, layer, (1000, 1000))
+        measure(tag, image, layer, (1000, 1000))
     image.delete()
 
 
@@ -193,7 +222,11 @@ def case_simple():
     image.delete()
 
 
-for case in (case_simple, case_trace):
+def case_trace16():
+    case_trace("C", Gimp.Precision.U16_NON_LINEAR)
+
+
+for case in (case_simple, case_trace, case_trace16):
     try:
         case()
     except Exception:
