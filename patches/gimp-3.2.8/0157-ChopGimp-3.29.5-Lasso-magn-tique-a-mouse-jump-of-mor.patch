@@ -1,0 +1,124 @@
+From b3fa79d4de733ac7e67d11d3a9fd5927e08b807d Mon Sep 17 00:00:00 2001
+From: ChopGimp <mathieu.redon@proton.me>
+Date: Thu, 26 Nov 2026 13:30:38 +0100
+Subject: [PATCH 157/158] =?UTF-8?q?ChopGimp=203.29.5:=20Lasso=20magn=C3=A9?=
+ =?UTF-8?q?tique:=20a=20mouse=20jump=20of=20more=20than=20100=20screen=20p?=
+ =?UTF-8?q?x=20follows=20the=20edge=20through=20intermediate=20positions?=
+ =?UTF-8?q?=20every=2040=20px,=20no=20point=20placed=20off=20the=20edge=20?=
+ =?UTF-8?q?(CHOPGIMP=5FNO=5FLASSO=5FSTEPS)?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+---
+ app/tools/gimpiscissorstool.c | 68 +++++++++++++++++++++++++++++++++++
+ app/tools/gimpiscissorstool.h |  3 ++
+ 2 files changed, 71 insertions(+)
+
+diff --git a/app/tools/gimpiscissorstool.c b/app/tools/gimpiscissorstool.c
+index 10f9e78..aebedd0 100644
+--- a/app/tools/gimpiscissorstool.c
++++ b/app/tools/gimpiscissorstool.c
+@@ -2424,6 +2424,8 @@ icurve_create_scan_convert (ICurve *curve)
+ static void
+ magnetic_clear_live (GimpIscissorsTool *iscissors)
+ {
++  iscissors->live_has_prev = FALSE;
++
+   if (iscissors->live)
+     {
+       isegment_free (iscissors->live);
+@@ -2499,10 +2501,76 @@ isegment_point_from_start (ISegment *segment,
+  *  pixels, so the result does not depend on the zoom)
+  */
+ static void
++magnetic_update_live_one (GimpIscissorsTool *iscissors,
++                          const GimpCoords  *coords,
++                          GdkModifierType    state,
++                          GimpDisplay       *display);
++
++/*  ChopGimp 3.29.5: a jump of the mouse of more than 100 screen pixels
++ *  (fast moves): the edge is followed through intermediate positions
++ *  every 40 screen pixels, as if the mouse had moved slowly, so that no
++ *  point is placed off the edge (CHOPGIMP_NO_LASSO_STEPS=1: as before)
++ */
++static void
+ magnetic_update_live (GimpIscissorsTool *iscissors,
+                       const GimpCoords  *coords,
+                       GdkModifierType    state,
+                       GimpDisplay       *display)
++{
++  GimpDisplayShell *shell = gimp_display_get_shell (display);
++  gdouble           scale = (shell && shell->scale_x > 0.0) ? shell->scale_x : 1.0;
++  ISegment         *last  = g_queue_peek_tail (iscissors->curve->segments);
++
++  if (last && ! (state & GDK_MOD1_MASK) && ! g_getenv ("CHOPGIMP_NO_LASSO_STEPS"))
++    {
++      gdouble px, py, dist;
++
++      if (iscissors->live_has_prev)
++        {
++          px = iscissors->live_px;
++          py = iscissors->live_py;
++        }
++      else if (last->x1 == last->x2 && last->y1 == last->y2)
++        {
++          px = last->x1;
++          py = last->y1;
++        }
++      else
++        {
++          px = last->x2;
++          py = last->y2;
++        }
++
++      dist = hypot (coords->x - px, coords->y - py) * scale;
++
++      if (dist > 100.0)
++        {
++          gint n = MIN ((gint) ceil (dist / 40.0), 64);
++
++          for (gint k = 1; k < n; k++)
++            {
++              GimpCoords c = *coords;
++
++              c.x = px + (coords->x - px) * k / n;
++              c.y = py + (coords->y - py) * k / n;
++
++              magnetic_update_live_one (iscissors, &c, state, display);
++            }
++        }
++    }
++
++  magnetic_update_live_one (iscissors, coords, state, display);
++
++  iscissors->live_has_prev = TRUE;
++  iscissors->live_px       = coords->x;
++  iscissors->live_py       = coords->y;
++}
++
++static void
++magnetic_update_live_one (GimpIscissorsTool *iscissors,
++                          const GimpCoords  *coords,
++                          GdkModifierType    state,
++                          GimpDisplay       *display)
+ {
+   GimpTool             *tool    = GIMP_TOOL (iscissors);
+   GimpIscissorsOptions *options = GIMP_ISCISSORS_TOOL_GET_OPTIONS (tool);
+diff --git a/app/tools/gimpiscissorstool.h b/app/tools/gimpiscissorstool.h
+index 18be8e2..991aa14 100644
+--- a/app/tools/gimpiscissorstool.h
++++ b/app/tools/gimpiscissorstool.h
+@@ -85,6 +85,9 @@ struct _GimpIscissorsTool
+   gboolean        magnetic;     /*  TRUE for GimpMagneticLassoTool          */
+   ISegment       *live;         /*  from the last point to the pointer      */
+   gboolean        live_free;    /*  Alt: straight line, no edge following   */
++  /*  ChopGimp 3.29.5: the last pointer position followed (image coords)  */
++  gboolean        live_has_prev;
++  gdouble         live_px, live_py;
+ };
+ 
+ struct _GimpIscissorsToolClass
+-- 
+2.53.0
+

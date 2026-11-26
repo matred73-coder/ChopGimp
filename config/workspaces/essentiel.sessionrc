@@ -33,7 +33,7 @@
                 (aux-info
                     (show-button-bar "true"))))
         (book
-            (position 250)
+            (position 220)
             (current-page 0)
             (dockable "gimp-undo-history"
                 (tab-style automatic)
@@ -74,7 +74,7 @@
                     (frame-1-mode "pixel")
                     (frame-2-mode "rgb-percent"))))
         (book
-            (position 330)
+            (position 400)
             (current-page 0)
             (dockable "gimp-layer-list"
                 (tab-style name)

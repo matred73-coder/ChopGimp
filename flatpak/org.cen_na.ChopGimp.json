@@ -1196,7 +1196,13 @@
                         "../patches/gimp-3.2.8/0149-ChopGimp-3.29.3-Direct-Selection-A-like-Illustrator-.patch",
                         "../patches/gimp-3.2.8/0150-ChopGimp-3.29.4-fast-cairo-ARGB32-to-layer-conversio.patch",
                         "../patches/gimp-3.2.8/0151-ChopGimp-3.29.4-vector-objects-rasterized-in-paralle.patch",
-                        "../patches/gimp-3.2.8/0152-ChopGimp-3.29.4-fast-cairo-ARGB32-conversion-limited.patch"
+                        "../patches/gimp-3.2.8/0152-ChopGimp-3.29.4-fast-cairo-ARGB32-conversion-limited.patch",
+                        "../patches/gimp-3.2.8/0153-ChopGimp-3.29.5-Aligner-sur-l-objet-cl-without-a-key.patch",
+                        "../patches/gimp-3.2.8/0154-ChopGimp-3.29.5-Direct-Selection-a-sub-path-drawn-wh.patch",
+                        "../patches/gimp-3.2.8/0155-ChopGimp-3.29.5-Transition-with-groups-as-key-object.patch",
+                        "../patches/gimp-3.2.8/0156-ChopGimp-3.29.5-live-paint-recomputed-incrementally-.patch",
+                        "../patches/gimp-3.2.8/0157-ChopGimp-3.29.5-Lasso-magn-tique-a-mouse-jump-of-mor.patch",
+                        "../patches/gimp-3.2.8/0158-ChopGimp-3.29.5-Red-finir-les-couleurs-Assigner-les-.patch"
                     ]
                 }
             ],

@@ -2079,6 +2079,156 @@ try:
     except Exception:
         report(False, "3.29.3", traceback.format_exc().replace("\n", " | ")[:400])
 
+    # 3.29.5 : finitions vectorielles (objet clé automatique, transitions
+    # de groupes / orientées / tracé de base, dégradé libre en lignes,
+    # dégradé en travers d'un contour à profil, peinture dynamique incrémentale)
+    try:
+        import re as re16
+
+        def vx16(layer):
+            r = run("chopgimp-vobjects-get-xml", layer=layer)
+            return r.index(1) if r is not None and r.index(0) == Gimp.PDBStatusType.SUCCESS else ""
+
+        def scene16(w, h, shapes, fill=True, stroke=True, sw=2):
+            im = Gimp.Image.new(w, h, Gimp.ImageBaseType.RGB)
+            pa = Gimp.Path.new(im, "Formes")
+            im.insert_path(pa, None, 0)
+            for pts, closed in shapes:
+                st = pa.bezier_stroke_new_moveto(*pts[0])
+                for x, y in pts[1:]:
+                    pa.bezier_stroke_lineto(st, x, y)
+                if closed:
+                    pa.stroke_close(st)
+            vl = Gimp.VectorLayer.new(im, pa)
+            im.insert_layer(vl, None, 0)
+            vl.set_enable_fill(fill); vl.set_enable_stroke(stroke); vl.set_stroke_width(sw)
+            vl.refresh()
+            im.set_selected_layers([vl])
+            def c(cmd):
+                r = run("chopgimp-vobjects-command", image=im, command=cmd)
+                return bool(r is not None and r.index(0) == Gimp.PDBStatusType.SUCCESS and r.index(1))
+            c("split-new")
+            return im, vl, c
+
+        def sq(x, y, s):
+            return ([(x, y), (x + s, y), (x + s, y + s), (x, y + s)], True)
+
+        def alpha16(layer, x, y):
+            ox, oy = layer.get_offsets()[1:]
+            if x < ox or y < oy or x >= ox + layer.get_width() or y >= oy + layer.get_height():
+                return 0
+            b = layer.get_buffer()
+            return bytes(b.get(Gegl.Rectangle.new(x - ox, y - oy, 1, 1), 1.0,
+                               "R'G'B'A u8", Gegl.AbyssPolicy.NONE))[3]
+
+        def pixels16(layer):
+            b = layer.get_buffer()
+            return bytes(b.get(b.get_extent(), 1.0, "R'G'B'A u8", Gegl.AbyssPolicy.NONE))
+
+        # objet clé automatique : « Aligner sur : l'objet clé » sans objet
+        # clé = l'objet du dessus (ici le second carré, à x = 100)
+        im, vl, c = scene16(300, 200, [sq(20, 20, 40), sq(100, 100, 60)])
+        c("select-all"); c("key-none"); c("align-to:key")
+        ok_al = c("align-left")
+        c("align-to:selection")
+        report(ok_al and alpha16(vl, 30, 40) == 0 and alpha16(vl, 110, 40) > 0,
+               "Aligner sur l'objet clé sans objet clé : l'objet du dessus sert de clé",
+               "alpha (30,40)=%d (110,40)=%d" % (alpha16(vl, 30, 40), alpha16(vl, 110, 40)))
+        im.delete()
+
+        # transition entre deux groupes (2 formes chacun) : étapes = groupes
+        im, vl, c = scene16(400, 300, [sq(20, 20, 30), sq(60, 20, 30),
+                                       sq(300, 200, 30), sq(340, 200, 30)])
+        c("select-at:35:35"); c("select-add-at:75:35"); c("group")
+        c("select-at:315:215"); c("select-add-at:355:215"); c("group")
+        c("select-at:35:35"); c("select-add-at:315:215")
+        ok_bm = c("blend-make")
+        ok_bs = c("blend-steps:3")
+        x = vx16(vl)
+        steps = re16.findall(r'<group [^>]*blend="step"', x)
+        report(ok_bm and ok_bs and len(steps) == 3 and x.count("<path ") == 4 + 3 * 2,
+               "Transition : un groupe sert d'objet clé (étapes = groupes interpolés)",
+               "%d étapes-groupes, %d tracés" % (len(steps), x.count("<path ")))
+        im.delete()
+
+        # tracé de base : les objets clés vont sur le tracé ; orienter le
+        # long du tracé fait tourner les étapes
+        im, vl, c = scene16(400, 300, [sq(20, 100, 40), sq(320, 100, 40),
+                                       ([(100, 250), (200, 60), (300, 250)], False)])
+        c("select-at:25:105"); c("select-add-at:355:105"); c("blend-make")
+        c("blend-steps:3")
+        c("select-at:25:105"); c("select-add-at:200:60")
+        ok_sp = c("blend-spine")
+        a_old, a_new = alpha16(vl, 40, 120), alpha16(vl, 100, 250)
+        report(ok_sp and a_old == 0 and a_new > 0,
+               "Transition : le tracé de base déplace les objets clés",
+               "alpha ancien centre %d, début du tracé %d" % (a_old, a_new))
+        c("select-at:100:250")
+        x0 = vx16(vl)
+        ok_or = c("blend-steps:3:1")
+        x1 = vx16(vl)
+        d0 = re16.findall(r'blend="step"[^>]*d="([^"]*)"', x0)
+        d1 = re16.findall(r'blend="step"[^>]*d="([^"]*)"', x1)
+        report(ok_or and "orient=path" in x1 and len(d1) == 3 and d0 != d1,
+               "Transition : « orienter le long du tracé » fait tourner les étapes")
+        im.delete()
+
+        # dégradé libre : mode Lignes (couleurs le long de la ligne)
+        im, vl, c = scene16(200, 200, [sq(20, 20, 160)], stroke=False)
+        c("select-at:100:100"); c("freeform-make")
+        x = vx16(vl)
+        pts = "points;0.1,0.5,#ff0000ff;0.9,0.5,#0000ffff;0.5,0.15,#00ff00ff"
+        xa = re16.sub(r'material="points[^"]*"', 'material="%s"' % pts, x)
+        run("chopgimp-vobjects-set-xml", layer=vl, xml=xa)
+        qa = pixels16(vl)
+        xb = re16.sub(r'material="points[^"]*"', 'material="%s"' % pts.replace("#0000ffff", "#0000ffff,l"), x)
+        run("chopgimp-vobjects-set-xml", layer=vl, xml=xb)
+        qb = pixels16(vl)
+        report("#0000ffff,l" in vx16(vl) and qa != qb,
+               "Dégradé libre : mode Lignes (gardé dans le XML, rendu différent)")
+        im.delete()
+
+        # dégradé en travers d'un contour à profil : épaisseur locale
+        im, vl, c = scene16(300, 120, [([(20, 60), (280, 60)], False)], fill=False, sw=40)
+        c("select-all"); c("stroke-gradient:2"); c("width-profile:taper-end")
+        x = vx16(vl)
+        m = re16.search(r'<stroke ([^>]*?)/>', x)
+        ok_x = False
+        if m:
+            attrs = re16.sub(r'(type|color)="[^"]*"\s*', '', m.group(1))
+            xs = x.replace(m.group(0), '<stroke type="linear" x1="0" y1="0" x2="1" y2="0" %s>'
+                           '<stop offset="0" color="0 0 0 1"/><stop offset="1" color="1 1 1 1"/>'
+                           '</stroke>' % attrs)
+            run("chopgimp-vobjects-set-xml", layer=vl, xml=xs)
+            qa = pixels16(vl)
+            os.environ["CHOPGIMP_NO_LOCAL_ACROSS"] = "1"
+            run("chopgimp-vobjects-set-xml", layer=vl, xml=xs)
+            qb = pixels16(vl)
+            del os.environ["CHOPGIMP_NO_LOCAL_ACROSS"]
+            ok_x = 'stroke-gradient="2"' in xs and qa != qb
+        report(ok_x, "Dégradé en travers d'un contour à profil : il suit l'épaisseur locale")
+        im.delete()
+
+        # peinture dynamique : recalcul incrémental (zones retrouvées par
+        # leur forme), couleurs gardées, plus rapide
+        lines = [([(10 + 12 * i, 5), (10 + 12 * i, 395)], False) for i in range(30)] + \
+                [([(5, 10 + 12 * i), (395, 10 + 12 * i)], False) for i in range(30)]
+        im, vl, c = scene16(400, 400, lines, fill=False, sw=1)
+        c("select-all")
+        ok_lm = c("livepaint-make")
+        c("livepaint-fill:16:16:#ff0000")
+        t0 = time.time(); c("livepaint-gap:0.5"); t_inc = time.time() - t0
+        x_inc = vx16(vl)
+        os.environ["CHOPGIMP_LP_NO_INCREMENTAL"] = "1"
+        t0 = time.time(); c("livepaint-gap:0.25"); t_full = time.time() - t0
+        del os.environ["CHOPGIMP_LP_NO_INCREMENTAL"]
+        report(ok_lm and x_inc.count('color="1 0 0 1"') >= 1 and t_inc < t_full,
+               "Peinture dynamique : recalcul incrémental (couleur gardée, plus rapide)",
+               "%.2f s au lieu de %.2f s, %d zones" % (t_inc, t_full, x_inc.count('livepaint="face"')))
+        im.delete()
+    except Exception:
+        report(False, "3.29.5", traceback.format_exc().replace("\n", " | ")[:400])
+
     # 4. Réglages d'usine présents (thème, icônes, menus, raccourcis)
     data = Gimp.data_directory()
     sysconf = Gimp.sysconf_directory()

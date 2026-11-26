@@ -37,7 +37,7 @@
                 (aux-info
                     (show-button-bar "true"))))
         (book
-            (position 250)
+            (position 220)
             (current-page 0)
             (dockable "chopgimp-appearance"
                 (tab-style automatic)
@@ -61,7 +61,7 @@
                 (aux-info
                     (show-button-bar "true"))))
         (book
-            (position 330)
+            (position 400)
             (current-page 0)
             (dockable "gimp-layer-list"
                 (tab-style name)

@@ -1,0 +1,43 @@
+From 47a9921da1c7c15e296fce4743297455e0f40ce0 Mon Sep 17 00:00:00 2001
+From: ChopGimp <mathieu.redon@proton.me>
+Date: Thu, 26 Nov 2026 13:30:38 +0100
+Subject: [PATCH 153/158] =?UTF-8?q?ChopGimp=203.29.5:=20=C2=AB=20Aligner?=
+ =?UTF-8?q?=20sur=20:=20l'objet=20cl=C3=A9=20=C2=BB=20without=20a=20key=20?=
+ =?UTF-8?q?object=20makes=20the=20frontmost=20selected=20object=20the=20ke?=
+ =?UTF-8?q?y=20(as=20Illustrator)=20instead=20of=20aligning=20on=20the=20s?=
+ =?UTF-8?q?election=20(CHOPGIMP=5FNO=5FAUTO=5FKEY)?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+---
+ app/path/chopgimp-vobject-ops.c | 13 +++++++++++++
+ 1 file changed, 13 insertions(+)
+
+diff --git a/app/path/chopgimp-vobject-ops.c b/app/path/chopgimp-vobject-ops.c
+index 8d5ca38..5ecc89a 100644
+--- a/app/path/chopgimp-vobject-ops.c
++++ b/app/path/chopgimp-vobject-ops.c
+@@ -883,6 +883,19 @@ chopgimp_vobjects_align (GimpVectorLayer *layer,
+    */
+   key = chopgimp_vtransform_get_key (layer);
+ 
++  /*  3.29.5: « Aligner sur : l'objet clé » without a key object: the
++   *  frontmost selected object becomes the key (as Illustrator does),
++   *  shown with its key outline, instead of aligning on the selection
++   *  (CHOPGIMP_NO_AUTO_KEY=1: the old behaviour)
++   */
++  if (! key && ! dist && boxes->len > 1 &&
++      chopgimp_vtransform_get_align_to () == CHOPGIMP_ALIGN_TO_KEY &&
++      ! g_getenv ("CHOPGIMP_NO_AUTO_KEY"))
++    {
++      key = g_array_index (boxes, Box, boxes->len - 1).id;   /* sorted bottom → top */
++      chopgimp_vtransform_set_key (layer, key);
++    }
++
+   if (key && boxes->len > 1 && ! dist)
+     {
+       for (guint i = 0; i < boxes->len; i++)
+-- 
+2.53.0
+

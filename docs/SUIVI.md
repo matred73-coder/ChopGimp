@@ -1074,3 +1074,60 @@ interrupteurs coupés). Cas A : vectorisation 2000 × 2000, 3 595 objets ; cas B
 Tests : smoke 195 OK / 0 échec ; banc graphique : vectoriser, glisser un objet,
 recolorer, annuler deux fois, sans plantage.
 
+
+## 3.29.5 — Finitions vectorielles (lot 1 du plan final) — **non compilé**
+
+Patchs 0153 à 0158. Code écrit et relu, **ni compilé ni testé** : la
+compilation, les tests (smoke, banc de performance, banc graphique) et la
+livraison se feront en une fois au lot 6 (4.0.0). VERSION inchangée (3.29.4).
+
+- **Objets** : « Aligner sur : l'objet clé » sans objet clé = l'objet du dessus
+  devient l'objet clé (contour doré), comme Illustrator (`CHOPGIMP_NO_AUTO_KEY`).
+- **Sélection directe (A)** : un sous-tracé dessiné pendant l'édition de
+  plusieurs objets devient un nouvel objet (style du dernier objet édité) au
+  lieu d'être perdu (`CHOPGIMP_NO_MULTI_NEW_PATH`) ; poignées d'angles
+  dynamiques redessinées quand l'objet change et pendant qu'on tire le rayon ;
+  barre d'options de A : les objets en premier, le champ « Rayon » ne passe
+  plus dans « ⋯ ».
+- **Transition** : un **groupe** sert d'objet clé (formes appariées dans
+  l'ordre, chaque étape est un groupe ; `CHOPGIMP_NO_BLEND_GROUPS`) ;
+  **orienter le long du tracé** fait tourner les étapes selon la tangente
+  (`CHOPGIMP_NO_BLEND_ORIENT`, PDB `blend-steps:N:1`) ; **Remplacer le tracé de
+  base** place les objets clés sur le tracé (début, fin, répartis ;
+  `CHOPGIMP_NO_SPINE_KEYS`) ; avec plus de deux clés, chaque tronçon suit sa
+  portion du tracé.
+- **Dégradé libre** : **mode Lignes** (points reliés, la couleur suit la ligne ;
+  spec `x,y,#rrggbbaa,l`) ; modifiable à l'**outil Dégradé** sur un calque
+  vectoriel (clic : point, glisser, Maj+clic : colorer, Alt+clic : retirer ;
+  option « Dégradé libre : Lignes » ; un objet sans dégradé libre en reçoit un ;
+  code partagé avec l'outil Filet ; `CHOPGIMP_NO_GRADIENT_FREEFORM`).
+- **Dégradé en travers d'un contour à profil** : il va du bord gauche au bord
+  droit à l'épaisseur locale (profil lissé comme le contour ;
+  `CHOPGIMP_NO_LOCAL_ACROSS`).
+- **Peinture dynamique** : recalcul **incrémental** — zones et segments
+  inchangés retrouvés par leur forme (sans échantillonnage), les autres
+  comparés seulement aux anciennes zones dont la boîte les touche (au lieu de
+  toutes) (`CHOPGIMP_LP_NO_INCREMENTAL`).
+- **Lasso magnétique** : un saut de souris de plus de 100 px suit le bord par
+  des positions intermédiaires tous les 40 px (`CHOPGIMP_NO_LASSO_STEPS`).
+- **Mise en page** : Redéfinir les couleurs (bouton « Assigner les couleurs
+  globales » sur sa ligne, fenêtre 520 × 640) ; espaces Essentiel et
+  Illustration : groupe de panneaux du milieu (Aspect, Contour…) plus haut.
+- **Déjà fermés avant ce lot** (vérifiés dans le code, tests existants) :
+  Plume = une annulation par nouvel objet, contours non mis à l'échelle
+  (option), sélection d'objets dans le XCF (3.28.2) ; glisser-déposer et
+  réordonner les couleurs globales, glisser un symbole sur le canevas et
+  occurrences décalées, double-clic de la Sélection de peinture dynamique,
+  Ajouter au groupe depuis d'autres niveaux (3.28.2) ; vectorisation
+  dynamique qui suit la mise à l'échelle de l'image (3.27.5, test « suit
+  Mettre l'image à l'échelle ») ; boutons de Redéfinir en bas (3.27.x).
+- **Tests ajoutés** (tools/smoke_test.py, bloc 3.29.5) : objet clé automatique,
+  transition de groupes, tracé de base qui déplace les clés, orientation des
+  étapes, dégradé libre en lignes, dégradé en travers à l'épaisseur locale,
+  peinture dynamique incrémentale (couleur gardée, plus rapide).
+- **À vérifier à la compilation (lot 6)** : compilation de l'ensemble ; outil
+  Dégradé sur calque vectoriel (initialisation, préservation pendant le
+  glisser, tracé des points) ; poignées d'angles en A au banc graphique ;
+  nouveau sous-tracé en A multi-objets ; lasso magnétique rapide ;
+  gain mesuré de la peinture dynamique et `bench_vector.sh` sans régression.
+- **Limites acceptées** : aucune.

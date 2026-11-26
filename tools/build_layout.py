@@ -137,10 +137,11 @@ def workspace_books(name):
                             dockable("chopgimp-global-colors"), dockable("chopgimp-symbols"),
                             dockable("gimp-gradient-list")]),
                 # 3.27.2 : Aspect et Contour des objets vectoriels en tête
-                book(250, [dockable("chopgimp-appearance"), dockable("chopgimp-stroke"),
+                # 3.29.5 : groupe du milieu plus haut (Aspect n'y est plus tassé)
+                book(220, [dockable("chopgimp-appearance"), dockable("chopgimp-stroke"),
                            dockable("gimp-path-list", tab="name", preview=32),
                            dockable("gimp-undo-history"), dockable("gimp-symmetry-editor")]),
-                book(330, [dockable("gimp-layer-list", tab="name", preview=32),
+                book(400, [dockable("gimp-layer-list", tab="name", preview=32),
                            dockable("gimp-channel-list", tab="name", preview=32)]))
     return None
 
@@ -153,7 +154,8 @@ def sessionrc(workspace="essentiel"):
                         dockable("gimp-gradient-list"), dockable("gimp-pattern-grid")])
     # v3 : les options d'outil sont dans la barre d'options horizontale ;
     # le panneau complet reste accessible (bouton à droite de la barre).
-    props = book(250, [dockable("gimp-undo-history"),
+    # 3.29.5 : groupe du milieu plus haut (le panneau Aspect y était tassé)
+    props = book(220, [dockable("gimp-undo-history"),
                        dockable("chopgimp-appearance"),
                        dockable("chopgimp-stroke"),
                        dockable("chopgimp-character"),
@@ -162,7 +164,7 @@ def sessionrc(workspace="essentiel"):
                        dockable("chopgimp-text-styles"),
                        dockable("gimp-brush-grid"),
                        dockable("gimp-cursor-view", extra=['(frame-1-mode "pixel")', '(frame-2-mode "rgb-percent")'])])
-    layers = book(330, [dockable("gimp-layer-list", tab="name", preview=32),
+    layers = book(400, [dockable("gimp-layer-list", tab="name", preview=32),
                         dockable("gimp-channel-list", tab="name", preview=32),
                         dockable("gimp-path-list", tab="name", preview=32)])
     if workspace != "essentiel":
