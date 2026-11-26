@@ -78,7 +78,8 @@ outils = ["      <section>"] + ["  " + l for l in get["_Tools"]] + ["      </sec
 # « Fenêtres ancrables ».
 PANNEAUX = [["dialogs-layers", "dialogs-channels", "dialogs-paths",
              "dialogs-appearance", "dialogs-stroke", "dialogs-global-colors",
-             "dialogs-symbols", "dialogs-transform", "dialogs-vbrushes"],
+             "dialogs-symbols", "dialogs-transform", "dialogs-vbrushes",
+             "dialogs-artboards"],
             ["dialogs-colors", "dialogs-palettes", "dialogs-gradients", "dialogs-patterns",
              "dialogs-brushes", "dialogs-fonts"],
             ["dialogs-character", "dialogs-paragraph", "dialogs-glyphs", "dialogs-text-styles",
@@ -349,6 +350,9 @@ VECTEUR_MENU = [
                               "layers-vobjects-brush-options"],
                              ["layers-vobjects-brush-define", "dialogs-vbrushes"],
                              ["layers-vobjects-brush-release", "layers-vobjects-brush-expand"]])],
+    # 3.31.0 (lot 4a) : Perspective (Illustrator : Objet > Perspective)
+    [("Pe_rspective", [["view-perspective-attach", "view-perspective-release"],
+                       ["view-perspective-grid-show"]])],
     # 3.28.1 (lot V6 points 6 et 7) : Peinture dynamique, Symboles
     [("_Peinture dynamique", [["layers-vobjects-livepaint-make", "layers-vobjects-livepaint-add"],
                               ["layers-vobjects-livepaint-gap"],
@@ -553,6 +557,19 @@ def insert_after_section_of(block, marker, extra):
 
 
 vue = insert_after_section_of(get["_View"], "app.view-show-guides<", GUIDES_SECTION)
+# 3.31.0 (lot 4a) : Grille de perspective (Illustrator : Affichage > Grille
+# de perspective) et plans de travail, après les guides et la grille
+PERSPECTIVE_SECTION = (["      <section>"] +
+                       acts(["view-show-artboards"], 8) +
+                       submenu("Grille de _perspective",
+                               [["view-perspective-grid-show", "view-perspective-grid-snap",
+                                 "view-perspective-grid-lock"],
+                                ["view-perspective-grid-1", "view-perspective-grid-2",
+                                 "view-perspective-grid-3"],
+                                ["view-perspective-grid-reset"],
+                                ["view-perspective-attach", "view-perspective-release"]], 8) +
+                       ["      </section>"])
+vue = insert_after_section_of(vue, "app.image-configure-grid<", PERSPECTIVE_SECTION)
 affichage = insert_before_close(vue, ["      <section>"] + ["  " + l for l in apparence] +
                                 ["      </section>",
                                  "      <section>",
@@ -560,8 +577,13 @@ affichage = insert_before_close(vue, ["      <section>"] + ["  " + l for l in ap
                                  '        <item><attribute name="action">app.view-timelapse</attribute></item>',
                                  "      </section>"])
 
+# 3.31.0 (lot 4a) : Fichier > Exporter les plans de travail, après « Exporter sous »
+fichier = insert_after_section_of(get["_File"], "app.file-export-as<",
+                                  ["      <section>"] + acts(["file-export-artboards"], 8) +
+                                  ["      </section>"])
+
 order = [
-    get["_File"],
+    fichier,
     insert_before_close(get["_Edit"], [
         "      <section>",
         "        <submenu>",

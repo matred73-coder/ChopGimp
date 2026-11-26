@@ -30,6 +30,8 @@
 (action "tools-live-paint-select" "<Shift>k")
 # Plage de couleurs
 (action "tools-by-color-select" "<Shift><Alt>w")
+# Plan de travail (Illustrator)
+(action "tools-artboard" "<Shift>o")
 # Recadrage
 (action "tools-crop" "c")
 # Perspective (transformation)
@@ -338,6 +340,8 @@
 (action "view-show-rulers" "<Primary>r")
 # Repères
 (action "view-show-guides" "<Primary>semicolon")
+# Grille de perspective
+(action "view-perspective-grid-show" "<Primary><Shift><Alt>i")
 # Grille
 (action "view-show-grid" "<Primary>apostrophe")
 # Magnétisme

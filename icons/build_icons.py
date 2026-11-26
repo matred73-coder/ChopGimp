@@ -1106,6 +1106,50 @@ def _repeat_mirror():
         s += rect(7.5, y, 1.0, 2.2)
     return s
 
+
+# ─── 3.31.0 : plans de travail, grille de perspective ──────────────────
+@icon("chopgimp-tool-artboard")
+def _artboard_tool():
+    # Deux pages (plans de travail) décalées, la première avec ses coins
+    s = rect_outline(5.0, 4.5, 9.5, 10.0, 1.0, 0.55)
+    s += rect_outline(1.5, 1.5, 9.5, 10.0)
+    for x, y in ((1.5, 1.5), (11.0, 1.5), (1.5, 11.5), (11.0, 11.5)):
+        s += rect(x - 1.0, y - 1.0, 2.0, 2.0)
+    return s
+
+
+@icon("chopgimp-artboards")
+def _artboards_panel():
+    # Panneau Plans de travail : trois pages en liste
+    s = ""
+    for i, y in enumerate((1.5, 6.0, 10.5)):
+        s += rect_outline(1.5, y, 4.0, 4.0, 1.0, 1.0 if i == 0 else 0.6)
+        s += rect(7.0, y + 1.4, 7.5, 1.2, 0, 1.0 if i == 0 else 0.6)
+    return s
+
+
+@icon("chopgimp-tool-perspective-grid")
+def _perspective_grid_tool():
+    # Deux plans en perspective qui fuient vers l'horizon, l'arête au centre
+    s = line(0.8, 5.0, 15.2, 5.0, 0.8, op=0.55)        # horizon
+    s += line(8.0, 4.0, 8.0, 15.0, 1.2)                # arête avant
+    for k in (0.0, 0.5, 1.0):                           # lignes de fuite
+        y0, y1 = 4.0 + 11.0 * k, 5.0 + 3.0 * k
+        s += line(8.0, y0, 1.0, y1, 0.9)
+        s += line(8.0, y0, 15.0, y1, 0.9)
+    s += line(4.5, 4.5, 4.5, 11.5, 0.9, op=0.7)
+    s += line(11.5, 4.5, 11.5, 11.5, 0.9, op=0.7)
+    return s
+
+
+@icon("chopgimp-tool-perspective-select")
+def _perspective_select_tool():
+    # Une flèche de sélection sur un plan en perspective
+    s = polygon([(1.0, 13.5), (9.0, 9.0), (15.0, 10.5), (7.0, 15.5)], 0.55)
+    s += cursor_arrow(4.0, 1.0, 0.95)
+    return s
+
+
 def main():
     os.makedirs(OUT, exist_ok=True)
     for name, fn in sorted(ICONS.items()):

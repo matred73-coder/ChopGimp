@@ -61,6 +61,9 @@
             (visible yes))
         (GimpToolInfo "gimp-perspective-tool"
             (icon-name "gimp-tool-perspective")
+            (visible yes))
+        (GimpToolInfo "gimp-artboard-tool"
+            (icon-name "chopgimp-tool-artboard")
             (visible yes))))
 (GimpToolGroup "tool group"
     (visible yes)
@@ -245,6 +248,16 @@
             (visible yes))
         (GimpToolInfo "gimp-vblend-tool"
             (icon-name "chopgimp-tool-blend")
+            (visible yes))))
+(GimpToolGroup "tool group"
+    (visible yes)
+    (active-tool "gimp-perspective-grid-tool")
+    (children
+        (GimpToolInfo "gimp-perspective-grid-tool"
+            (icon-name "chopgimp-tool-perspective-grid")
+            (visible yes))
+        (GimpToolInfo "gimp-perspective-select-tool"
+            (icon-name "chopgimp-tool-perspective-select")
             (visible yes))))
 (GimpToolInfo "gimp-text-tool"
     (icon-name "gimp-tool-text")

@@ -2556,6 +2556,123 @@ try:
     except Exception:
         report(False, "3.30.0", traceback.format_exc().replace("\n", " | ")[:400])
 
+    # 3.31.0 (lot 4a) : plans de travail, grille de perspective
+    try:
+        def ab(im, cmd):
+            r = run("chopgimp-artboards-command", image=im, command=cmd)
+            ok = r is not None and r.index(0) == Gimp.PDBStatusType.SUCCESS and r.index(1)
+            return ok, (r.index(2) if r is not None else "")
+
+        def pg(im, cmd, item=None):
+            kw = {"image": im, "command": cmd}
+            if item is not None:
+                kw["item"] = item
+            r = run("chopgimp-perspective-command", **kw)
+            ok = r is not None and r.index(0) == Gimp.PDBStatusType.SUCCESS and r.index(1)
+            return ok, (r.index(2) if r is not None else "")
+
+        im = test_image()
+        ok1, _ = ab(im, "add:0:0:200:150:Couverture")
+        ok2, _ = ab(im, "add:200:150:200:150:Page 2")
+        _, lst = ab(im, "list")
+        report(ok1 and ok2 and lst.splitlines() == ["0 0 200 150 Couverture", "200 150 200 150 Page 2"],
+               "3.31.0 Plans de travail : créer, lister (nom et rectangle)", lst.replace("\n", " | "))
+        ab(im, "rename:1:Dos"); ab(im, "duplicate:0"); ab(im, "move:2:0")
+        _, lst = ab(im, "list")
+        names = [l.split(" ", 4)[4] for l in lst.splitlines()]
+        report(names == ["Couverture copie", "Couverture", "Dos"],
+               "3.31.0 Plans de travail : renommer, dupliquer, réordonner", ", ".join(names))
+        _, f = ab(im, "find:300:200")
+        report(f == "2", "3.31.0 Plans de travail : plan sous un point", f)
+        par = im.get_parasite("chopgimp-artboards")
+        report(par is not None, "3.31.0 Plans de travail enregistrés (parasite XCF)")
+        # la taille du canevas suit (décalage) : les plans suivent comme les repères
+        im.resize(500, 400, 50, 20)
+        _, lst = ab(im, "list")
+        report(lst.splitlines()[1].startswith("50 20 200 150"),
+               "3.31.0 Plans de travail : suivent Taille du canevas", lst.splitlines()[1])
+        # un plan hors du canevas : le canevas s'agrandit
+        ab(im, "add:-100:0:80:80")
+        ab(im, "fit")
+        _, lst = ab(im, "list")
+        report(im.get_width() >= 600 and lst.splitlines()[-1].startswith("0 "),
+               "3.31.0 Plans de travail : agrandir le canevas", "%d px" % im.get_width())
+        # exportation PNG, un fichier par plan
+        d = os.path.join(TMP, "artboards")
+        os.makedirs(d, exist_ok=True)
+        for fn in os.listdir(d):
+            os.remove(os.path.join(d, fn))
+        ok_e, n_e = ab(im, "export|%s|png|t-|1-2" % d)
+        files = sorted(os.listdir(d))
+        report(ok_e and n_e == "2" and files == ["t-Couverture copie.png", "t-Couverture.png"],
+               "3.31.0 Exporter les plans de travail (PNG, plage 1-2)", ", ".join(files))
+        if files:
+            ex = Gimp.file_load(Gimp.RunMode.NONINTERACTIVE, Gio.File.new_for_path(os.path.join(d, files[1])))
+            report(ex.get_width() == 200 and ex.get_height() == 150,
+                   "3.31.0 Exporter : taille du plan", "%dx%d" % (ex.get_width(), ex.get_height()))
+            ex.delete()
+        # XCF : les plans reviennent
+        xcf = os.path.join(TMP, "artboards.xcf")
+        Gimp.file_save(Gimp.RunMode.NONINTERACTIVE, im, Gio.File.new_for_path(xcf), None)
+        im2 = Gimp.file_load(Gimp.RunMode.NONINTERACTIVE, Gio.File.new_for_path(xcf))
+        _, lst2 = ab(im2, "list")
+        report(lst2 == lst, "3.31.0 Plans de travail relus du XCF")
+        im2.delete()
+        im.delete()
+
+        # grille de perspective
+        im = Gimp.Image.new(800, 600, Gimp.ImageBaseType.RGB)
+        pg(im, "set:type=2;visible=1;snap=0;active=2;origin=400,480;vl=-200,270;vr=1000,270;cell=40")
+        ok_p, xy = pg(im, "project:2:0:0")
+        report(ok_p and xy == "400.000 480.000", "3.31.0 Grille de perspective : origine", xy)
+        ok_f, xy = pg(im, "project:2:100000:0")
+        x, y = (float(v) for v in xy.split()) if ok_f else (0, 0)
+        report(ok_f and abs(x - 1000) < 10 and abs(y - 270) < 3,
+               "3.31.0 Grille de perspective : point de fuite droit", xy)
+        ok_u, uv = pg(im, "unproject:1:300:400")
+        ok_b, xy = pg(im, "project:1:%s:%s" % tuple(uv.split())) if ok_u else (False, "")
+        report(ok_b and xy == "300.000 400.000", "3.31.0 Grille : aller-retour plan gauche", xy)
+        for t in (1, 3):
+            ok_t, _ = pg(im, "type:%d" % t)
+            _, gs = pg(im, "get")
+            report(ok_t and "type=%d" % t in gs, "3.31.0 Grille à %d point(s) de fuite" % t)
+        pg(im, "type:2")
+        # un calque posé sur le plan droit (Sélection de perspective)
+        ly = Gimp.Layer.new(im, "Carré", 100, 100, Gimp.ImageType.RGBA_IMAGE, 100, Gimp.LayerMode.NORMAL)
+        im.insert_layer(ly, None, 0)
+        Gimp.context_set_foreground(color(1, 0, 0))
+        ly.edit_fill(Gimp.FillType.FOREGROUND)
+        ok_d, _ = pg(im, "drag:0:0:400:470", ly)
+        _, pl = pg(im, "item-plane", ly)
+        report(ok_d and pl == "2" and ly.get_width() != 100,
+               "3.31.0 Sélection de perspective : calque posé sur le plan droit",
+               "plan %s, %dx%d" % (pl, ly.get_width(), ly.get_height()))
+        # une forme dessinée sur le plan actif s'y colle
+        pa = Gimp.Path.new(im, "v")
+        im.insert_path(pa, None, 0)
+        st = pa.bezier_stroke_new_moveto(10, 10)
+        pa.bezier_stroke_lineto(st, 20, 10)
+        vl = Gimp.VectorLayer.new(im, pa)
+        im.insert_layer(vl, None, 0)
+        vl.refresh()
+        ok_r, oid = pg(im, "rect:420:300:600:440", vl)
+        _, pl = pg(im, "item-plane:%s" % oid, vl) if ok_r else (False, "")
+        x = run("chopgimp-vobjects-get-xml", layer=vl).index(1) if ok_r else ""
+        report(ok_r and pl == "2" and "Rectangle" in x,
+               "3.31.0 Forme dessinée sur le plan actif (attachée au plan)", "objet %s plan %s" % (oid, pl))
+        report(im.get_parasite("chopgimp-perspective-grid") is not None,
+               "3.31.0 Grille de perspective enregistrée (parasite XCF)")
+        im.delete()
+
+        tr = open(os.path.join(Gimp.sysconf_directory(), "toolrc")).read()
+        report(all(t in tr for t in ('"gimp-artboard-tool"', '"gimp-perspective-grid-tool"',
+                                     '"gimp-perspective-select-tool"')),
+               "3.31.0 Outils Plan de travail, Grille et Sélection de perspective dans la boîte")
+        sc = open(os.path.join(Gimp.sysconf_directory(), "shortcutsrc")).read()
+        report('(action "tools-artboard" "<Shift>o")' in sc, "3.31.0 Raccourci Maj+O : Plan de travail")
+    except Exception:
+        report(False, "3.31.0", traceback.format_exc().replace("\n", " | ")[:400])
+
     # 4. Réglages d'usine présents (thème, icônes, menus, raccourcis)
     data = Gimp.data_directory()
     sysconf = Gimp.sysconf_directory()

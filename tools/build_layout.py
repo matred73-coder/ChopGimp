@@ -18,7 +18,7 @@ TOOLBOX = [
     ("magnetic-lasso", "free-select", "iscissors"),           # L (3.28.3 : lasso magnétique)
     ("fuzzy-select", "paint-select", "foreground-select",
      "by-color-select"),                                      # W (3.28.3 : sélection rapide)
-    ("crop", "perspective"),                                  # C
+    ("crop", "perspective", "artboard"),                      # C (3.31.0 : Plan de travail, Maj+O)
     ("unified-transform", "scale", "rotate", "shear", "flip",
      "transform-3d", "handle-transform", "warp", "cage", "offset"),  # Ctrl+T
     ("color-picker", "measure"),                              # I
@@ -41,6 +41,7 @@ TOOLBOX = [
     ("width", "envelope"),                                    # Maj+W : déformer
     ("vscissors", "vknife", "vjoin"),                         # couper et assembler (la Gomme vectorielle est une commande, menu Vecteur)
     ("vmesh", "vblend"),                                      # Maj+U : couleur et matière
+    ("perspective-grid", "perspective-select"),               # 3.31.0 : grille de perspective
     ("text",),                                                # T
     # ── Navigation ───────────────────────────────────────────────────
     ("hand", "rotate-view"),                                  # H / R
@@ -63,7 +64,10 @@ ICON = {"dodge-burn": "gimp-tool-dodge", "convolve": "gimp-tool-blur",
         "vsmooth": "chopgimp-tool-vsmooth", "vscissors": "chopgimp-tool-vscissors",
         "vknife": "chopgimp-tool-vknife", "vjoin": "chopgimp-tool-vjoin",
         "vmesh": "chopgimp-tool-mesh", "vblend": "chopgimp-tool-blend",
-        "vblob": "chopgimp-tool-vblob"}
+        "vblob": "chopgimp-tool-vblob",
+        "artboard": "chopgimp-tool-artboard",
+        "perspective-grid": "chopgimp-tool-perspective-grid",
+        "perspective-select": "chopgimp-tool-perspective-select"}
 
 
 def info(tool, visible=True, indent=""):
@@ -137,6 +141,7 @@ def workspace_books(name):
         return (book(None, [dockable("gimp-color-editor"), dockable("gimp-palette-editor"),
                             dockable("chopgimp-global-colors"), dockable("chopgimp-symbols"),
                             dockable("chopgimp-brushes"),   # 3.30.0 : Formes
+                            dockable("chopgimp-artboards"),  # 3.31.0 : Plans de travail
                             dockable("gimp-gradient-list")]),
                 # 3.27.2 : Aspect et Contour des objets vectoriels en tête
                 # 3.29.5 : groupe du milieu plus haut (Aspect n'y est plus tassé)

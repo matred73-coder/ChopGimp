@@ -1168,6 +1168,52 @@ bancs et livraison au lot 6). VERSION inchangée (3.29.4).
 - **Limites acceptées** : contours de profil préparés pour rien quand moins de
   8 objets sont à dessiner (rendu alors un par un).
 
+## 3.31.0 (non compilé) — partie 1 : plans de travail et grille de perspective (lot 4a du plan final)
+
+Patch 0162. Code écrit, relu et vérifié à la syntaxe (gcc -fsyntax-only dans le SDK
+GNOME), **ni compilé ni testé** (compilation, tests et livraison au lot 6). VERSION
+inchangée.
+
+- **Plans de travail** (Illustrator) : liste ordonnée de rectangles nommés de l'image,
+  parasite XCF `chopgimp-artboards` (texte : `x y largeur hauteur nom`, annulable).
+  L'image n'est pas changée : le canevas sert de plan de montage ; les plans sont
+  dessinés sur le canevas avec leur nom (`01 - Nom`, le plan actif en bleu) et suivent
+  Taille du canevas, Recadrer, Échelle, Retourner, Rotation et Transformer comme les
+  repères (`chopgimp_image_overlays_transform`).
+- **Outil Plan de travail** (Maj+O, groupe C) : glisser = nouveau plan ; dans un plan =
+  le déplacer avec son contenu (calques contenus, objets vectoriels contenus ; Alt :
+  copie) ; poignées = redimensionner (Maj : proportions) ; double-clic = renommer ;
+  Suppr ; flèches (Maj × 10). Options : formats (A3…A5 à la résolution de l'image,
+  Lettre, HD, 4K, réseaux sociaux…), orientation, nom, X / Y / L / H, Nouveau,
+  Dupliquer, Supprimer, Exporter ; « Déplacer l'illustration avec le plan »,
+  « Agrandir le canevas pour contenir les plans ».
+- **Panneau Plans de travail** (Fenêtres, espace Illustration) : liste, plan actif,
+  renommer, ordonner, afficher dans la fenêtre, plan d'après la sélection, agrandir le
+  canevas, exporter.
+- **Fichier > Exporter les plans de travail…** : un fichier par plan (PNG, JPEG, WebP,
+  TIFF ; dossier, préfixe, plage « 1-3, 5 »). API pour l'agent des exports :
+  `chopgimp_artboards_get()` (core), PDB `chopgimp-artboards-command` (« list »),
+  `plug-ins/common/chopgimp-artboards-parse.h` pour les greffons.
+- Vecteur > Aligner sur le plan de travail : le plan des objets (avant : le canevas).
+- **Grille de perspective** à 1, 2 ou 3 points de fuite : modèle de caméra (points de
+  fuite + niveau du sol), trois plans (gauche, droit, horizontal) avec décalages,
+  parasite XCF `chopgimp-perspective-grid`. Affichage > Grille de perspective
+  (afficher Ctrl+Maj+Alt+I, magnétisme, verrouiller, 1 / 2 / 3 points, réinitialiser,
+  attacher / libérer) ; Affichage > Afficher les plans de travail.
+- **Outil Grille de perspective** : widgets façon Illustrator (points de fuite, horizon,
+  niveau du sol, étendues gauche / droite, hauteur, taille de cellule, position des
+  plans), cube de choix du plan en haut à gauche, touches 1 / 2 / 3 / 4 ; options
+  (type, tailles, couleurs, opacité, magnétisme, verrous) gardées par les préréglages.
+- **Outil Sélection de perspective** : un calque ou un objet vectoriel glissé se pose
+  sur le plan actif (1 px = 1 unité au niveau du sol) ou se déplace sur son plan ; Alt :
+  copie (calques) ; flèches ; Attacher au plan actif / Libérer de la perspective.
+- **Formes (U) sur le plan actif** : dessinées dans les coordonnées du plan (magnétisme
+  de la grille) puis projetées ; l'objet ou le calque créé est attaché au plan.
+- Générateurs : `build_layout.py` (outils, panneau), `build_shortcuts.py` (Maj+O,
+  Ctrl+Maj+Alt+I), `build_menus.py` (Fichier, Affichage, Vecteur > Perspective,
+  Fenêtres), `icons/build_icons.py` (4 icônes) ; tests smoke 3.31.0.
+- Points à vérifier : `docs/dev/A-VERIFIER-4.0.md`, section « Lot 4a ».
+
 ## 3.30.0 (non compilé) — Blocs vectoriels 4 et 5 (lot 3 du plan final)
 
 Patchs 0160 et 0161. Code écrit et relu, **ni compilé ni testé** (compilation,

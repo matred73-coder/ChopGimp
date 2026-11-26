@@ -41,6 +41,9 @@ PS_MAP = [
     ("Outils", "tools-live-paint-bucket",  ["k"],            "Pot de peinture dynamique (Illustrator)"),
     ("Outils", "tools-live-paint-select",  [S + "k"],        "Sélection de peinture dynamique"),
     ("Outils", "tools-by-color-select",    [S + A + "w"],    "Plage de couleurs"),
+    # 3.31.0 : Plan de travail (Illustrator Maj+O ; Maj+O était la sélection par
+    # couleur de GIMP, qui a déjà Maj+Alt+W)
+    ("Outils", "tools-artboard",           [S + "o"],        "Plan de travail (Illustrator)"),
     ("Outils", "tools-crop",               ["c"],            "Recadrage"),
     ("Outils", "tools-perspective",        [S + "c"],        "Perspective (transformation)"),
     ("Outils", "tools-color-picker",       ["i"],            "Pipette"),
@@ -221,6 +224,9 @@ PS_MAP = [
     ("Affichage", "view-zoom-1-1",         [P + "1", P + A + "0"], "100 %"),
     ("Affichage", "view-show-rulers",      [P + "r"],        "Règles"),
     ("Affichage", "view-show-guides",      [P + "semicolon"], "Repères"),
+    # 3.31.0 : grille de perspective (Ctrl+Maj+I dans Illustrator, pris par
+    # Intervertir la sélection : avec Alt en plus)
+    ("Affichage", "view-perspective-grid-show", [P + S + A + "i"], "Grille de perspective"),
     ("Affichage", "view-show-grid",        [P + "apostrophe"], "Grille"),
     ("Affichage", "view-snap-to-guides",   [P + S + "semicolon"], "Magnétisme"),
     ("Affichage", "view-show-selection",   [P + "h"],        "Extras (afficher la sélection)"),
@@ -258,7 +264,7 @@ def main():
 
     # 1. actions valides
     for _, act, _, _ in PS_MAP:
-        if act not in defaults and not act.startswith(("photogimp-", "chopgimp-", "tools-opacity-ps-", "tools-hand", "tools-rotate-view", "tools-shape", "tools-spot-heal", "windows-hide-right-docks", "tools-shape-builder", "tools-direct-select", "tools-width", "tools-envelope", "tools-live-paint-", "layers-vobjects-", "tools-curvature", "tools-vpencil", "tools-vsmooth", "tools-vscissors", "tools-vknife", "tools-vjoin", "dialogs-transform", "tools-vmesh", "tools-vblend", "tools-vblob")):
+        if act not in defaults and not act.startswith(("photogimp-", "chopgimp-", "tools-opacity-ps-", "tools-hand", "tools-rotate-view", "tools-shape", "tools-spot-heal", "windows-hide-right-docks", "tools-shape-builder", "tools-direct-select", "tools-width", "tools-envelope", "tools-live-paint-", "layers-vobjects-", "tools-curvature", "tools-vpencil", "tools-vsmooth", "tools-vscissors", "tools-vknife", "tools-vjoin", "dialogs-transform", "tools-vmesh", "tools-vblend", "tools-vblob", "tools-artboard", "view-perspective-")):
             errors.append("action inconnue de GIMP 3.2.8 : %s" % act)
 
     # 2. aucune touche attribuée deux fois dans PS_MAP

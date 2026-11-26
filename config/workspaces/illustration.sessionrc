@@ -36,6 +36,10 @@
                 (tab-style automatic)
                 (aux-info
                     (show-button-bar "true")))
+            (dockable "chopgimp-artboards"
+                (tab-style automatic)
+                (aux-info
+                    (show-button-bar "true")))
             (dockable "gimp-gradient-list"
                 (tab-style automatic)
                 (aux-info
