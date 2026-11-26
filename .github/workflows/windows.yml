@@ -148,6 +148,12 @@ jobs:
         run: |
           Start-Transcript -Append -Path "$env:RUNNER_TEMP\steps.log" | Out-Null
           $PSNativeCommandArgumentPassing = 'Legacy'
+          # setup-msys2 exporte MSYSTEM=CLANG64 pour tout le job : le Python de MSYS2
+          # écrit alors ses chemins avec « / » (sys.executable compris, recopié dans
+          # meson-log.txt « Main binary: »), et 2_bundle-gimp-uni_base.py, qui y cherche
+          # « \\bin\\python.exe », plante au début de « meson install ». La CI de GIMP
+          # n'a pas cette variable : on la retire de toutes les étapes PowerShell de GIMP.
+          Remove-Item Env:MSYSTEM -ErrorAction SilentlyContinue
           Set-Location "$env:ROOT\gimp"
           & "$env:MSYS_ROOT/clang64/bin/python3.exe" -I "$env:GITHUB_WORKSPACE\tools\windows_branding.py" ico "$env:ROOT\gimp"
           if ($LASTEXITCODE) { exit 1 }
@@ -166,19 +172,27 @@ jobs:
           if (-not (Select-String -Quiet 'Library potrace found: YES' _build-clang64\meson-logs\meson-log.txt)) {
             Write-Host '::error::libpotrace introuvable (Calque > Vectoriser)'; exit 1
           }
+          Select-String 'Main binary:' _build-clang64\meson-logs\meson-log.txt | Select-Object -First 1 | ForEach-Object { Write-Host $_.Line }
 
       - name: Compiler ChopGimp (2_build-gimp-msys2.ps1)
         shell: pwsh
         run: |
           Start-Transcript -Append -Path "$env:RUNNER_TEMP\steps.log" | Out-Null
           $PSNativeCommandArgumentPassing = 'Legacy'
+          Remove-Item Env:MSYSTEM -ErrorAction SilentlyContinue   # voir « Configurer »
           Set-Location "$env:ROOT\gimp"
           .\build\windows\2_build-gimp-msys2.ps1
           if (-not $?) {
             # guide, étape 7 : win_bison en parallèle perd parfois imap_cern_parse.c
             Write-Host 'Nouvel essai (fichier bison perdu ?)'
             .\build\windows\2_build-gimp-msys2.ps1
-            if (-not $?) { exit 1 }
+            if (-not $?) {
+              # Le script garde la sortie standard de « ninja install » dans un fichier et
+              # perd la sortie d'erreur (Traceback des scripts d'installation) : on refait
+              # l'installation, sortie d'erreur comprise, pour les annotations.
+              cmd /c "ninja -C _build-clang64 install > $env:RUNNER_TEMP\install.log 2>&1"
+              exit 1
+            }
           }
 
       # ── Étape 6 du guide
@@ -198,9 +212,13 @@ jobs:
         run: |
           Start-Transcript -Append -Path "$env:RUNNER_TEMP\steps.log" | Out-Null
           $PSNativeCommandArgumentPassing = 'Legacy'
+          Remove-Item Env:MSYSTEM -ErrorAction SilentlyContinue   # voir « Configurer »
           Set-Location "$env:ROOT\gimp"
           .\build\windows\2_build-gimp-msys2.ps1
-          if (-not $?) { exit 1 }
+          if (-not $?) {
+            cmd /c "ninja -C _build-clang64 install > $env:RUNNER_TEMP\install.log 2>&1"
+            exit 1
+          }
 
       # ── Étape 8 du guide : une seule fois, après le dernier « ninja install »
       - name: Données ChopGimp (install_data.sh)
@@ -227,6 +245,7 @@ jobs:
           CHOPGIMP_VERSION: ${{ steps.ver.outputs.version }}
         run: |
           $PSNativeCommandArgumentPassing = 'Legacy'
+          Remove-Item Env:MSYSTEM -ErrorAction SilentlyContinue   # comme la CI de GIMP
           Set-Location "$env:ROOT\gimp"
           & "$env:MSYS_ROOT/clang64/bin/python3.exe" -I "$env:GITHUB_WORKSPACE\tools\windows_branding.py" installer "$env:ROOT\gimp\_build-clang64"
           if ($LASTEXITCODE) { exit 1 }
@@ -252,17 +271,54 @@ jobs:
           } | Set-Content -Encoding ascii SHA256SUMS.txt
           Get-ChildItem
 
-      # Annotations lisibles sans compte GitHub : fin du journal à l'échec
+      # Annotations lisibles sans compte GitHub. Une annotation est coupée vers
+      # 4 Ko et une étape n'en publie que 10 : d'abord les lignes d'erreur
+      # (error / FAILED / Traceback…, avec leur suite), puis la fin des journaux.
       - name: Journal de l'échec (annotations)
         if: failure()
         shell: pwsh
         run: |
-          foreach ($f in @("$env:RUNNER_TEMP\steps.log", "$env:RUNNER_TEMP\meson-setup.log", "$env:ROOT\gimp\_build-clang64\meson-logs\meson-log.txt")) {
-            if (Test-Path $f) {
-              $t = (Get-Content $f -Tail 60 | ForEach-Object { $_.Substring(0, [Math]::Min(300, $_.Length)) }) -join '%0A'
-              Write-Host "::error title=$(Split-Path $f -Leaf)::$($t -replace '%(?!0A)','%25')"
+          $ErrorActionPreference = 'Continue'
+          $left = @{ n = 10 }   # table : modifiable depuis la fonction quelle que soit la portée
+          function Esc ($t) { $t -replace '%','%25' -replace "`r",'' -replace "`n",'%0A' }
+          function Publish ($title, [string[]]$lines) {
+            $chunk = @(); $size = 0
+            foreach ($l in ($lines | ForEach-Object { $_.Substring(0, [Math]::Min(240, $_.Length)) })) {
+              if ($size + $l.Length + 1 -gt 3500 -and $chunk.Count) {
+                if ($left.n -le 0) { return }
+                Write-Host "::error title=$title::$(Esc ($chunk -join "`n"))"; $left.n--
+                $chunk = @(); $size = 0
+              }
+              $chunk += $l; $size += $l.Length + 1
+            }
+            if ($chunk.Count -and $left.n -gt 0) {
+              Write-Host "::error title=$title::$(Esc ($chunk -join "`n"))"; $left.n--
             }
           }
+          $pattern = '(?i)(\berror\b|\(ERROR\)|FAILED|Traceback|Exception|not found|No such file|cannot find|undefined reference)'
+          $noise   = 'Failed to guess install tag|-Werror|error_|_error|errors\.c|Wno-error'
+          $logs = @(
+            @{ f = "$env:RUNNER_TEMP\install.log";     tail = 40 },
+            @{ f = "$env:RUNNER_TEMP\steps.log";       tail = 25 },
+            @{ f = "$env:RUNNER_TEMP\meson-setup.log"; tail = 15 },
+            @{ f = "$env:ROOT\gimp\_build-clang64\meson-logs\meson-log.txt"; tail = 10 }
+          )
+          foreach ($log in $logs) {
+            if (-not (Test-Path $log.f)) { continue }
+            $name = Split-Path $log.f -Leaf
+            $all = @(Get-Content $log.f)
+            Write-Host "::group::$name (complet)"; $all | ForEach-Object { Write-Host $_ }; Write-Host '::endgroup::'
+            # lignes d'erreur avec 2 lignes avant et 12 après (fin d'un Traceback), 150 au plus
+            $hits = @()
+            Select-String -Path $log.f -Pattern $pattern -Context 2,12 |
+              Where-Object { $_.Line -notmatch $noise } | Select-Object -First 30 | ForEach-Object {
+                $hits += "-- ligne $($_.LineNumber)"; $hits += $_.Context.PreContext; $hits += "> $($_.Line)"; $hits += $_.Context.PostContext
+              }
+            if ($hits.Count) { Publish "$name - erreurs" ($hits | Select-Object -First 150) }
+            Publish "$name - fin" ($all | Select-Object -Last $log.tail)
+          }
+          $ml = "$env:ROOT\gimp\_build-clang64\meson-logs\meson-log.txt"
+          if (Test-Path $ml) { Select-String 'Main binary:' $ml | Select-Object -First 1 | ForEach-Object { Write-Host "::notice title=meson::$($_.Line)" } }
 
       - uses: actions/upload-artifact@v4
         with:

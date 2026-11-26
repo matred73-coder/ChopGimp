@@ -80,3 +80,21 @@ Actions > Flatpak > Run workflow (artefact seulement, 14 jours).
   argument natif non cité comme `-Dpkgconfig.relocatable=true` au point. Toutes les
   options `-D…` de `meson setup` sont donc entre guillemets ; la sortie de meson est
   recopiée dans `meson-setup.log`, publié en annotation en cas d'échec.
+
+## Pièges connus (corrigés pour la version qui suit v3.29.4)
+
+- **Windows — `meson install` échoue juste après les scripts `copy2`** : le
+  script suivant est `2_bundle-gimp-uni_base.py`, qui fabrique `gimp-clang64`. Il
+  retrouve MSYS2 en cherchant `\bin\python.exe` dans la ligne « Main binary: » de
+  `meson-log.txt`. Or `setup-msys2` exporte `MSYSTEM=CLANG64` pour tout le job, et le
+  Python de MSYS2 écrit alors ses chemins avec des `/`. La recherche échoue et le
+  script s'arrête, avec un Traceback que `2_build-gimp-msys2.ps1` ne garde pas
+  (il ne recopie que la sortie standard de `ninja install`). Les étapes PowerShell
+  de GIMP retirent donc `MSYSTEM`, comme sur la CI de GIMP. La ligne « Main binary: »
+  est affichée à la configuration et publiée en annotation `notice`.
+- **Annotations** : si la compilation échoue, `ninja install` est relancé avec sa
+  sortie d'erreur dans `install.log`. L'étape « Journal de l'échec » publie d'abord
+  les lignes `error` / `FAILED` / `Traceback`, avec leur contexte, puis la fin de
+  `install.log`, `steps.log`, `meson-setup.log` et `meson-log.txt`. Elle publie au
+  plus 10 annotations d'environ 3,5 Ko, et les journaux complets sont repliés dans
+  la sortie de l'étape.
