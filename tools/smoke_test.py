@@ -2229,6 +2229,118 @@ try:
     except Exception:
         report(False, "3.29.5", traceback.format_exc().replace("\n", " | ")[:400])
 
+    # 3.29.6 : performance complète (calques 16 / 32 bits en flottant,
+    # rastérisation parallèle étendue, annulation partielle)
+    try:
+        import random as _r
+
+        def vx17(layer):
+            r = run("chopgimp-vobjects-get-xml", layer=layer)
+            return r.index(1) if r is not None and r.index(0) == Gimp.PDBStatusType.SUCCESS else ""
+
+        def px17(layer):
+            b = layer.get_buffer()
+            e = b.get_extent()
+            return (layer.get_offsets()[1:], e.width, e.height,
+                    bytes(b.get(e, 1.0, "R'G'B'A u8", Gegl.AbyssPolicy.NONE)))
+
+        def scene17(w, h, n, precision=None, closed=True, seed=5):
+            if precision is None:
+                im = Gimp.Image.new(w, h, Gimp.ImageBaseType.RGB)
+            else:
+                im = Gimp.Image.new_with_precision(w, h, Gimp.ImageBaseType.RGB, precision)
+            pa = Gimp.Path.new(im, "Formes")
+            im.insert_path(pa, None, 0)
+            rnd = _r.Random(seed)
+            for i in range(n):
+                x, y = rnd.uniform(10, w - 90), rnd.uniform(10, h - 90)
+                sid = pa.bezier_stroke_new_moveto(x, y)
+                pa.bezier_stroke_lineto(sid, x + rnd.uniform(20, 80), y + rnd.uniform(-5, 5))
+                pa.bezier_stroke_lineto(sid, x + rnd.uniform(0, 40), y + rnd.uniform(20, 80))
+                if closed:
+                    pa.stroke_close(sid)
+            vl = Gimp.VectorLayer.new(im, pa)
+            im.insert_layer(vl, None, 0)
+            vl.set_enable_fill(closed); vl.set_enable_stroke(True); vl.set_stroke_width(3)
+            vl.refresh()
+            im.set_selected_layers([vl])
+            def c(cmd):
+                r = run("chopgimp-vobjects-command", image=im, command=cmd)
+                return bool(r is not None and r.index(0) == Gimp.PDBStatusType.SUCCESS and r.index(1))
+            c("split-new")
+            return im, vl, c
+
+        # calque 16 bits : même rendu (à 1 près en 8 bits) que le calque 8 bits
+        im8, v8, c8 = scene17(300, 300, 30)
+        x8 = vx17(v8)
+        im16, v16, c16 = scene17(300, 300, 30, Gimp.Precision.U16_NON_LINEAR)
+        run("chopgimp-vobjects-set-xml", layer=v16, xml=x8)
+        a, b = px17(v8), px17(v16)
+        dmax = max((abs(p - q) for p, q in zip(a[3], b[3])), default=999) if a[:3] == b[:3] else 999
+        report(dmax <= 1 and any(a[3][3::4]),
+               "3.29.6 calque 16 bits (conversion en flottant) : même rendu que 8 bits",
+               "écart max %d" % dmax)
+        im16.delete()
+        im32, v32, c32 = scene17(300, 300, 30, Gimp.Precision.FLOAT_LINEAR)
+        run("chopgimp-vobjects-set-xml", layer=v32, xml=x8)
+        b = px17(v32)
+        dmax = max((abs(p - q) for p, q in zip(a[3], b[3])), default=999) if a[:3] == b[:3] else 999
+        report(dmax <= 1, "3.29.6 calque 32 bits linéaire : même rendu que 8 bits",
+               "écart max %d" % dmax)
+        im32.delete()
+        im8.delete()
+
+        # rastérisation parallèle étendue : flèches + profil + dégradé libre
+        # sur 30 objets ; deux rendus complets identiques, rien de vide
+        im, vl, c = scene17(400, 400, 30, closed=False)
+        c("select-all"); c("width-profile:taper-end")
+        x = vx17(vl)
+        xa = x.replace("<stroke ", '<stroke arrow-end="triangle" ') if 'arrow-end=' not in x else x
+        run("chopgimp-vobjects-set-xml", layer=vl, xml=xa)
+        q1 = px17(vl)
+        run("chopgimp-vobjects-set-xml", layer=vl, xml=xa)
+        q2 = px17(vl)
+        report(q1 == q2 and any(q1[3][3::4]),
+               "3.29.6 rastérisation parallèle (profils, flèches) : rendu stable",
+               "%d x %d" % (q1[1], q1[2]))
+        im.delete()
+        im, vl, c = scene17(400, 400, 20)
+        c("select-all"); ok_ff = c("freeform-make")
+        q1 = px17(vl)
+        run("chopgimp-vobjects-set-xml", layer=vl, xml=vx17(vl))
+        q2 = px17(vl)
+        report(ok_ff and q1 == q2,
+               "3.29.6 rastérisation parallèle (dégradés libres) : identique à un rendu complet")
+        im.delete()
+
+        # annulation partielle : deux changements, annuler / rétablir ;
+        # objets et pixels exacts à chaque étape
+        im, vl, c = scene17(400, 400, 40)
+        x0, p0 = vx17(vl), px17(vl)
+        c("select-all"); c("drag-sim:5:3:4")
+        x1, p1 = vx17(vl), px17(vl)
+        c("select-all"); c("hide")
+        x2, p2 = vx17(vl), px17(vl)
+        u1 = c("bench-undo"); xu1, pu1 = vx17(vl), px17(vl)
+        u2 = c("bench-undo"); xu2, pu2 = vx17(vl), px17(vl)
+        r1 = c("bench-redo"); xr1, pr1 = vx17(vl), px17(vl)
+        r2 = c("bench-redo"); xr2, pr2 = vx17(vl), px17(vl)
+        ok = (u1 and u2 and r1 and r2 and x0 != x1 != x2 and
+              xu1 == x1 and pu1 == p1 and xu2 == x0 and pu2 == p0 and
+              xr1 == x1 and pr1 == p1 and xr2 == x2 and pr2 == p2)
+        report(ok, "3.29.6 annulation partielle : annuler / rétablir exacts (objets et pixels)",
+               "annulé %s %s, rétabli %s %s" % (u1, u2, r1, r2))
+        # un nouveau changement après une annulation, puis annuler
+        c("bench-undo"); c("bench-undo")
+        c("select-all"); c("drag-sim:-7:2:3")
+        x3 = vx17(vl)
+        u3 = c("bench-undo")
+        report(u3 and vx17(vl) == x0 and px17(vl) == p0 and x3 != x0,
+               "3.29.6 annulation partielle : nouveau changement après annuler")
+        im.delete()
+    except Exception:
+        report(False, "3.29.6", traceback.format_exc().replace("\n", " | ")[:400])
+
     # 4. Réglages d'usine présents (thème, icônes, menus, raccourcis)
     data = Gimp.data_directory()
     sysconf = Gimp.sysconf_directory()

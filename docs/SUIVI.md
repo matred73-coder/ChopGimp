@@ -1131,3 +1131,39 @@ livraison se feront en une fois au lot 6 (4.0.0). VERSION inchangée (3.29.4).
   nouveau sous-tracé en A multi-objets ; lasso magnétique rapide ;
   gain mesuré de la peinture dynamique et `bench_vector.sh` sans régression.
 - **Limites acceptées** : aucune.
+
+## 3.29.6 — Performance vectorielle complète (lot 2 du plan final) — **non compilé**
+
+Patch 0159. Code écrit et relu, **ni compilé ni testé** (compilation, tests,
+bancs et livraison au lot 6). VERSION inchangée (3.29.4).
+
+- **Calques 16 / 32 bits** : les pixels ARGB32 de cairo sont dépremultipliés
+  en R'G'B'A flottant (c / a exact, en parallèle), que babl convertit par ses
+  chemins rapides vers le format du calque, au lieu de sa conversion de
+  référence (`CHOPGIMP_NO_FAST_FLOAT`).
+- **Rastérisation parallèle étendue** : filets, dégradés libres, motifs
+  (bitmap et vectoriels), flèches, dégradés le long / en travers des contours
+  et contours à profil de largeur. Ce qui se fabriquait à la demande depuis un
+  état partagé l'est avant, sur le fil principal : contours des profils (ce
+  sont des chemins de l'image) et cellules des motifs vectoriels (cache
+  protégé par un verrou, jamais vidé pendant le rendu)
+  (`CHOPGIMP_NO_PAR_RENDER_EXT` : le jeu de 3.29.4).
+- **Annulation partielle** : un instantané ne copie que les feuilles changées
+  depuis le précédent et partage les autres (même révision — chaque
+  changement du rendu en crée une —, mêmes attributs, même matrice monde) ;
+  annuler / rétablir échange les feuilles inchangées des deux états au lieu de
+  les copier ; mémoire d'annulation comptée une fois par feuille partagée
+  (`CHOPGIMP_NO_PARTIAL_UNDO` : copie de tout l'arbre).
+- **Ancien tracé réécrit paresseusement** après annuler / rétablir : une fois
+  pour plusieurs pas, avant les événements suivants ; écrit tout de suite si
+  un changement, l'enregistrement XCF ou un ancien tracé remplacé le lit
+  (`CHOPGIMP_NO_LAZY_LEGACY`).
+- **Tests ajoutés** (tools/smoke_test.py, bloc 3.29.6) : calques 16 bits et
+  32 bits linéaires (rendu à 1 près du 8 bits), rendu parallèle stable
+  (profils, flèches, dégradés libres), annuler / rétablir exacts sur deux
+  pas, nouveau changement après annulation.
+- **À vérifier à la compilation (lot 6)** : voir docs/dev/A-VERIFIER-4.0.md,
+  section « Lot 2 » ; mesures au banc (`bench_vector.sh`, cas A et B en
+  16 bits, annuler, rendu complet) et test de charge du rendu parallèle.
+- **Limites acceptées** : contours de profil préparés pour rien quand moins de
+  8 objets sont à dessiner (rendu alors un par un).

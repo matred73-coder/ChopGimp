@@ -1202,7 +1202,8 @@
                         "../patches/gimp-3.2.8/0155-ChopGimp-3.29.5-Transition-with-groups-as-key-object.patch",
                         "../patches/gimp-3.2.8/0156-ChopGimp-3.29.5-live-paint-recomputed-incrementally-.patch",
                         "../patches/gimp-3.2.8/0157-ChopGimp-3.29.5-Lasso-magn-tique-a-mouse-jump-of-mor.patch",
-                        "../patches/gimp-3.2.8/0158-ChopGimp-3.29.5-Red-finir-les-couleurs-Assigner-les-.patch"
+                        "../patches/gimp-3.2.8/0158-ChopGimp-3.29.5-Red-finir-les-couleurs-Assigner-les-.patch",
+                        "../patches/gimp-3.2.8/0159-ChopGimp-3.29.6-complete-vector-performance-16-32-bi.patch"
                     ]
                 }
             ],
