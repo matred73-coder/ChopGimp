@@ -1,0 +1,3424 @@
+From 8f267150fd7acc90e9704c71ff2ba17e58d8c46f Mon Sep 17 00:00:00 2001
+From: ChopGimp <mathieu.redon@proton.me>
+Date: Thu, 26 Nov 2026 07:52:28 +0100
+Subject: [PATCH] =?UTF-8?q?ChopGimp=203.29.3:=20Direct=20Selection=20(A)?=
+ =?UTF-8?q?=20like=20Illustrator=20(never=20creates=20a=20node,=20a=20pres?=
+ =?UTF-8?q?s=20in=20the=20void=20draws=20a=20selection=20rectangle,=20a=20?=
+ =?UTF-8?q?click=20on=20a=20segment=20selects=20its=20two=20nodes=20withou?=
+ =?UTF-8?q?t=20an=20empty=20undo=20step=20nor=20losing=20them,=20corner=20?=
+ =?UTF-8?q?widgets=20as=20soon=20as=20an=20object=20is=20picked);=20object?=
+ =?UTF-8?q?=20mode=20like=20Photoshop's=20auto-select=20(a=20click=20picks?=
+ =?UTF-8?q?=20the=20shape=20even=20inside=20a=20group,=20a=20double-click?=
+ =?UTF-8?q?=20its=20group;=20=C2=AB=20Un=20clic=20s=C3=A9lectionne=20le=20?=
+ =?UTF-8?q?groupe=20=C2=BB);=20fill=20/=20stroke=20follow=20the=20foregrou?=
+ =?UTF-8?q?nd=20/=20background=20colors=20with=20V;=20Color=20Picker=20cop?=
+ =?UTF-8?q?ies=20fill=20and=20stroke=20to=20the=20selected=20objects;=20ho?=
+ =?UTF-8?q?ver:=20status=20bar=20and=20floating=20tooltip=20(CHOPGIMP=5FNO?=
+ =?UTF-8?q?=5FHOVER=5FTIP);=20Ctrl+Alt+click=20and=20Objet=20suivant=20des?=
+ =?UTF-8?q?sus=20/=20dessous;=20isolation=20mode=20dims=20the=20rest;=20ri?=
+ =?UTF-8?q?ght-click=20with=20V=20pops=20up=20the=20=C2=AB=20Vecteur=20?=
+ =?UTF-8?q?=C2=BB=20menu;=20Vecteur=20>=20S=C3=A9lectionner=20(same=20fill?=
+ =?UTF-8?q?=20/=20stroke=20/=20color,=20inverse,=20smaller),=20Nettoyer=20?=
+ =?UTF-8?q?(delete=20smaller,=20merge=20same=20color,=20Simplifier=20with?=
+ =?UTF-8?q?=20live=20preview,=20fill=20small=20holes),=20Couleurs=20(Coule?=
+ =?UTF-8?q?urs=20du=20dessin=20dialog:=20recolor=20or=20select=20per=20col?=
+ =?UTF-8?q?or,=20swap=20fill=20/=20stroke,=20none);=20lock=20/=20hide=20ot?=
+ =?UTF-8?q?hers;=20mesh=20tangent=20handles=20in=20the=20Filet=20tool=20(c?=
+ =?UTF-8?q?urved=20Coons=20edges,=20optional=20tangents=20in=20the=20spec)?=
+ =?UTF-8?q?;=20SVG=20export=20of=20the=20mesh=20as=20<meshgradient>=20with?=
+ =?UTF-8?q?=20a=20fallback=20color;=20PDB=20select-same-*,=20select-invers?=
+ =?UTF-8?q?e,=20select-smaller,=20delete-smaller,=20merge-same-color,=20sw?=
+ =?UTF-8?q?ap-fill-stroke,=20fill-none,=20lock-others,=20hide-others,=20se?=
+ =?UTF-8?q?lect-next-*,=20simplify,=20simplify-preview,=20fill-holes,=20re?=
+ =?UTF-8?q?place-color?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+---
+ app/actions/layers-actions.c          | 127 ++++
+ app/actions/vector-objects-commands.c | 519 ++++++++++++++
+ app/actions/vector-objects-commands.h |  55 ++
+ app/display/chopgimp-vobjectbar.c     |  53 ++
+ app/display/gimptoolpath.c            |  72 +-
+ app/path/chopgimp-vmaterial.c         | 109 ++-
+ app/path/chopgimp-vmaterial.h         |  13 +
+ app/path/chopgimp-vobject-ops.c       | 951 ++++++++++++++++++++++++++
+ app/path/chopgimp-vobject-ops.h       |  92 +++
+ app/pdb/chopgimp-cmds.c               |  58 ++
+ app/tools/chopgimp-materialtools.c    | 177 ++++-
+ app/tools/chopgimp-vobjecttool.c      | 324 ++++++++-
+ app/tools/chopgimp-vobjecttool.h      |  13 +
+ app/tools/gimpcolorpickertool.c       |  50 ++
+ app/tools/gimpmovetool.c              |  20 +
+ app/tools/gimppathtool.c              |   9 +
+ plug-ins/common/file-svg-vobjects.h   | 176 +++++
+ 17 files changed, 2774 insertions(+), 44 deletions(-)
+
+diff --git a/app/actions/layers-actions.c b/app/actions/layers-actions.c
+index 8272f6c..dae27a9 100644
+--- a/app/actions/layers-actions.c
++++ b/app/actions/layers-actions.c
+@@ -710,6 +710,108 @@ static const GimpActionEntry layers_actions[] =
+     vector_objects_corners_reset_cmd_callback,
+     NULL },
+ 
++  { "layers-vobjects-select-same-fill", NULL,
++    "Même couleur de _fond", NULL, { NULL },
++    "Sélectionner les objets qui ont le même fond que l'objet sélectionné",
++    vector_objects_select_same_fill_cmd_callback,
++    NULL },
++
++  { "layers-vobjects-select-same-stroke", NULL,
++    "Même couleur de _contour", NULL, { NULL },
++    "Sélectionner les objets qui ont le même contour que l'objet sélectionné",
++    vector_objects_select_same_stroke_cmd_callback,
++    NULL },
++
++  { "layers-vobjects-select-same-color", NULL,
++    "Même _couleur", NULL, { NULL },
++    "Sélectionner les objets qui ont la même couleur (fond ou contour)",
++    vector_objects_select_same_color_cmd_callback,
++    NULL },
++
++  { "layers-vobjects-select-inverse", NULL,
++    "_Inverser la sélection d'objets", NULL, { NULL },
++    "Sélectionner les autres objets du calque",
++    vector_objects_select_inverse_cmd_callback,
++    NULL },
++
++  { "layers-vobjects-select-smaller", NULL,
++    "Objets plus _petits que…", NULL, { NULL },
++    "Sélectionner les objets plus petits qu'une taille donnée",
++    vector_objects_select_smaller_cmd_callback,
++    NULL },
++
++  { "layers-vobjects-delete-smaller", NULL,
++    "Supprimer les petits objets…", NULL, { NULL },
++    "Supprimer les miettes, par exemple après une vectorisation",
++    vector_objects_delete_smaller_cmd_callback,
++    NULL },
++
++  { "layers-vobjects-merge-same-color", NULL,
++    "Fusionner les formes de même couleur", NULL, { NULL },
++    "Chaque couleur de fond devient un seul objet (plus léger, plus simple à recolorer)",
++    vector_objects_merge_same_color_cmd_callback,
++    NULL },
++
++  { "layers-vobjects-drawing-colors", GIMP_ICON_COLORS_DEFAULT,
++    "Couleurs du _dessin…", NULL, { NULL },
++    "Les couleurs du calque vectoriel et leurs usages : recolorer ou sélectionner d'un clic",
++    vector_objects_drawing_colors_cmd_callback,
++    NULL },
++
++  { "layers-vobjects-swap-fill-stroke", NULL,
++    "Permuter fond et contour", NULL, { NULL },
++    "Échanger la couleur du fond et celle du contour des objets sélectionnés",
++    vector_objects_swap_fill_stroke_cmd_callback,
++    NULL },
++
++  { "layers-vobjects-fill-none", NULL,
++    "Fond : aucun", NULL, { NULL },
++    "Retirer le fond des objets sélectionnés",
++    vector_objects_fill_none_cmd_callback,
++    NULL },
++
++  { "layers-vobjects-stroke-none", NULL,
++    "Contour : aucun", NULL, { NULL },
++    "Retirer le contour des objets sélectionnés",
++    vector_objects_stroke_none_cmd_callback,
++    NULL },
++
++  { "layers-vobjects-lock-others", NULL,
++    "Verrouiller les autres objets", NULL, { NULL },
++    "Verrouiller tout sauf la sélection",
++    vector_objects_lock_others_cmd_callback,
++    NULL },
++
++  { "layers-vobjects-hide-others", NULL,
++    "Masquer les autres objets", NULL, { NULL },
++    "Masquer tout sauf la sélection",
++    vector_objects_hide_others_cmd_callback,
++    NULL },
++
++  { "layers-vobjects-simplify", NULL,
++    "Simplifier…", NULL, { NULL },
++    "Moins de points sur les objets sélectionnés (ou tous), à l'écart choisi",
++    vector_objects_simplify_cmd_callback,
++    NULL },
++
++  { "layers-vobjects-fill-holes", NULL,
++    "Remplir les petits trous…", NULL, { NULL },
++    "Boucher les petits trous des formes (par exemple après une vectorisation)",
++    vector_objects_fill_holes_cmd_callback,
++    NULL },
++
++  { "layers-vobjects-select-next-below", NULL,
++    "Objet suivant dessous", NULL, { NULL },
++    "Sélectionner l'objet situé juste en dessous dans l'empilement",
++    vector_objects_select_next_below_cmd_callback,
++    NULL },
++
++  { "layers-vobjects-select-next-above", NULL,
++    "Objet suivant dessus", NULL, { NULL },
++    "Sélectionner l'objet situé juste au-dessus dans l'empilement",
++    vector_objects_select_next_above_cmd_callback,
++    NULL },
++
+   { "layers-vobjects-select-all", NULL,
+     "Sélectionner tous les objets", NULL, { NULL },
+     "Sélectionner tous les objets du calque vectoriel (ou du groupe ouvert)",
+@@ -725,6 +827,14 @@ static const GimpActionEntry layers_actions[] =
+ 
+ static const GimpToggleActionEntry layers_toggle_actions[] =
+ {
++  { "layers-vobjects-click-group", NULL,
++    "Un clic sélectionne le _groupe", NULL, { NULL },
++    "Décoché (par défaut) : un clic prend la forme sous le pointeur, même dans un groupe, "
++    "et un double-clic son groupe. Coché : un clic prend le groupe entier (Illustrator)",
++    vector_objects_click_group_cmd_callback,
++    FALSE,
++    NULL },
++
+   { "layers-mask-edit", GIMP_ICON_EDIT,
+     NC_("layers-action", "_Edit Layer Mask"), NULL, { NULL },
+     NC_("layers-action", "Work on the layer mask"),
+@@ -1866,6 +1976,23 @@ layers_actions_update (GimpActionGroup *group,
+       SET_SENSITIVE ("layers-vobjects-clip-release",    vlayer && chopgimp_vobjects_can_clip_release (vlayer));
+       SET_SENSITIVE ("layers-vobjects-style-picker",    n_obj > 0);
+       SET_SENSITIVE ("layers-vobjects-select-all",      vlayer != NULL);
++      SET_SENSITIVE ("layers-vobjects-select-next-below", vlayer != NULL);
++      SET_SENSITIVE ("layers-vobjects-select-next-above", vlayer != NULL);
++      SET_SENSITIVE ("layers-vobjects-simplify", vlayer != NULL);
++      SET_SENSITIVE ("layers-vobjects-fill-holes", vlayer != NULL);
++      SET_SENSITIVE ("layers-vobjects-select-same-fill", vlayer && n_obj > 0);
++      SET_SENSITIVE ("layers-vobjects-select-same-stroke", vlayer && n_obj > 0);
++      SET_SENSITIVE ("layers-vobjects-select-same-color", vlayer && n_obj > 0);
++      SET_SENSITIVE ("layers-vobjects-select-inverse", vlayer && n_obj > 0);
++      SET_SENSITIVE ("layers-vobjects-select-smaller", vlayer != NULL);
++      SET_SENSITIVE ("layers-vobjects-delete-smaller", vlayer != NULL);
++      SET_SENSITIVE ("layers-vobjects-merge-same-color", vlayer != NULL);
++      SET_SENSITIVE ("layers-vobjects-swap-fill-stroke", vlayer && n_obj > 0);
++      SET_SENSITIVE ("layers-vobjects-drawing-colors", vlayer != NULL);
++      SET_SENSITIVE ("layers-vobjects-fill-none", vlayer && n_obj > 0);
++      SET_SENSITIVE ("layers-vobjects-stroke-none", vlayer && n_obj > 0);
++      SET_SENSITIVE ("layers-vobjects-lock-others", vlayer && n_obj > 0);
++      SET_SENSITIVE ("layers-vobjects-hide-others", vlayer && n_obj > 0);
+       SET_SENSITIVE ("layers-vobjects-distort-warp",    vlayer && chopgimp_vdistort_can_make (vlayer));
+       SET_SENSITIVE ("layers-vobjects-distort-mesh",    vlayer && chopgimp_vdistort_can_make (vlayer));
+       SET_SENSITIVE ("layers-vobjects-distort-top",     vlayer && chopgimp_vdistort_can_make_top (vlayer));
+diff --git a/app/actions/vector-objects-commands.c b/app/actions/vector-objects-commands.c
+index d15dd98..bea23f7 100644
+--- a/app/actions/vector-objects-commands.c
++++ b/app/actions/vector-objects-commands.c
+@@ -138,6 +138,98 @@ SIMPLE_COMMAND (clip_release, chopgimp_vobjects_clip_release)
+ SIMPLE_COMMAND (select_all,   chopgimp_vobjects_select_all)
+ SIMPLE_COMMAND (delete,       chopgimp_vobjects_delete_selection)
+ 
++/*  3.29.3: selection by color, cleaning, colors (Illustrator)  */
++static gboolean v_same_fill   (GimpVectorLayer *l) { return chopgimp_vobjects_select_same (l, CHOPGIMP_VSAME_FILL); }
++static gboolean v_same_stroke (GimpVectorLayer *l) { return chopgimp_vobjects_select_same (l, CHOPGIMP_VSAME_STROKE); }
++static gboolean v_same_color  (GimpVectorLayer *l) { return chopgimp_vobjects_select_same (l, CHOPGIMP_VSAME_COLOR); }
++static gboolean v_merge_same  (GimpVectorLayer *l) { return chopgimp_vobjects_merge_same_color (l) >= 0; }
++static gboolean v_fill_none   (GimpVectorLayer *l) { return chopgimp_vobjects_apply_color (l, NULL, FALSE, TRUE); }
++static gboolean v_stroke_none (GimpVectorLayer *l) { return chopgimp_vobjects_apply_color (l, NULL, TRUE, TRUE); }
++
++static gboolean v_next_below (GimpVectorLayer *l) { return chopgimp_vobjects_select_adjacent (l, FALSE); }
++static gboolean v_next_above (GimpVectorLayer *l) { return chopgimp_vobjects_select_adjacent (l, TRUE); }
++
++SIMPLE_COMMAND (select_next_below,  v_next_below)
++SIMPLE_COMMAND (select_next_above,  v_next_above)
++SIMPLE_COMMAND (select_same_fill,   v_same_fill)
++SIMPLE_COMMAND (select_same_stroke, v_same_stroke)
++SIMPLE_COMMAND (select_same_color,  v_same_color)
++SIMPLE_COMMAND (select_inverse,     chopgimp_vobjects_select_inverse)
++SIMPLE_COMMAND (merge_same_color,   v_merge_same)
++SIMPLE_COMMAND (swap_fill_stroke,   chopgimp_vobjects_swap_fill_stroke)
++SIMPLE_COMMAND (fill_none,          v_fill_none)
++SIMPLE_COMMAND (stroke_none,        v_stroke_none)
++SIMPLE_COMMAND (lock_others,        chopgimp_vobjects_lock_others)
++SIMPLE_COMMAND (hide_others,        chopgimp_vobjects_hide_others)
++
++/*  « Objets plus petits que… » / « Supprimer les petits objets… »: the
++ *  threshold is a side in pixels (area = side²), remembered
++ */
++static gint vobjects_small_side = 6;
++
++static void
++vobjects_small_callback (GtkWidget *query_box,
++                         gint       value,
++                         gpointer   data)
++{
++  GimpImage       *image  = g_object_get_data (G_OBJECT (query_box), "chopgimp-image");
++  GimpVectorLayer *layer  = image ? chopgimp_vobjects_get_active_layer (image) : NULL;
++  gboolean         delete = GPOINTER_TO_INT (data);
++
++  vobjects_small_side = value;
++
++  if (! layer)
++    return;
++
++  if (delete)
++    chopgimp_vobjects_delete_smaller (layer, (gdouble) value * value);
++  else
++    chopgimp_vobjects_select_smaller (layer, (gdouble) value * value);
++
++  gimp_image_flush (image);
++}
++
++static void
++vobjects_small_query (GimpAction *action,
++                      gpointer    data,
++                      gboolean    delete)
++{
++  GimpImage       *image;
++  GimpVectorLayer *layer;
++  GtkWidget       *box;
++  return_if_no_vlayer (image, layer, data);
++
++  box = gimp_query_int_box (delete ? _("Supprimer les petits objets")
++                                   : _("Objets plus petits que"),
++                            NULL, gimp_standard_help_func, NULL,
++                            delete ? _("Supprimer les objets dont la taille (largeur × hauteur) "
++                                       "est inférieure au carré de ce côté, en pixels :")
++                                   : _("Sélectionner les objets dont la taille (largeur × hauteur) "
++                                       "est inférieure au carré de ce côté, en pixels :"),
++                            vobjects_small_side, 1, 10000,
++                            G_OBJECT (image), "disconnect",
++                            vobjects_small_callback,
++                            GINT_TO_POINTER (delete), NULL);
++  g_object_set_data (G_OBJECT (box), "chopgimp-image", image);
++  gtk_widget_show (box);
++}
++
++void
++vector_objects_select_smaller_cmd_callback (GimpAction *action,
++                                            GVariant   *value,
++                                            gpointer    data)
++{
++  vobjects_small_query (action, data, FALSE);
++}
++
++void
++vector_objects_delete_smaller_cmd_callback (GimpAction *action,
++                                            GVariant   *value,
++                                            gpointer    data)
++{
++  vobjects_small_query (action, data, TRUE);
++}
++
+ void
+ vector_objects_arrange_cmd_callback (GimpAction *action,
+                                      GVariant   *value,
+@@ -778,3 +870,430 @@ vector_objects_pattern_apply_cmd_callback (GimpAction *action,
+ 
+   chopgimp_pattern_apply_dialog_show (image, layer, widget);
+ }
++
++
++void
++vector_objects_click_group_cmd_callback (GimpAction *action,
++                                         GVariant   *value,
++                                         gpointer    data)
++{
++  chopgimp_vsel_set_click_group (g_variant_get_boolean (value));
++}
++
++
++/*  3.29.3: « Simplifier… » (tolerance in px) and « Remplir les petits
++ *  trous… » (side in px): on the selected objects, else on all
++ */
++static gdouble vobjects_simplify_tol = 1.0;
++static gint    vobjects_holes_side   = 6;
++
++static void
++vobjects_holes_callback (GtkWidget *query_box,
++                         gint       value,
++                         gpointer   data)
++{
++  GimpImage       *image = g_object_get_data (G_OBJECT (query_box), "chopgimp-image");
++  GimpVectorLayer *layer = image ? chopgimp_vobjects_get_active_layer (image) : NULL;
++
++  vobjects_holes_side = value;
++
++  if (layer && chopgimp_vobjects_fill_holes (layer, (gdouble) value * value) > 0)
++    gimp_image_flush (image);
++}
++
++/*  3.29.3: « Simplifier… » with a live preview (the number of nodes
++ *  before / after); modal: the objects cannot change under the preview
++ */
++typedef struct
++{
++  GimpImage         *image;
++  ChopGimpVSimplify *s;
++  GtkAdjustment     *adj;
++  GtkWidget         *preview;
++  GtkWidget         *info;
++  guint              timeout;
++} SimplifyDialog;
++
++static gboolean
++simplify_dialog_update (gpointer data)
++{
++  SimplifyDialog *d = data;
++  gint            before = 0, after = 0;
++  gboolean        on     = gtk_toggle_button_get_active (GTK_TOGGLE_BUTTON (d->preview));
++
++  d->timeout = 0;
++
++  if (chopgimp_vsimplify_preview (d->s, on ? gtk_adjustment_get_value (d->adj) : 0.0,
++                                  &before, &after))
++    {
++      gchar *text = on ? g_strdup_printf (_("%d points → %d points"), before, after)
++                       : g_strdup_printf (_("%d points"), before);
++
++      gtk_label_set_text (GTK_LABEL (d->info), text);
++      g_free (text);
++      gimp_image_flush (d->image);
++    }
++
++  return G_SOURCE_REMOVE;
++}
++
++static void
++simplify_dialog_changed (gpointer        unused,
++                         SimplifyDialog *d)
++{
++  if (d->timeout)
++    g_source_remove (d->timeout);
++
++  d->timeout = g_timeout_add (120, simplify_dialog_update, d);
++}
++
++static void
++simplify_dialog_response (GtkWidget      *dialog,
++                          gint            response,
++                          SimplifyDialog *d)
++{
++  if (d->timeout)
++    {
++      g_source_remove (d->timeout);
++      d->timeout = 0;
++    }
++
++  vobjects_simplify_tol = gtk_adjustment_get_value (d->adj);
++  chopgimp_vsimplify_end (d->s, response == GTK_RESPONSE_OK, vobjects_simplify_tol);
++  d->s = NULL;
++  gimp_image_flush (d->image);
++
++  gtk_widget_destroy (dialog);
++}
++
++static void
++simplify_dialog_free (SimplifyDialog *d)
++{
++  if (d->timeout)
++    g_source_remove (d->timeout);
++  if (d->s)
++    chopgimp_vsimplify_end (d->s, FALSE, 0.0);
++  g_object_unref (d->image);
++  g_free (d);
++}
++
++void
++vector_objects_simplify_cmd_callback (GimpAction *action,
++                                      GVariant   *value,
++                                      gpointer    data)
++{
++  GimpImage       *image;
++  GimpVectorLayer *layer;
++  GtkWidget       *widget;
++  GtkWidget       *dialog, *vbox, *scale;
++  SimplifyDialog  *d;
++  return_if_no_vlayer (image, layer, data);
++  return_if_no_widget (widget, data);
++
++  d        = g_new0 (SimplifyDialog, 1);
++  d->image = g_object_ref (image);
++  d->s     = chopgimp_vsimplify_begin (layer);
++
++  if (! d->s)
++    {
++      simplify_dialog_free (d);
++      return;
++    }
++
++  dialog = gimp_dialog_new (_("Simplifier"), "chopgimp-simplify",
++                            gtk_widget_get_toplevel (widget), GTK_DIALOG_MODAL,
++                            gimp_standard_help_func, NULL,
++                            _("_Annuler"), GTK_RESPONSE_CANCEL,
++                            _("_Valider"), GTK_RESPONSE_OK,
++                            NULL);
++  gtk_dialog_set_default_response (GTK_DIALOG (dialog), GTK_RESPONSE_OK);
++
++  vbox = gtk_box_new (GTK_ORIENTATION_VERTICAL, 8);
++  gtk_container_set_border_width (GTK_CONTAINER (vbox), 12);
++  gtk_box_pack_start (GTK_BOX (gtk_dialog_get_content_area (GTK_DIALOG (dialog))),
++                      vbox, TRUE, TRUE, 0);
++
++  gtk_box_pack_start (GTK_BOX (vbox),
++                      gimp_hint_box_new (_("Écart maximal entre le tracé simplifié et "
++                                           "l'original, en pixels : plus grand = moins "
++                                           "de points.")),
++                      FALSE, FALSE, 0);
++
++  d->adj = gtk_adjustment_new (vobjects_simplify_tol, 0.05, 50.0, 0.05, 1.0, 0.0);
++  scale  = gimp_spin_scale_new (d->adj, _("Écart (px)"), 2);
++  gimp_spin_scale_set_scale_limits (GIMP_SPIN_SCALE (scale), 0.05, 10.0);
++  gtk_widget_set_size_request (scale, 320, -1);
++  gtk_box_pack_start (GTK_BOX (vbox), scale, FALSE, FALSE, 0);
++
++  d->preview = gtk_check_button_new_with_mnemonic (_("A_perçu"));
++  gtk_toggle_button_set_active (GTK_TOGGLE_BUTTON (d->preview), TRUE);
++  gtk_box_pack_start (GTK_BOX (vbox), d->preview, FALSE, FALSE, 0);
++
++  d->info = gtk_label_new (NULL);
++  gtk_label_set_xalign (GTK_LABEL (d->info), 0.0);
++  gtk_box_pack_start (GTK_BOX (vbox), d->info, FALSE, FALSE, 0);
++
++  g_signal_connect (d->adj, "value-changed",
++                    G_CALLBACK (simplify_dialog_changed), d);
++  g_signal_connect (d->preview, "toggled",
++                    G_CALLBACK (simplify_dialog_changed), d);
++  g_signal_connect (dialog, "response",
++                    G_CALLBACK (simplify_dialog_response), d);
++  g_object_set_data_full (G_OBJECT (dialog), "chopgimp-simplify", d,
++                          (GDestroyNotify) simplify_dialog_free);
++
++  gtk_widget_show_all (dialog);
++  simplify_dialog_update (d);
++}
++
++
++/*  3.29.3: « Couleurs du dessin… »: the plain colors of the vector layer
++ *  with their number of uses; a swatch recolors every use (one undo
++ *  step), « Sélectionner » selects the objects using it. Not modal: it
++ *  follows the objects and the selected layer.
++ */
++#define DRAWING_COLORS_MAX 64
++
++typedef struct
++{
++  GimpImage       *image;      /* weak */
++  GimpVectorLayer *layer;      /* weak, watched */
++  GtkWidget       *dialog;
++  GtkWidget       *title;
++  GtkWidget       *grid;
++  guint            idle;
++} DrawingColors;
++
++static void drawing_colors_queue (DrawingColors *dc);
++
++static void
++drawing_colors_watch (DrawingColors   *dc,
++                      GimpVectorLayer *layer)
++{
++  if (dc->layer == layer)
++    return;
++
++  if (dc->layer)
++    {
++      g_signal_handlers_disconnect_by_data (dc->layer, dc);
++      g_object_remove_weak_pointer (G_OBJECT (dc->layer), (gpointer *) &dc->layer);
++    }
++
++  dc->layer = layer;
++
++  if (layer)
++    {
++      g_object_add_weak_pointer (G_OBJECT (layer), (gpointer *) &dc->layer);
++      g_signal_connect_swapped (layer, "objects-changed",
++                                G_CALLBACK (drawing_colors_queue), dc);
++    }
++}
++
++static void
++drawing_colors_select (GtkButton     *button,
++                       DrawingColors *dc)
++{
++  guint32 key = GPOINTER_TO_UINT (g_object_get_data (G_OBJECT (button), "key"));
++
++  if (dc->layer && dc->image &&
++      chopgimp_vobjects_select_color_key (dc->layer, key))
++    gimp_image_flush (dc->image);
++}
++
++static void
++drawing_colors_recolor (GimpColorButton *button,
++                        DrawingColors   *dc)
++{
++  guint32    key   = GPOINTER_TO_UINT (g_object_get_data (G_OBJECT (button), "key"));
++  GeglColor *color = gimp_color_button_get_color (button);
++
++  if (dc->layer && dc->image &&
++      chopgimp_vobjects_replace_color_key (dc->layer, key, color) > 0)
++    gimp_image_flush (dc->image);
++
++  g_object_unref (color);
++}
++
++static gboolean
++drawing_colors_rebuild (gpointer data)
++{
++  DrawingColors   *dc    = data;
++  GimpVectorLayer *layer = dc->image ? chopgimp_vobjects_get_target_layer (dc->image) : NULL;
++  GArray          *uses  = NULL;
++  gchar           *text;
++  gint             total = 0;
++
++  dc->idle = 0;
++  drawing_colors_watch (dc, layer);
++
++  gtk_container_foreach (GTK_CONTAINER (dc->grid), (GtkCallback) gtk_widget_destroy, NULL);
++
++  if (layer)
++    uses = chopgimp_vobjects_drawing_colors (layer);
++
++  for (guint i = 0; uses && i < uses->len; i++)
++    total += g_array_index (uses, ChopGimpVColorUse, i).count;
++
++  if (! layer)
++    text = g_strdup (_("Sélectionnez un calque vectoriel (outil Déplacement, mode objets)."));
++  else if (uses->len > DRAWING_COLORS_MAX)
++    text = g_strdup_printf (_("%u couleurs, %d usages — les %d plus employées :"),
++                            uses->len, total, DRAWING_COLORS_MAX);
++  else
++    text = g_strdup_printf (_("%u couleurs, %d usages (fonds et contours unis)"),
++                            uses ? uses->len : 0, total);
++
++  gtk_label_set_text (GTK_LABEL (dc->title), text);
++  g_free (text);
++
++  for (guint i = 0; uses && i < MIN (uses->len, DRAWING_COLORS_MAX); i++)
++    {
++      ChopGimpVColorUse *u = &g_array_index (uses, ChopGimpVColorUse, i);
++      GeglColor         *color = gegl_color_new (NULL);
++      guint8             px[4] = { u->key >> 24, (u->key >> 16) & 0xff,
++                                   (u->key >> 8) & 0xff, u->key & 0xff };
++      GtkWidget         *w;
++      gchar             *s;
++
++      gegl_color_set_pixel (color, babl_format ("R'G'B'A u8"), px);
++
++      w = gimp_color_button_new (_("Remplacer la couleur"), 48, 20, color,
++                                 GIMP_COLOR_AREA_SMALL_CHECKS);
++      g_object_set_data (G_OBJECT (w), "key", GUINT_TO_POINTER (u->key));
++      gimp_help_set_help_data (w, _("Remplacer cette couleur partout (une annulation)"), NULL);
++      g_signal_connect (w, "color-changed", G_CALLBACK (drawing_colors_recolor), dc);
++      gtk_grid_attach (GTK_GRID (dc->grid), w, 0, i, 1, 1);
++
++      s = g_strdup_printf ("#%02x%02x%02x", px[0], px[1], px[2]);
++      w = gtk_label_new (s);
++      gtk_label_set_xalign (GTK_LABEL (w), 0.0);
++      gtk_grid_attach (GTK_GRID (dc->grid), w, 1, i, 1, 1);
++      g_free (s);
++
++      s = g_strdup_printf ("×%d", u->count);
++      w = gtk_label_new (s);
++      gtk_label_set_xalign (GTK_LABEL (w), 1.0);
++      gtk_grid_attach (GTK_GRID (dc->grid), w, 2, i, 1, 1);
++      g_free (s);
++
++      w = gtk_button_new_with_label (_("Sélectionner"));
++      g_object_set_data (G_OBJECT (w), "key", GUINT_TO_POINTER (u->key));
++      g_signal_connect (w, "clicked", G_CALLBACK (drawing_colors_select), dc);
++      gtk_grid_attach (GTK_GRID (dc->grid), w, 3, i, 1, 1);
++
++      g_object_unref (color);
++    }
++
++  if (uses)
++    g_array_free (uses, TRUE);
++
++  gtk_widget_show_all (dc->grid);
++
++  return G_SOURCE_REMOVE;
++}
++
++static void
++drawing_colors_queue (DrawingColors *dc)
++{
++  if (! dc->idle)
++    dc->idle = g_timeout_add (250, drawing_colors_rebuild, dc);
++}
++
++static void
++drawing_colors_free (DrawingColors *dc)
++{
++  if (dc->idle)
++    g_source_remove (dc->idle);
++
++  drawing_colors_watch (dc, NULL);
++
++  if (dc->image)
++    {
++      g_signal_handlers_disconnect_by_data (dc->image, dc);
++      g_object_set_data (G_OBJECT (dc->image), "chopgimp-drawing-colors", NULL);
++      g_object_remove_weak_pointer (G_OBJECT (dc->image), (gpointer *) &dc->image);
++    }
++
++  g_free (dc);
++}
++
++void
++vector_objects_drawing_colors_cmd_callback (GimpAction *action,
++                                            GVariant   *value,
++                                            gpointer    data)
++{
++  GimpImage     *image;
++  GtkWidget     *widget;
++  GtkWidget     *vbox, *sw;
++  DrawingColors *dc;
++  return_if_no_image (image, data);
++  return_if_no_widget (widget, data);
++
++  dc = g_object_get_data (G_OBJECT (image), "chopgimp-drawing-colors");
++  if (dc)
++    {
++      drawing_colors_queue (dc);
++      gtk_window_present (GTK_WINDOW (dc->dialog));
++      return;
++    }
++
++  dc        = g_new0 (DrawingColors, 1);
++  dc->image = image;
++  g_object_add_weak_pointer (G_OBJECT (image), (gpointer *) &dc->image);
++  g_object_set_data (G_OBJECT (image), "chopgimp-drawing-colors", dc);
++
++  dc->dialog = gimp_dialog_new (_("Couleurs du dessin"), "chopgimp-drawing-colors",
++                                gtk_widget_get_toplevel (widget), 0,
++                                gimp_standard_help_func, NULL,
++                                _("_Fermer"), GTK_RESPONSE_CLOSE,
++                                NULL);
++  g_signal_connect (dc->dialog, "response", G_CALLBACK (gtk_widget_destroy), NULL);
++  g_object_set_data_full (G_OBJECT (dc->dialog), "chopgimp-drawing-colors", dc,
++                          (GDestroyNotify) drawing_colors_free);
++
++  vbox = gtk_box_new (GTK_ORIENTATION_VERTICAL, 6);
++  gtk_container_set_border_width (GTK_CONTAINER (vbox), 12);
++  gtk_box_pack_start (GTK_BOX (gtk_dialog_get_content_area (GTK_DIALOG (dc->dialog))),
++                      vbox, TRUE, TRUE, 0);
++
++  dc->title = gtk_label_new (NULL);
++  gtk_label_set_xalign (GTK_LABEL (dc->title), 0.0);
++  gtk_box_pack_start (GTK_BOX (vbox), dc->title, FALSE, FALSE, 0);
++
++  sw = gtk_scrolled_window_new (NULL, NULL);
++  gtk_scrolled_window_set_policy (GTK_SCROLLED_WINDOW (sw),
++                                  GTK_POLICY_NEVER, GTK_POLICY_AUTOMATIC);
++  gtk_widget_set_size_request (sw, 340, 360);
++  gtk_box_pack_start (GTK_BOX (vbox), sw, TRUE, TRUE, 0);
++
++  dc->grid = gtk_grid_new ();
++  gtk_grid_set_row_spacing (GTK_GRID (dc->grid), 4);
++  gtk_grid_set_column_spacing (GTK_GRID (dc->grid), 10);
++  gtk_container_add (GTK_CONTAINER (sw), dc->grid);
++
++  g_signal_connect_swapped (image, "selected-layers-changed",
++                            G_CALLBACK (drawing_colors_queue), dc);
++
++  drawing_colors_rebuild (dc);
++  gtk_widget_show_all (dc->dialog);
++}
++
++void
++vector_objects_fill_holes_cmd_callback (GimpAction *action,
++                                        GVariant   *value,
++                                        gpointer    data)
++{
++  GimpImage       *image;
++  GimpVectorLayer *layer;
++  GtkWidget       *box;
++  return_if_no_vlayer (image, layer, data);
++
++  box = gimp_query_int_box (_("Remplir les petits trous"), NULL, gimp_standard_help_func, NULL,
++                            _("Boucher les trous dont la taille (largeur × hauteur) est "
++                              "inférieure au carré de ce côté, en pixels :"),
++                            vobjects_holes_side, 1, 10000,
++                            G_OBJECT (image), "disconnect",
++                            vobjects_holes_callback, NULL, NULL);
++  g_object_set_data (G_OBJECT (box), "chopgimp-image", image);
++  gtk_widget_show (box);
++}
+diff --git a/app/actions/vector-objects-commands.h b/app/actions/vector-objects-commands.h
+index d66fb29..8e479f6 100644
+--- a/app/actions/vector-objects-commands.h
++++ b/app/actions/vector-objects-commands.h
+@@ -99,6 +99,61 @@ void   vector_objects_style_picker_cmd_callback (GimpAction *action,
+ void   vector_objects_select_all_cmd_callback   (GimpAction *action,
+                                                  GVariant   *value,
+                                                  gpointer    data);
++/*  3.29.3  */
++void   vector_objects_select_next_below_cmd_callback (GimpAction *action,
++                                                 GVariant   *value,
++                                                 gpointer    data);
++void   vector_objects_select_next_above_cmd_callback (GimpAction *action,
++                                                 GVariant   *value,
++                                                 gpointer    data);
++void   vector_objects_simplify_cmd_callback (GimpAction *action,
++                                                 GVariant   *value,
++                                                 gpointer    data);
++void   vector_objects_drawing_colors_cmd_callback (GimpAction *action,
++                                                 GVariant   *value,
++                                                 gpointer    data);
++void   vector_objects_fill_holes_cmd_callback (GimpAction *action,
++                                                 GVariant   *value,
++                                                 gpointer    data);
++void   vector_objects_click_group_cmd_callback (GimpAction *action,
++                                                 GVariant   *value,
++                                                 gpointer    data);
++void   vector_objects_select_same_fill_cmd_callback (GimpAction *action,
++                                                 GVariant   *value,
++                                                 gpointer    data);
++void   vector_objects_select_same_stroke_cmd_callback (GimpAction *action,
++                                                 GVariant   *value,
++                                                 gpointer    data);
++void   vector_objects_select_same_color_cmd_callback (GimpAction *action,
++                                                 GVariant   *value,
++                                                 gpointer    data);
++void   vector_objects_select_inverse_cmd_callback (GimpAction *action,
++                                                 GVariant   *value,
++                                                 gpointer    data);
++void   vector_objects_select_smaller_cmd_callback (GimpAction *action,
++                                                 GVariant   *value,
++                                                 gpointer    data);
++void   vector_objects_delete_smaller_cmd_callback (GimpAction *action,
++                                                 GVariant   *value,
++                                                 gpointer    data);
++void   vector_objects_merge_same_color_cmd_callback (GimpAction *action,
++                                                 GVariant   *value,
++                                                 gpointer    data);
++void   vector_objects_swap_fill_stroke_cmd_callback (GimpAction *action,
++                                                 GVariant   *value,
++                                                 gpointer    data);
++void   vector_objects_fill_none_cmd_callback (GimpAction *action,
++                                                 GVariant   *value,
++                                                 gpointer    data);
++void   vector_objects_stroke_none_cmd_callback (GimpAction *action,
++                                                 GVariant   *value,
++                                                 gpointer    data);
++void   vector_objects_lock_others_cmd_callback (GimpAction *action,
++                                                 GVariant   *value,
++                                                 gpointer    data);
++void   vector_objects_hide_others_cmd_callback (GimpAction *action,
++                                                 GVariant   *value,
++                                                 gpointer    data);
+ void   vector_objects_distort_warp_cmd_callback (GimpAction *action,
+                                               GVariant   *value,
+                                               gpointer    data);
+diff --git a/app/display/chopgimp-vobjectbar.c b/app/display/chopgimp-vobjectbar.c
+index 5046f2b..a502910 100644
+--- a/app/display/chopgimp-vobjectbar.c
++++ b/app/display/chopgimp-vobjectbar.c
+@@ -97,6 +97,7 @@ typedef struct
+   GimpVectorLayer *layer;      /* weak */
+   GtkWidget       *content;    /* shown while objects are selected */
+   GtkWidget       *trace;      /* 3.27.3: « Vectorisation… » on a live trace */
++  GtkWidget       *trace_box;  /* 3.29.3: help + Décomposer / Dissocier / Supprimer */
+ 
+   gboolean         loading;
+   gboolean         applying;
+@@ -185,6 +186,9 @@ props_load (ChopGimpVObjectProps *p)
+   if (p->trace)
+     gtk_widget_set_visible (p->trace,
+                             p->layer && chopgimp_trace_layer_is_live (GIMP_ITEM (p->layer)));
++  if (p->trace_box)
++    gtk_widget_set_visible (p->trace_box,
++                            p->layer && chopgimp_trace_layer_is_live (GIMP_ITEM (p->layer)));
+ 
+   if (! objs)
+     return;
+@@ -852,6 +856,17 @@ pack (GtkWidget *box,
+     }
+ }
+ 
++/*  3.29.3: a button of the bar that activates an action  */
++static void
++props_action_clicked (GtkButton            *button,
++                      ChopGimpVObjectProps *p)
++{
++  const gchar *name = g_object_get_data (G_OBJECT (button), "chopgimp-action");
++
++  if (name)
++    g_action_group_activate_action (G_ACTION_GROUP (p->gimp->app), name, NULL);
++}
++
+ static void
+ props_trace_clicked (GtkButton            *button,
+                      ChopGimpVObjectProps *p)
+@@ -979,6 +994,44 @@ chopgimp_vobject_bar_new (Gimp                      *gimp,
+   g_signal_connect (p->trace, "clicked", G_CALLBACK (props_trace_clicked), p);
+   gtk_box_pack_start (GTK_BOX (box), p->trace, FALSE, FALSE, 0);
+ 
++  /*  3.29.3: a live trace explained, and its usual next steps  */
++  {
++    static const struct { const gchar *label, *action, *tip; } btns[] =
++    {
++      { N_("Décomposer"), "layers-image-trace-expand",
++        N_("Figer la vectorisation en objets ordinaires") },
++      { N_("Dissocier"),  "layers-vobjects-ungroup",
++        N_("Défaire le groupe sélectionné (un groupe par couleur)") },
++      { N_("Supprimer"),  "layers-vobjects-delete",
++        N_("Supprimer les objets sélectionnés") },
++    };
++    GtkWidget *label;
++
++    p->trace_box = gtk_box_new (GTK_ORIENTATION_HORIZONTAL, 4);
++    gtk_widget_set_no_show_all (p->trace_box, TRUE);
++
++    label = gtk_label_new (_("Vectorisation : un clic prend une forme, "
++                             "un double-clic son groupe de couleur"));
++    gtk_label_set_ellipsize (GTK_LABEL (label), PANGO_ELLIPSIZE_END);
++    gimp_label_set_attributes (GTK_LABEL (label),
++                               PANGO_ATTR_SCALE, PANGO_SCALE_SMALL, -1);
++    gtk_box_pack_start (GTK_BOX (p->trace_box), label, FALSE, FALSE, 0);
++    gtk_widget_show (label);
++
++    for (guint i = 0; i < G_N_ELEMENTS (btns); i++)
++      {
++        GtkWidget *b = gtk_button_new_with_label (_(btns[i].label));
++
++        g_object_set_data (G_OBJECT (b), "chopgimp-action", (gpointer) btns[i].action);
++        gimp_help_set_help_data (b, _(btns[i].tip), NULL);
++        g_signal_connect (b, "clicked", G_CALLBACK (props_action_clicked), p);
++        gtk_box_pack_start (GTK_BOX (p->trace_box), b, FALSE, FALSE, 0);
++        gtk_widget_show (b);
++      }
++
++    gtk_box_pack_start (GTK_BOX (box), p->trace_box, FALSE, FALSE, 0);
++  }
++
+   context = gimp_get_user_context (gimp);
+   g_signal_connect_object (context, "image-changed",
+                            G_CALLBACK (props_image_changed), p, 0);
+diff --git a/app/display/gimptoolpath.c b/app/display/gimptoolpath.c
+index 8b8d0cb..5b34613 100644
+--- a/app/display/gimptoolpath.c
++++ b/app/display/gimptoolpath.c
+@@ -824,11 +824,34 @@ gimp_tool_path_button_press (GimpToolWidget      *widget,
+   if (private->function == VECTORS_MOVE_CURVE &&
+       gimp_tool_path_check_writable (tool_path))
+     {
++      /*  ChopGimp 3.29.3: Direct Selection selects the whole segment (its
++       *  two nodes; Shift adds them to the selection), like Illustrator.
++       *  Selected before the undo step is opened: a click without a drag
++       *  pops that step, which must not bring the old selection back.
++       */
++      if (private->direct_select)
++        {
++          gimp_path_freeze (private->path);
++          gimp_path_anchor_select (private->path,
++                                   private->cur_stroke,
++                                   private->cur_anchor, TRUE,
++                                   ! (state & TOGGLE_MASK));
++          if (private->cur_anchor2)
++            gimp_path_anchor_select (private->path,
++                                     private->cur_stroke,
++                                     private->cur_anchor2, TRUE, FALSE);
++          gimp_path_thaw (private->path);
++        }
++
+       gimp_tool_path_begin_change (tool_path, _("Drag Curve"));
+ 
+       /* the magic numbers are taken from the "feel good" parameter
+        * from gimp_bezier_stroke_point_move_relative in gimpbezierstroke.c. */
+-      if (private->cur_position < 5.0 / 6.0)
++      if (private->direct_select)
++        {
++          /*  a click only selects: the drag (motion) makes the undo step  */
++        }
++      else if (private->cur_position < 5.0 / 6.0)
+         {
+           gimp_path_anchor_select (private->path,
+                                    private->cur_stroke,
+@@ -836,7 +859,7 @@ gimp_tool_path_button_press (GimpToolWidget      *widget,
+           private->undo_motion = TRUE;
+         }
+ 
+-      if (private->cur_position > 1.0 / 6.0)
++      if (! private->direct_select && private->cur_position > 1.0 / 6.0)
+         {
+           gimp_path_anchor_select (private->path,
+                                    private->cur_stroke,
+@@ -1699,6 +1722,51 @@ gimp_tool_path_get_function (GimpToolPath     *tool_path,
+       break;
+     }
+ 
++  /*  ChopGimp 3.29.3: the Direct Selection tool works like Illustrator's
++   *  and never creates a node: a press that would start a path, a stroke
++   *  or a new anchor (in the void, without any edited path, on another
++   *  path) draws a selection rectangle; on a node it selects / moves the
++   *  node (connecting and deleting belong to the Pen); on a segment it
++   *  selects and drags the segment.
++   */
++  if (private->direct_select)
++    {
++      switch (function)
++        {
++        case VECTORS_CREATE_PATH:
++        case VECTORS_CREATE_STROKE:
++        case VECTORS_ADD_ANCHOR:
++        case VECTORS_INSERT_ANCHOR:
++        case VECTORS_DELETE_SEGMENT:
++        case VECTORS_FINISHED:
++          function = VECTORS_RUBBER_BAND;
++          private->modifier_lock = FALSE;
++          break;
++
++        case VECTORS_SELECT_PATH:
++          if (! private->path)
++            function = VECTORS_RUBBER_BAND;
++          break;
++
++        case VECTORS_CONNECT_STROKES:
++        case VECTORS_DELETE_ANCHOR:
++          if (anchor && anchor->type == GIMP_ANCHOR_ANCHOR)
++            function = ((state & TOGGLE_MASK) ||
++                        (private->sel_count >= 2 && anchor->selected)) ?
++                       VECTORS_MOVE_ANCHORSET : VECTORS_MOVE_ANCHOR;
++          else
++            function = VECTORS_RUBBER_BAND;
++          break;
++
++        case VECTORS_CONVERT_EDGE:
++          function = VECTORS_MOVE_HANDLE;
++          break;
++
++        default:
++          break;
++        }
++    }
++
+   return function;
+ }
+ 
+diff --git a/app/path/chopgimp-vmaterial.c b/app/path/chopgimp-vmaterial.c
+index a1649d8..bb615c7 100644
+--- a/app/path/chopgimp-vmaterial.c
++++ b/app/path/chopgimp-vmaterial.c
+@@ -167,6 +167,27 @@ chopgimp_vmesh_clear (ChopGimpMesh *mesh)
+   mesh->rows = mesh->cols = 0;
+ }
+ 
++void
++chopgimp_vmesh_edge (const ChopGimpMesh *mesh,
++                     gint                a,
++                     gint                b,
++                     gdouble             c1[2],
++                     gdouble             c2[2])
++{
++  const ChopGimpMeshNode *na  = &mesh->nodes[a];
++  const ChopGimpMeshNode *nb  = &mesh->nodes[b];
++  gboolean                row = ABS (a - b) == 1;
++  gdouble                 sg  = b > a ? 1.0 : -1.0;
++  const gdouble          *ta  = row ? na->th : na->tv;
++  const gdouble          *tb  = row ? nb->th : nb->tv;
++  gdouble                 dx  = nb->x - na->x, dy = nb->y - na->y;
++
++  c1[0] = na->x + dx / 3.0 + sg * ta[0];
++  c1[1] = na->y + dy / 3.0 + sg * ta[1];
++  c2[0] = nb->x - dx / 3.0 - sg * tb[0];
++  c2[1] = nb->y - dy / 3.0 - sg * tb[1];
++}
++
+ gboolean
+ chopgimp_vmesh_parse (const gchar  *spec,
+                       ChopGimpMesh *mesh)
+@@ -196,13 +217,22 @@ chopgimp_vmesh_parse (const gchar  *spec,
+ 
+   for (gint i = 1; parts[i] && k < n; i++)
+     {
+-      gchar **f = g_strsplit (parts[i], ",", 3);
++      gchar **f = g_strsplit (parts[i], ",", 7);
+ 
+       if (f[0] && f[1] && f[2])
+         {
+           mesh->nodes[k].x = g_ascii_strtod (f[0], NULL);
+           mesh->nodes[k].y = g_ascii_strtod (f[1], NULL);
+           hex_to_rgba (f[2], mesh->nodes[k].rgba);
++
++          /*  3.29.3: optional tangents « ,thx,thy,tvx,tvy »  */
++          if (f[3] && f[4] && f[5] && f[6])
++            {
++              mesh->nodes[k].th[0] = g_ascii_strtod (f[3], NULL);
++              mesh->nodes[k].th[1] = g_ascii_strtod (f[4], NULL);
++              mesh->nodes[k].tv[0] = g_ascii_strtod (f[5], NULL);
++              mesh->nodes[k].tv[1] = g_ascii_strtod (f[6], NULL);
++            }
+           k++;
+         }
+ 
+@@ -236,6 +266,19 @@ chopgimp_vmesh_to_spec (const ChopGimpMesh *mesh)
+       put_dbl (s, mesh->nodes[i].y);
+       g_string_append_c (s, ',');
+       put_hex (s, mesh->nodes[i].rgba);
++
++      /*  3.29.3: tangents only when there are some (same spec as before
++       *  for straight meshes)
++       */
++      if (mesh->nodes[i].th[0] != 0.0 || mesh->nodes[i].th[1] != 0.0 ||
++          mesh->nodes[i].tv[0] != 0.0 || mesh->nodes[i].tv[1] != 0.0)
++        {
++          for (gint j = 0; j < 4; j++)
++            {
++              g_string_append_c (s, ',');
++              put_dbl (s, j < 2 ? mesh->nodes[i].th[j] : mesh->nodes[i].tv[j - 2]);
++            }
++        }
+     }
+ 
+   return g_string_free (s, FALSE);
+@@ -367,6 +410,13 @@ chopgimp_vmesh_insert (ChopGimpMesh  *mesh,
+           nd->rgba[i] = (a.rgba[i] * (1 - fc) + b.rgba[i] * fc) * (1 - fr) +
+                         (cc.rgba[i] * (1 - fc) + d.rgba[i] * fc) * fr;
+ 
++        /*  3.29.3: an old node keeps its tangents  */
++        if (fr == 0.0 && fc == 0.0)
++          {
++            memcpy (nd->th, a.th, sizeof (nd->th));
++            memcpy (nd->tv, a.tv, sizeof (nd->tv));
++          }
++
+         /*  the clicked node takes the color  */
+         if (rgba && r == row + 1 && c == col + 1)
+           memcpy (nd->rgba, rgba, sizeof (gdouble) * 4);
+@@ -380,12 +430,14 @@ chopgimp_vmesh_insert (ChopGimpMesh  *mesh,
+   return TRUE;
+ }
+ 
+-/*  adds one Coons patch with straight sides (control points at 1/3, 2/3)
+- *  and corner colors
++/*  adds one Coons patch: corners @p, the control points of side i
++ *  (from corner i to corner i + 1) @ctl[i] (3.29.3: tangents), corner
++ *  colors @col
+  */
+ static void
+ mesh_patch (cairo_pattern_t *pat,
+             const gdouble    p[4][2],
++            const gdouble    ctl[4][4],
+             const gdouble    col[4][4])
+ {
+   cairo_mesh_pattern_begin_patch (pat);
+@@ -393,14 +445,10 @@ mesh_patch (cairo_pattern_t *pat,
+ 
+   for (gint i = 1; i <= 4; i++)
+     {
+-      const gdouble *a = p[(i - 1) % 4];
+       const gdouble *b = p[i % 4];
++      const gdouble *c = ctl[i - 1];
+ 
+-      cairo_mesh_pattern_curve_to (pat,
+-                                   a[0] + (b[0] - a[0]) / 3.0, a[1] + (b[1] - a[1]) / 3.0,
+-                                   a[0] + (b[0] - a[0]) * 2.0 / 3.0,
+-                                   a[1] + (b[1] - a[1]) * 2.0 / 3.0,
+-                                   b[0], b[1]);
++      cairo_mesh_pattern_curve_to (pat, c[0], c[1], c[2], c[3], b[0], b[1]);
+     }
+ 
+   for (gint i = 0; i < 4; i++)
+@@ -427,21 +475,32 @@ mesh_source (const gchar   *spec,
+     for (gint c = 0; c < m.cols; c++)
+       {
+         const ChopGimpMeshNode *n[4];
+-        gdouble                 p[4][2], col[4][4];
++        gint                    k[4];
++        gdouble                 p[4][2], ctl[4][4], col[4][4];
++        gdouble                 w = box[2] - box[0], h = box[3] - box[1];
+ 
+-        n[0] = &m.nodes[r * (m.cols + 1) + c];
+-        n[1] = &m.nodes[r * (m.cols + 1) + c + 1];
+-        n[2] = &m.nodes[(r + 1) * (m.cols + 1) + c + 1];
+-        n[3] = &m.nodes[(r + 1) * (m.cols + 1) + c];
++        k[0] = r * (m.cols + 1) + c;
++        k[1] = r * (m.cols + 1) + c + 1;
++        k[2] = (r + 1) * (m.cols + 1) + c + 1;
++        k[3] = (r + 1) * (m.cols + 1) + c;
+ 
+         for (gint i = 0; i < 4; i++)
+           {
+-            p[i][0] = box[0] + n[i]->x * (box[2] - box[0]);
+-            p[i][1] = box[1] + n[i]->y * (box[3] - box[1]);
++            gdouble c1[2], c2[2];
++
++            n[i]    = &m.nodes[k[i]];
++            p[i][0] = box[0] + n[i]->x * w;
++            p[i][1] = box[1] + n[i]->y * h;
+             to_space (n[i]->rgba, space, col[i]);
++
++            chopgimp_vmesh_edge (&m, k[i], k[(i + 1) % 4], c1, c2);
++            ctl[i][0] = box[0] + c1[0] * w;
++            ctl[i][1] = box[1] + c1[1] * h;
++            ctl[i][2] = box[0] + c2[0] * w;
++            ctl[i][3] = box[1] + c2[1] * h;
+           }
+ 
+-        mesh_patch (pat, p, col);
++        mesh_patch (pat, p, ctl, col);
+       }
+ 
+   chopgimp_vmesh_clear (&m);
+@@ -630,7 +689,21 @@ freeform_source (const gchar   *spec,
+                     sizeof (gdouble) * 4);
+           }
+ 
+-        mesh_patch (pat, p, col);
++        {
++          gdouble ctl[4][4];
++
++          for (gint i = 0; i < 4; i++)
++            {
++              const gdouble *a = p[i], *b = p[(i + 1) % 4];
++
++              ctl[i][0] = a[0] + (b[0] - a[0]) / 3.0;
++              ctl[i][1] = a[1] + (b[1] - a[1]) / 3.0;
++              ctl[i][2] = a[0] + (b[0] - a[0]) * 2.0 / 3.0;
++              ctl[i][3] = a[1] + (b[1] - a[1]) * 2.0 / 3.0;
++            }
++
++          mesh_patch (pat, p, ctl, col);
++        }
+       }
+ 
+   g_free (grid);
+diff --git a/app/path/chopgimp-vmaterial.h b/app/path/chopgimp-vmaterial.h
+index 5c8b100..2780765 100644
+--- a/app/path/chopgimp-vmaterial.h
++++ b/app/path/chopgimp-vmaterial.h
+@@ -70,6 +70,11 @@ typedef struct
+ {
+   gdouble x, y;               /* box units                                  */
+   gdouble rgba[4];            /* sRGB, 0..1                                 */
++  /*  3.29.3: tangents of a mesh node (box units), along its row (th) and
++   *  its column (tv): the control points of its edges are moved by ±t
++   *  from the straight line (1/3 of the edge); 0: straight lines
++   */
++  gdouble th[2], tv[2];
+ } ChopGimpMeshNode;
+ 
+ typedef struct
+@@ -87,6 +92,14 @@ gboolean          chopgimp_vmesh_parse              (const gchar          *spec,
+                                                      ChopGimpMesh         *mesh);
+ gchar           * chopgimp_vmesh_to_spec            (const ChopGimpMesh   *mesh);
+ void              chopgimp_vmesh_clear              (ChopGimpMesh         *mesh);
++/*  3.29.3: the two control points (box units) of the edge from node @a
++ *  to its neighbour @b (same row or column), with the nodes' tangents
++ */
++void              chopgimp_vmesh_edge               (const ChopGimpMesh   *mesh,
++                                                     gint                  a,
++                                                     gint                  b,
++                                                     gdouble               c1[2],
++                                                     gdouble               c2[2]);
+ /*  adds a row and a column through (@x, @y) (box units), the new nodes
+  *  colored with @rgba (NULL: interpolated); FALSE outside the grid
+  */
+diff --git a/app/path/chopgimp-vobject-ops.c b/app/path/chopgimp-vobject-ops.c
+index b5b77ce..8d5ca38 100644
+--- a/app/path/chopgimp-vobject-ops.c
++++ b/app/path/chopgimp-vobject-ops.c
+@@ -34,10 +34,12 @@
+ #include "core/gimpchannel.h"
+ #include "core/gimpfilloptions.h"
+ #include "core/gimpimage.h"
++#include "core/gimpimage-undo.h"
+ #include "core/gimpitem.h"
+ #include "core/gimprasterizable.h"
+ #include "core/gimpstrokeoptions.h"
+ 
++#include "gimpanchor.h"
+ #include "gimppath.h"
+ #include "gimpstroke.h"
+ #include "gimpvectorlayer.h"
+@@ -1235,3 +1237,952 @@ chopgimp_vobjects_copy_style (GimpVectorLayer *layer,
+ 
+   return TRUE;
+ }
++
++
++/*  ─── 3.29.3: selection by color / size, cleaning, colors ──────────── */
++
++/*  the plain color of a leaf's primary fill / stroke as R'G'B'A u8; FALSE
++ *  when it has none (no entry, hidden, not a plain color)
++ */
++static gboolean
++leaf_color_key (ChopGimpVObject *leaf,
++                gboolean         stroke,
++                guint32         *key)
++{
++  ChopGimpVEntry *e;
++  guint8          px[4];
++
++  if (! leaf || leaf->kind != CHOPGIMP_VOBJECT_PATH)
++    return FALSE;
++
++  e = stroke ? chopgimp_vstyle_get_stroke (&leaf->style)
++             : chopgimp_vstyle_get_fill (&leaf->style);
++
++  if (! e || ! e->visible || e->paint.type != CHOPGIMP_PAINT_COLOR ||
++      ! e->paint.color || (stroke && e->width <= 0.0))
++    return FALSE;
++
++  gegl_color_get_pixel (e->paint.color, babl_format ("R'G'B'A u8"), px);
++  *key = ((guint32) px[0] << 24) | ((guint32) px[1] << 16) |
++         ((guint32) px[2] << 8)  |  (guint32) px[3];
++
++  return TRUE;
++}
++
++static gboolean
++leaf_is_free (ChopGimpVObject *o)
++{
++  return o->kind == CHOPGIMP_VOBJECT_PATH &&
++         chopgimp_vobject_is_visible (o) && ! chopgimp_vobject_is_locked (o);
++}
++
++static ChopGimpVObject *
++first_selected_leaf (GimpVectorLayer *layer)
++{
++  GList           *objs = chopgimp_vlayer_get_selected_objects (layer);
++  ChopGimpVObject *leaf = NULL;
++
++  if (objs)
++    {
++      GList *leaves = chopgimp_vobjects_leaves_of (objs->data);
++
++      if (leaves)
++        leaf = leaves->data;
++
++      g_list_free (leaves);
++      g_list_free (objs);
++    }
++
++  return leaf;
++}
++
++gboolean
++chopgimp_vobjects_select_same (GimpVectorLayer *layer,
++                               ChopGimpVSame    what)
++{
++  ChopGimpVObject *ref = first_selected_leaf (layer);
++  guint32          kf  = 0, ks = 0;
++  gboolean         hf, hs;
++  GList           *leaves;
++  GPtrArray       *objs;
++
++  if (! ref)
++    return FALSE;
++
++  hf = leaf_color_key (ref, FALSE, &kf);
++  hs = leaf_color_key (ref, TRUE,  &ks);
++
++  if ((what == CHOPGIMP_VSAME_FILL && ! hf) ||
++      (what == CHOPGIMP_VSAME_STROKE && ! hs) ||
++      (! hf && ! hs))
++    return FALSE;
++
++  objs   = g_ptr_array_new ();
++  leaves = chopgimp_vlayer_get_leaves (layer);
++
++  for (GList *l = leaves; l; l = l->next)
++    {
++      ChopGimpVObject *o = l->data;
++      guint32          f, k;
++      gboolean         of, os, match = FALSE;
++
++      if (! leaf_is_free (o))
++        continue;
++
++      of = leaf_color_key (o, FALSE, &f);
++      os = leaf_color_key (o, TRUE,  &k);
++
++      switch (what)
++        {
++        case CHOPGIMP_VSAME_FILL:   match = of && f == kf; break;
++        case CHOPGIMP_VSAME_STROKE: match = os && k == ks; break;
++        case CHOPGIMP_VSAME_COLOR:
++          match = (hf && ((of && f == kf) || (os && k == kf))) ||
++                  (hs && ((of && f == ks) || (os && k == ks)));
++          break;
++        }
++
++      if (match)
++        g_ptr_array_add (objs, o);
++    }
++
++  g_list_free (leaves);
++
++  if (objs->len)
++    select_objects (layer, objs);
++
++  g_ptr_array_free (objs, TRUE);
++
++  return TRUE;
++}
++
++gboolean
++chopgimp_vobjects_select_inverse (GimpVectorLayer *layer)
++{
++  GList     *leaves = chopgimp_vlayer_get_leaves (layer);
++  GPtrArray *objs   = g_ptr_array_new ();
++  GList     *sel    = chopgimp_vlayer_get_selected_objects (layer);
++  GHashTable *in    = g_hash_table_new (NULL, NULL);
++
++  /*  a selected group counts for all its leaves  */
++  for (GList *o = sel; o; o = o->next)
++    {
++      GList *ls = chopgimp_vobjects_leaves_of (o->data);
++
++      for (GList *l = ls; l; l = l->next)
++        g_hash_table_add (in, l->data);
++
++      g_list_free (ls);
++    }
++
++  for (GList *l = leaves; l; l = l->next)
++    if (leaf_is_free (l->data) && ! g_hash_table_contains (in, l->data))
++      g_ptr_array_add (objs, l->data);
++
++  select_objects (layer, objs);
++
++  g_hash_table_destroy (in);
++  g_list_free (sel);
++  g_list_free (leaves);
++  g_ptr_array_free (objs, TRUE);
++
++  return TRUE;
++}
++
++gint
++chopgimp_vobjects_select_smaller (GimpVectorLayer *layer,
++                                  gdouble          area)
++{
++  GList     *leaves = chopgimp_vlayer_get_leaves (layer);
++  GPtrArray *objs   = g_ptr_array_new ();
++  gint       n;
++
++  for (GList *l = leaves; l; l = l->next)
++    {
++      ChopGimpVObject *o = l->data;
++      gdouble          x1, y1, x2, y2;
++
++      if (leaf_is_free (o) &&
++          chopgimp_vobject_get_bounds (layer, o, TRUE, &x1, &y1, &x2, &y2) &&
++          (x2 - x1) * (y2 - y1) < area)
++        g_ptr_array_add (objs, o);
++    }
++
++  g_list_free (leaves);
++
++  n = objs->len;
++  select_objects (layer, objs);
++  g_ptr_array_free (objs, TRUE);
++
++  return n;
++}
++
++gint
++chopgimp_vobjects_delete_smaller (GimpVectorLayer *layer,
++                                  gdouble          area)
++{
++  gint n = chopgimp_vobjects_select_smaller (layer, area);
++
++  if (n > 0)
++    chopgimp_vobjects_delete_selection (layer);
++
++  return n;
++}
++
++gint
++chopgimp_vobjects_merge_same_color (GimpVectorLayer *layer)
++{
++  GimpImage  *image  = gimp_item_get_image (GIMP_ITEM (layer));
++  GHashTable *groups = g_hash_table_new_full (NULL, NULL, NULL,
++                                              (GDestroyNotify) g_ptr_array_unref);
++  GList      *leaves = chopgimp_vlayer_get_leaves (layer);
++  gint        before = g_list_length (leaves);
++  gint        after;
++  GHashTableIter iter;
++  gpointer    value;
++
++  for (GList *l = leaves; l; l = l->next)
++    {
++      ChopGimpVObject *o = l->data;
++      guint32          k, ks;
++      GPtrArray       *arr;
++
++      /*  plain fill, no visible stroke: the union keeps the look  */
++      if (! leaf_is_free (o) || ! leaf_color_key (o, FALSE, &k) ||
++          leaf_color_key (o, TRUE, &ks))
++        continue;
++
++      arr = g_hash_table_lookup (groups, GUINT_TO_POINTER (k + 1));
++      if (! arr)
++        {
++          arr = g_ptr_array_new ();
++          g_hash_table_insert (groups, GUINT_TO_POINTER (k + 1), arr);
++        }
++      g_ptr_array_add (arr, GUINT_TO_POINTER (o->id));
++    }
++
++  g_list_free (leaves);
++
++  gimp_image_undo_group_start (image, GIMP_UNDO_GROUP_MISC,
++                               _("Fusionner les formes de même couleur"));
++
++  g_hash_table_iter_init (&iter, groups);
++  while (g_hash_table_iter_next (&iter, NULL, &value))
++    {
++      GPtrArray *arr = value;
++      guint     *ids;
++
++      if (arr->len < 2)
++        continue;
++
++      ids = g_new (guint, arr->len);
++      for (guint i = 0; i < arr->len; i++)
++        ids[i] = GPOINTER_TO_UINT (arr->pdata[i]);
++
++      chopgimp_vlayer_set_selection (layer, ids, arr->len);
++      g_free (ids);
++
++      chopgimp_vobjects_pathfinder (layer, CHOPGIMP_VPATHFINDER_UNION);
++    }
++
++  gimp_image_undo_group_end (image);
++  g_hash_table_destroy (groups);
++
++  after = chopgimp_vlayer_count_leaves (layer);
++
++  return MAX (0, before - after);
++}
++
++gboolean
++chopgimp_vobjects_apply_color (GimpVectorLayer *layer,
++                               GeglColor       *color,
++                               gboolean         stroke,
++                               gboolean         push_undo)
++{
++  GList *objs = chopgimp_vlayer_get_selected_objects (layer);
++
++  if (! objs)
++    return FALSE;
++
++  if (push_undo)
++    chopgimp_vlayer_push_undo (layer, stroke ? _("Couleur du contour")
++                                             : _("Couleur du fond"));
++
++  chopgimp_vlayer_freeze (layer);
++
++  for (GList *o = objs; o; o = o->next)
++    {
++      GList *leaves = chopgimp_vobjects_leaves_of (o->data);
++
++      for (GList *l = leaves; l; l = l->next)
++        {
++          ChopGimpVObject *leaf = l->data;
++          ChopGimpVStyle   st;
++          ChopGimpVEntry  *e;
++
++          if (leaf->kind != CHOPGIMP_VOBJECT_PATH || chopgimp_vobject_is_locked (leaf))
++            continue;
++
++          chopgimp_vstyle_init (&st);
++          chopgimp_vstyle_copy (&st, &leaf->style);
++
++          e = stroke ? chopgimp_vstyle_ensure_stroke (&st)
++                     : chopgimp_vstyle_ensure_fill (&st);
++
++          if (color)
++            {
++              chopgimp_vpaint_set_color (&e->paint, color);
++              e->visible = TRUE;
++              if (stroke && e->width <= 0.0)
++                e->width = 1.0;
++            }
++          else
++            {
++              chopgimp_vpaint_clear (&e->paint);
++            }
++
++          chopgimp_vlayer_set_style (layer, leaf->id, &st, FALSE);
++          chopgimp_vstyle_clear (&st);
++        }
++
++      g_list_free (leaves);
++    }
++
++  chopgimp_vlayer_thaw (layer);
++  g_list_free (objs);
++
++  return TRUE;
++}
++
++gboolean
++chopgimp_vobjects_swap_fill_stroke (GimpVectorLayer *layer)
++{
++  GList *objs = chopgimp_vlayer_get_selected_objects (layer);
++
++  if (! objs)
++    return FALSE;
++
++  chopgimp_vlayer_push_undo (layer, _("Permuter fond et contour"));
++  chopgimp_vlayer_freeze (layer);
++
++  for (GList *o = objs; o; o = o->next)
++    {
++      GList *leaves = chopgimp_vobjects_leaves_of (o->data);
++
++      for (GList *l = leaves; l; l = l->next)
++        {
++          ChopGimpVObject *leaf = l->data;
++          ChopGimpVStyle   st;
++          ChopGimpVEntry  *f, *k;
++          ChopGimpPaint    tmp;
++
++          if (leaf->kind != CHOPGIMP_VOBJECT_PATH || chopgimp_vobject_is_locked (leaf))
++            continue;
++
++          chopgimp_vstyle_init (&st);
++          chopgimp_vstyle_copy (&st, &leaf->style);
++
++          f = chopgimp_vstyle_ensure_fill (&st);
++          k = chopgimp_vstyle_ensure_stroke (&st);
++
++          tmp      = f->paint;
++          f->paint = k->paint;
++          k->paint = tmp;
++          f->visible = TRUE;
++          k->visible = TRUE;
++          if (k->paint.type != CHOPGIMP_PAINT_NONE && k->width <= 0.0)
++            k->width = 1.0;
++
++          chopgimp_vlayer_set_style (layer, leaf->id, &st, FALSE);
++          chopgimp_vstyle_clear (&st);
++        }
++
++      g_list_free (leaves);
++    }
++
++  chopgimp_vlayer_thaw (layer);
++  g_list_free (objs);
++
++  return TRUE;
++}
++
++gboolean
++chopgimp_vobjects_select_next_under (GimpVectorLayer *layer,
++                                     gdouble          x,
++                                     gdouble          y,
++                                     gdouble          tolerance)
++{
++  ChopGimpVObject *cur = first_selected_leaf (layer);
++  GList           *leaves = chopgimp_vlayer_get_leaves (layer);   /* bottom → top */
++  GList           *under  = NULL;
++  GList           *l;
++  ChopGimpVObject *next   = NULL;
++
++  for (l = leaves; l; l = l->next)
++    {
++      ChopGimpVObject *o = l->data;
++      gdouble          x1, y1, x2, y2;
++
++      if (leaf_is_free (o) &&
++          chopgimp_vobject_get_bounds (layer, o, TRUE, &x1, &y1, &x2, &y2) &&
++          x >= x1 - tolerance && x <= x2 + tolerance &&
++          y >= y1 - tolerance && y <= y2 + tolerance)
++        under = g_list_prepend (under, o);                       /* top → bottom */
++    }
++
++  g_list_free (leaves);
++
++  if (! under)
++    return FALSE;
++
++  l = cur ? g_list_find (under, cur) : NULL;
++  next = (l && l->next) ? l->next->data : under->data;
++
++  chopgimp_vlayer_set_selection (layer, &next->id, 1);
++  g_list_free (under);
++
++  return TRUE;
++}
++
++static gboolean
++others_set (GimpVectorLayer *layer,
++            gboolean         lock)
++{
++  GList      *leaves = chopgimp_vlayer_get_leaves (layer);
++  GList      *sel    = chopgimp_vlayer_get_selected_objects (layer);
++  GHashTable *in     = g_hash_table_new (NULL, NULL);
++
++  if (! sel)
++    {
++      g_list_free (leaves);
++      g_hash_table_destroy (in);
++      return FALSE;
++    }
++
++  for (GList *o = sel; o; o = o->next)
++    {
++      GList *ls = chopgimp_vobjects_leaves_of (o->data);
++
++      for (GList *l = ls; l; l = l->next)
++        g_hash_table_add (in, l->data);
++
++      g_list_free (ls);
++    }
++
++  chopgimp_vlayer_push_undo (layer, lock ? _("Verrouiller les autres objets")
++                                         : _("Masquer les autres objets"));
++  chopgimp_vlayer_freeze (layer);
++
++  for (GList *l = leaves; l; l = l->next)
++    {
++      ChopGimpVObject *o = l->data;
++
++      if (g_hash_table_contains (in, o))
++        continue;
++
++      chopgimp_vlayer_set_props (layer, o->id, NULL, -1.0, -1,
++                                 lock ? -1 : FALSE, lock ? TRUE : -1, FALSE);
++    }
++
++  chopgimp_vlayer_thaw (layer);
++
++  g_hash_table_destroy (in);
++  g_list_free (sel);
++  g_list_free (leaves);
++
++  return TRUE;
++}
++
++gboolean
++chopgimp_vobjects_lock_others (GimpVectorLayer *layer)
++{
++  return others_set (layer, TRUE);
++}
++
++gboolean
++chopgimp_vobjects_hide_others (GimpVectorLayer *layer)
++{
++  return others_set (layer, FALSE);
++}
++
++
++/*  the selected leaves, or all the free leaves when nothing is selected  */
++static GList *
++target_leaves (GimpVectorLayer *layer)
++{
++  GList *objs = chopgimp_vlayer_get_selected_objects (layer);
++  GList *out  = NULL;
++
++  if (! objs)
++    {
++      GList *all = chopgimp_vlayer_get_leaves (layer);
++
++      for (GList *l = all; l; l = l->next)
++        if (leaf_is_free (l->data))
++          out = g_list_prepend (out, l->data);
++
++      g_list_free (all);
++
++      return g_list_reverse (out);
++    }
++
++  for (GList *o = objs; o; o = o->next)
++    {
++      GList *ls = chopgimp_vobjects_leaves_of (o->data);
++
++      for (GList *l = ls; l; l = l->next)
++        if (leaf_is_free (l->data))
++          out = g_list_prepend (out, l->data);
++
++      g_list_free (ls);
++    }
++
++  g_list_free (objs);
++
++  return g_list_reverse (out);
++}
++
++gint
++chopgimp_vobjects_simplify (GimpVectorLayer *layer,
++                            gdouble          tolerance,
++                            gboolean         push_undo)
++{
++  GList *leaves = target_leaves (layer);
++  gint   n      = 0;
++
++  if (! leaves)
++    return 0;
++
++  if (push_undo)
++    chopgimp_vlayer_push_undo (layer, _("Simplifier"));
++
++  chopgimp_vlayer_freeze (layer);
++
++  for (GList *l = leaves; l; l = l->next)
++    {
++      ChopGimpVObject *o = l->data;
++      GimpPath        *simple;
++
++      if (! o->path)
++        continue;
++
++      simple = chopgimp_geom_simplify (o->path, MAX (tolerance, 0.01));
++
++      if (simple)
++        {
++          g_object_ref_sink (simple);
++          chopgimp_vlayer_set_path (layer, o->id, simple, FALSE);
++          g_object_unref (simple);
++          n++;
++        }
++    }
++
++  chopgimp_vlayer_thaw (layer);
++  g_list_free (leaves);
++
++  return n;
++}
++
++/*  ─── 3.29.3: « Simplifier » with a live preview ───────────────────── */
++
++struct _ChopGimpVSimplify
++{
++  GimpVectorLayer *layer;    /* weak */
++  GArray          *ids;      /* guint */
++  GPtrArray       *orig;     /* GimpPath, local coordinates */
++  gint             n_nodes;
++  gboolean         changed;
++};
++
++static gint
++path_n_nodes (GimpPath *path)
++{
++  GimpStroke *stroke = NULL;
++  gint        n      = 0;
++
++  while ((stroke = gimp_path_stroke_get_next (path, stroke)))
++    for (GList *a = stroke->anchors->head; a; a = a->next)
++      if (((GimpAnchor *) a->data)->type == GIMP_ANCHOR_ANCHOR)
++        n++;
++
++  return n;
++}
++
++ChopGimpVSimplify *
++chopgimp_vsimplify_begin (GimpVectorLayer *layer)
++{
++  ChopGimpVSimplify *s;
++  GList             *leaves;
++
++  g_return_val_if_fail (GIMP_IS_VECTOR_LAYER (layer), NULL);
++
++  leaves = target_leaves (layer);
++  if (! leaves)
++    return NULL;
++
++  s        = g_new0 (ChopGimpVSimplify, 1);
++  s->layer = layer;
++  s->ids   = g_array_new (FALSE, FALSE, sizeof (guint));
++  s->orig  = g_ptr_array_new_with_free_func (g_object_unref);
++  g_object_add_weak_pointer (G_OBJECT (layer), (gpointer *) &s->layer);
++
++  for (GList *l = leaves; l; l = l->next)
++    {
++      ChopGimpVObject *o = l->data;
++      GimpPath        *copy;
++
++      if (! o->path)
++        continue;
++
++      copy = GIMP_PATH (gimp_item_duplicate (GIMP_ITEM (o->path),
++                                             G_TYPE_FROM_INSTANCE (o->path)));
++      g_object_ref_sink (copy);
++      g_array_append_val (s->ids, o->id);
++      g_ptr_array_add (s->orig, copy);
++      s->n_nodes += path_n_nodes (o->path);
++    }
++
++  g_list_free (leaves);
++
++  return s;
++}
++
++static void
++vsimplify_apply (ChopGimpVSimplify *s,
++                 gdouble            tolerance,
++                 gint              *n_after)
++{
++  chopgimp_vlayer_freeze (s->layer);
++
++  for (guint i = 0; i < s->ids->len; i++)
++    {
++      guint     id   = g_array_index (s->ids, guint, i);
++      GimpPath *orig = g_ptr_array_index (s->orig, i);
++      GimpPath *path = tolerance > 0.0 ? chopgimp_geom_simplify (orig, MAX (tolerance, 0.01))
++                                       : NULL;
++
++      if (path)
++        g_object_ref_sink (path);
++
++      if (n_after)
++        *n_after += path_n_nodes (path ? path : orig);
++
++      if (chopgimp_vlayer_get_object (s->layer, id))
++        chopgimp_vlayer_set_path (s->layer, id, path ? path : orig, FALSE);
++
++      if (path)
++        g_object_unref (path);
++    }
++
++  chopgimp_vlayer_thaw (s->layer);
++}
++
++gboolean
++chopgimp_vsimplify_preview (ChopGimpVSimplify *s,
++                            gdouble            tolerance,
++                            gint              *n_before,
++                            gint              *n_after)
++{
++  if (n_before) *n_before = s ? s->n_nodes : 0;
++  if (n_after)  *n_after  = 0;
++
++  if (! s || ! s->layer)
++    return FALSE;
++
++  vsimplify_apply (s, tolerance, n_after);
++  s->changed = TRUE;
++
++  return TRUE;
++}
++
++void
++chopgimp_vsimplify_end (ChopGimpVSimplify *s,
++                        gboolean           commit,
++                        gdouble            tolerance)
++{
++  if (! s)
++    return;
++
++  if (s->layer)
++    {
++      if (s->changed)
++        vsimplify_apply (s, 0.0, NULL);   /* the originals back */
++
++      if (commit)
++        {
++          chopgimp_vlayer_push_undo (s->layer, _("Simplifier"));
++          vsimplify_apply (s, tolerance, NULL);
++        }
++
++      g_object_remove_weak_pointer (G_OBJECT (s->layer), (gpointer *) &s->layer);
++    }
++
++  g_array_free (s->ids, TRUE);
++  g_ptr_array_free (s->orig, TRUE);
++  g_free (s);
++}
++
++
++/*  ─── 3.29.3: « Couleurs du dessin » ───────────────────────────────── */
++
++static gint
++color_use_cmp (gconstpointer a,
++               gconstpointer b)
++{
++  const ChopGimpVColorUse *x = a, *y = b;
++
++  if (x->count != y->count)
++    return y->count - x->count;
++
++  return x->key < y->key ? -1 : x->key > y->key;
++}
++
++GArray *
++chopgimp_vobjects_drawing_colors (GimpVectorLayer *layer)
++{
++  GHashTable *counts = g_hash_table_new (NULL, NULL);
++  GArray     *out    = g_array_new (FALSE, FALSE, sizeof (ChopGimpVColorUse));
++  GList      *leaves = chopgimp_vlayer_get_leaves (layer);
++  GHashTableIter iter;
++  gpointer    k, v;
++
++  for (GList *l = leaves; l; l = l->next)
++    for (gint stroke = 0; stroke < 2; stroke++)
++      {
++        guint32 key;
++
++        if (leaf_is_free (l->data) && leaf_color_key (l->data, stroke, &key))
++          {
++            gpointer kp = GUINT_TO_POINTER (key ^ 0x1);  /* never NULL */
++
++            g_hash_table_insert (counts, kp,
++                                 GINT_TO_POINTER (GPOINTER_TO_INT (g_hash_table_lookup (counts, kp)) + 1));
++          }
++      }
++
++  g_list_free (leaves);
++
++  g_hash_table_iter_init (&iter, counts);
++  while (g_hash_table_iter_next (&iter, &k, &v))
++    {
++      ChopGimpVColorUse use = { GPOINTER_TO_UINT (k) ^ 0x1, GPOINTER_TO_INT (v) };
++
++      g_array_append_val (out, use);
++    }
++
++  g_hash_table_destroy (counts);
++  g_array_sort (out, color_use_cmp);
++
++  return out;
++}
++
++gboolean
++chopgimp_vobjects_select_color_key (GimpVectorLayer *layer,
++                                    guint32          key)
++{
++  GPtrArray *objs   = g_ptr_array_new ();
++  GList     *leaves = chopgimp_vlayer_get_leaves (layer);
++
++  for (GList *l = leaves; l; l = l->next)
++    {
++      guint32 f, k;
++
++      if (leaf_is_free (l->data) &&
++          ((leaf_color_key (l->data, FALSE, &f) && f == key) ||
++           (leaf_color_key (l->data, TRUE,  &k) && k == key)))
++        g_ptr_array_add (objs, l->data);
++    }
++
++  g_list_free (leaves);
++
++  if (objs->len)
++    select_objects (layer, objs);
++
++  g_ptr_array_free (objs, TRUE);
++
++  return TRUE;
++}
++
++gint
++chopgimp_vobjects_replace_color_key (GimpVectorLayer *layer,
++                                     guint32          key,
++                                     GeglColor       *color)
++{
++  GList *leaves = chopgimp_vlayer_get_leaves (layer);
++  GList *hits   = NULL;
++  gint   n      = 0;
++
++  for (GList *l = leaves; l; l = l->next)
++    {
++      guint32 f, k;
++
++      if (leaf_is_free (l->data) &&
++          ((leaf_color_key (l->data, FALSE, &f) && f == key) ||
++           (leaf_color_key (l->data, TRUE,  &k) && k == key)))
++        hits = g_list_prepend (hits, l->data);
++    }
++
++  g_list_free (leaves);
++
++  if (! hits || ! color)
++    {
++      g_list_free (hits);
++      return 0;
++    }
++
++  chopgimp_vlayer_push_undo (layer, _("Couleurs du dessin"));
++  chopgimp_vlayer_freeze (layer);
++
++  for (GList *l = hits; l; l = l->next)
++    {
++      ChopGimpVObject *leaf = l->data;
++      ChopGimpVStyle   st;
++      guint32          kk;
++
++      chopgimp_vstyle_init (&st);
++      chopgimp_vstyle_copy (&st, &leaf->style);
++
++      for (gint stroke = 0; stroke < 2; stroke++)
++        if (leaf_color_key (leaf, stroke, &kk) && kk == key)
++          {
++            ChopGimpVEntry *e = stroke ? chopgimp_vstyle_get_stroke (&st)
++                                       : chopgimp_vstyle_get_fill (&st);
++
++            if (e)
++              chopgimp_vpaint_set_color (&e->paint, color);
++          }
++
++      chopgimp_vlayer_set_style (layer, leaf->id, &st, FALSE);
++      chopgimp_vstyle_clear (&st);
++      n++;
++    }
++
++  chopgimp_vlayer_thaw (layer);
++  g_list_free (hits);
++
++  return n;
++}
++
++static gdouble
++stroke_box_area (GimpStroke *stroke)
++{
++  gdouble x1 = G_MAXDOUBLE, y1 = G_MAXDOUBLE, x2 = -G_MAXDOUBLE, y2 = -G_MAXDOUBLE;
++
++  for (GList *a = stroke->anchors->head; a; a = a->next)
++    {
++      GimpAnchor *anchor = a->data;
++
++      x1 = MIN (x1, anchor->position.x);  x2 = MAX (x2, anchor->position.x);
++      y1 = MIN (y1, anchor->position.y);  y2 = MAX (y2, anchor->position.y);
++    }
++
++  return (x2 > x1 && y2 > y1) ? (x2 - x1) * (y2 - y1) : 0.0;
++}
++
++gint
++chopgimp_vobjects_fill_holes (GimpVectorLayer *layer,
++                              gdouble          area)
++{
++  GimpImage *image  = gimp_item_get_image (GIMP_ITEM (layer));
++  GList     *leaves = target_leaves (layer);
++  gint       n      = 0;
++  gboolean   pushed = FALSE;
++
++  for (GList *l = leaves; l; l = l->next)
++    {
++      ChopGimpVObject *o       = l->data;
++      GimpStroke      *stroke  = NULL;
++      GimpStroke      *largest = NULL;
++      gdouble          best    = -1.0;
++      gint             removed = 0;
++      GimpPath        *path;
++
++      if (! o->path)
++        continue;
++
++      while ((stroke = gimp_path_stroke_get_next (o->path, stroke)))
++        {
++          gdouble a = stroke_box_area (stroke);
++
++          if (a > best)
++            {
++              best    = a;
++              largest = stroke;
++            }
++        }
++
++      path = gimp_path_new (image, o->name ? o->name : "");
++      g_object_ref_sink (path);
++
++      while ((stroke = gimp_path_stroke_get_next (o->path, stroke)))
++        {
++          if (stroke != largest && stroke_box_area (stroke) < area)
++            {
++              removed++;
++              continue;
++            }
++
++          {
++            GimpStroke *copy = gimp_stroke_duplicate (stroke);
++
++            gimp_path_stroke_add (path, copy);
++            g_object_unref (copy);
++          }
++        }
++
++      if (removed > 0)
++        {
++          if (! pushed)
++            {
++              chopgimp_vlayer_push_undo (layer, _("Remplir les petits trous"));
++              chopgimp_vlayer_freeze (layer);
++              pushed = TRUE;
++            }
++
++          chopgimp_vlayer_set_path (layer, o->id, path, FALSE);
++          n += removed;
++        }
++
++      g_object_unref (path);
++    }
++
++  if (pushed)
++    chopgimp_vlayer_thaw (layer);
++
++  g_list_free (leaves);
++
++  return n;
++}
++
++
++gboolean
++chopgimp_vobjects_select_adjacent (GimpVectorLayer *layer,
++                                   gboolean         above)
++{
++  ChopGimpVObject *cur    = first_selected_leaf (layer);
++  GList           *leaves = chopgimp_vlayer_get_leaves (layer);   /* bottom → top */
++  GList           *free_  = NULL;
++  GList           *l;
++  ChopGimpVObject *next;
++
++  for (l = leaves; l; l = l->next)
++    if (leaf_is_free (l->data))
++      free_ = g_list_append (free_, l->data);
++
++  g_list_free (leaves);
++
++  if (! free_)
++    return FALSE;
++
++  l = cur ? g_list_find (free_, cur) : NULL;
++
++  if (above)
++    next = (l && l->next) ? l->next->data : free_->data;
++  else
++    next = (l && l->prev) ? l->prev->data : g_list_last (free_)->data;
++
++  chopgimp_vlayer_set_selection (layer, &next->id, 1);
++  g_list_free (free_);
++
++  return TRUE;
++}
+diff --git a/app/path/chopgimp-vobject-ops.h b/app/path/chopgimp-vobject-ops.h
+index 97a30d5..b7c0517 100644
+--- a/app/path/chopgimp-vobject-ops.h
++++ b/app/path/chopgimp-vobject-ops.h
+@@ -117,6 +117,98 @@ gboolean          chopgimp_vobjects_can_pathfinder   (GimpVectorLayer *layer);
+ /*  ─── commands ──────────────────────────────────────────────────────── */
+ 
+ gboolean          chopgimp_vobjects_select_all       (GimpVectorLayer *layer);
++
++/*  3.29.3 (Illustrator « Sélection > Identique »): from the first selected
++ *  object, select every visible, unlocked leaf of the layer with the same
++ *  plain fill color / stroke color / either of them
++ */
++typedef enum
++{
++  CHOPGIMP_VSAME_FILL,
++  CHOPGIMP_VSAME_STROKE,
++  CHOPGIMP_VSAME_COLOR
++} ChopGimpVSame;
++
++gboolean          chopgimp_vobjects_select_same      (GimpVectorLayer *layer,
++                                                      ChopGimpVSame    what);
++gboolean          chopgimp_vobjects_select_inverse   (GimpVectorLayer *layer);
++/*  leaves whose bounds are smaller than @area px²: their count  */
++gint              chopgimp_vobjects_select_smaller   (GimpVectorLayer *layer,
++                                                      gdouble          area);
++gint              chopgimp_vobjects_delete_smaller   (GimpVectorLayer *layer,
++                                                      gdouble          area);
++/*  the leaves of each plain fill color become one object (union), one
++ *  undo step; the number of objects removed
++ */
++gint              chopgimp_vobjects_merge_same_color (GimpVectorLayer *layer);
++/*  recolor the selected objects: their fill (@stroke FALSE) or stroke;
++ *  @color NULL: none. One undo step unless @push_undo is FALSE.
++ */
++gboolean          chopgimp_vobjects_apply_color      (GimpVectorLayer *layer,
++                                                      GeglColor       *color,
++                                                      gboolean         stroke,
++                                                      gboolean         push_undo);
++gboolean          chopgimp_vobjects_swap_fill_stroke (GimpVectorLayer *layer);
++/*  the next selectable object under (@x, @y) below the selected one
++ *  (Tab, Illustrator), wrapping; FALSE if none
++ */
++gboolean          chopgimp_vobjects_select_next_under (GimpVectorLayer *layer,
++                                                       gdouble          x,
++                                                       gdouble          y,
++                                                       gdouble          tolerance);
++/*  the next object below / above the selected one in the stacking order
++ *  (Ctrl+Alt+[ / Ctrl+Alt+], Illustrator), wrapping
++ */
++gboolean          chopgimp_vobjects_select_adjacent  (GimpVectorLayer *layer,
++                                                      gboolean         above);
++/*  lock / hide everything but the selection (Ctrl+Alt+2 / Ctrl+Alt+3)  */
++/*  « Simplifier »: the selected leaves (all when none) with fewer nodes
++ *  (@tolerance px); « Remplir les petits trous »: their holes (sub-paths
++ *  that are not the largest one) smaller than @area px² are removed.
++ *  One undo step unless @push_undo is FALSE (live preview).
++ */
++gint              chopgimp_vobjects_simplify         (GimpVectorLayer *layer,
++                                                      gdouble          tolerance,
++                                                      gboolean         push_undo);
++gint              chopgimp_vobjects_fill_holes       (GimpVectorLayer *layer,
++                                                      gdouble          area);
++/*  3.29.3: « Simplifier » with a live preview: the original paths are
++ *  kept; preview() simplifies them with no undo step and returns the
++ *  number of nodes before / after; end() puts them back and, when
++ *  @commit, applies @tolerance as one undo step
++ */
++typedef struct _ChopGimpVSimplify ChopGimpVSimplify;
++
++ChopGimpVSimplify * chopgimp_vsimplify_begin       (GimpVectorLayer   *layer);
++gboolean          chopgimp_vsimplify_preview       (ChopGimpVSimplify *s,
++                                                    gdouble            tolerance,
++                                                    gint              *n_before,
++                                                    gint              *n_after);
++void              chopgimp_vsimplify_end           (ChopGimpVSimplify *s,
++                                                    gboolean           commit,
++                                                    gdouble            tolerance);
++/*  3.29.3: « Couleurs du dessin »: the plain fill / stroke colors of the
++ *  free leaves (R'G'B'A u8 as 0xRRGGBBAA) with their number of uses, the
++ *  most used first (GArray of ChopGimpVColorUse)
++ */
++typedef struct
++{
++  guint32 key;
++  gint    count;
++} ChopGimpVColorUse;
++
++GArray          * chopgimp_vobjects_drawing_colors   (GimpVectorLayer *layer);
++/*  selects the free leaves whose fill or stroke is @key  */
++gboolean          chopgimp_vobjects_select_color_key (GimpVectorLayer *layer,
++                                                      guint32          key);
++/*  every fill / stroke of color @key becomes @color (one undo step);
++ *  returns the number of objects changed
++ */
++gint              chopgimp_vobjects_replace_color_key (GimpVectorLayer *layer,
++                                                       guint32          key,
++                                                       GeglColor       *color);
++gboolean          chopgimp_vobjects_lock_others      (GimpVectorLayer *layer);
++gboolean          chopgimp_vobjects_hide_others      (GimpVectorLayer *layer);
+ gboolean          chopgimp_vobjects_delete_selection (GimpVectorLayer *layer);
+ /*  the copies go right above their originals and become the selection  */
+ gboolean          chopgimp_vobjects_duplicate_selection (GimpVectorLayer *layer,
+diff --git a/app/pdb/chopgimp-cmds.c b/app/pdb/chopgimp-cmds.c
+index f5388ce..dc72240 100644
+--- a/app/pdb/chopgimp-cmds.c
++++ b/app/pdb/chopgimp-cmds.c
+@@ -636,6 +636,64 @@ vobjects_command_invoker (GimpProcedure         *procedure,
+         }
+       else if (! chopgimp_vobjects_layer_is_multi (layer))
+         done = FALSE;
++      /*  3.29.3: selection by color / size, cleaning, colors  */
++      else if (! strcmp (cmd, "select-same-fill"))
++        done = chopgimp_vobjects_select_same (layer, CHOPGIMP_VSAME_FILL);
++      else if (! strcmp (cmd, "select-same-stroke"))
++        done = chopgimp_vobjects_select_same (layer, CHOPGIMP_VSAME_STROKE);
++      else if (! strcmp (cmd, "select-same-color"))
++        done = chopgimp_vobjects_select_same (layer, CHOPGIMP_VSAME_COLOR);
++      else if (! strcmp (cmd, "select-next-below"))
++        done = chopgimp_vobjects_select_adjacent (layer, FALSE);
++      else if (! strcmp (cmd, "select-next-above"))
++        done = chopgimp_vobjects_select_adjacent (layer, TRUE);
++      else if (! strcmp (cmd, "select-inverse"))
++        done = chopgimp_vobjects_select_inverse (layer);
++      else if (! strncmp (cmd, "select-smaller:", 15))
++        done = chopgimp_vobjects_select_smaller (layer, g_ascii_strtod (cmd + 15, NULL)) >= 0;
++      else if (! strncmp (cmd, "delete-smaller:", 15))
++        done = chopgimp_vobjects_delete_smaller (layer, g_ascii_strtod (cmd + 15, NULL)) >= 0;
++      else if (! strcmp (cmd, "merge-same-color"))
++        done = chopgimp_vobjects_merge_same_color (layer) >= 0;
++      else if (! strncmp (cmd, "simplify:", 9))
++        done = chopgimp_vobjects_simplify (layer, g_ascii_strtod (cmd + 9, NULL), TRUE) >= 0;
++      else if (! strncmp (cmd, "simplify-preview:", 17))
++        {
++          /*  3.29.3: preview then cancel; TRUE when the preview had
++           *  fewer nodes (the paths must be back afterwards)
++           */
++          ChopGimpVSimplify *sp = chopgimp_vsimplify_begin (layer);
++          gint               b = 0, a = 0;
++
++          chopgimp_vsimplify_preview (sp, g_ascii_strtod (cmd + 17, NULL), &b, &a);
++          chopgimp_vsimplify_end (sp, FALSE, 0.0);
++          done = sp && a < b;
++        }
++      else if (! strncmp (cmd, "replace-color:", 14) && strlen (cmd) >= 14 + 8 + 1 + 6)
++        {
++          /*  3.29.3 « Couleurs du dessin »: replace-color:RRGGBBAA:RRGGBB[AA]  */
++          guint32    key = (guint32) g_ascii_strtoull (cmd + 14, NULL, 16);
++          GeglColor *c   = gegl_color_new (NULL);
++          guint8     px[4];
++          guint32    v   = (guint32) g_ascii_strtoull (cmd + 23, NULL, 16);
++
++          if (strlen (cmd + 23) <= 6)
++            v = (v << 8) | 0xff;
++          px[0] = v >> 24; px[1] = (v >> 16) & 0xff; px[2] = (v >> 8) & 0xff; px[3] = v & 0xff;
++          gegl_color_set_pixel (c, babl_format ("R'G'B'A u8"), px);
++          done = chopgimp_vobjects_replace_color_key (layer, key, c) > 0;
++          g_object_unref (c);
++        }
++      else if (! strncmp (cmd, "fill-holes:", 11))
++        done = chopgimp_vobjects_fill_holes (layer, g_ascii_strtod (cmd + 11, NULL)) >= 0;
++      else if (! strcmp (cmd, "swap-fill-stroke"))
++        done = chopgimp_vobjects_swap_fill_stroke (layer);
++      else if (! strcmp (cmd, "fill-none"))
++        done = chopgimp_vobjects_apply_color (layer, NULL, FALSE, TRUE);
++      else if (! strcmp (cmd, "lock-others"))
++        done = chopgimp_vobjects_lock_others (layer);
++      else if (! strcmp (cmd, "hide-others"))
++        done = chopgimp_vobjects_hide_others (layer);
+       else if (! strcmp (cmd, "group"))
+         done = chopgimp_vobjects_group_selection (layer);
+       else if (! strcmp (cmd, "ungroup"))
+diff --git a/app/tools/chopgimp-materialtools.c b/app/tools/chopgimp-materialtools.c
+index 70b6bc7..786ea6b 100644
+--- a/app/tools/chopgimp-materialtools.c
++++ b/app/tools/chopgimp-materialtools.c
+@@ -86,6 +86,11 @@ typedef struct
+   guint            target;
+   gint             node;
+   gboolean         dragging;
++  /*  3.29.3: the selected mesh node (its tangent handles are shown) and
++   *  the neighbour whose edge handle is dragged (-1: none)
++   */
++  gint             sel;
++  gint             handle_nb;
+ } GimpVMaterialTool;
+ 
+ typedef struct
+@@ -365,6 +370,46 @@ nearest_point (const gdouble *pts,
+ }
+ 
+ 
++/*  3.29.3: the tangent handles of node @sel of a mesh: for each
++ *  neighbour (left, right, up, down), the first control point of the
++ *  edge towards it, in image coordinates; returns their number
++ */
++static gint
++mesh_handles (ChopGimpVObject    *o,
++              const gdouble       box[4],
++              const ChopGimpMesh *m,
++              gint                sel,
++              gdouble            *hx,
++              gdouble            *hy,
++              gint               *nb)
++{
++  gint C = m->cols + 1;
++  gint r, c, n = 0;
++  gint cand[4][2] = { { 0, -1 }, { 0, 1 }, { -1, 0 }, { 1, 0 } };
++
++  if (sel < 0 || sel >= (m->rows + 1) * C)
++    return 0;
++
++  r = sel / C;
++  c = sel % C;
++
++  for (gint i = 0; i < 4; i++)
++    {
++      gint rr = r + cand[i][0], cc = c + cand[i][1];
++      gdouble c1[2], c2[2];
++
++      if (rr < 0 || rr > m->rows || cc < 0 || cc > m->cols)
++        continue;
++
++      nb[n] = rr * C + cc;
++      chopgimp_vmesh_edge (m, sel, nb[n], c1, c2);
++      box_to_image (o, box, c1[0], c1[1], &hx[n], &hy[n]);
++      n++;
++    }
++
++  return n;
++}
++
+ /*  ─── events ────────────────────────────────────────────────────────── */
+ 
+ static ChopGimpVObject *
+@@ -408,7 +453,8 @@ gimp_vmaterial_tool_oper_update (GimpTool         *tool,
+     gimp_tool_replace_status (tool, display,
+                               o ? _("Clic : ajouter un point du filet (couleur de premier "
+                                     "plan) — glisser un point : le déplacer — Maj+clic : "
+-                                    "le colorer — Alt+clic : retirer un point libre")
++                                    "le colorer — Alt+clic : retirer un point libre — poignées d'un "
++                                    "nœud : courber les lignes du filet")
+                                 : _("Survolez un objet du calque vectoriel"));
+   else
+     gimp_tool_replace_status (tool, display,
+@@ -488,6 +534,43 @@ mesh_press (GimpVMaterialTool *mt,
+ 
+   image_to_box (o, box, coords->x, coords->y, &u, &v);
+ 
++  if (mt->target != o->id)
++    mt->sel = -1;
++
++  /*  3.29.3: a tangent handle of the selected node  */
++  mt->handle_nb = -1;
++  if (! freeform && mt->target == o->id && mt->sel >= 0 &&
++      e && e->paint.type == CHOPGIMP_PAINT_MESH)
++    {
++      ChopGimpMesh m;
++
++      if (chopgimp_vmesh_parse (e->paint.material, &m))
++        {
++          gdouble hx[4], hy[4];
++          gint    nb[4];
++          gint    nh = mesh_handles (o, box, &m, mt->sel, hx, hy, nb);
++          gdouble bd = tol;
++
++          for (gint i = 0; i < nh; i++)
++            if (hypot (hx[i] - coords->x, hy[i] - coords->y) <= bd)
++              {
++                bd            = hypot (hx[i] - coords->x, hy[i] - coords->y);
++                mt->handle_nb = nb[i];
++              }
++
++          chopgimp_vmesh_clear (&m);
++        }
++
++      if (mt->handle_nb >= 0)
++        {
++          chopgimp_vlayer_push_undo (mt->layer, _("Filet"));
++          mt->node     = mt->sel;
++          mt->dragging = TRUE;
++          g_free (pts);
++          return;
++        }
++    }
++
+   chopgimp_vlayer_push_undo (mt->layer, _("Filet"));
+ 
+   mt->target   = o->id;
+@@ -510,7 +593,7 @@ mesh_press (GimpVMaterialTool *mt,
+         }
+       else
+         {
+-          ChopGimpMeshNode nd;
++          ChopGimpMeshNode nd = { 0, };
+ 
+           nd.x = u;
+           nd.y = v;
+@@ -552,6 +635,7 @@ mesh_press (GimpVMaterialTool *mt,
+       else if (idx >= 0)
+         {
+           mt->node     = idx;
++          mt->sel      = idx;
+           mt->dragging = TRUE;
+         }
+       else if (u >= 0 && u <= 1 && v >= 0 && v <= 1)
+@@ -621,8 +705,24 @@ gimp_vmaterial_tool_motion (GimpTool         *tool,
+           mt->node >= (m.rows + 1) * (m.cols + 1))
+         return;
+ 
+-      m.nodes[mt->node].x = u;
+-      m.nodes[mt->node].y = v;
++      if (mt->handle_nb >= 0 && mt->handle_nb < (m.rows + 1) * (m.cols + 1))
++        {
++          /*  3.29.3: the handle is the first control point of the edge
++           *  towards handle_nb: c = node + (nb - node) / 3 + s × t
++           */
++          ChopGimpMeshNode *nd  = &m.nodes[mt->node];
++          ChopGimpMeshNode *nbn = &m.nodes[mt->handle_nb];
++          gdouble           sg  = mt->handle_nb > mt->node ? 1.0 : -1.0;
++          gdouble          *t   = ABS (mt->handle_nb - mt->node) == 1 ? nd->th : nd->tv;
++
++          t[0] = sg * (u - nd->x - (nbn->x - nd->x) / 3.0);
++          t[1] = sg * (v - nd->y - (nbn->y - nd->y) / 3.0);
++        }
++      else
++        {
++          m.nodes[mt->node].x = u;
++          m.nodes[mt->node].y = v;
++        }
+       spec = chopgimp_vmesh_to_spec (&m);
+       set_fill_material (mt->layer, o, CHOPGIMP_PAINT_MESH, spec);
+       g_free (spec);
+@@ -666,8 +766,9 @@ gimp_vmaterial_tool_button_release (GimpTool              *tool,
+   if (gimp_tool_control_is_active (tool->control))
+     gimp_tool_control_halt (tool->control);
+ 
+-  mt->dragging = FALSE;
+-  mt->node     = -1;
++  mt->dragging  = FALSE;
++  mt->node      = -1;
++  mt->handle_nb = -1;
+ 
+   chopgimp_draw_tool_redraw (GIMP_DRAW_TOOL (mt), display);
+ }
+@@ -683,6 +784,7 @@ gimp_vmaterial_tool_key_press (GimpTool    *tool,
+     {
+       mt->first  = 0;
+       mt->target = 0;
++      mt->sel    = -1;
+       chopgimp_draw_tool_redraw (GIMP_DRAW_TOOL (mt), display);
+       return TRUE;
+     }
+@@ -752,25 +854,56 @@ gimp_vmaterial_tool_draw (GimpDrawTool *dt)
+           ChopGimpVEntry *e = material_fill (o);
+           ChopGimpMesh    m;
+ 
+-          /*  the mesh lines  */
++          /*  the mesh lines (3.29.3: curved by the tangents)  */
+           if (e && chopgimp_vmesh_parse (e->paint.material, &m))
+             {
+-              for (gint r = 0; r <= m.rows; r++)
+-                for (gint c = 0; c <= m.cols; c++)
+-                  {
+-                    gint i = r * (m.cols + 1) + c;
+-
+-                    if (c < m.cols)
+-                      gimp_draw_tool_add_line (dt, pts[2 * i], pts[2 * i + 1],
+-                                               pts[2 * (i + 1)], pts[2 * (i + 1) + 1]);
+-                    if (r < m.rows)
++              gdouble box[4];
++
++              if (object_box (o, box))
++                for (gint r = 0; r <= m.rows; r++)
++                  for (gint c = 0; c <= m.cols; c++)
++                    for (gint dir = 0; dir < 2; dir++)
+                       {
+-                        gint j = i + m.cols + 1;
++                        gint        i = r * (m.cols + 1) + c;
++                        gint        j = dir ? i + m.cols + 1 : i + 1;
++                        gdouble     c1[2], c2[2];
++                        GimpVector2 seg[13];
++
++                        if ((dir == 0 && c >= m.cols) || (dir == 1 && r >= m.rows))
++                          continue;
+ 
+-                        gimp_draw_tool_add_line (dt, pts[2 * i], pts[2 * i + 1],
+-                                                 pts[2 * j], pts[2 * j + 1]);
++                        chopgimp_vmesh_edge (&m, i, j, c1, c2);
++
++                        for (gint k = 0; k <= 12; k++)
++                          {
++                            gdouble tt = k / 12.0, mt1 = 1.0 - tt;
++                            gdouble bx = mt1 * mt1 * mt1 * m.nodes[i].x + 3 * mt1 * mt1 * tt * c1[0] +
++                                         3 * mt1 * tt * tt * c2[0] + tt * tt * tt * m.nodes[j].x;
++                            gdouble by = mt1 * mt1 * mt1 * m.nodes[i].y + 3 * mt1 * mt1 * tt * c1[1] +
++                                         3 * mt1 * tt * tt * c2[1] + tt * tt * tt * m.nodes[j].y;
++
++                            box_to_image (o, box, bx, by, &seg[k].x, &seg[k].y);
++                          }
++
++                        gimp_draw_tool_add_lines (dt, seg, 13, NULL, FALSE);
+                       }
+-                  }
++
++              /*  3.29.3: the tangent handles of the selected node  */
++              if (mt->sel >= 0 && o->id == mt->target && object_box (o, box))
++                {
++                  gdouble hx[4], hy[4];
++                  gint    nb[4];
++                  gint    nh = mesh_handles (o, box, &m, mt->sel, hx, hy, nb);
++
++                  for (gint k = 0; k < nh; k++)
++                    {
++                      gimp_draw_tool_add_line (dt, pts[2 * mt->sel], pts[2 * mt->sel + 1],
++                                               hx[k], hy[k]);
++                      gimp_draw_tool_add_handle (dt, GIMP_HANDLE_CIRCLE, hx[k], hy[k],
++                                                 HANDLE_PX, HANDLE_PX,
++                                                 GIMP_HANDLE_ANCHOR_CENTER);
++                    }
++                }
+ 
+               chopgimp_vmesh_clear (&m);
+             }
+@@ -834,7 +967,9 @@ gimp_vblend_tool_init (GimpVMaterialTool *mt)
+ {
+   GimpTool *tool = GIMP_TOOL (mt);
+ 
+-  mt->node = -1;
++  mt->node      = -1;
++  mt->sel       = -1;
++  mt->handle_nb = -1;
+ 
+   gimp_tool_control_set_tool_cursor (tool->control, GIMP_TOOL_CURSOR_MOVE);
+   gimp_tool_control_set_cursor      (tool->control, GIMP_CURSOR_MOUSE);
+diff --git a/app/tools/chopgimp-vobjecttool.c b/app/tools/chopgimp-vobjecttool.c
+index 107fc26..943525b 100644
+--- a/app/tools/chopgimp-vobjecttool.c
++++ b/app/tools/chopgimp-vobjecttool.c
+@@ -38,6 +38,8 @@
+ 
+ #include "config.h"
+ 
++#include <string.h>
++
+ #include <gegl.h>
+ #include <gtk/gtk.h>
+ #include <gdk/gdkkeysyms.h>
+@@ -63,6 +65,7 @@
+ #include "widgets/gimpwidgets-utils.h"
+ 
+ #include "display/gimpcanvasitem.h"
++#include "display/gimpcanvaspassepartout.h"
+ #include "display/gimpcanvaspath.h"
+ #include "display/gimpdisplay.h"
+ #include "display/gimpdisplayshell.h"
+@@ -101,8 +104,14 @@ enum
+ struct _ChopGimpVSel
+ {
+   GimpDrawTool    *tool;
++  GimpContext     *context;     /* 3.29.3: user context (fill / stroke) */
++  gulong           fg_id, bg_id;
++  gint64           color_push;  /* last undo push of a color burst     */
++  gdouble          hx, hy;      /* 3.29.3: last pointer position (Tab)  */
+   GimpVectorLayer *layer;       /* watched (weak)                       */
+   guint            hover_id;
++  GtkWidget       *tip_widget;  /* 3.29.3: canvas with the hover tooltip */
++  guint            tip_id;      /* object shown in the tooltip          */
+ 
+   gint             drag;
+   gint             handle;      /* 0..7: NW N NE E SE S SW W            */
+@@ -147,6 +156,35 @@ vsel_redraw (ChopGimpVSel *vsel)
+     }
+ }
+ 
++/*  3.29.3: floating tooltip over the canvas: what a click takes  */
++static void
++vsel_set_tip (ChopGimpVSel *vsel,
++              GtkWidget    *canvas,
++              guint         id,
++              const gchar  *text)
++{
++  if (vsel->tip_widget && vsel->tip_widget != canvas)
++    {
++      gtk_widget_set_tooltip_text (vsel->tip_widget, NULL);
++      g_object_remove_weak_pointer (G_OBJECT (vsel->tip_widget),
++                                    (gpointer *) &vsel->tip_widget);
++      vsel->tip_widget = NULL;
++      vsel->tip_id     = 0;
++    }
++
++  if (! canvas || (vsel->tip_widget == canvas && vsel->tip_id == id))
++    return;
++
++  if (! vsel->tip_widget)
++    {
++      vsel->tip_widget = canvas;
++      g_object_add_weak_pointer (G_OBJECT (canvas), (gpointer *) &vsel->tip_widget);
++    }
++
++  vsel->tip_id = id;
++  gtk_widget_set_tooltip_text (canvas, id ? text : NULL);
++}
++
+ static void
+ vsel_layer_changed (GimpVectorLayer *layer,
+                     gpointer         dirty,
+@@ -357,6 +395,109 @@ vsel_take_ids (ChopGimpVSel *vsel)
+     }
+ }
+ 
++static gboolean vsel_click_group = FALSE;   /* 3.29.3 */
++
++static void
++vsel_color_changed (ChopGimpVSel *vsel,
++                    GeglColor    *color,
++                    gboolean      stroke)
++{
++  GimpTool        *tool = GIMP_TOOL (vsel->tool);
++  GimpImage       *image;
++  GimpVectorLayer *layer;
++  GList           *objs;
++  gboolean         same = FALSE;
++  gint64           now;
++
++  if (vsel->drag || gimp_context_get_tool (vsel->context) != tool->tool_info)
++    return;
++
++  image = gimp_context_get_image (vsel->context);
++  layer = image ? chopgimp_vobjects_get_active_layer (image) : NULL;
++
++  if (! layer || chopgimp_vobjects_n_selected (layer) == 0 || ! color)
++    return;
++
++  /*  nothing to do when the selection already has this color (e.g. the
++   *  foreground set from the picked object)
++   */
++  objs = chopgimp_vlayer_get_selected_objects (layer);
++  if (objs && ! objs->next && ((ChopGimpVObject *) objs->data)->kind == CHOPGIMP_VOBJECT_PATH)
++    {
++      ChopGimpVObject *o = objs->data;
++      ChopGimpVEntry  *e = stroke ? chopgimp_vstyle_get_stroke (&o->style)
++                                  : chopgimp_vstyle_get_fill (&o->style);
++
++      if (e && e->visible && e->paint.type == CHOPGIMP_PAINT_COLOR && e->paint.color)
++        {
++          guint8 a[4], b[4];
++
++          gegl_color_get_pixel (e->paint.color, babl_format ("R'G'B'A u8"), a);
++          gegl_color_get_pixel (color, babl_format ("R'G'B'A u8"), b);
++          same = memcmp (a, b, 4) == 0;
++        }
++    }
++  g_list_free (objs);
++
++  if (same)
++    return;
++
++  now = g_get_monotonic_time ();
++
++  chopgimp_vobjects_apply_color (layer, color, stroke, now - vsel->color_push > 700000);
++  vsel->color_push = now;
++
++  gimp_image_flush (image);
++}
++
++static void
++vsel_fg_changed (GimpContext  *context,
++                 GeglColor    *color,
++                 ChopGimpVSel *vsel)
++{
++  vsel_color_changed (vsel, color, FALSE);
++}
++
++static void
++vsel_bg_changed (GimpContext  *context,
++                 GeglColor    *color,
++                 ChopGimpVSel *vsel)
++{
++  vsel_color_changed (vsel, color, TRUE);
++}
++
++void
++chopgimp_vsel_set_click_group (gboolean click_group)
++{
++  vsel_click_group = click_group;
++}
++
++gboolean
++chopgimp_vsel_get_click_group (void)
++{
++  return vsel_click_group;
++}
++
++/*  3.29.3: the group of @leaf to select on a double-click: its ancestor
++ *  that is a child of the entered group (or of the root)
++ */
++static ChopGimpVObject *
++vsel_top_group_of (GimpVectorLayer *layer,
++                   ChopGimpVObject *leaf)
++{
++  guint            entered = chopgimp_vlayer_get_entered_group (layer);
++  ChopGimpVObject *context = entered ? chopgimp_vlayer_get_object (layer, entered) : NULL;
++  ChopGimpVObject *o       = leaf;
++
++  if (! context)
++    context = chopgimp_vlayer_get_root (layer);
++
++  while (o && o->parent && o->parent != context)
++    o = o->parent;
++
++  return (o && o != leaf) ? o : NULL;
++}
++
+ static gboolean
+ vsel_is_double (ChopGimpVSel        *vsel,
+                 GimpDisplay         *display,
+@@ -501,6 +642,33 @@ vsel_corner_at (ChopGimpVSel     *vsel,
+ 
+ /*  ─── API ───────────────────────────────────────────────────────────── */
+ 
++/*  3.29.3 (Illustrator « Fond / Contour »): with V on selected objects,
++ *  the foreground color is their fill and the background color their
++ *  stroke: a swatch, the color dialog, the picker or X recolor them
++ *  (one undo step per burst). CHOPGIMP_NO_FG_RECOLOR=1: off. Connected
++ *  at the first event: the tool's tool_info is not set yet when the
++ *  tool is created.
++ */
++static void
++vsel_ensure_context (ChopGimpVSel *vsel,
++                     GimpDisplay  *display)
++{
++  GimpImage *image;
++
++  if (vsel->context || ! display || g_getenv ("CHOPGIMP_NO_FG_RECOLOR"))
++    return;
++
++  image = gimp_display_get_image (display);
++  if (! image)
++    return;
++
++  vsel->context = gimp_get_user_context (image->gimp);
++  vsel->fg_id = g_signal_connect (vsel->context, "foreground-changed",
++                                  G_CALLBACK (vsel_fg_changed), vsel);
++  vsel->bg_id = g_signal_connect (vsel->context, "background-changed",
++                                  G_CALLBACK (vsel_bg_changed), vsel);
++}
++
+ ChopGimpVSel *
+ chopgimp_vsel_new (GimpDrawTool *tool)
+ {
+@@ -520,6 +688,14 @@ chopgimp_vsel_free (ChopGimpVSel *vsel)
+ 
+   vsel_end_drag (vsel);
+   vsel_watch (vsel, NULL);
++  vsel_set_tip (vsel, NULL, 0, NULL);
++
++  if (vsel->context)
++    {
++      g_signal_handler_disconnect (vsel->context, vsel->fg_id);
++      g_signal_handler_disconnect (vsel->context, vsel->bg_id);
++    }
++
+   g_free (vsel);
+ }
+ 
+@@ -538,6 +714,7 @@ chopgimp_vsel_halt (ChopGimpVSel *vsel)
+ 
+   vsel_end_drag (vsel);
+   vsel_watch (vsel, NULL);
++  vsel_set_tip (vsel, NULL, 0, NULL);
+ }
+ 
+ void
+@@ -571,6 +748,8 @@ chopgimp_vsel_button_press (ChopGimpVSel        *vsel,
+   gboolean          dbl;
+   gint              handle;
+ 
++  vsel_ensure_context (vsel, display);
++
+   if (! chopgimp_vobjects_enabled () || ! image)
+     return FALSE;
+ 
+@@ -652,9 +831,38 @@ chopgimp_vsel_button_press (ChopGimpVSel        *vsel,
+     {
+       guint entered;
+ 
++      /*  3.29.3: Ctrl+Alt+click cycles through the objects under the
++       *  pointer (the next one behind), Illustrator
++       */
++      if ((state & gimp_get_constrain_behavior_mask ()) && (state & GDK_MOD1_MASK) &&
++          chopgimp_vobjects_select_next_under (layer, coords->x, coords->y, tol))
++        {
++          gimp_image_flush (image);
++          vsel_ensure_drawing (vsel, display);
++
++          return TRUE;
++        }
++
+       dbl = vsel_is_double (vsel, display, coords, time, press_type);
++      /*  3.29.3: the shape under the pointer, even inside a group  */
+       hit = chopgimp_vlayer_hit_test (layer, coords->x, coords->y, tol,
+-                                      CHOPGIMP_HIT_SELECTABLE);
++                                      vsel_click_group ? CHOPGIMP_HIT_SELECTABLE
++                                                       : CHOPGIMP_HIT_LEAF);
++
++      /*  3.29.3: double-click on a shape of a group: select the group  */
++      if (dbl && ! vsel_click_group && hit && hit->kind != CHOPGIMP_VOBJECT_GROUP)
++        {
++          ChopGimpVObject *group = vsel_top_group_of (layer, hit);
++
++          if (group)
++            {
++              chopgimp_vlayer_set_selection (layer, &group->id, 1);
++              gimp_image_flush (image);
++              vsel_ensure_drawing (vsel, display);
++
++              return TRUE;
++            }
++        }
+ 
+       /*  a click outside of the entered group leaves it  */
+       entered = chopgimp_vlayer_get_entered_group (layer);
+@@ -1058,6 +1266,8 @@ chopgimp_vsel_key_press (ChopGimpVSel *vsel,
+   gdouble          step  = (kevent->state & gimp_get_extend_selection_mask ()) ? 10.0 : 1.0;
+   gdouble          dx    = 0.0, dy = 0.0;
+ 
++  vsel_ensure_context (vsel, display);
++
+   if (! layer)
+     {
+       if (kevent->keyval == GDK_KEY_Escape && style_picker_armed)
+@@ -1144,15 +1354,21 @@ chopgimp_vsel_oper_update (ChopGimpVSel     *vsel,
+   ChopGimpVObject  *hit   = NULL;
+   guint             hover;
+ 
++  vsel_ensure_context (vsel, display);
++
+   vsel_watch (vsel, layer);
+ 
+   if (! layer)
+     return FALSE;
+ 
++  vsel->hx = coords->x;
++  vsel->hy = coords->y;
++
+   if (proximity)
+     hit = chopgimp_vlayer_hit_test (layer, coords->x, coords->y,
+                                     HIT_TOLERANCE / MAX (shell->scale_x, 1e-6),
+-                                    CHOPGIMP_HIT_SELECTABLE);
++                                    vsel_click_group ? CHOPGIMP_HIT_SELECTABLE
++                                                     : CHOPGIMP_HIT_LEAF);
+ 
+   hover = hit ? hit->id : 0;
+ 
+@@ -1168,15 +1384,58 @@ chopgimp_vsel_oper_update (ChopGimpVSel     *vsel,
+       vsel_redraw (vsel);
+     }
+ 
++  if (! hit)
++    vsel_set_tip (vsel, shell->canvas, 0, NULL);
++
+   if (style_picker_armed)
+     gimp_tool_replace_status (GIMP_TOOL (vsel->tool), display,
+                               _("Pipette de style : cliquez sur l'objet dont copier "
+                                 "le fond et le contour (Échap : annuler)"));
++  else if (hit)
++    {
++      /*  3.29.3: what a click will take (name, fill color, group)  */
++      ChopGimpVEntry *fill  = hit->kind == CHOPGIMP_VOBJECT_PATH ?
++                              chopgimp_vstyle_get_fill (&hit->style) : NULL;
++      gchar          *color = NULL;
++
++      if (fill && fill->visible && fill->paint.type == CHOPGIMP_PAINT_COLOR && fill->paint.color)
++        {
++          guint8 px[4];
++
++          gegl_color_get_pixel (fill->paint.color, babl_format ("R'G'B'A u8"), px);
++          color = g_strdup_printf ("#%02x%02x%02x", px[0], px[1], px[2]);
++        }
++
++      if (vsel->drag == DRAG_NONE && ! g_getenv ("CHOPGIMP_NO_HOVER_TIP"))
++        {
++          gchar *tip = g_strdup_printf ("%s%s%s%s%s",
++                                        hit->name ? hit->name : _("Objet"),
++                                        color ? "\n" : "", color ? color : "",
++                                        (hit->parent && hit->parent->parent) ?
++                                          _("\nGroupe : ") : "",
++                                        (hit->parent && hit->parent->parent) ?
++                                          (hit->parent->name ? hit->parent->name : _("sans nom")) : "");
++
++          vsel_set_tip (vsel, shell->canvas, hit->id, tip);
++          g_free (tip);
++        }
++
++      gimp_tool_replace_status (GIMP_TOOL (vsel->tool), display,
++                                "%s%s%s%s%s — %s",
++                                hit->name ? hit->name : _("Objet"),
++                                color ? "  " : "", color ? color : "",
++                                (hit->parent && hit->parent->parent) ? _("  · groupe ") : "",
++                                (hit->parent && hit->parent->parent && hit->parent->name) ?
++                                  hit->parent->name : "",
++                                _("clic : sélectionner, double-clic : son groupe, "
++                                  "Ctrl+Alt+clic : l'objet derrière"));
++      g_free (color);
++    }
+   else
+     gimp_tool_replace_status (GIMP_TOOL (vsel->tool), display,
+                               _("Objets : clic pour sélectionner, Maj+clic pour ajouter, "
+                                 "glisser dans le vide pour encadrer, Alt+glisser pour "
+-                                "dupliquer, double-clic pour entrer dans un groupe"));
++                                "dupliquer, Ctrl+Alt+clic pour l'objet derrière"));
+ 
+   return TRUE;
+ }
+@@ -1278,6 +1537,27 @@ chopgimp_vsel_draw (ChopGimpVSel *vsel)
+       chopgimp_vobjects_get_target_layer (image) != vsel->layer)
+     return FALSE;
+ 
++  /*  3.29.3: isolation mode (a group entered by a double-click): the rest
++   *  of the image is dimmed around the group (Échap leaves it)
++   */
++  {
++    guint entered = chopgimp_vlayer_get_entered_group (vsel->layer);
++    ChopGimpVObject *group = entered ? chopgimp_vlayer_get_object (vsel->layer, entered) : NULL;
++    gdouble gx1, gy1, gx2, gy2;
++
++    if (group &&
++        chopgimp_vobject_get_bounds (vsel->layer, group, TRUE, &gx1, &gy1, &gx2, &gy2))
++      {
++        GimpCanvasItem *pp;
++
++        pp = gimp_canvas_passe_partout_new (gimp_display_get_shell (dt->display),
++                                            gx1 - 4, gy1 - 4,
++                                            gx2 - gx1 + 8, gy2 - gy1 + 8);
++        gimp_draw_tool_add_item (dt, pp);
++        g_object_unref (pp);
++      }
++  }
++
+   /*  outlines of the selected objects, and of the one under the pointer  */
+   {
+     GList *objs = chopgimp_vlayer_get_selected_objects (vsel->layer);
+@@ -1382,3 +1662,41 @@ chopgimp_vsel_draw (ChopGimpVSel *vsel)
+ 
+   return TRUE;
+ }
++
++
++GimpUIManager *
++chopgimp_vsel_get_popup (ChopGimpVSel     *vsel,
++                         const GimpCoords *coords,
++                         GimpDisplay      *display,
++                         const gchar     **ui_path)
++{
++  GimpImage        *image = gimp_display_get_image (display);
++  GimpDisplayShell *shell = gimp_display_get_shell (display);
++  GimpVectorLayer  *layer;
++  ChopGimpVObject  *hit;
++
++  if (! vsel || ! image || ! chopgimp_vobjects_enabled ())
++    return NULL;
++
++  layer = chopgimp_vobjects_get_target_layer (image);
++  if (! layer)
++    return NULL;
++
++  hit = chopgimp_vlayer_hit_test (layer, coords->x, coords->y,
++                                  HIT_TOLERANCE / MAX (shell->scale_x, 1e-6),
++                                  vsel_click_group ? CHOPGIMP_HIT_SELECTABLE
++                                                   : CHOPGIMP_HIT_LEAF);
++  if (! hit)
++    return NULL;
++
++  if (! chopgimp_vlayer_is_selected (layer, hit->id))
++    {
++      chopgimp_vlayer_set_selection (layer, &hit->id, 1);
++      gimp_image_flush (image);
++    }
++
++  /*  the « Vecteur » menu of the menu bar (tools/build_menus.py)  */
++  *ui_path = "/image-menubar/Vecteur";
++
++  return shell->popup_manager;
++}
+diff --git a/app/tools/chopgimp-vobjecttool.h b/app/tools/chopgimp-vobjecttool.h
+index 0299658..a64646d 100644
+--- a/app/tools/chopgimp-vobjecttool.h
++++ b/app/tools/chopgimp-vobjecttool.h
+@@ -62,3 +62,16 @@ void           chopgimp_vsel_halt           (ChopGimpVSel      *vsel);
+  *  objects
+  */
+ void           chopgimp_vsel_arm_style_picker (Gimp            *gimp);
++/*  3.29.3: FALSE (default, like Photoshop's auto-select): a click picks
++ *  the shape under the pointer even inside a group, a double-click its
++ *  group; TRUE: a click picks the top group (Illustrator)
++ */
++void           chopgimp_vsel_set_click_group  (gboolean         click_group);
++/*  3.29.3: the right-click menu with V over an object: the object is
++ *  selected (unless it already is) and the « Vecteur » menu pops up
++ */
++GimpUIManager * chopgimp_vsel_get_popup      (ChopGimpVSel     *vsel,
++                                              const GimpCoords *coords,
++                                              GimpDisplay      *display,
++                                              const gchar     **ui_path);
++gboolean       chopgimp_vsel_get_click_group  (void);
+diff --git a/app/tools/gimpcolorpickertool.c b/app/tools/gimpcolorpickertool.c
+index 5d55f2e..8d531a2 100644
+--- a/app/tools/gimpcolorpickertool.c
++++ b/app/tools/gimpcolorpickertool.c
+@@ -38,6 +38,11 @@
+ #include "widgets/gimpwidgets-utils.h"
+ 
+ #include "display/gimpdisplay.h"
++#include "display/gimpdisplayshell.h"
++
++#include "path/gimpvectorlayer.h"
++#include "path/chopgimp-vobject.h"
++#include "path/chopgimp-vobject-ops.h"
+ #include "display/gimptoolgui.h"
+ 
+ #include "gimpcolorpickeroptions.h"
+@@ -95,6 +100,50 @@ G_DEFINE_TYPE (GimpColorPickerTool, gimp_color_picker_tool,
+ #define parent_class gimp_color_picker_tool_parent_class
+ 
+ 
++/*  ChopGimp 3.29.3 (Illustrator): with objects selected in the active
++ *  vector layer, a click of the Color Picker on another object copies its
++ *  fill and stroke to them (« Pipette de style »), like Illustrator's
++ *  eyedropper; anywhere else, or with a modifier, it picks a color.
++ */
++static void
++gimp_color_picker_tool_button_press (GimpTool            *tool,
++                                     const GimpCoords    *coords,
++                                     guint32              time,
++                                     GdkModifierType      state,
++                                     GimpButtonPressType  press_type,
++                                     GimpDisplay         *display)
++{
++  GimpImage       *image = gimp_display_get_image (display);
++  GimpVectorLayer *layer = NULL;
++
++  if (image && chopgimp_vobjects_enabled ())
++    layer = chopgimp_vobjects_get_active_layer (image);
++
++  if (layer && press_type == GIMP_BUTTON_PRESS_NORMAL &&
++      ! (state & gimp_get_all_modifiers_mask ()) &&
++      chopgimp_vobjects_n_selected (layer) > 0)
++    {
++      GimpDisplayShell *shell = gimp_display_get_shell (display);
++      ChopGimpVObject  *hit;
++
++      hit = chopgimp_vlayer_hit_test (layer, coords->x, coords->y,
++                                      3.0 / MAX (shell->scale_x, 1e-6),
++                                      CHOPGIMP_HIT_LEAF);
++
++      if (hit && ! chopgimp_vlayer_is_selected (layer, hit->id))
++        {
++          if (chopgimp_vobjects_copy_style (layer, hit))
++            gimp_image_flush (image);
++
++          return;
++        }
++    }
++
++  GIMP_TOOL_CLASS (parent_class)->button_press (tool, coords, time, state,
++                                                press_type, display);
++}
++
++
+ void
+ gimp_color_picker_tool_register (GimpToolRegisterCallback  callback,
+                                  gpointer                  data)
+@@ -124,6 +173,7 @@ gimp_color_picker_tool_class_init (GimpColorPickerToolClass *klass)
+   object_class->dispose      = gimp_color_picker_tool_dispose;
+ 
+   tool_class->control        = gimp_color_picker_tool_control;
++  tool_class->button_press   = gimp_color_picker_tool_button_press;   /* 3.29.3 */
+   tool_class->modifier_key   = gimp_color_picker_tool_modifier_key;
+   tool_class->oper_update    = gimp_color_picker_tool_oper_update;
+   tool_class->is_destructive = FALSE;
+diff --git a/app/tools/gimpmovetool.c b/app/tools/gimpmovetool.c
+index 78a950b..9945cb8 100644
+--- a/app/tools/gimpmovetool.c
++++ b/app/tools/gimpmovetool.c
+@@ -101,6 +101,11 @@ static void   gimp_move_tool_oper_update    (GimpTool              *tool,
+                                              GdkModifierType        state,
+                                              gboolean               proximity,
+                                              GimpDisplay           *display);
++static GimpUIManager * gimp_move_tool_get_popup (GimpTool         *tool,
++                                                 const GimpCoords *coords,
++                                                 GdkModifierType   state,
++                                                 GimpDisplay      *display,
++                                                 const gchar     **ui_path);
+ static void   gimp_move_tool_cursor_update  (GimpTool              *tool,
+                                              const GimpCoords      *coords,
+                                              GdkModifierType        state,
+@@ -158,6 +163,7 @@ gimp_move_tool_class_init (GimpMoveToolClass *klass)
+   tool_class->modifier_key   = gimp_move_tool_modifier_key;
+   tool_class->oper_update    = gimp_move_tool_oper_update;
+   tool_class->cursor_update  = gimp_move_tool_cursor_update;
++  tool_class->get_popup      = gimp_move_tool_get_popup;   /* 3.29.3 */
+   tool_class->is_destructive = FALSE;
+ 
+   draw_tool_class->draw      = gimp_move_tool_draw;
+@@ -1150,3 +1156,17 @@ gimp_move_tool_draw (GimpDrawTool *draw_tool)
+       gimp_canvas_item_set_highlight (item, TRUE);
+     }
+ }
++
++
++/*  3.29.3: right-click on an object of a vector layer: the « Vecteur » menu  */
++static GimpUIManager *
++gimp_move_tool_get_popup (GimpTool         *tool,
++                          const GimpCoords *coords,
++                          GdkModifierType   state,
++                          GimpDisplay      *display,
++                          const gchar     **ui_path)
++{
++  GimpMoveTool *move = GIMP_MOVE_TOOL (tool);
++
++  return chopgimp_vsel_get_popup (move->vsel, coords, display, ui_path);
++}
+diff --git a/app/tools/gimppathtool.c b/app/tools/gimppathtool.c
+index 60817b8..0c16b32 100644
+--- a/app/tools/gimppathtool.c
++++ b/app/tools/gimppathtool.c
+@@ -542,6 +542,15 @@ gimp_path_tool_vobj_edit (GimpPathTool    *path_tool,
+                     G_CALLBACK (gimp_path_tool_vobj_changed), path_tool);
+ 
+   chopgimp_vlayer_set_selection (layer, &object->id, 1);
++
++  /*  3.29.3: the dynamic corner widgets need vobj_id, set after the draw
++   *  tool was restarted by set_path(): draw again
++   */
++  if (gimp_draw_tool_is_active (GIMP_DRAW_TOOL (path_tool)))
++    {
++      gimp_draw_tool_pause (GIMP_DRAW_TOOL (path_tool));
++      gimp_draw_tool_resume (GIMP_DRAW_TOOL (path_tool));
++    }
+ }
+ 
+ /*  ChopGimp 3.28.3: the nodes of all the visible, unlocked path objects
+diff --git a/plug-ins/common/file-svg-vobjects.h b/plug-ins/common/file-svg-vobjects.h
+index 3f19047..62a3dc0 100644
+--- a/plug-ins/common/file-svg-vobjects.h
++++ b/plug-ins/common/file-svg-vobjects.h
+@@ -807,6 +807,168 @@ svg_vput_vpattern (SvgVWrite   *w,
+   return n;
+ }
+ 
++/*  3.29.3: a « filet de dégradé » (spec « rows cols;x,y,#rrggbbaa[,thx,
++ *  thy,tvx,tvy];… », box units, chopgimp-vmaterial.c) → an SVG 2
++ *  <meshgradient> in object bounding box units (Inkscape reads it; the
++ *  browsers use the fallback color of the paint); → its id number, 0
++ *  when the spec cannot be read
++ */
++typedef struct
++{
++  gdouble x, y, rgba[4], th[2], tv[2];
++} SvgVMeshNode;
++
++static void
++svg_vmesh_edge (const SvgVMeshNode *nodes,
++                gint                a,
++                gint                b,
++                gdouble             c[6])
++{
++  const SvgVMeshNode *na  = &nodes[a], *nb = &nodes[b];
++  gboolean            row = ABS (a - b) == 1;
++  gdouble             sg  = b > a ? 1.0 : -1.0;
++  const gdouble      *ta  = row ? na->th : na->tv;
++  const gdouble      *tb  = row ? nb->th : nb->tv;
++  gdouble             dx  = nb->x - na->x, dy = nb->y - na->y;
++
++  /*  relative to the start of the edge (« c » of a path)  */
++  c[0] = dx / 3.0 + sg * ta[0];
++  c[1] = dy / 3.0 + sg * ta[1];
++  c[2] = dx - dx / 3.0 - sg * tb[0];
++  c[3] = dy - dy / 3.0 - sg * tb[1];
++  c[4] = dx;
++  c[5] = dy;
++}
++
++static gint
++svg_vput_mesh (SvgVWrite   *w,
++               const gchar *spec)
++{
++  gchar       **parts;
++  gint          rows = 0, cols = 0, n, k = 0, id;
++  SvgVMeshNode *nodes;
++
++  if (! spec)
++    return 0;
++
++  parts = g_strsplit (spec, ";", -1);
++
++  if (! parts[0] || sscanf (parts[0], "%d %d", &rows, &cols) != 2 ||
++      rows < 1 || cols < 1 || rows > 64 || cols > 64)
++    {
++      g_strfreev (parts);
++      return 0;
++    }
++
++  n     = (rows + 1) * (cols + 1);
++  nodes = g_new0 (SvgVMeshNode, n);
++
++  for (gint i = 1; parts[i] && k < n; i++)
++    {
++      gchar **f = g_strsplit (parts[i], ",", 7);
++
++      if (f[0] && f[1] && f[2])
++        {
++          const gchar *h = f[2];
++          guint        v[4] = { 0, 0, 0, 255 };
++
++          nodes[k].x = g_ascii_strtod (f[0], NULL);
++          nodes[k].y = g_ascii_strtod (f[1], NULL);
++
++          while (*h == '#' || *h == ' ')
++            h++;
++          for (gint j = 0; j < 4 && g_ascii_isxdigit (h[0]) && g_ascii_isxdigit (h[1]); j++, h += 2)
++            v[j] = g_ascii_xdigit_value (h[0]) * 16 + g_ascii_xdigit_value (h[1]);
++          for (gint j = 0; j < 4; j++)
++            nodes[k].rgba[j] = v[j] / 255.0;
++
++          if (f[3] && f[4] && f[5] && f[6])
++            {
++              nodes[k].th[0] = g_ascii_strtod (f[3], NULL);
++              nodes[k].th[1] = g_ascii_strtod (f[4], NULL);
++              nodes[k].tv[0] = g_ascii_strtod (f[5], NULL);
++              nodes[k].tv[1] = g_ascii_strtod (f[6], NULL);
++            }
++          k++;
++        }
++
++      g_strfreev (f);
++    }
++
++  g_strfreev (parts);
++
++  if (k < n)
++    {
++      g_free (nodes);
++      return 0;
++    }
++
++  id = ++w->n_gradients;
++
++  g_string_append_printf (w->defs,
++                          "<meshgradient id=\"%s-m%d\" gradientUnits=\"objectBoundingBox\""
++                          " x=\"", w->prefix, id);
++  svg_vput_num (w->defs, nodes[0].x);
++  g_string_append (w->defs, "\" y=\"");
++  svg_vput_num (w->defs, nodes[0].y);
++  g_string_append (w->defs, "\">\n");
++
++  for (gint r = 0; r < rows; r++)
++    {
++      g_string_append (w->defs, "<meshrow>\n");
++
++      for (gint c = 0; c < cols; c++)
++        {
++          gint corner[4] = { r * (cols + 1) + c, r * (cols + 1) + c + 1,
++                             (r + 1) * (cols + 1) + c + 1, (r + 1) * (cols + 1) + c };
++
++          g_string_append (w->defs, "<meshpatch>\n");
++
++          /*  side s goes from corner s to corner s + 1 (top, right,
++           *  bottom, left); the sides shared with the patch above / on
++           *  the left are not written, nor the colors already given
++           */
++          for (gint sd = 0; sd < 4; sd++)
++            {
++              gdouble cc[6];
++
++              if ((sd == 0 && r > 0) || (sd == 3 && c > 0))
++                continue;
++
++              svg_vmesh_edge (nodes, corner[sd], corner[(sd + 1) % 4], cc);
++
++              g_string_append (w->defs, "<stop path=\"c ");
++              for (gint j = 0; j < 6; j++)
++                {
++                  svg_vput_num (w->defs, cc[j]);
++                  g_string_append_c (w->defs, j == 5 ? '"' : (j % 2 ? ' ' : ','));
++                }
++
++              if ((sd == 0 && r == 0 && c == 0) || (sd == 1 && r == 0) ||
++                  sd == 2 || (sd == 3 && c == 0))
++                {
++                  g_string_append (w->defs, " style=\"stop-color:");
++                  svg_vput_color (w->defs, nodes[corner[sd]].rgba);
++                  g_string_append (w->defs, ";stop-opacity:");
++                  svg_vput_num (w->defs, CLAMP (nodes[corner[sd]].rgba[3], 0.0, 1.0));
++                  g_string_append_c (w->defs, '"');
++                }
++
++              g_string_append (w->defs, "/>\n");
++            }
++
++          g_string_append (w->defs, "</meshpatch>\n");
++        }
++
++      g_string_append (w->defs, "</meshrow>\n");
++    }
++
++  g_string_append (w->defs, "</meshgradient>\n");
++  g_free (nodes);
++
++  return id;
++}
++
+ /*  « fill:…;fill-opacity:… » (or stroke); gradients go to the defs.
+  *  @alpha: the opacity of the fill / stroke (fill-opacity for a gradient,
+  *  times the alpha of a color)
+@@ -891,6 +1053,20 @@ svg_vput_paint (SvgVWrite       *w,
+           g_string_append_c (style, ';');
+         }
+     }
++  else if (! g_strcmp0 (p->type, "color") && p->material &&
++           g_str_has_prefix (p->material, "mesh:") &&
++           (n_pat = svg_vput_mesh (w, p->material + 5)) > 0)
++    {
++      /*  3.29.3: the mesh, its main color as the fallback  */
++      g_string_append_printf (style, "%s:url(#%s-m%d) ", prop, w->prefix, n_pat);
++      svg_vput_color (style, p->rgba);
++      if (p->rgba[3] * alpha < 1.0)
++        {
++          g_string_append_printf (style, ";%s-opacity:", prop);
++          svg_vput_num (style, CLAMP (p->rgba[3] * alpha, 0.0, 1.0));
++        }
++      g_string_append_c (style, ';');
++    }
+   else if (! g_strcmp0 (p->type, "color"))
+     {
+       g_string_append_printf (style, "%s:", prop);
+-- 
+2.53.0
+
