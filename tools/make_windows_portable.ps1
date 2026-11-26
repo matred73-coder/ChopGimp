@@ -25,7 +25,7 @@ $name = "ChopGimp-$Version-portable"
 $dst  = Join-Path $OutDir $name
 $zip  = Join-Path $OutDir "$name.zip"
 if (-not (Test-Path "$Bundle\bin\gimp-3.2.exe")) { throw "Dossier autonome introuvable : $Bundle" }
-if (-not (Select-String -Quiet -Path "$Bundle\etc\gimp\3.0\gimprc" -Pattern 'PS-Dark')) {
+if (-not (Select-String -Quiet -Path "$Bundle\etc\gimp\3.0\gimprc" -Pattern '\(theme "(ChopGimp|PS-Dark)"\)')) {
     throw "Données ChopGimp absentes de $Bundle : lancer d'abord tools/install_data.sh sur ce dossier"
 }
 

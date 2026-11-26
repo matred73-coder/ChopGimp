@@ -1531,3 +1531,12 @@ Patchs 0170 à 0173 (nouveaux commits, aucun patch réécrit).
   (styles, calques de forme, textes), le PDF en calques dans Acrobat et
   Illustrator (calques OCG, vectoriel), le SVG dans Illustrator ; essayer
   le paquet LTO + PGO au quotidien.
+
+## 4.0.1 — CI Windows : version portable
+
+- La CI Windows de la v4.0.0 échouait à l'étape « Version portable » :
+  `make_windows_portable.ps1` vérifiait que les données ChopGimp étaient
+  installées en cherchant le thème « PS-Dark » dans le gimprc du dossier
+  autonome, or le thème s'appelle « ChopGimp » depuis la 3.25 (PS-Dark
+  n'est plus qu'un alias). Le test accepte les deux noms. Le code de
+  ChopGimp est celui de la 4.0.0.
