@@ -1605,7 +1605,7 @@ try:
         rc = open(os.path.join(Gimp.sysconf_directory(), "toolrc")).read()
         order = [rc.find('"gimp-%s-tool"' % t) for t in
                  ("move", "magnetic-lasso", "paint-select", "paintbrush", "eraser",
-                  "heal", "clone", "path", "shape", "width", "live-paint-bucket", "zoom")]
+                  "heal", "clone", "path", "shape", "live-paint-bucket", "width", "zoom")]
         report(all(p >= 0 for p in order) and order == sorted(order),
                "Boîte à outils par familles (Lasso magnétique, Sélection rapide, Gomme sous le pinceau…)",
                "positions : %s" % order)
@@ -1995,11 +1995,81 @@ try:
         r = run("chopgimp-vobjects-command", image=im14, command="fill-holes:100")
         report(r is not None and r.index(0) == Gimp.PDBStatusType.SUCCESS,
                "Remplir les petits trous")
+        # 3.29.3 (suite) : aperçu de Simplifier annulé, Couleurs du dessin
+        import re
+        x_before = vx14()
+        r = run("chopgimp-vobjects-command", image=im14, command="simplify-preview:30")
+        report(r is not None and r.index(0) == Gimp.PDBStatusType.SUCCESS and vx14() == x_before,
+               "Simplifier : aperçu en direct puis Annuler (tracés d'origine rendus)")
+        xr = re.sub(r'<fill type="color" color="[^"]*"', '<fill type="color" color="1 0 0 1"', vx14())
+        run("chopgimp-vobjects-set-xml", layer=vl14, xml=xr)
+        r = run("chopgimp-vobjects-command", image=im14, command="replace-color:ff0000ff:00ff00")
+        xr2 = vx14()
+        report(r is not None and r.index(0) == Gimp.PDBStatusType.SUCCESS and r.index(1) and
+               'color="0 1 0 1"' in xr2 and 'color="1 0 0 1"' not in xr2,
+               "Couleurs du dessin : une couleur remplacée partout")
         r = run("chopgimp-vobjects-command", image=im14, command="merge-same-color")
         n2 = vx14().count("<path ")
         report(r is not None and r.index(0) == Gimp.PDBStatusType.SUCCESS and n2 == 1,
                "Fusionner les formes de même couleur", "%d objet(s)" % n2)
         im14.delete()
+
+        # filet : tangentes (lignes courbes) et export SVG en <meshgradient>
+        im15 = Gimp.Image.new(200, 200, Gimp.ImageBaseType.RGB)
+        p15 = Gimp.Path.new(im15, "Carré")
+        im15.insert_path(p15, None, 0)
+        st = p15.bezier_stroke_new_moveto(20, 20)
+        for x, y in ((180, 20), (180, 180), (20, 180)):
+            p15.bezier_stroke_lineto(st, x, y)
+        p15.stroke_close(st)
+        st = p15.bezier_stroke_new_moveto(185, 185)
+        for x, y in ((195, 185), (195, 195), (185, 195)):
+            p15.bezier_stroke_lineto(st, x, y)
+        p15.stroke_close(st)
+        vl15 = Gimp.VectorLayer.new(im15, p15)
+        im15.insert_layer(vl15, None, 0)
+        vl15.set_enable_fill(True); vl15.set_enable_stroke(False)
+        vl15.refresh()
+        im15.set_selected_layers([vl15])
+
+        def c15(c):
+            r = run("chopgimp-vobjects-command", image=im15, command=c)
+            return bool(r is not None and r.index(0) == Gimp.PDBStatusType.SUCCESS and r.index(1))
+
+        def px15():
+            b = vl15.get_buffer()
+            e = b.get_extent()
+            return bytes(b.get(e, 1.0, "R'G'B'A u8", Gegl.AbyssPolicy.NONE))
+
+        c15("split-new")
+        c15("select-at:100:100")
+        c15("mesh-make:2:2:1:0.9")
+        x15 = run("chopgimp-vobjects-get-xml", layer=vl15).index(1)
+        m15 = re.search(r'material="([^"]*)"', x15)
+        ok_t = False
+        if m15:
+            nodes = m15.group(1).split(";")
+            if len(nodes) == 10:
+                # nœud central rouge : la courbure des lignes se voit
+                nodes[5] = ",".join(nodes[5].split(",")[:2] + ["#ff0000ff"])
+                x15a = x15.replace(m15.group(1), ";".join(nodes))
+                run("chopgimp-vobjects-set-xml", layer=vl15, xml=x15a)
+                q0 = px15()
+                x15, m15 = x15a, re.search(r'material="([^"]*)"', x15a)
+                nodes[5] = ",".join(nodes[5].split(",")[:3] + ["0.15", "0.1", "0", "0"])
+                x15b = x15.replace(m15.group(1), ";".join(nodes))
+                run("chopgimp-vobjects-set-xml", layer=vl15, xml=x15b)
+                x15c = run("chopgimp-vobjects-get-xml", layer=vl15).index(1)
+                ok_t = px15() != q0 and ",0.15,0.1,0,0" in x15c
+        report(ok_t, "Filet : tangentes d'un nœud (lignes courbes, gardées dans le XML)")
+        out15 = os.path.join(TMP, "filet-3293.svg")
+        os.makedirs(TMP, exist_ok=True)
+        Gimp.file_save(Gimp.RunMode.NONINTERACTIVE, im15, Gio.File.new_for_path(out15), None)
+        t15 = open(out15, encoding="utf-8").read()
+        report("<meshgradient" in t15 and t15.count("<meshpatch>") == 4 and "url(#" in t15,
+               "Export SVG du filet en <meshgradient> (couleur de repli)",
+               "%d meshpatch" % t15.count("<meshpatch>"))
+        im15.delete()
 
         tr = open(os.path.join(Gimp.sysconf_directory(), "toolrc")).read()
         pos = [tr.find('"gimp-%s-tool"' % t) for t in ("direct-select", "path", "vpencil", "shape",

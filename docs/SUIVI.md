@@ -1001,3 +1001,45 @@ annuler, rétablir, XCF rouvert) ; banc avant / après.
 la conversion de référence, prochaine étape ; recoloration et rendu complet
 peu changés ; pas encore mesuré au banc graphique.
 
+
+## 3.29.3 — Sélection directe, nettoyage et couleurs façon Illustrator
+
+Patch 0149 (le code écrit en brouillon, `docs/dev/SUIVI-3.29.3-brouillon.md`,
+plus ce qui restait).
+- **Sélection directe (A)** : ne crée jamais de point ; dans le vide, un appui
+  trace un rectangle de sélection ; un clic sur un segment prend ses deux
+  nœuds (Maj : ajoute). Corrigé à l'intégration : sans glisser, l'annulation
+  dépilée remettait l'ancienne sélection (les nœuds sont maintenant
+  sélectionnés avant l'ouverture de l'étape).
+- **Clic direct** (V) : la forme sous le pointeur même dans un groupe,
+  double-clic : son groupe ; fond / contour = couleurs de premier plan /
+  d'arrière-plan (`CHOPGIMP_NO_FG_RECOLOR`) ; pipette d'objets ; Ctrl+Alt+clic
+  et Objet suivant dessus / dessous ; mode isolation ; clic droit = menu
+  Vecteur.
+- **Survol** : barre d'état et **info-bulle flottante** (nom, couleur, groupe ;
+  `CHOPGIMP_NO_HOVER_TIP=1` pour la couper).
+- **Vecteur > Sélectionner / Nettoyer / Couleurs** ; **Simplifier…** avec
+  **aperçu en direct** (nombre de points avant → après, Annuler remet les
+  tracés, Valider = une annulation) ; panneau **« Couleurs du dessin »**
+  (couleurs unies du calque et leurs usages, nuancier = remplacer partout en
+  une annulation, « Sélectionner »).
+- **Filet** : **poignées de tangente** du nœud sélectionné (lignes courbes,
+  rendu et tracé dans l'outil ; tangentes facultatives dans la spec, filets
+  droits inchangés) ; **export SVG en `<meshgradient>`** (SVG 2, lu par
+  Inkscape ; les navigateurs prennent la couleur de repli).
+- PDB : `simplify-preview:`, `replace-color:` en plus des commandes du
+  brouillon.
+- Corrigé à l'intégration : plantage à la sélection de l'outil Déplacement
+  (le contexte Fond / Contour était lu avant que l'outil ait son
+  `tool_info` ; branché au premier événement).
+- **Non fait ici** : la conversion de pixels babl (glisser lourd ~300 ms par
+  image) est confiée à un autre chantier (`next-babl`, sans commit au moment
+  de cette livraison) : pas de mesure avant / après dans cette version.
+
+**Vérifié** : 195 tests sur 195 (11 nouveaux : petits objets, même fond,
+fusion par couleur, ordre de la boîte à outils, objet suivant, Simplifier,
+petits trous, aperçu de Simplifier annulé, remplacement d'une couleur,
+tangentes du filet, export `<meshgradient>`) ; banc graphique : Sélection
+directe qui trace un rectangle dans le vide sans créer de point, ordre des
+outils vectoriels, sur des formes importées un objet recoloré (premier plan)
+puis un autre supprimé, info-bulle au survol.

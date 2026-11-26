@@ -148,6 +148,12 @@ Ils sont produits automatiquement par GitHub Actions à chaque tag `v*`
   dégradé, dynamiques, qui peuvent suivre un tracé de base), **filet de dégradé** (outil
   Filet), **dégradé libre**, dégradé dans, le long ou en travers du contour.
 - **Vectoriel rapide** (3.29.2) : ouverture des fichiers vectorisés ~20× plus rapide, glisser par rendus en cache, annulation instantanée par copie des objets (mesures : `docs/PLAN-PERF-VECTEUR.md`).
+- **Sélection et nettoyage façon Illustrator** (3.29.3) : Sélection directe qui ne crée
+  jamais de point, clic direct sur la forme (double-clic : le groupe), fond / contour suivant
+  les couleurs de premier plan / d'arrière-plan, pipette d'objets, info-bulle au survol, mode
+  isolation, clic droit = menu Vecteur ; Vecteur > Sélectionner / Nettoyer (Simplifier avec
+  aperçu, petits objets, petits trous, fusion par couleur) / Couleurs (panneau « Couleurs du
+  dessin ») ; tangentes du filet et export SVG en `<meshgradient>`.
 - **Masques d'opacité** et **motifs vectoriels** (grille, briques, hexagonal, mode de
   modification, exportés en `<pattern>` SVG).
 
@@ -215,7 +221,7 @@ Ils sont produits automatiquement par GitHub Actions à chaque tag `v*`
 | 3.25 – 3.26 | Passe de performance, barre d'options compacte, curseurs et panneaux modernisés |
 | 3.27 | Objets vectoriels, panneaux Objets / Aspect / Contour, Vectoriser, fenêtre d'accueil |
 | 3.28 | Menus réorganisés comme Photoshop (menu Vecteur…), Peinture dynamique et Symboles (3.28.1), petits défauts : contours à l'échelle, convertir en maille, pipette avec effets, ombres pixellisées dans leur mode (3.28.2), Lasso magnétique, Sélection rapide, boîte à outils par familles (3.28.3) |
-| 3.29 | Vectoriel « complet » : outils Courbure, Crayon vectoriel, Lissage, Ciseaux, Cutter et Jonction, angles dynamiques, spirale / arc / grilles, panneau Transformation, Ctrl+D, Transformer chaque, objet clé (3.29.0) ; Transition, filet de dégradé, dégradé libre, masques d'opacité, motifs vectoriels (3.29.1) |
+| 3.29 | Vectoriel « complet » : outils Courbure, Crayon vectoriel, Lissage, Ciseaux, Cutter et Jonction, angles dynamiques, spirale / arc / grilles, panneau Transformation, Ctrl+D, Transformer chaque, objet clé (3.29.0) ; Transition, filet de dégradé, dégradé libre, masques d'opacité, motifs vectoriels (3.29.1) ; vectoriel rapide (3.29.2) ; sélection directe, nettoyage et couleurs du dessin façon Illustrator (3.29.3) |
 
 Le détail de chaque version (ce qui est fait, vérifié, et ce qui reste) se trouve
 dans [`docs/SUIVI.md`](docs/SUIVI.md). Le plan du chantier vectoriel est dans
