@@ -318,10 +318,72 @@ def scale(img):
     dup.delete()
 
 
+def vector():
+    """4.0.0 : le vectoriel (bench_vector.py en plus court) : vectorisation
+    d'une « photo » de taches, sélection, glisser, déplacement, annuler /
+    rétablir, recoloration, rendu complet, XCF."""
+    import random
+    pdb = Gimp.get_pdb()
+
+    def run(proc, **kw):
+        p = pdb.lookup_procedure(proc)
+        cfg = p.create_config()
+        for k, v in kw.items():
+            cfg.set_property(k, v)
+        return p.run(cfg)
+
+    def cmd(image, c):
+        r = run("chopgimp-vobjects-command", image=image, command=c)
+        return bool(r is not None and r.index(0) == Gimp.PDBStatusType.SUCCESS and r.index(1))
+
+    N = 1200
+    image = Gimp.Image.new(N, N, Gimp.ImageBaseType.RGB)
+    src = Gimp.Layer.new(image, "Source", N, N, Gimp.ImageType.RGB_IMAGE, 100, Gimp.LayerMode.NORMAL)
+    image.insert_layer(src, None, 0)
+    Gimp.context_set_background(color(1, 1, 1))
+    src.fill(Gimp.FillType.BACKGROUND)
+    rnd = random.Random(42)
+    for _ in range(300):
+        r = rnd.randint(8, 120)
+        x, y = rnd.randint(-r, N), rnd.randint(-r, N)
+        v = rnd.random()
+        Gimp.context_set_foreground(color(v, v * rnd.random(), rnd.random() * 0.6))
+        if rnd.random() < 0.5:
+            image.select_ellipse(Gimp.ChannelOps.REPLACE, x, y, r * 2, r)
+        else:
+            image.select_rectangle(Gimp.ChannelOps.REPLACE, x, y, r, r * 2)
+        src.edit_fill(Gimp.FillType.FOREGROUND)
+    Gimp.Selection.none(image)
+    res = run("chopgimp-image-trace", drawable=src, options="photo-high",
+              **{"selection-only": False, "live": False})
+    layer = res.index(1) if res is not None and res.index(0) == Gimp.PDBStatusType.SUCCESS else None
+    if layer:
+        image.set_selected_layers([layer])
+        cmd(image, "select-at:600:600")
+        cmd(image, "drag-sim:3:2:30")
+        cmd(image, "transform-record:1:0:0:1:5:5")
+        cmd(image, "transform-again")
+        for _ in range(5):
+            cmd(image, "bench-undo")
+            cmd(image, "bench-redo")
+        cmd(image, "select-all")
+        run("chopgimp-vobjects-recolor", image=image, spec="hue=30")
+        r = run("chopgimp-vobjects-get-xml", layer=layer)
+        if r is not None and r.index(0) == Gimp.PDBStatusType.SUCCESS:
+            run("chopgimp-vobjects-set-xml", layer=layer, xml=r.index(1))
+        path = os.path.join(DIR, "pgo-vector.xcf")
+        Gimp.file_save(Gimp.RunMode.NONINTERACTIVE, image, Gio.File.new_for_path(path), None)
+        im2 = Gimp.file_load(Gimp.RunMode.NONINTERACTIVE, Gio.File.new_for_path(path))
+        if im2:
+            im2.delete()
+    image.delete()
+
+
 img = Gimp.Image.new(W, H, Gimp.ImageBaseType.RGB)
 img.undo_disable()              # comme un script : l'historique n'est pas entraîné
 layers = build(img)
 log("construction")
+step("vectoriel", vector)       # 4.0.0 : en tête, pour qu'il soit toujours entraîné
 step("effets", effects, layers)
 step("rendu 1", render, img)
 step("projection", projection, img)

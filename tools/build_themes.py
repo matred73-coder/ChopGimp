@@ -132,12 +132,32 @@ HEADER = """/* ═════════════════════�
 """
 
 
+def contrast(a, b):
+    """Rapport de contraste WCAG de deux couleurs #RRGGBB."""
+    def lum(h):
+        def f(c):
+            return c / 12.92 if c <= 0.03928 else ((c + 0.055) / 1.055) ** 2.4
+        r, g, b = (int(h[i:i + 2], 16) / 255.0 for i in (1, 3, 5))
+        return 0.2126 * f(r) + 0.7152 * f(g) + 0.0722 * f(b)
+    la, lb = lum(a), lum(b)
+    return (max(la, lb) + 0.05) / (min(la, lb) + 0.05)
+
+
+def on_accent(accent):
+    """4.0.0 : texte posé sur l'accent (survol des menus, bouton par défaut,
+    sélection) : blanc comme Photoshop s'il reste lisible (contraste ≥ 3),
+    sinon noir (accent jaune du Contraste élevé, cyan d'Affinity et Krita).
+    Même règle dans app/gui/themes.c pour un accent choisi."""
+    return "#FFFFFF" if contrast("#FFFFFF", accent) >= 3.0 else "#000000"
+
+
 def palette_css(name):
     label, base, colors = PALETTES[name]
     assert len(colors) == len(NAMES), name
     lines = [HEADER.format(what="palette « %s » (schéma %s)" % (label, base))]
     for key, value in zip(NAMES, colors):
         lines.append("@define-color %-30s %s;" % (key, value))
+    lines.append("@define-color %-30s %s;" % ("ps-on-accent", on_accent(colors[0])))
     return "\n".join(lines) + "\n"
 
 

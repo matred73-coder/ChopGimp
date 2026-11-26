@@ -220,7 +220,7 @@ def pgo_gimp(gimp):
     # réexportée par libgimp* (sinon tools/defcheck.py échoue : mangle_path).
     gen = "-fprofile-generate -fprofile-update=atomic"
     use = "-fprofile-use -fprofile-partial-training -Wno-missing-profile"
-    train_env = ("HOME=$PWD/_train/home GIMP3_DIRECTORY=$PWD/_train/cfg PGO_DIR=$PWD/_train PGO_SIZE=2000 "
+    train_env = ("HOME=$PWD/_train/home GIMP3_DIRECTORY=$PWD/_train/cfg PGO_DIR=$PWD/_train PGO_SIZE=1000 "
                  "XDG_CONFIG_HOME=$PWD/_train/home/.config XDG_CACHE_HOME=$PWD/_train/home/.cache "
                  "GI_TYPELIB_PATH=${FLATPAK_DEST}/lib/girepository-1.0${GI_TYPELIB_PATH:+:$GI_TYPELIB_PATH} ")
     gimp["buildsystem"] = "simple"
@@ -231,7 +231,12 @@ def pgo_gimp(gimp):
         # entraînement : sans écran, configuration jetable dans le dossier de
         # compilation ; deux passes (la première initialise la configuration,
         # interroge les greffons et charge polices et données)
-        "mkdir -p _train/home _train/cfg && for pass in 1 2; do " + train_env +
+        # 4.0.0 : images de 1000 px et deux fils de calcul (num-processors) :
+        # avec les compteurs atomiques du profil, le rendu instrumenté était
+        # ~50× plus lent que le normal et la passe 1 coupée au délai (30 min)
+        # avant la fin ; le profil (branches) ne dépend pas de la taille
+        "mkdir -p _train/home _train/cfg && echo '(num-processors 2)' > _train/cfg/gimprc && "
+        "for pass in 1 2; do " + train_env +
         "timeout 1800 ${FLATPAK_DEST}/bin/gimp-console-3.2 -i --quit "
         "--batch-interpreter=python-fu-eval -b \"exec(open('pgo_train.py').read())\" "
         "> _train/console-$pass.log 2>&1 || { echo \"PGO : passe $pass incomplète\"; "

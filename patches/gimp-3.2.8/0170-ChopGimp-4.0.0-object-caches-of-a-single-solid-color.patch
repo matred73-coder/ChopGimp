@@ -1,0 +1,370 @@
+From 32ae19eebc718e58e6e3188c7bc11d502625d8b8 Mon Sep 17 00:00:00 2001
+From: ChopGimp <mathieu.redon@proton.me>
+Date: Thu, 26 Nov 2026 21:26:55 +0100
+Subject: [PATCH] ChopGimp 4.0.0: object caches of a single solid color kept as
+ coverage (A8, a quarter of the memory); Blob brush preview in the color of
+ its result; click selection and Blob brush by the PDB on a layer whose single
+ object was never edited; an undoable parasite attached without undo no longer
+ closes the caller's undo group; PDF export of a single-color layer without
+ asking GTK for a monitor; unused d_free removed
+
+---
+ app/core/gimpitem.c               |  5 +-
+ app/display/gimpcanvaspath.c      | 49 ++++++++++++++++
+ app/display/gimpcanvaspath.h      |  3 +
+ app/path/chopgimp-vobject.c       | 94 ++++++++++++++++++++++++++++---
+ app/path/chopgimp-vobject.h       |  5 +-
+ app/pdb/chopgimp-cmds.c           | 10 ++++
+ app/tools/chopgimp-blobtool.c     | 11 ++++
+ plug-ins/common/file-pdf-export.c |  9 ++-
+ plug-ins/file-psd/psd-chopgimp.c  |  7 ---
+ 9 files changed, 175 insertions(+), 18 deletions(-)
+
+diff --git a/app/core/gimpitem.c b/app/core/gimpitem.c
+index eee56de..24a269b 100644
+--- a/app/core/gimpitem.c
++++ b/app/core/gimpitem.c
+@@ -2262,7 +2262,10 @@ gimp_item_parasite_attach (GimpItem           *item,
+       gimp_parasite_attach (private->image->gimp, &copy);
+     }
+ 
+-  if (gimp_item_is_attached (item) &&
++  /*  ChopGimp 4.0.0: the group is closed only when it was opened (an
++   *  undoable parasite attached without undo closed the caller's group)
++   */
++  if (push_undo &&
+       gimp_parasite_is_undoable (&copy))
+     {
+       gimp_image_undo_group_end (private->image);
+diff --git a/app/display/gimpcanvaspath.c b/app/display/gimpcanvaspath.c
+index 4da57ef..cdb3b86 100644
+--- a/app/display/gimpcanvaspath.c
++++ b/app/display/gimpcanvaspath.c
+@@ -56,6 +56,9 @@ struct _GimpCanvasPathPrivate
+   gdouble       y;
+   gboolean      filled;
+   GimpPathStyle path_style;
++  gboolean      has_fill_rgba;  /* 4.0.0: filled in this color instead of
++                                 * the canvas style                     */
++  gdouble       fill_rgba[4];
+ };
+ 
+ #define GET_PRIVATE(path) \
+@@ -77,6 +80,8 @@ static void             gimp_canvas_path_draw         (GimpCanvasItem *item,
+ static cairo_region_t * gimp_canvas_path_get_extents  (GimpCanvasItem *item);
+ static void             gimp_canvas_path_stroke       (GimpCanvasItem *item,
+                                                        cairo_t        *cr);
++static void             gimp_canvas_path_fill         (GimpCanvasItem *item,
++                                                       cairo_t        *cr);
+ 
+ 
+ G_DEFINE_TYPE_WITH_PRIVATE (GimpCanvasPath, gimp_canvas_path,
+@@ -98,6 +103,7 @@ gimp_canvas_path_class_init (GimpCanvasPathClass *klass)
+   item_class->draw           = gimp_canvas_path_draw;
+   item_class->get_extents    = gimp_canvas_path_get_extents;
+   item_class->stroke         = gimp_canvas_path_stroke;
++  item_class->fill           = gimp_canvas_path_fill;
+ 
+   g_object_class_install_property (object_class, PROP_PATH,
+                                    g_param_spec_boxed ("path", NULL, NULL,
+@@ -319,6 +325,49 @@ gimp_canvas_path_stroke (GimpCanvasItem *item,
+     }
+ }
+ 
++static void
++gimp_canvas_path_fill (GimpCanvasItem *item,
++                       cairo_t        *cr)
++{
++  GimpCanvasPathPrivate *private = GET_PRIVATE (item);
++
++  if (private->has_fill_rgba)
++    {
++      cairo_set_source_rgba (cr, private->fill_rgba[0], private->fill_rgba[1],
++                             private->fill_rgba[2], private->fill_rgba[3]);
++      cairo_fill (cr);
++    }
++  else
++    {
++      GIMP_CANVAS_ITEM_CLASS (parent_class)->fill (item, cr);
++    }
++}
++
++/*  4.0.0: a filled path drawn in @color (with @opacity) instead of the
++ *  canvas style (preview of the Blob brush in the color of its result)
++ */
++void
++gimp_canvas_path_set_fill_color (GimpCanvasItem *path,
++                                 GeglColor      *color,
++                                 gdouble         opacity)
++{
++  GimpCanvasPathPrivate *private;
++
++  g_return_if_fail (GIMP_IS_CANVAS_PATH (path));
++
++  private = GET_PRIVATE (path);
++  private->has_fill_rgba = (color != NULL);
++
++  if (color)
++    {
++      gegl_color_get_pixel (color, babl_format ("R'G'B'A double"), private->fill_rgba);
++      private->fill_rgba[3] *= CLAMP (opacity, 0.0, 1.0);
++    }
++
++  gimp_canvas_item_begin_change (path);
++  gimp_canvas_item_end_change (path);
++}
++
+ GimpCanvasItem *
+ gimp_canvas_path_new (GimpDisplayShell     *shell,
+                       const GimpBezierDesc *bezier,
+diff --git a/app/display/gimpcanvaspath.h b/app/display/gimpcanvaspath.h
+index d9bb5ac..7ebfe00 100644
+--- a/app/display/gimpcanvaspath.h
++++ b/app/display/gimpcanvaspath.h
+@@ -56,3 +56,6 @@ GimpCanvasItem * gimp_canvas_path_new      (GimpDisplayShell     *shell,
+ 
+ void             gimp_canvas_path_set      (GimpCanvasItem       *path,
+                                             const GimpBezierDesc *bezier);
++void             gimp_canvas_path_set_fill_color (GimpCanvasItem *path,
++                                                  GeglColor      *color,
++                                                  gdouble         opacity);
+diff --git a/app/path/chopgimp-vobject.c b/app/path/chopgimp-vobject.c
+index 8ab13b2..9629c40 100644
+--- a/app/path/chopgimp-vobject.c
++++ b/app/path/chopgimp-vobject.c
+@@ -4160,6 +4160,61 @@ draw_leaf (cairo_t         *cr,
+   cairo_restore (cr);
+ }
+ 
++/*  4.0.0: a leaf painted in a single solid color (every painted entry a
++ *  flat color, the same one, in Normal mode: the case of every traced
++ *  shape) is cached as its coverage only, A8 instead of ARGB32 (a quarter
++ *  of the memory), and painted through it in its color.  The color's
++ *  alpha and the entries' opacities stay in the coverage.
++ *  CHOPGIMP_NO_A8_CACHE=1: ARGB32 caches as before.
++ */
++static gboolean
++leaf_mono (ChopGimpVObject *o,
++           const Babl      *space,
++           gdouble          rgb[3])
++{
++  static gint           enabled = -1;
++  const ChopGimpVStyle *st      = &o->style;
++  gboolean              any     = FALSE;
++
++  if (enabled < 0)
++    enabled = (g_getenv ("CHOPGIMP_NO_A8_CACHE") == NULL);
++
++  if (! enabled)
++    return FALSE;
++
++  for (gint k = 0; k < chopgimp_vstyle_get_n_entries (st); k++)
++    {
++      ChopGimpVEntry       *e = chopgimp_vstyle_get_entry (st, k);
++      const ChopGimpVEntry *fill;
++      const ChopGimpPaint  *p;
++      gdouble               rgba[4];
++
++      if (! chopgimp_ventry_is_painted (e))
++        continue;
++
++      fill = e->follow_fill ? chopgimp_vstyle_get_fill (st) : NULL;
++      p    = fill ? &fill->paint : &e->paint;
++
++      if (p->type != CHOPGIMP_PAINT_COLOR || ! p->color ||
++          mode_operator (e->mode) != CAIRO_OPERATOR_OVER)
++        return FALSE;
++
++      color_rgba (p->color, space, rgba);
++
++      if (! any)
++        {
++          rgb[0] = rgba[0]; rgb[1] = rgba[1]; rgb[2] = rgba[2];
++          any = TRUE;
++        }
++      else if (rgb[0] != rgba[0] || rgb[1] != rgba[1] || rgb[2] != rgba[2])
++        {
++          return FALSE;
++        }
++    }
++
++  return any;
++}
++
+ static cairo_surface_t *
+ leaf_cache (GimpVectorLayer     *layer,
+             ChopGimpVObject     *o,
+@@ -4173,9 +4228,14 @@ leaf_cache (GimpVectorLayer     *layer,
+     return NULL;
+ 
+   {
+-    cairo_surface_t *surf = cairo_image_surface_create (CAIRO_FORMAT_ARGB32,
+-                                                        ib->width, ib->height);
+-    cairo_t         *cr   = cairo_create (surf);
++    cairo_surface_t *surf;
++    cairo_t         *cr;
++
++    o->cache_a8 = leaf_mono (o, space, o->cache_rgb);
++    surf = cairo_image_surface_create (o->cache_a8 ? CAIRO_FORMAT_A8
++                                                   : CAIRO_FORMAT_ARGB32,
++                                       ib->width, ib->height);
++    cr   = cairo_create (surf);
+ 
+     cairo_translate (cr, -ib->x, -ib->y);
+     draw_leaf (cr, layer, o, space);
+@@ -4366,6 +4426,8 @@ par_collect (ParJob              *job,
+       if (job->ext && ! par_prepare_leaf (o, path))
+         return;
+ 
++      o->cache_a8 = leaf_mono (o, job->space, o->cache_rgb);
++
+       g_ptr_array_add (job->leaves, o);
+       g_array_append_val (job->rects, ib);
+     }
+@@ -4382,7 +4444,9 @@ par_draw (gint     i,
+   while ((k = g_atomic_int_add (&job->next, 1)) < (gint) job->leaves->len)
+     {
+       const GeglRectangle *ib   = &g_array_index (job->rects, GeglRectangle, k);
+-      cairo_surface_t     *surf = cairo_image_surface_create (CAIRO_FORMAT_ARGB32,
++      ChopGimpVObject     *o    = g_ptr_array_index (job->leaves, k);
++      cairo_surface_t     *surf = cairo_image_surface_create (o->cache_a8 ? CAIRO_FORMAT_A8
++                                                                          : CAIRO_FORMAT_ARGB32,
+                                                               ib->width, ib->height);
+       cairo_t             *cr   = cairo_create (surf);
+ 
+@@ -4565,10 +4629,22 @@ composite (cairo_t             *cr,
+       if (surf)
+         {
+           cairo_set_operator (cr, op);
+-          cairo_set_source_surface (cr, surf,
+-                                    o->cache_x + o->cache_fx,
+-                                    o->cache_y + o->cache_fy);
+-          cairo_paint_with_alpha (cr, o->opacity);
++
++          if (o->cache_a8)
++            {
++              cairo_set_source_rgba (cr, o->cache_rgb[0], o->cache_rgb[1],
++                                     o->cache_rgb[2], o->opacity);
++              cairo_mask_surface (cr, surf,
++                                  o->cache_x + o->cache_fx,
++                                  o->cache_y + o->cache_fy);
++            }
++          else
++            {
++              cairo_set_source_surface (cr, surf,
++                                        o->cache_x + o->cache_fx,
++                                        o->cache_y + o->cache_fy);
++              cairo_paint_with_alpha (cr, o->opacity);
++            }
+         }
+       else if (! simple)
+         {
+@@ -5763,6 +5839,8 @@ snapshot_fix_one (ChopGimpVObject *src,
+       dst->cache_y  = src->cache_y;
+       dst->cache_fx = src->cache_fx;
+       dst->cache_fy = src->cache_fy;
++      dst->cache_a8 = src->cache_a8;
++      memcpy (dst->cache_rgb, src->cache_rgb, sizeof (src->cache_rgb));
+     }
+ 
+   memcpy (dst->bounds_valid, src->bounds_valid, sizeof (src->bounds_valid));
+diff --git a/app/path/chopgimp-vobject.h b/app/path/chopgimp-vobject.h
+index 7bda8eb..eeba96c 100644
+--- a/app/path/chopgimp-vobject.h
++++ b/app/path/chopgimp-vobject.h
+@@ -250,7 +250,10 @@ struct _ChopGimpVObject
+   gboolean             effective_valid;
+   guint64              rev;           /* 3.29.6: changed at every change of
+                                        * the rendering (cache dropped or
+-                                       * shifted); copies keep it            */
++                                       * shifted); copies keep it            */  gboolean             cache_a8;      /* 4.0.0: the cache is the coverage
++                                       * only (A8) of a single solid color,
++                                       * cache_rgb, painted through it       */
++  gdouble              cache_rgb[3];
+ };
+ 
+ 
+diff --git a/app/pdb/chopgimp-cmds.c b/app/pdb/chopgimp-cmds.c
+index b5e1d42..462f307 100644
+--- a/app/pdb/chopgimp-cmds.c
++++ b/app/pdb/chopgimp-cmds.c
+@@ -840,6 +840,16 @@ vobjects_command_invoker (GimpProcedure         *procedure,
+           chopgimp_vlayer_set_selection (layer, NULL, 0);
+           done = TRUE;
+         }
++      /*  4.0.0: clicking an object and the Pinceau goutte work on any
++       *  vector layer, as the tools do, including a layer whose single
++       *  object was never edited
++       */
++      else if ((g_str_has_prefix (cmd, "select-at:") ||
++                g_str_has_prefix (cmd, "select-add-at:") ||
++                g_str_has_prefix (cmd, "blob:")) &&
++               chopgimp_vobjects_layer_is_target (layer) &&
++               chopgimp_vmaterial_command (layer, context, cmd, &done))
++        ;
+       else if (! chopgimp_vobjects_layer_is_multi (layer))
+         done = FALSE;
+       /*  3.29.3: selection by color / size, cleaning, colors  */
+diff --git a/app/tools/chopgimp-blobtool.c b/app/tools/chopgimp-blobtool.c
+index 0ff35e5..c36b7ec 100644
+--- a/app/tools/chopgimp-blobtool.c
++++ b/app/tools/chopgimp-blobtool.c
+@@ -490,6 +490,17 @@ gimp_vblob_tool_draw (GimpDrawTool *dt)
+                 gimp_canvas_path_new (gimp_display_get_shell (dt->display),
+                                       gimp_path_get_bezier (shape), 0, 0, TRUE,
+                                       GIMP_PATH_STYLE_DEFAULT);
++              ChopGimpVStyle  style;
++              ChopGimpVEntry *fill;
++
++              /*  4.0.0: the preview in the color of the result  */
++              vblob_style (GIMP_PATH_OPTIONS (VBLOB_OPTIONS (bt)), image, &style);
++              fill = chopgimp_vstyle_get_fill (&style);
++
++              if (fill && fill->paint.type == CHOPGIMP_PAINT_COLOR && fill->paint.color)
++                gimp_canvas_path_set_fill_color (item, fill->paint.color, fill->opacity);
++
++              chopgimp_vstyle_clear (&style);
+ 
+               gimp_draw_tool_add_item (dt, item);
+               g_object_unref (item);
+diff --git a/plug-ins/common/file-pdf-export.c b/plug-ins/common/file-pdf-export.c
+index 38a527c..65f94ac 100644
+--- a/plug-ins/common/file-pdf-export.c
++++ b/plug-ins/common/file-pdf-export.c
+@@ -2348,7 +2348,14 @@ draw_layer (GimpImage            *image,
+ 
+           if (vectorize && single_color)
+             {
+-              gimp_cairo_set_source_color (cr, layer_color, NULL, FALSE, NULL);
++              /*  ChopGimp 4.0.0: the color itself (sRGB), not the
++               *  monitor's rendering (a widget-less call asked GTK for a
++               *  monitor, with warnings when exporting without a display)
++               */
++              gdouble rgba[4];
++
++              gegl_color_get_pixel (layer_color, babl_format ("R'G'B'A double"), rgba);
++              cairo_set_source_rgba (cr, rgba[0], rgba[1], rgba[2], rgba[3]);
+               if (mask)
+                 cairo_mask_surface (cr, mask_image, x, y);
+               else
+diff --git a/plug-ins/file-psd/psd-chopgimp.c b/plug-ins/file-psd/psd-chopgimp.c
+index 03130ed..6716214 100644
+--- a/plug-ins/file-psd/psd-chopgimp.c
++++ b/plug-ins/file-psd/psd-chopgimp.c
+@@ -296,13 +296,6 @@ d_emit (GByteArray  *out,
+   d->b = NULL;
+ }
+ 
+-static void
+-d_free (Desc *d)
+-{
+-  if (d->b)
+-    g_byte_array_free (d->b, TRUE);
+-  d->b = NULL;
+-}
+ 
+ 
+ /*  ─── reading the settings of a filter ──────────────────────────────── */
+-- 
+2.53.0
+

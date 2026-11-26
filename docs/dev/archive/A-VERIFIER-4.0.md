@@ -1,5 +1,7 @@
 # Points à vérifier à la compilation de la 4.0.0 (lot 6)
 
+> Archivé en 4.0.0 : tous les points sont vérifiés. Les restes de la 3.99.0 sont fermés dans la 4.0.0 (voir docs/SUIVI.md) ; seuls les contrôles dans Photoshop, Acrobat et Illustrator restent à faire par l'utilisateur.
+
 **Bilan 3.99.0 (lot 6a, 26/11/2026)** : tout compilé, 272 tests smoke OK, bench_vector.sh sans régression, banc graphique sur une vraie vectorisation lourde (8 et 16 bits), PSD et PDF exportés puis relus. Chaque point porte son résultat (→). Restent hors de portée ici : Photoshop, Acrobat et Illustrator (contrôlés avec psd-tools, Ghostscript et pypdf).
 
 ## Lot 1 (3.29.5, commit 5ced593, patchs 0153-0158)

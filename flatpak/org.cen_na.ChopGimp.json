@@ -1213,7 +1213,11 @@
                         "../patches/gimp-3.2.8/0166-ChopGimp-3.99.0-smoke-fixes-perspective-project-unpr.patch",
                         "../patches/gimp-3.2.8/0167-ChopGimp-3.99.0-perspective-grid-parasites-read-with.patch",
                         "../patches/gimp-3.2.8/0168-ChopGimp-3.99.0-document-tab-labels-keep-20-characte.patch",
-                        "../patches/gimp-3.2.8/0169-ChopGimp-3.99.0-an-artboard-over-no-visible-layer-is.patch"
+                        "../patches/gimp-3.2.8/0169-ChopGimp-3.99.0-an-artboard-over-no-visible-layer-is.patch",
+                        "../patches/gimp-3.2.8/0170-ChopGimp-4.0.0-object-caches-of-a-single-solid-color.patch",
+                        "../patches/gimp-3.2.8/0171-ChopGimp-4.0.0-text-on-a-chosen-accent-color-in-blac.patch",
+                        "../patches/gimp-3.2.8/0172-ChopGimp-4.0.0-PDF-export-layers-of-a-single-color-l.patch",
+                        "../patches/gimp-3.2.8/0173-ChopGimp-4.0.0-object-bar-color-properties-declared-.patch"
                     ]
                 }
             ],

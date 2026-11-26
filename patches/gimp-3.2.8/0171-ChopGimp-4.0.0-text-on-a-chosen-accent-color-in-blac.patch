@@ -1,0 +1,98 @@
+From 484f39d3ad082072f200c606b97726a6ff6e383f Mon Sep 17 00:00:00 2001
+From: ChopGimp <mathieu.redon@proton.me>
+Date: Thu, 26 Nov 2026 21:36:40 +0100
+Subject: [PATCH] ChopGimp 4.0.0: text on a chosen accent color in black when
+ white is not readable (ps-on-accent); explicit braces in the hit test of
+ repeats and brushes; blob bounds initialized
+
+---
+ app/gui/themes.c            | 24 +++++++++++++++++++++---
+ app/path/chopgimp-vbrush.c  |  2 +-
+ app/path/chopgimp-vobject.c |  2 ++
+ 3 files changed, 24 insertions(+), 4 deletions(-)
+
+diff --git a/app/gui/themes.c b/app/gui/themes.c
+index 2b4e535..df7f0fd 100644
+--- a/app/gui/themes.c
++++ b/app/gui/themes.c
+@@ -17,6 +17,7 @@
+ 
+ #include "config.h"
+ 
++#include <math.h>
+ #include <stdio.h>
+ #include <stdlib.h>
+ #include <string.h>
+@@ -321,16 +322,33 @@ chopgimp_themes_appearance_css (void)
+ 
+   if (accent && strlen (accent) == 7 && accent[0] == '#')
+     {
+-      gchar hover[8], pressed[8];
++      gchar   hover[8], pressed[8];
++      guint   r = 0, g = 0, b = 0;
++      gdouble lum;
+ 
+       chopgimp_shade (accent, 1.15, hover);
+       chopgimp_shade (accent, 0.85, pressed);
+ 
++      /*  4.0.0: the text on the accent (as tools/build_themes.py): white
++       *  while its WCAG contrast stays >= 3, else black
++       */
++      sscanf (accent + 1, "%02x%02x%02x", &r, &g, &b);
++      {
++        gdouble c[3] = { r / 255.0, g / 255.0, b / 255.0 };
++
++        for (gint i = 0; i < 3; i++)
++          c[i] = (c[i] <= 0.03928) ? c[i] / 12.92 : pow ((c[i] + 0.055) / 1.055, 2.4);
++
++        lum = 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2];
++      }
++
+       g_string_append_printf (css,
+                               "@define-color ps-accent %s;\n"
+                               "@define-color ps-accent-hover %s;\n"
+-                              "@define-color ps-accent-pressed %s;\n",
+-                              accent, hover, pressed);
++                              "@define-color ps-accent-pressed %s;\n"
++                              "@define-color ps-on-accent %s;\n",
++                              accent, hover, pressed,
++                              (1.05 / (lum + 0.05) >= 3.0) ? "#FFFFFF" : "#000000");
+     }
+ 
+   if (! g_strcmp0 (density, "compact"))
+diff --git a/app/path/chopgimp-vbrush.c b/app/path/chopgimp-vbrush.c
+index b91315d..9fdff6c 100644
+--- a/app/path/chopgimp-vbrush.c
++++ b/app/path/chopgimp-vbrush.c
+@@ -2773,7 +2773,7 @@ chopgimp_vblob_paint (GimpVectorLayer      *layer,
+   GPtrArray       *paths, *hits;
+   GList           *leaves;
+   guint8           key[5];
+-  gdouble          sb[4];
++  gdouble          sb[4] = { 0.0, 0.0, 0.0, 0.0 };
+   ChopGimpVObject *top = NULL, *parent = NULL, *object;
+   gint             position = -1;
+ 
+diff --git a/app/path/chopgimp-vobject.c b/app/path/chopgimp-vobject.c
+index 9629c40..8cb7690 100644
+--- a/app/path/chopgimp-vobject.c
++++ b/app/path/chopgimp-vobject.c
+@@ -6934,6 +6934,7 @@ chopgimp_vlayer_hit_test (GimpVectorLayer *layer,
+    */
+   if (hit && mode == CHOPGIMP_HIT_LEAF)
+     for (ChopGimpVObject *p = hit; p; p = p->parent)
++      {
+       if (p->blend && ! strcmp (p->blend, "rinst"))
+         {
+           hit = p->parent;
+@@ -6953,6 +6954,7 @@ chopgimp_vlayer_hit_test (GimpVectorLayer *layer,
+             }
+           break;
+         }
++      }
+ 
+   if (hit && mode == CHOPGIMP_HIT_SELECTABLE)
+     hit = selectable_of (layer->vobjects, hit);
+-- 
+2.53.0
+

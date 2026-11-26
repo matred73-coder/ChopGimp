@@ -74,13 +74,13 @@ menu menuitem:hover {
 menu menuitem:hover,
 menuitem *:hover {
   background-color: @ps-accent;
-  color: @ps-white;
+  color: @ps-on-accent;
 }
 
 menu menuitem:hover label,
 menu menuitem:hover accelerator,
 menu menuitem:hover arrow {
-  color: @ps-white;
+  color: @ps-on-accent;
   background-color: transparent;
 }
 
@@ -108,7 +108,7 @@ menuitem check:checked,
 menuitem radio:checked {
   background-color: @ps-accent;
   border-color: @ps-accent;
-  color: @ps-white;
+  color: @ps-on-accent;
 }
 
 /* ── Panneaux (docks) ──────────────────────────────────────────── */
@@ -352,12 +352,12 @@ button.default,
 .dialog-action-box button.default {
   background-color: @ps-accent;
   border: 1px solid @ps-accent;
-  color: @ps-white;
+  color: @ps-on-accent;
 }
 
 button.suggested-action label,
 button.default label {
-  color: @ps-white;
+  color: @ps-on-accent;
   font-weight: bold;
 }
 
@@ -416,7 +416,7 @@ spinbutton:focus-within {
 entry selection,
 .view selection {
   background-color: @ps-accent;
-  color: @ps-white;
+  color: @ps-on-accent;
 }
 
 spinbutton {
@@ -604,7 +604,7 @@ check:checked,
 radio:checked {
   background-color: @ps-accent;
   border-color: @ps-accent;
-  color: @ps-white;
+  color: @ps-on-accent;
 }
 
 checkbutton:hover,

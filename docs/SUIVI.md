@@ -557,7 +557,7 @@ Restent à traiter (identiques avec ou sans effets) : blocages au déplacement, 
 - **Panneaux** : copie réduite (512 px) du rendu des effets pour les vignettes, mise à jour par zones ; vignettes et Navigation limitées à 2 rafraîchissements/s ; histogramme non bloquant (échantillon pendant le travail) ; panneau Calques mis à jour au plus toutes les 250 ms ; contour de sélection (gimpboundary) et fourmis rapides ; Tableau de bord : groupe « Réactivité ».
 - **Système** : mimalloc (lanceur `/app/bin/chopgimp`, `CHOPGIMP_NO_MIMALLOC=1` pour couper) ; babl et GEGL en -O3 + LTO (`make build LTO=0` pour revenir) ; PGO en option (`make build PGO=1`, non essayé) ; sauvegarde automatique repoussée pendant le travail ; mesures `tools/dev/bench-all.sh`.
 - **Styles de calque façon Photoshop** : Contour avec remplissage Couleur / Dégradé (6 styles dont éclat de forme) / Motif, mode de fusion, surimpression ; glisser sur l'image pour déplacer ombre, ombre interne, lueurs, dégradé ou motif ; lueurs : bruit, source dégradé, courbes de contour, plage (patch GEGL 0005, `gegl:glow-map`) ; « Ajouter un autre contour » et numérotation dans la liste fx ; « Définir par défaut » / « Rétablir ». Non fait : mode de fusion de l'ombre portée et de la lueur externe (demande le fond sous le calque), « Aligner sur le calque », technique précise.
-- **Traduction** : ~650 libellés de menus et de filtres (gimp, plug-ins, GEGL : patch 0003) ; liste dans `docs/dev/traductions-3.25.0.tsv`. **Pixelliser le style de calque** (Calque > Style de calque).
+- **Traduction** : ~650 libellés de menus et de filtres (gimp, plug-ins, GEGL : patch 0003) ; liste dans `docs/dev/archive/traductions-3.25.0.tsv`. **Pixelliser le style de calque** (Calque > Style de calque).
 - Vérifié : 103 tests ; fenêtre Contour au banc (dégradé linéaire et éclat de forme).
 
 ## 3.25.1 — Fin de la passe de performance (blocages, cache XCF, rendu en arrière-plan, styles fusionnés, babl)
@@ -1004,7 +1004,7 @@ peu changés ; pas encore mesuré au banc graphique.
 
 ## 3.29.3 — Sélection directe, nettoyage et couleurs façon Illustrator
 
-Patch 0149 (le code écrit en brouillon, `docs/dev/SUIVI-3.29.3-brouillon.md`,
+Patch 0149 (le code écrit en brouillon, `docs/dev/archive/SUIVI-3.29.3-brouillon.md`,
 plus ce qui restait).
 - **Sélection directe (A)** : ne crée jamais de point ; dans le vide, un appui
   trace un rectangle de sélection ; un clic sur un segment prend ses deux
@@ -1162,7 +1162,7 @@ bancs et livraison au lot 6). VERSION inchangée (3.29.4).
   32 bits linéaires (rendu à 1 près du 8 bits), rendu parallèle stable
   (profils, flèches, dégradés libres), annuler / rétablir exacts sur deux
   pas, nouveau changement après annulation.
-- **À vérifier à la compilation (lot 6)** : voir docs/dev/A-VERIFIER-4.0.md,
+- **À vérifier à la compilation (lot 6)** : voir docs/dev/archive/A-VERIFIER-4.0.md,
   section « Lot 2 » ; mesures au banc (`bench_vector.sh`, cas A et B en
   16 bits, annuler, rendu complet) et test de charge du rendu parallèle.
 - **Limites acceptées** : contours de profil préparés pour rien quand moins de
@@ -1217,7 +1217,7 @@ VERSION inchangée.
   import : repris depuis lfx2 (motif lu dans Patt) ou cgFX. `CHOPGIMP_NO_INNER_STYLES=1`.
 - Tests : 8 nouveaux (rendu satin et motif, PSD exporté / relu par psdparse / réimporté,
   menus sans doublon et façon Photoshop, plug-ins sans chemin en double, icônes).
-- **À vérifier à la compilation (lot 6)** : docs/dev/A-VERIFIER-4.0.md, section « Lot 5 ».
+- **À vérifier à la compilation (lot 6)** : docs/dev/archive/A-VERIFIER-4.0.md, section « Lot 5 ».
 
 ## 3.31.0 (compilé et vérifié en 3.99.0) — partie 2 : exports PDF, EPS et PSD (lot 4b du plan final)
 
@@ -1285,7 +1285,7 @@ inchangée.
   par plan, calques PDF, vecteurs et texte, fichiers par plan, EPS, PSD exporté et
   relu, rapport) ; `tools/dev/check_psd_tools.py`, lancé par `tools/dev/smoke.sh`,
   relit le PSD avec **psd-tools** (environnement virtuel de `$CHOPGIMP_DEV`).
-- Points à vérifier : `docs/dev/A-VERIFIER-4.0.md`, section « Lot 4b ».
+- Points à vérifier : `docs/dev/archive/A-VERIFIER-4.0.md`, section « Lot 4b ».
 
 ## 3.31.0 (compilé et vérifié en 3.99.0) — partie 1 : plans de travail et grille de perspective (lot 4a du plan final)
 
@@ -1331,7 +1331,7 @@ inchangée.
 - Générateurs : `build_layout.py` (outils, panneau), `build_shortcuts.py` (Maj+O,
   Ctrl+Maj+Alt+I), `build_menus.py` (Fichier, Affichage, Vecteur > Perspective,
   Fenêtres), `icons/build_icons.py` (4 icônes) ; tests smoke 3.31.0.
-- Points à vérifier : `docs/dev/A-VERIFIER-4.0.md`, section « Lot 4a ».
+- Points à vérifier : `docs/dev/archive/A-VERIFIER-4.0.md`, section « Lot 4a ».
 
 ## 3.30.0 (compilé et vérifié en 3.99.0) — Blocs vectoriels 4 et 5 (lot 3 du plan final)
 
@@ -1380,7 +1380,7 @@ tests, bancs et livraison au lot 6). VERSION inchangée (3.29.4).
   `blend` du XML, `chopgimp:dynamic` en SVG).
 - **Tests** : 19 tests ajoutés à `tools/smoke_test.py` (commandes PDB
   `repeat-*`, `repeat-handle`, `brush-*`, `brush-lib-*`, `blob:`).
-- **À vérifier à la compilation (lot 6)** : docs/dev/A-VERIFIER-4.0.md,
+- **À vérifier à la compilation (lot 6)** : docs/dev/archive/A-VERIFIER-4.0.md,
   section « Lot 3 ».
 
 ## 3.99.0 — Lots 1 à 5 compilés, corrigés et vérifiés (lot 6, partie 6a)
@@ -1423,7 +1423,7 @@ Livraison intermédiaire avant la 4.0.0 (LTO + PGO et recette finale).
 
   2 000 objets simples : glisser 0,3 ms / image, rendu complet 109 ms,
   annuler 12 ms, rafale 1 309 ms (rendu identique).
-- **Vérifications** (docs/dev/A-VERIFIER-4.0.md, chaque point annoté) :
+- **Vérifications** (docs/dev/archive/A-VERIFIER-4.0.md, chaque point annoté) :
   annulation partielle (opérations variées, tout annuler / rétablir,
   alternances : XML et pixels identiques) ; 16 / 32 bits à 1 près du 8
   bits ; plans et grille suivent rotation, miroir, échelle, recadrage ;
@@ -1438,3 +1438,96 @@ Livraison intermédiaire avant la 4.0.0 (LTO + PGO et recette finale).
   pour 3 595 objets sur 2 000 × 2 000) à alléger ; aperçu du Pinceau goutte
   au style du canevas (pas à la couleur) ; un calque d'un seul objet jamais
   modifié refuse le clic de sélection / le Pinceau goutte par la PDB.
+
+## 4.0.0 — Version finale (lot 6, partie 6b)
+
+Patchs 0170 à 0173 (nouveaux commits, aucun patch réécrit).
+
+- **Restes de la 3.99.0 fermés** :
+  - les 3 avertissements `gimp_image_undo_group_end` venaient de GIMP lui-même :
+    `gimp_item_parasite_attach` sans annulation fermait le groupe de
+    l'appelant (vectorisation dynamique qui suit un déplacement, forme posée
+    sur un plan de perspective). Le groupe n'est fermé que s'il a été ouvert ;
+  - export PDF sans interface : la couleur d'un calque uni était demandée au
+    moniteur (`gimp_cairo_set_source_color` sans widget), d'où 21
+    avertissements GTK. La couleur est maintenant prise telle quelle (sRVB) ;
+  - **mémoire des caches** : un objet d'une seule couleur unie (tous les
+    objets d'une vectorisation) garde sa seule couverture (A8) au lieu de
+    RVBA, et il est peint dans sa couleur à travers elle : 4× moins de
+    mémoire par cache, et plus rapide (moins d'octets à composer).
+    Vectorisation lourde de 3 595 objets : mémoire du cœur 3 077 → 1 366 Mo
+    (16 bits : 3 452 → 1 652 Mo). Les caches restent limités à la boîte de
+    l'objet ; pas d'éviction LRU, inutile à ce niveau
+    (`CHOPGIMP_NO_A8_CACHE`) ;
+  - **aperçu du Pinceau goutte** à la couleur du résultat (couleur du
+    contour, ou du fond sans contour, avec son opacité) ;
+  - **calque d'un seul objet jamais modifié** : la sélection au clic
+    (`select-at`, `select-add-at`) et le Pinceau goutte (`blob:`) passent
+    par la PDB comme par les outils (test ajouté) ;
+  - **thèmes** : les 7 variantes vues au banc graphique. Le texte posé sur
+    la couleur d'accent (survol des menus, bouton par défaut, sélection,
+    cases cochées) était blanc partout : illisible sur le jaune du
+    Contraste élevé (1,4:1) et faible sur le cyan d'Affinity et de Krita
+    (2,4:1). Il devient noir quand le blanc tombe sous 3:1, y compris pour
+    un accent choisi dans Affichage > Apparence (`ps-on-accent`) ;
+  - **CI** : actions en Node 24 (checkout v5, cache v5, upload-artifact v6,
+    action-gh-release v3 ; setup-msys2 v2 y est déjà).
+- **Recette au banc graphique** :
+  - les 67 outils activés et utilisés sur le canevas, sans plantage. Les
+    outils vectoriels émettaient 6 avertissements GTK à leur premier
+    choix : les couleurs Fond / Contour de la barre des objets étaient
+    déclarées en couleurs GEGL, et le bouton caché du sélecteur de couleur
+    n'était pas créé. Elles sont maintenant déclarées en couleurs GIMP ;
+  - les 11 menus de premier niveau ouverts, sans défaut ;
+  - scénario complet : photo 1 280 × 981 vectorisée (« Photo haute
+    fidélité », 1 413 objets), un groupe de couleur isolé puis recoloré,
+    répétition radiale, forme de pinceau calligraphique, deux plans de
+    travail, puis export PDF en calques (2 pages, 2 calques OCG), PSD
+    (relu par psd-tools : calque vectorisé avec masque vectoriel) et SVG
+    (1 380 tracés, groupes dynamiques gardés). Le XCF (17 Mo) se rouvre avec
+    ses objets, sa répétition et ses plans ;
+  - les boîtes d'export PDF, PSD et SVG et les options de métadonnées
+    étaient en partie en anglais (chaînes absentes du fr.po de GIMP
+    3.2.8) : traduites.
+- **Compilation optimisée** (`make build LTO=all PGO=1`, 1 170 profils) :
+  l'entraînement du profil (`tools/dev/pgo_train.py`) commence par du
+  vectoriel (vectorisation, sélection, glisser, annuler / rétablir,
+  recoloration, rendu complet, XCF). Il tournait ~50× plus lentement que le
+  code normal (compteurs atomiques du profil) et la passe 1 était coupée au
+  délai de 30 minutes : images de 1 000 px et 2 fils de calcul pendant
+  l'entraînement, chaque passe dure maintenant ~5 minutes.
+- **Mesures** (`tools/dev/bench_vector.sh`, ms ; vectorisation lourde de
+  3 595 objets en 8 bits, 2 886 en 16 bits) :
+
+| Mesure | 3.99.0 | 4.0.0 LTO=1 | 4.0.0 LTO=all + PGO |
+|---|---|---|---|
+| Glisser, par image | 9,4 | 8,6 | **8,6** |
+| Recolorer | 149 | 120 | **104** |
+| Rendu complet | 459 | 401 | **420** |
+| Annuler | 67 | 51 | **53** |
+| 40 annuler + 40 rétablir | 7 607 | 6 311 | **6 297** |
+| Vectoriser | 887 | 755 | **742** |
+| Mémoire du cœur (Mo) | 3 077 | 1 366 | **1 371** |
+| 16 bits : rendu complet / mémoire | 467 / 3 452 | 431 / 1 652 | **435 / 1 639** |
+
+  Le gain vient des caches A8 (moins d'octets à écrire et à composer) ;
+  LTO + PGO sur GIMP ne change presque rien au vectoriel (±5 %, dans le
+  bruit) : le temps se passe dans cairo, pixman, babl et GEGL. Le paquet
+  publié par la CI reste en LTO=1 (babl et GEGL) ; le paquet LTO + PGO est
+  `dist/ChopGimp-4.0.0.flatpak`.
+- **Nettoyage** : fonction morte `d_free` (import PSD), accolades
+  explicites dans le clic sur les répétitions et formes, bornes du Pinceau
+  goutte initialisées ; notes de développement terminées rangées dans
+  `docs/dev/archive/` ; `bench_vector.sh` quitte à la fin (il attendait la
+  fin du délai de 30 minutes) et mesure la mémoire du cœur ; le journal du
+  smoke repère chaque test (un avertissement se relie à son test).
+- **Documentation** : README à jour pour la 4.0 (section « Interrupteurs
+  `CHOPGIMP_*` » : la liste complète et l'effet de chacun) ; nouveau guide
+  de l'utilisateur `docs/GUIDE.md`.
+- **Tests** : 273 / 273 (smoke), plus aucun avertissement critique dans le
+  journal (le dernier, `gimp_image_undo_thaw`, venait de l'agrandissement
+  IA qui réactivait l'historique d'une image dupliquée).
+- **Reste à valider par l'utilisateur** : ouvrir le PSD dans Photoshop
+  (styles, calques de forme, textes), le PDF en calques dans Acrobat et
+  Illustrator (calques OCG, vectoriel), le SVG dans Illustrator ; essayer
+  le paquet LTO + PGO au quotidien.

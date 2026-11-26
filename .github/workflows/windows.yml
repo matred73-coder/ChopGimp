@@ -45,7 +45,7 @@ jobs:
           git config --global user.email "ci@chopgimp.invalid"
           git config --global advice.detachedHead false
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Version
         id: ver
@@ -85,7 +85,7 @@ jobs:
           New-Item -ItemType Directory -Force $env:ROOT, $env:CCACHE_DIR | Out-Null
 
       - name: Cache ccache
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: C:\gimpshop\ccache
           key: ccache-windows-${{ github.run_id }}
@@ -326,7 +326,7 @@ jobs:
           $ml = "$env:ROOT\gimp\_build-clang64\meson-logs\meson-log.txt"
           if (Test-Path $ml) { Select-String 'Main binary:' $ml | Select-Object -First 1 | ForEach-Object { Write-Host "::notice title=meson::$($_.Line)" } }
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         with:
           name: chopgimp-${{ steps.ver.outputs.version }}-windows
           path: C:\gimpshop\out\*
@@ -335,7 +335,7 @@ jobs:
 
       - name: Release GitHub du tag
         if: startsWith(github.ref, 'refs/tags/')
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           files: C:/gimpshop/out/*
           fail_on_unmatched_files: true

@@ -13,8 +13,10 @@ fichier ChopGimp s'ouvre dans un GIMP standard, qui y voit les pixels rendus.
 - **Linux** : Flatpak `org.cen_na.ChopGimp`, installé à côté d'un GIMP existant,
   avec une configuration séparée (`~/.var/app/org.cen_na.ChopGimp/`).
 - **Windows** : installateur Inno Setup ou version portable (zip).
-- **Version actuelle** : voir le fichier [`VERSION`](VERSION). Le journal détaillé
-  est dans [`docs/SUIVI.md`](docs/SUIVI.md).
+- **Version actuelle** : 4.0.0, la version finale du plan (voir [`VERSION`](VERSION)).
+  Le journal détaillé est dans [`docs/SUIVI.md`](docs/SUIVI.md).
+- **Prise en main** : le [guide de l'utilisateur](docs/GUIDE.md), rangé par tâche
+  (vectoriser, objets, exports, raccourcis).
 
 ---
 
@@ -40,13 +42,15 @@ Ils sont produits automatiquement par GitHub Actions à chaque tag `v*`
 
 **En chiffres** :
 
-- 137 patchs sur GIMP 3.2.8 (`patches/gimp-3.2.8/`), soit environ 92 000 lignes
-  ajoutées dans 370 fichiers, dont 83 fichiers `chopgimp-*` nouveaux ;
+- 173 patchs sur GIMP 3.2.8 (`patches/gimp-3.2.8/`), soit environ 144 000 lignes
+  ajoutées dans 475 fichiers, dont 141 fichiers `chopgimp-*` nouveaux ;
 - 7 patchs sur GEGL 0.4.72 et 2 sur babl 0.1.128 (performances, styles de calque,
   traductions) ;
 - 12 greffons Python ChopGimp ;
 - 2 thèmes, des préréglages d'outils et des palettes ;
-- 115 tests automatiques.
+- 273 tests automatiques (`tools/dev/smoke.sh`), un banc de performance du
+  vectoriel (`tools/dev/bench_vector.sh`) et un banc de test graphique sans écran
+  (`tools/gui-test/`).
 
 ### Prise en main façon Photoshop
 - **Raccourcis et gestes Photoshop** : Ctrl+T, V, Espace pour la main (retour à
@@ -221,13 +225,102 @@ Ils sont produits automatiquement par GitHub Actions à chaque tag `v*`
   brouillons en résolution réduite, rendu en arrière-plan en option.
 - **Système** :
   - mimalloc ;
-  - babl et GEGL compilés en -O3 avec LTO ;
+  - babl et GEGL compilés en -O3 avec LTO ; GIMP aussi avec LTO et PGO
+    (profil d'exécution, vectoriel compris) par `make build LTO=all PGO=1` ;
+  - caches des objets vectoriels d'une seule couleur réduits à leur
+    couverture (4.0) : mémoire divisée par plus de deux sur une grosse
+    vectorisation, rendu plus rapide ;
   - 48 conversions directes ajoutées à babl (×30 à ×300).
 - **Traceur de plantage** : journal de session, rapport avec la pile d'appels et
   symbolisation (`tools/crash_symbolize.sh`).
-- **Interrupteurs de secours** pour revenir au comportement de GIMP :
-  `CHOPGIMP_NO_VOBJECTS`, `CHOPGIMP_CLASSIC_PANELS`, `CHOPGIMP_NO_MIMALLOC`, etc.
-  Ils sont décrits dans `docs/SUIVI.md`.
+- **Interrupteurs de secours** pour revenir au comportement de GIMP : voir
+  [Interrupteurs `CHOPGIMP_*`](#interrupteurs-chopgimp_).
+
+---
+
+## Interrupteurs `CHOPGIMP_*`
+
+Chaque nouveauté peut être coupée par une variable d'environnement, pour revenir au
+comportement précédent ou isoler un défaut. Il suffit de lui donner la valeur `1` :
+
+```bash
+flatpak run --env=CHOPGIMP_NO_VOBJECTS=1 org.cen_na.ChopGimp
+```
+
+Sous Windows, définissez la variable avant de lancer `chopgimp.exe`.
+
+**Interface**
+
+| Variable | Effet |
+|---|---|
+| `CHOPGIMP_CLASSIC_PANELS` | Panneaux de GIMP (onglets, panneau Calques d'origine) |
+| `CHOPGIMP_CLASSIC_SPIN_SCALE` | Curseurs de GIMP au lieu des curseurs façon Photoshop |
+| `CHOPGIMP_CLASSIC_STATUSBAR` | Barre d'état de GIMP au lieu de la barre « Doc » |
+| `CHOPGIMP_CLASSIC_TABS` | Onglets de documents de GIMP |
+| `CHOPGIMP_NO_GROUP_KEY` | La touche d'un groupe d'outils active le premier outil du groupe, et non l'outil affiché |
+| `CHOPGIMP_NO_HOVER_TIP` | Plus d'info-bulle au survol des objets vectoriels |
+| `CHOPGIMP_NO_INNER_STYLES` | Masque les styles Satin et Incrustation de motif |
+| `CHOPGIMP_FULL_REDRAW` | Plans de travail et grille de perspective : toute la vue est redessinée à chaque changement |
+
+**Calques et effets**
+
+| Variable | Effet |
+|---|---|
+| `CHOPGIMP_NO_BEHIND_MODES` | Ombre portée et lueur externe sans mode de fusion sur les calques du dessous |
+| `CHOPGIMP_NO_BEHIND_LAYERS` | Pixelliser une ombre portée ou une lueur externe dans son mode : elle n'est plus posée dans un calque à part sous le calque |
+| `CHOPGIMP_NO_FUSED_STYLES` | Effets consécutifs calculés un à un, et non en une passe |
+| `CHOPGIMP_NO_XCF_FX_CACHE` | Effets non mis en cache dans le XCF |
+| `CHOPGIMP_NO_DRAFT` | Pas de brouillon en résolution réduite pendant l'action |
+| `CHOPGIMP_NO_THREADED_RENDER` | Pas de rendu en arrière-plan |
+| `CHOPGIMP_RENDER_THREAD_MIN_US`, `CHOPGIMP_THREADABLE_RECHECK_MS` | Réglages fins du rendu en arrière-plan (durées en µs et en ms) |
+| `CHOPGIMP_NO_LASSO_STEPS` | Lasso magnétique : un grand saut de souris ne suit plus le bord par étapes |
+
+**Vectoriel**
+
+| Variable | Effet |
+|---|---|
+| `CHOPGIMP_NO_VOBJECTS` | Calques vectoriels de GIMP, sans objets (aussi à l'import PDF / AI) |
+| `CHOPGIMP_NO_FAST_LOAD` | À l'ouverture d'un XCF, l'ancien tracé est dessiné avant les objets |
+| `CHOPGIMP_NO_LAZY_LEGACY` | Ancien tracé réécrit tout de suite après chaque annulation |
+| `CHOPGIMP_NO_FAST_UNDO` | Annulation par le XML au lieu d'une copie des objets |
+| `CHOPGIMP_NO_PARTIAL_UNDO` | Annulation : tous les objets sont copiés, pas seulement ceux qui changent |
+| `CHOPGIMP_NO_FAST_DRAG`, `CHOPGIMP_NO_DRAG_SPRITE` | Glisser des objets sans les rendus en cache |
+| `CHOPGIMP_NO_FAST_BABL`, `CHOPGIMP_NO_FAST_FLOAT` | Conversion du rendu vers le calque par babl (8 bits, puis 16 / 32 bits) |
+| `CHOPGIMP_NO_PAR_RENDER`, `CHOPGIMP_NO_PAR_RENDER_EXT` | Objets rastérisés un à un (tous, ou seulement filets, motifs, flèches et profils) |
+| `CHOPGIMP_NO_A8_CACHE` | Cache d'un objet d'une seule couleur en RVBA au lieu de sa seule couverture (4.0.0 : 4× moins de mémoire) |
+| `CHOPGIMP_NO_MULTI_NEW_PATH` | Plume : un sous-tracé dessiné pendant une sélection de plusieurs objets est perdu |
+| `CHOPGIMP_NO_FG_RECOLOR` | Les couleurs de premier plan / d'arrière-plan ne recolorent plus les objets sélectionnés |
+| `CHOPGIMP_NO_AUTO_KEY` | « Aligner sur l'objet clé » sans objet clé : pas d'objet clé automatique |
+| `CHOPGIMP_NO_BLEND_GROUPS`, `CHOPGIMP_NO_BLEND_ORIENT`, `CHOPGIMP_NO_SPINE_KEYS` | Transition : pas de groupes comme objets clés, étapes non orientées le long du tracé, objets clés laissés en place |
+| `CHOPGIMP_NO_GRADIENT_FREEFORM` | L'outil Dégradé ne modifie plus le dégradé libre d'un objet |
+| `CHOPGIMP_NO_LOCAL_ACROSS` | Dégradé en travers d'un contour à profil : largeur moyenne au lieu de l'épaisseur locale |
+| `CHOPGIMP_LP_NO_INCREMENTAL`, `CHOPGIMP_LP_NO_THROTTLE` | Peinture dynamique : recalcul complet, et à chaque mouvement |
+| `CHOPGIMP_NO_BLOB_MERGE` | Pinceau goutte : les coups ne fusionnent jamais |
+| `CHOPGIMP_NO_VBRUSHES` | Pas de formes de pinceau |
+| `CHOPGIMP_NO_REPEAT` | Pas de répétitions |
+| `CHOPGIMP_NO_PART_HIT` | Clic sur une forme de pinceau ou une répétition : la partie touchée, non l'ensemble |
+| `CHOPGIMP_NO_PERSP_SOURCE` | Sélection de perspective : un calque pixel est rééchantillonné à chaque déplacement |
+
+**Fichiers**
+
+| Variable | Effet |
+|---|---|
+| `CHOPGIMP_NO_PDF_VECTOR` | Export PDF de GIMP (images, sans calques PDF) |
+| `CHOPGIMP_PDF_PAGES` | Import PDF non interactif : pages à importer (ex. `1-3`) |
+| `CHOPGIMP_PSD_PLAIN` | Import PSD de GIMP, sans reprise des styles, formes et textes |
+| `CHOPGIMP_IA_ALLOW_DOWNLOAD` | Autorise un script à télécharger un modèle d'IA absent |
+
+**Système et diagnostic**
+
+| Variable | Effet |
+|---|---|
+| `CHOPGIMP_NO_MIMALLOC` | Allocateur de la glibc au lieu de mimalloc (Flatpak) |
+| `CHOPGIMP_NO_SESSION_LOG` | Pas de journal de session (traceur de plantage) |
+| `CHOPGIMP_CRASH_TEST` | Provoque un plantage de test (`N`, ou `tN` dans un fil de calcul) |
+| `CHOPGIMP_DEBUG_RENDER`, `CHOPGIMP_DEBUG_GRAPH`, `CHOPGIMP_FUSED_STYLES_DEBUG`, `CHOPGIMP_FX_CACHE_DEBUG` | Messages de diagnostic du rendu, du graphe GEGL, des effets fusionnés et du cache des effets |
+
+Les options de compilation (`make build LTO=… PGO=… GIMP_O=…`) passent par
+`CHOPGIMP_LTO`, `CHOPGIMP_PGO` et `CHOPGIMP_GIMP_O` : voir le Makefile.
 
 ---
 
@@ -248,6 +341,7 @@ Ils sont produits automatiquement par GitHub Actions à chaque tag `v*`
 | 3.31 | Export PDF / EPS vectoriel par plan de travail, calques PDF, export PSD façon Photoshop (styles, formes, textes) (3.31.0 partie 2, compilé en 3.99.0) |
 | 3.32 | Interface : icônes de la boîte à outils, barre d'état « Doc », onglets de documents façon Photoshop, menus Fichier / Édition / Sélection / Fenêtres sans doublon, styles Satin et Incrustation de motif (aussi en PSD) (3.32.0, compilé en 3.99.0) |
 | 3.99 | Lots 1 à 5 compilés, corrigés et vérifiés (272 tests, banc de performance, banc graphique) ; version intermédiaire avant la 4.0 (3.99.0) |
+| 4.0 | Version finale : caches d'objets 4× plus légers, compilation LTO + PGO, recette complète au banc graphique, avertissements éliminés, thèmes lisibles, traductions des exports, interrupteurs documentés, guide de l'utilisateur (4.0.0) |
 
 Le détail de chaque version (ce qui est fait, vérifié, et ce qui reste) se trouve
 dans [`docs/SUIVI.md`](docs/SUIVI.md). Le plan du chantier vectoriel est dans
@@ -266,7 +360,7 @@ dans [`docs/SUIVI.md`](docs/SUIVI.md). Le plan du chantier vectoriel est dans
 | `config/`, `presets/`, `data/` | Raccourcis, dispositions, préréglages, palettes, dictionnaire |
 | `flatpak/` | Manifeste Flatpak (généré par `tools/make_manifest.py`) et lanceur |
 | `tools/` | Générateurs (menus, thèmes, raccourcis…), tests (`tools/dev/smoke.sh`), banc graphique (`tools/gui-test/`), scripts Windows |
-| `docs/` | Journal des versions, déploiement, compilation Windows, CI, crédits |
+| `docs/` | Guide de l'utilisateur, journal des versions, déploiement, compilation Windows, CI, crédits ; `docs/dev/archive/` : notes de développement terminées |
 | `.github/workflows/` | Paquets Flatpak et Windows automatiques |
 
 ## Compiler
@@ -277,7 +371,8 @@ Sous Linux, il faut `flatpak` et `flatpak-builder`, ainsi que Flathub.
 git clone https://gitlab.gnome.org/GNOME/gimp.git build/gimp-src   # puis : git checkout GIMP_3_2_8
 # appliquer patches/gimp-3.2.8/*.patch sur une branche « photogimp » (git am)
 make manifest      # génère flatpak/org.cen_na.ChopGimp.json
-make build         # flatpak-builder (LTO=0 pour une compilation plus courte)
+make build         # flatpak-builder (LTO=0 pour une compilation plus courte,
+                   # LTO=all PGO=1 pour le paquet optimisé de la 4.0)
 make bundle        # dist/ChopGimp-<VERSION>.flatpak
 make install       # installe le bundle pour l'utilisateur
 tools/dev/smoke.sh # tests automatiques

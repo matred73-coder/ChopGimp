@@ -32,7 +32,7 @@ jobs:
           sudo docker image prune --all --force || true
           df -h /
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Version
         id: ver
@@ -62,7 +62,7 @@ jobs:
             https://dl.flathub.org/repo/flathub.flatpakrepo
 
       - name: Cache flatpak-builder (sources et ccache)
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: flatpak/.flatpak-builder
           key: flatpak-${{ hashFiles('flatpak/org.cen_na.ChopGimp.json') }}
@@ -100,7 +100,7 @@ jobs:
           (cd out && sha256sum *.flatpak > SHA256SUMS-flatpak.txt)
           ls -lh out
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         with:
           name: chopgimp-${{ steps.ver.outputs.version }}-flatpak
           path: out/*
@@ -109,7 +109,7 @@ jobs:
 
       - name: Release GitHub du tag
         if: startsWith(github.ref, 'refs/tags/')
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           files: out/*
           fail_on_unmatched_files: true

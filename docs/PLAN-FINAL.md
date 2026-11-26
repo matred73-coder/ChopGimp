@@ -69,7 +69,7 @@ Exécution d'une traite, lot après lot, sans arrêt entre les lots.
   - profil de largeur relégué dans « ⋯ ».
 - **Menus façon Photoshop** : Fichier, Édition, Sélection, Affichage, Fenêtres, Aide.
 
-## Lot 6 — 4.0.0 : version finale
+## Lot 6 — 4.0.0 : version finale (fait : 3.99.0 puis 4.0.0, voir SUIVI)
 - **Compilation** : LTO + PGO (`make build LTO=all PGO=1`).
 - **Recette complète au banc graphique** : chaque outil et chaque menu, sur des scénarios réels.
 - **Nettoyage** : code mort ; interrupteurs `CHOPGIMP_*` documentés.

@@ -470,7 +470,8 @@ class ChopGimpIA(Gimp.PlugIn):
                 return procedure.new_return_values(Gimp.PDBStatusType.CANCEL, GLib.Error())
             big, msg = upscale(image, factor, interactive)
             if big is not None:
-                big.undo_enable()
+                # 4.0.0 : l'image dupliquée a déjà son historique (undo_enable
+                # en trop : avertissement gimp_image_undo_thaw)
                 if interactive:
                     Gimp.Display.new(big)
                 Gimp.displays_flush()

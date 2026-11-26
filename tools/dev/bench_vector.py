@@ -132,6 +132,13 @@ def measure(tag, image, layer, click):
 
     # rendu complet (set_xml du même contenu force un rendu de tout)
     out(tag + ".rendu_complet", timed(lambda: set_xml(layer, get_xml(layer)))[0])
+    # 4.0.0 : mémoire du cœur (gimp-console, processus parent du greffon)
+    # après le rendu complet : caches des objets compris
+    try:
+        rss = [l for l in open("/proc/%d/status" % os.getppid()) if l.startswith("VmRSS")][0]
+        out(tag + ".memoire_mo", int(rss.split()[1]) / 1024.0, "RSS du cœur après rendu complet")
+    except Exception:
+        pass
 
     # XCF
     path = os.path.join(TMP, tag + ".xcf")

@@ -5,6 +5,7 @@ ChopGimp — test de fonctionnement exécuté DANS le paquet Flatpak :
 Résultats : <SMOKE_OUT> (une ligne « OK|ÉCHEC  test  détail » par test).
 """
 import os
+import sys
 import re
 import traceback
 import time
@@ -20,6 +21,9 @@ results = []
 
 def report(ok, name, detail=""):
     results.append("%s  %s  %s" % ("OK    " if ok else "ÉCHEC ", name, detail))
+    # 4.0.0 : repère dans le journal (relie un avertissement à son test)
+    sys.stderr.write("[smoke] %s %s\n" % ("OK" if ok else "ÉCHEC", name))
+    sys.stderr.flush()
 
 
 def run(proc, **kw):
@@ -2504,6 +2508,21 @@ try:
                a18(vl, 215, 130) > 0,
                "3.30.0 Pinceau goutte : fusionne avec la forme touchée, pas avec l'autre",
                "%d puis %d objets" % (x1.count("<path "), x2.count("<path ")))
+        im.delete()
+
+        # 4.0.0 : calque d'un seul objet jamais modifié : clic de sélection
+        # et Pinceau goutte acceptés par la PDB, comme par les outils
+        im, vl, c = scene18(400, 400, [sq18(100, 100, 60)])
+        x = vx18(vl)
+        m = re18.search(r'<fill type="color" color="([^"]+)"', x)
+        rgb = [float(v) for v in m.group(1).split()[:3]] if m else [0, 0, 0]
+        hexc = "#%02x%02x%02x" % tuple(int(round(v * 255)) for v in rgb)
+        ok_s = c("select-at:100:100")
+        ok_b = c("blob:20:120,130;220,130:%s" % hexc)
+        x1 = vx18(vl)
+        report(ok_s and ok_b and x1.count("<path ") == 1 and a18(vl, 215, 130) > 0,
+               "4.0.0 Calque d'un seul objet jamais modifié : sélection au clic et Pinceau goutte",
+               "sélection %s, goutte %s, %d objet(s)" % (ok_s, ok_b, x1.count("<path ")))
         im.delete()
 
         # répétitions : poignées (espacement de grille, nombre d'instances)
