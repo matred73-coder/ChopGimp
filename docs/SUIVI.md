@@ -978,3 +978,26 @@ nœud recoloré et déplacé, dégradé libre, dégradé le long d'un contour é
 d'un contour à tirets, masque d'opacité noir → blanc, motif en briques, angles
 arrondis) ; export SVG relu (`<pattern>` avec `<use>`, `<mask>`) ; banc
 graphique : poignées d'angles en mode objets.
+
+## 3.29.2 — Vectoriel rapide (performance)
+
+Mesures et plan : `docs/PLAN-PERF-VECTEUR.md` (banc `tools/dev/bench_vector.sh`).
+- **Ouverture XCF** : 22,5 s → 1,0 s sur une vectorisation de 3 595 objets
+  (5,8 s → 0,27 s pour 2 000 triangles) : l'ancien tracé n'est plus dessiné
+  avant les objets (`CHOPGIMP_NO_FAST_LOAD`).
+- **Glisser** (outil V) : rendus en cache et boîtes décalés, « sprite » du
+  reste et des objets déplacés, ancien tracé et panneaux mis à jour une fois au
+  relâchement, rendu exact à la fin (`CHOPGIMP_NO_FAST_DRAG`,
+  `CHOPGIMP_NO_DRAG_SPRITE`) : 0,5 – 0,9 ms par image sur 2 000 objets.
+- **Annulation** par copie de l'arbre (caches partagés) au lieu du XML
+  (`CHOPGIMP_NO_FAST_UNDO`) ; calque qui s'agrandit sans tout redessiner.
+- PDB de test : commandes `drag-sim`, `bench-undo`, `bench-redo`.
+
+**Vérifié** : 184 tests sur 184 (4 nouveaux : pixels identiques après glisser,
+annuler, rétablir, XCF rouvert) ; banc avant / après.
+
+**Limites** : glisser d'une très grosse sélection (vectorisation lourde) encore
+~300 ms par image : la conversion de pixels de babl (cairo → calque) passe par
+la conversion de référence, prochaine étape ; recoloration et rendu complet
+peu changés ; pas encore mesuré au banc graphique.
+

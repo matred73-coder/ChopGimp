@@ -147,6 +147,7 @@ Ils sont produits automatiquement par GitHub Actions à chaque tag `v*`
 - **Couleur et matière** (3.29.1) : outil **Transition** (étapes de forme, de couleur et de
   dégradé, dynamiques, qui peuvent suivre un tracé de base), **filet de dégradé** (outil
   Filet), **dégradé libre**, dégradé dans, le long ou en travers du contour.
+- **Vectoriel rapide** (3.29.2) : ouverture des fichiers vectorisés ~20× plus rapide, glisser par rendus en cache, annulation instantanée par copie des objets (mesures : `docs/PLAN-PERF-VECTEUR.md`).
 - **Masques d'opacité** et **motifs vectoriels** (grille, briques, hexagonal, mode de
   modification, exportés en `<pattern>` SVG).
 

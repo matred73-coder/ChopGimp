@@ -1,0 +1,1158 @@
+From e5a6ffe942b92e6b59502caa99768343e733e8d1 Mon Sep 17 00:00:00 2001
+From: ChopGimp <mathieu.redon@proton.me>
+Date: Wed, 25 Nov 2026 16:12:35 +0100
+Subject: [PATCH] ChopGimp 3.29.2: fast vector objects (interactive drag moves
+ the cached renderings and bounds, exact rendering, legacy path and
+ objects-changed once at the end; layer growing keeps its pixels; undo keeps a
+ copy of the object tree sharing the caches instead of its XML; XCF load does
+ not draw the legacy path first; PDB drag-sim, bench-undo, bench-redo;
+ CHOPGIMP_NO_FAST_DRAG, CHOPGIMP_NO_FAST_UNDO, CHOPGIMP_NO_FAST_LOAD)
+
+---
+ app/path/chopgimp-vobject.c      | 753 +++++++++++++++++++++++++++++--
+ app/path/chopgimp-vobject.h      |  12 +
+ app/path/gimpvectorlayer.c       |  10 +
+ app/pdb/chopgimp-cmds.c          |  37 +-
+ app/tools/chopgimp-vobjecttool.c |  19 +
+ 5 files changed, 791 insertions(+), 40 deletions(-)
+
+diff --git a/app/path/chopgimp-vobject.c b/app/path/chopgimp-vobject.c
+index 43f283a..cff8fa4 100644
+--- a/app/path/chopgimp-vobject.c
++++ b/app/path/chopgimp-vobject.c
+@@ -116,9 +116,32 @@ struct _ChopGimpVLayer
+   guint            pending;
+   gboolean         pending_all;
+   GeglRectangle    pending_rect;
++
++  /*  3.29.2: interactive gesture (chopgimp_vlayer_begin_interactive)  */
++  gint             interactive;
++  gboolean         legacy_dirty;  /* legacy path to rewrite at the end    */
++  gboolean         sig_pending;   /* "objects-changed" to send at the end */
++  gboolean         sig_all;
++  GeglRectangle    sig_rect;
++  GHashTable      *moved;         /* ids translated with their caches     */
++
++  /*  3.29.2 « sprite » of a drag: the layer without the moved objects
++   *  (rest) and the moved objects alone (sprite), made once; each step
++   *  only copies the rest and pastes the sprite at its offset
++   */
++  cairo_surface_t *rest;
++  GeglRectangle    rest_r;
++  cairo_surface_t *sprite;
++  GeglRectangle    sprite_r;      /* where it was made                    */
++  GeglRectangle    shown_r;       /* where it is shown now                */
++  gdouble          sdx, sdy;
++  gboolean         sprite_off;    /* not usable for this gesture          */
+ };
+ 
+ 
++static void sprite_free (ChopGimpVLayer *vl);
++
++
+ /*  ─── switch ────────────────────────────────────────────────────────── */
+ 
+ gboolean
+@@ -1738,6 +1761,7 @@ vobj_drop_cache (ChopGimpVObject *o)
+       o->cache = NULL;
+     }
+ 
++  o->cache_fx = o->cache_fy = 0.0;
+   o->bounds_valid[0] = o->bounds_valid[1] = FALSE;
+ }
+ 
+@@ -1754,6 +1778,77 @@ vobj_invalidate (ChopGimpVObject *o)
+       vobj_invalidate (g_ptr_array_index (o->children, i));
+ }
+ 
++/*  3.29.2: a translation of the world (interactive drag): the bounds and
++ *  the cached renderings move with it, nothing is rasterized again (the
++ *  effective path is in the object's coordinates and stays valid)
++ */
++static void
++vobj_shift (ChopGimpVObject *o,
++            gdouble          dx,
++            gdouble          dy)
++{
++  for (gint k = 0; k < 2; k++)
++    if (o->bounds_valid[k])
++      {
++        o->bounds[k][0] += dx;
++        o->bounds[k][1] += dy;
++        o->bounds[k][2] += dx;
++        o->bounds[k][3] += dy;
++      }
++
++  if (o->cache)
++    {
++      gdouble ix, iy;
++
++      o->cache_fx += dx;
++      o->cache_fy += dy;
++      ix = floor (o->cache_fx);
++      iy = floor (o->cache_fy);
++      o->cache_x  += (gint) ix;
++      o->cache_y  += (gint) iy;
++      o->cache_fx -= ix;
++      o->cache_fy -= iy;
++    }
++
++  if (o->children)
++    for (guint i = 0; i < o->children->len; i++)
++      vobj_shift (g_ptr_array_index (o->children, i), dx, dy);
++}
++
++/*  3.29.2: after a drag, only the renderings moved by a fraction of a
++ *  pixel are made again (a whole-pixel move keeps them exact)
++ */
++static void
++vobj_settle (ChopGimpVObject *o)
++{
++  if (o->cache && (o->cache_fx != 0.0 || o->cache_fy != 0.0))
++    vobj_drop_cache (o);
++
++  if (o->children)
++    for (guint i = 0; i < o->children->len; i++)
++      vobj_settle (g_ptr_array_index (o->children, i));
++}
++
++static gboolean
++fast_drag_enabled (void)
++{
++  static gint enabled = -1;
++
++  if (enabled < 0)
++    enabled = (g_getenv ("CHOPGIMP_NO_FAST_DRAG") == NULL);
++
++  return enabled;
++}
++
++static gboolean
++matrix_is_translation (const GimpMatrix3 *m)
++{
++  return (fabs (m->coeff[0][0] - 1.0) < 1e-12 && fabs (m->coeff[1][1] - 1.0) < 1e-12 &&
++          fabs (m->coeff[0][1]) < 1e-12 && fabs (m->coeff[1][0]) < 1e-12 &&
++          fabs (m->coeff[2][0]) < 1e-12 && fabs (m->coeff[2][1]) < 1e-12 &&
++          fabs (m->coeff[2][2] - 1.0) < 1e-12);
++}
++
+ ChopGimpVObject *
+ chopgimp_vobject_new_path (GimpImage            *image,
+                            GimpPath             *path,
+@@ -2003,6 +2098,9 @@ chopgimp_vlayer_free (ChopGimpVLayer *vl)
+   g_ptr_array_unref (vl->layouts);
+   g_free (vl->opt_sig);
+   g_free (vl->layer_lpe);
++  if (vl->moved)
++    g_hash_table_unref (vl->moved);
++  sprite_free (vl);
+   g_free (vl);
+ }
+ 
+@@ -4029,14 +4127,18 @@ leaf_cache (GimpVectorLayer     *layer,
+     cairo_destroy (cr);
+     cairo_surface_flush (surf);
+ 
+-    o->cache   = surf;
+-    o->cache_x = ib->x;
+-    o->cache_y = ib->y;
++    o->cache    = surf;
++    o->cache_x  = ib->x;
++    o->cache_y  = ib->y;
++    o->cache_fx = o->cache_fy = 0.0;
+   }
+ 
+   return o->cache;
+ }
+ 
++/*  3.29.2: objects left out of composite() (the « rest » of a drag)  */
++static GHashTable *composite_skip = NULL;
++
+ static void
+ composite (cairo_t             *cr,
+            GimpVectorLayer     *layer,
+@@ -4050,6 +4152,9 @@ composite (cairo_t             *cr,
+   if (! o->visible || o->opacity <= 0.0)
+     return;
+ 
++  if (composite_skip && g_hash_table_contains (composite_skip, o))
++    return;
++
+   simple = (o->opacity >= 1.0 && op == CAIRO_OPERATOR_OVER);
+ 
+   if (o->kind == CHOPGIMP_VOBJECT_GROUP)
+@@ -4144,7 +4249,9 @@ composite (cairo_t             *cr,
+       if (surf)
+         {
+           cairo_set_operator (cr, op);
+-          cairo_set_source_surface (cr, surf, o->cache_x, o->cache_y);
++          cairo_set_source_surface (cr, surf,
++                                    o->cache_x + o->cache_fx,
++                                    o->cache_y + o->cache_fy);
+           cairo_paint_with_alpha (cr, o->opacity);
+         }
+       else if (! simple)
+@@ -4195,8 +4302,54 @@ union_ibounds (GimpVectorLayer *layer,
+   return any;
+ }
+ 
++/*  draws the objects of @rect (image coordinates) into @buffer, whose
++ *  origin is (@u->x, @u->y)
++ */
++static void
++render_rect (GimpVectorLayer     *layer,
++             GeglBuffer          *buffer,
++             const GeglRectangle *u,
++             const GeglRectangle *rect,
++             const Babl          *space,
++             const Babl          *fmt)
++{
++  ChopGimpVLayer *vl = layer->vobjects;
++  gint            band_h;
++
++  if (rect->width <= 0 || rect->height <= 0)
++    return;
++
++  band_h = MAX (1, MIN (rect->height, BAND_MAX_PIXELS / MAX (1, rect->width)));
++
++  for (gint y = rect->y; y < rect->y + rect->height; y += band_h)
++    {
++      GeglRectangle    band = { rect->x, y, rect->width,
++                                MIN (band_h, rect->y + rect->height - y) };
++      cairo_surface_t *surf = cairo_image_surface_create (CAIRO_FORMAT_ARGB32,
++                                                          band.width, band.height);
++      cairo_t         *cr   = cairo_create (surf);
++
++      cairo_translate (cr, -band.x, -band.y);
++      composite (cr, layer, vl->root, &band, space);
++      cairo_destroy (cr);
++      cairo_surface_flush (surf);
++
++      gegl_buffer_set (buffer,
++                       GEGL_RECTANGLE (band.x - u->x, band.y - u->y,
++                                       band.width, band.height),
++                       0, fmt,
++                       cairo_image_surface_get_data (surf),
++                       cairo_image_surface_get_stride (surf));
++
++      cairo_surface_destroy (surf);
++    }
++}
++
+ /*  draws the objects into the layer; @dirty (image coordinates) NULL:
+- *  everything. The layer follows the bounds of its objects.
++ *  everything. The layer follows the bounds of its objects; 3.29.2: when
++ *  only @dirty changed and the bounds moved, the pixels that stay are
++ *  copied from the old buffer instead of being drawn again
++ *  (CHOPGIMP_NO_FAST_DRAG=1: everything is drawn again).
+  */
+ static void
+ vlayer_render_region (GimpVectorLayer     *layer,
+@@ -4210,7 +4363,7 @@ vlayer_render_region (GimpVectorLayer     *layer,
+   GeglBuffer    *buffer;
+   GeglRectangle  u, cur, region;
+   gboolean       full;
+-  gint           band_h;
++  gboolean       grown = FALSE;
+ 
+   if (! gimp_item_is_attached (item) ||
+       gimp_rasterizable_is_rasterized (GIMP_RASTERIZABLE (layer)))
+@@ -4237,10 +4390,33 @@ vlayer_render_region (GimpVectorLayer     *layer,
+ 
+   if (full)
+     {
++      GeglBuffer    *old = NULL;
++      GeglRectangle  keep;
++
++      /*  3.29.2: only the dirty part changed: keep the other pixels  */
++      if (dirty && fast_drag_enabled () && cur.width > 1 && cur.height > 1 &&
++          gegl_rectangle_intersect (&keep, &cur, &u))
++        {
++          old   = g_object_ref (gimp_drawable_get_buffer (drawable));
++          grown = TRUE;
++        }
++
+       g_object_freeze_notify (G_OBJECT (drawable));
+ 
+       buffer = gegl_buffer_new (GEGL_RECTANGLE (0, 0, u.width, u.height),
+                                 gimp_drawable_get_format (drawable));
++
++      if (old)
++        {
++          gegl_buffer_copy (old,
++                            GEGL_RECTANGLE (keep.x - cur.x, keep.y - cur.y,
++                                            keep.width, keep.height),
++                            GEGL_ABYSS_NONE, buffer,
++                            GEGL_RECTANGLE (keep.x - u.x, keep.y - u.y,
++                                            keep.width, keep.height));
++          g_object_unref (old);
++        }
++
+       gimp_drawable_set_buffer (drawable, FALSE, NULL, buffer);
+       g_object_unref (buffer);
+ 
+@@ -4253,29 +4429,39 @@ vlayer_render_region (GimpVectorLayer     *layer,
+     }
+ 
+   buffer = gimp_drawable_get_buffer (drawable);
+-  band_h = MAX (1, MIN (region.height, BAND_MAX_PIXELS / MAX (1, region.width)));
+ 
+-  for (gint y = region.y; y < region.y + region.height; y += band_h)
++  if (grown)
+     {
+-      GeglRectangle    band = { region.x, y, region.width,
+-                                MIN (band_h, region.y + region.height - y) };
+-      cairo_surface_t *surf = cairo_image_surface_create (CAIRO_FORMAT_ARGB32,
+-                                                          band.width, band.height);
+-      cairo_t         *cr   = cairo_create (surf);
+-
+-      cairo_translate (cr, -band.x, -band.y);
+-      composite (cr, layer, vl->root, &band, space);
+-      cairo_destroy (cr);
+-      cairo_surface_flush (surf);
++      GeglRectangle d;
+ 
+-      gegl_buffer_set (buffer,
+-                       GEGL_RECTANGLE (band.x - u.x, band.y - u.y,
+-                                       band.width, band.height),
+-                       0, fmt,
+-                       cairo_image_surface_get_data (surf),
+-                       cairo_image_surface_get_stride (surf));
++      /*  the dirty part, and the new strips outside the old bounds  */
++      if (gegl_rectangle_intersect (&d, dirty, &u))
++        render_rect (layer, buffer, &u, &d, space, fmt);
+ 
+-      cairo_surface_destroy (surf);
++      if (cur.y > u.y)
++        render_rect (layer, buffer, &u,
++                     GEGL_RECTANGLE (u.x, u.y, u.width, cur.y - u.y), space, fmt);
++      if (cur.y + cur.height < u.y + u.height)
++        render_rect (layer, buffer, &u,
++                     GEGL_RECTANGLE (u.x, cur.y + cur.height, u.width,
++                                     u.y + u.height - cur.y - cur.height), space, fmt);
++      {
++        gint y1 = MAX (u.y, cur.y);
++        gint y2 = MIN (u.y + u.height, cur.y + cur.height);
++
++        if (y2 > y1 && cur.x > u.x)
++          render_rect (layer, buffer, &u,
++                       GEGL_RECTANGLE (u.x, y1, cur.x - u.x, y2 - y1), space, fmt);
++        if (y2 > y1 && cur.x + cur.width < u.x + u.width)
++          render_rect (layer, buffer, &u,
++                       GEGL_RECTANGLE (cur.x + cur.width, y1,
++                                       u.x + u.width - cur.x - cur.width, y2 - y1),
++                       space, fmt);
++      }
++    }
++  else
++    {
++      render_rect (layer, buffer, &u, &region, space, fmt);
+     }
+ 
+   if (full)
+@@ -4713,6 +4899,7 @@ vlayer_commit (GimpVectorLayer     *layer,
+ {
+   ChopGimpVLayer *vl = layer->vobjects;
+   gboolean        sel_changed = FALSE;
++  gboolean        fast;
+ 
+   if (! vl)
+     return;
+@@ -4733,13 +4920,22 @@ vlayer_commit (GimpVectorLayer     *layer,
+   /*  3.27.7: live paint regions follow their paths; an occurrence whose
+    *  objects were changed changes its symbol (and the other occurrences)
+    */
++  /*  3.29.2: during an interactive gesture, a change of geometry only
++   *  (the structure is the same): no reindex, no legacy path, the
++   *  signal once at the end (chopgimp_vlayer_end_interactive())
++   */
++  fast = (vl->interactive > 0 && fast_drag_enabled () && ! (what & CHANGE_STRUCTURE));
++
+   if (! vl->hooking)
+     {
+       gboolean regen;
+ 
+       vl->hooking++;
+-      vlayer_reindex (vl);
+-      vlayer_assign_missing_ids (vl, vl->root);
++      if (! fast)
++        {
++          vlayer_reindex (vl);
++          vlayer_assign_missing_ids (vl, vl->root);
++        }
+       regen = chopgimp_vlivepaint_refresh (layer);
+       regen |= chopgimp_vsymbols_layer_changed (layer);
+       regen |= chopgimp_vblend_refresh (layer);
+@@ -4747,9 +4943,11 @@ vlayer_commit (GimpVectorLayer     *layer,
+ 
+       if (regen)
+         {
++          vlayer_reindex (vl);
+           vlayer_assign_missing_ids (vl, vl->root);
+           what |= CHANGE_STRUCTURE | CHANGE_GEOMETRY;
+           dirty = NULL;
++          fast  = FALSE;
+         }
+     }
+ 
+@@ -4759,11 +4957,18 @@ vlayer_commit (GimpVectorLayer     *layer,
+       vlayer_prune_selection (vl, &sel_changed);
+     }
+ 
+-  vlayer_write_legacy (layer,
+-                       (what & (CHANGE_GEOMETRY | CHANGE_STRUCTURE)) != 0,
+-                       TRUE);
++  if (fast)
++    vl->legacy_dirty = TRUE;
++  else
++    vlayer_write_legacy (layer,
++                         (what & (CHANGE_GEOMETRY | CHANGE_STRUCTURE)) != 0 ||
++                         vl->legacy_dirty,
++                         TRUE);
+ 
+-  if (layer_usable (layer))
++  if (! fast)
++    vl->legacy_dirty = FALSE;
++
++  if (layer_usable (layer) && ! (fast && vl->rest))
+     {
+       if (vl->legacy)
+         gimp_vector_layer_refresh (layer);
+@@ -4771,7 +4976,21 @@ vlayer_commit (GimpVectorLayer     *layer,
+         vlayer_render_region (layer, dirty);
+     }
+ 
+-  g_signal_emit_by_name (layer, "objects-changed", dirty);
++  if (fast)
++    {
++      if (! dirty || vl->sig_all)
++        vl->sig_all = TRUE;
++      else if (vl->sig_pending)
++        gegl_rectangle_bounding_box (&vl->sig_rect, &vl->sig_rect, dirty);
++      else
++        vl->sig_rect = *dirty;
++
++      vl->sig_pending = TRUE;
++    }
++  else
++    {
++      g_signal_emit_by_name (layer, "objects-changed", dirty);
++    }
+ 
+   if (sel_changed)
+     g_signal_emit_by_name (layer, "object-selection-changed");
+@@ -4851,6 +5070,93 @@ chopgimp_vlayer_thaw (GimpVectorLayer *layer)
+     }
+ }
+ 
++void
++chopgimp_vlayer_begin_interactive (GimpVectorLayer *layer)
++{
++  ChopGimpVLayer *vl;
++
++  if (! layer_usable (layer) || ! (vl = vlayer_ensure (layer)))
++    return;
++
++  if (! vl->moved)
++    vl->moved = g_hash_table_new (NULL, NULL);
++
++  vl->interactive++;
++}
++
++void
++chopgimp_vlayer_end_interactive (GimpVectorLayer *layer)
++{
++  ChopGimpVLayer *vl = layer ? layer->vobjects : NULL;
++  GHashTableIter  iter;
++  gpointer        key;
++  GeglRectangle   r;
++  gboolean        any = FALSE;
++
++  /*  an undo during the gesture replaced the state: nothing to end  */
++  if (! vl || vl->interactive == 0)
++    return;
++
++  if (--vl->interactive > 0)
++    return;
++
++  /*  the sprite showed the moved objects on top: their old place and
++   *  the layer bounds are drawn exactly below
++   */
++  if (vl->rest)
++    {
++      r   = vl->sprite_r;
++      any = TRUE;
++      sprite_free (vl);
++    }
++  vl->sprite_off = FALSE;
++
++  /*  the exact rendering of what was moved with its cached rendering  */
++  g_hash_table_iter_init (&iter, vl->moved);
++  while (g_hash_table_iter_next (&iter, &key, NULL))
++    {
++      ChopGimpVObject *o = g_hash_table_lookup (vl->by_id, key);
++
++      if (o)
++        {
++          dirty_of (layer, o, &r, &any);
++          vobj_settle (o);
++          dirty_of (layer, o, &r, &any);
++        }
++    }
++  g_hash_table_remove_all (vl->moved);
++
++  if (vl->legacy_dirty)
++    {
++      vlayer_write_legacy (layer, TRUE, TRUE);
++      vl->legacy_dirty = FALSE;
++    }
++
++  if (any && layer_usable (layer) && ! vl->legacy)
++    vlayer_render_region (layer, &r);
++
++  if (vl->sig_pending || any)
++    {
++      gboolean all = vl->sig_all;
++
++      if (any && vl->sig_pending && ! all)
++        gegl_rectangle_bounding_box (&r, &r, &vl->sig_rect);
++      else if (! any)
++        r = vl->sig_rect;
++
++      vl->sig_pending = FALSE;
++      vl->sig_all     = FALSE;
++
++      g_signal_emit_by_name (layer, "objects-changed", all ? NULL : &r);
++    }
++}
++
++gboolean
++chopgimp_vlayer_is_interactive (GimpVectorLayer *layer)
++{
++  return layer && layer->vobjects && layer->vobjects->interactive > 0;
++}
++
+ void
+ chopgimp_vlayer_object_changed (GimpVectorLayer *layer,
+                                 ChopGimpVObject *object)
+@@ -4877,6 +5183,7 @@ typedef struct
+   GimpItemUndo            parent_instance;
+ 
+   gchar                  *state;
++  ChopGimpVLayer         *snap;     /* 3.29.2: the state as objects       */
+   GimpVectorLayerOptions *options;
+ } ChopGimpVObjectsUndo;
+ 
+@@ -4889,6 +5196,118 @@ GType chopgimp_vobjects_undo_get_type (void);
+ 
+ G_DEFINE_TYPE (ChopGimpVObjectsUndo, chopgimp_vobjects_undo, GIMP_TYPE_ITEM_UNDO)
+ 
++/*  3.29.2: undo keeps a copy of the object tree (same ids, sharing the
++ *  cached renderings, which are never changed once made) instead of its
++ *  XML: no writing, no parsing, the restored layer is composited from the
++ *  caches. CHOPGIMP_NO_FAST_UNDO=1: the XML as before.
++ */
++static gboolean
++fast_undo_enabled (void)
++{
++  static gint enabled = -1;
++
++  if (enabled < 0)
++    enabled = (g_getenv ("CHOPGIMP_NO_FAST_UNDO") == NULL);
++
++  return enabled;
++}
++
++static void
++snapshot_fix (ChopGimpVObject *src,
++              ChopGimpVObject *dst)
++{
++  dst->id = src->id;
++
++  if (src->cache)
++    {
++      dst->cache    = cairo_surface_reference (src->cache);
++      dst->cache_x  = src->cache_x;
++      dst->cache_y  = src->cache_y;
++      dst->cache_fx = src->cache_fx;
++      dst->cache_fy = src->cache_fy;
++    }
++
++  memcpy (dst->bounds_valid, src->bounds_valid, sizeof (src->bounds_valid));
++  memcpy (dst->bounds, src->bounds, sizeof (src->bounds));
++
++  if (src->children && dst->children)
++    for (guint i = 0; i < src->children->len && i < dst->children->len; i++)
++      snapshot_fix (g_ptr_array_index (src->children, i),
++                    g_ptr_array_index (dst->children, i));
++}
++
++static ChopGimpVLayer *
++vlayer_snapshot (GimpVectorLayer *layer)
++{
++  ChopGimpVLayer *vl = layer->vobjects;
++  ChopGimpVLayer *c  = vlayer_new ();
++
++  chopgimp_vobject_unref (c->root);
++  c->root = chopgimp_vobject_copy (vl->root, gimp_item_get_image (GIMP_ITEM (layer)));
++  snapshot_fix (vl->root, c->root);
++
++  c->next_id = vl->next_id;
++  c->legacy  = vl->legacy;
++  c->entered = vl->entered;
++  g_array_append_vals (c->selection, vl->selection->data, vl->selection->len);
++  c->opt_sig   = g_strdup (vl->opt_sig);
++  c->layer_lpe = g_strdup (vl->layer_lpe);
++
++  vlayer_reindex (c);
++
++  return c;
++}
++
++static gint64
++vobj_memsize (ChopGimpVObject *o)
++{
++  gint64 size = sizeof (ChopGimpVObject);
++
++  if (o->path)
++    size += gimp_object_get_memsize (GIMP_OBJECT (o->path), NULL);
++
++  if (o->children)
++    for (guint i = 0; i < o->children->len; i++)
++      size += vobj_memsize (g_ptr_array_index (o->children, i));
++
++  return size;
++}
++
++/*  @vl replaces the objects of @layer; returns the old state (not freed)  */
++static ChopGimpVLayer *
++vlayer_install (GimpVectorLayer *layer,
++                ChopGimpVLayer  *vl)
++{
++  ChopGimpVLayer *old = layer->vobjects;
++
++  if (vl && old)
++    {
++      vl->freeze = old->freeze;
++
++      g_ptr_array_extend_and_steal (vl->layouts, old->layouts);
++      old->layouts = g_ptr_array_new_with_free_func ((GDestroyNotify) g_array_unref);
++    }
++
++  if (old)
++    {
++      old->freeze       = 0;
++      old->interactive  = 0;
++      old->legacy_dirty = FALSE;
++      old->sig_pending  = FALSE;
++      sprite_free (old);
++      old->sprite_off   = FALSE;
++      if (old->moved)
++        g_hash_table_remove_all (old->moved);
++    }
++
++  layer->vobjects = vl;
++
++  if (vl)
++    vobj_resolve_globals (vl->root, gimp_item_get_image (GIMP_ITEM (layer)), NULL, NULL);
++
++  return old;
++}
++
+ static void
+ chopgimp_vobjects_undo_constructed (GObject *object)
+ {
+@@ -4900,7 +5319,12 @@ chopgimp_vobjects_undo_constructed (GObject *object)
+   layer = GIMP_VECTOR_LAYER (GIMP_ITEM_UNDO (undo)->item);
+ 
+   if (layer->vobjects)
+-    undo->state = vlayer_serialize (layer, TRUE);
++    {
++      if (fast_undo_enabled ())
++        undo->snap = vlayer_snapshot (layer);
++      else
++        undo->state = vlayer_serialize (layer, TRUE);
++    }
+ 
+   if (layer->options)
+     undo->options = gimp_config_duplicate (GIMP_CONFIG (layer->options));
+@@ -4947,12 +5371,21 @@ chopgimp_vobjects_undo_pop (GimpUndo            *undo,
+ 
+   GIMP_UNDO_CLASS (chopgimp_vobjects_undo_parent_class)->pop (undo, undo_mode, accum);
+ 
+-  state = layer->vobjects ? vlayer_serialize (layer, TRUE) : NULL;
+-
+   if (layer->options)
+     options = gimp_config_duplicate (GIMP_CONFIG (layer->options));
+ 
+-  vlayer_restore (layer, vundo->state);
++  if (vundo->snap)
++    {
++      /*  3.29.2: swap the states  */
++      vundo->snap = vlayer_install (layer, vundo->snap);
++      state       = NULL;
++    }
++  else
++    {
++      state = layer->vobjects ? vlayer_serialize (layer, TRUE) : NULL;
++
++      vlayer_restore (layer, vundo->state);
++    }
+ 
+   /*  the legacy fill / stroke as they were (exactly, for the legacy
+    *  renderer); the legacy path is rewritten from the objects
+@@ -4968,8 +5401,11 @@ chopgimp_vobjects_undo_pop (GimpUndo            *undo,
+         layer->vobjects->syncing--;
+     }
+ 
+-  g_free (vundo->state);
+-  vundo->state = state;
++  if (! vundo->snap || state)
++    {
++      g_free (vundo->state);
++      vundo->state = state;
++    }
+   g_clear_object (&vundo->options);
+   vundo->options = options;
+ 
+@@ -5006,6 +5442,7 @@ chopgimp_vobjects_undo_free (GimpUndo     *undo,
+   ChopGimpVObjectsUndo *vundo = CHOPGIMP_VOBJECTS_UNDO (undo);
+ 
+   g_clear_pointer (&vundo->state, g_free);
++  g_clear_pointer (&vundo->snap, chopgimp_vlayer_free);
+   g_clear_object (&vundo->options);
+ 
+   GIMP_UNDO_CLASS (chopgimp_vobjects_undo_parent_class)->free (undo, undo_mode);
+@@ -5018,6 +5455,9 @@ chopgimp_vobjects_undo_get_memsize (GimpObject *object,
+   ChopGimpVObjectsUndo *vundo = CHOPGIMP_VOBJECTS_UNDO (object);
+   gint64                size  = vundo->state ? strlen (vundo->state) + 1 : 0;
+ 
++  if (vundo->snap && vundo->snap->root)
++    size += vobj_memsize (vundo->snap->root);
++
+   size += gimp_object_get_memsize (GIMP_OBJECT (vundo->options), NULL);
+ 
+   return size + GIMP_OBJECT_CLASS (chopgimp_vobjects_undo_parent_class)->get_memsize (object,
+@@ -5668,6 +6108,212 @@ keep_stroke_widths_rec (ChopGimpVObject *o,
+       keep_stroke_widths_rec (g_ptr_array_index (o->children, i), s);
+ }
+ 
++/*  ─── 3.29.2: the « sprite » of a drag ─────────────────────────────── */
++
++static gboolean
++sprite_unsupported (ChopGimpVObject *o)
++{
++  /*  what makes the rendering of an object depend on others  */
++  if (o->clip || o->opmask || o->livepaint || o->symbol || o->blend ||
++      o->mode != GIMP_LAYER_MODE_NORMAL)
++    return TRUE;
++
++  if (o->children)
++    for (guint i = 0; i < o->children->len; i++)
++      if (sprite_unsupported (g_ptr_array_index (o->children, i)))
++        return TRUE;
++
++  return FALSE;
++}
++
++static void
++sprite_free (ChopGimpVLayer *vl)
++{
++  g_clear_pointer (&vl->rest, cairo_surface_destroy);
++  g_clear_pointer (&vl->sprite, cairo_surface_destroy);
++  vl->sdx = vl->sdy = 0.0;
++}
++
++static void
++sprite_collect (ChopGimpVObject *o,
++                GHashTable      *set,
++                GList          **order)
++{
++  if (g_hash_table_contains (set, o))
++    {
++      *order = g_list_prepend (*order, o);
++      return;
++    }
++
++  if (o->children)
++    for (guint i = 0; i < o->children->len; i++)
++      sprite_collect (g_ptr_array_index (o->children, i), set, order);
++}
++
++/*  made before the first translation of the gesture: TRUE when usable  */
++static gboolean
++sprite_begin (GimpVectorLayer *layer,
++              GPtrArray       *objs)
++{
++  ChopGimpVLayer *vl    = layer->vobjects;
++  GimpItem       *item  = GIMP_ITEM (layer);
++  const Babl     *space = babl_format_get_space (gimp_drawable_get_format (GIMP_DRAWABLE (layer)));
++  GHashTable     *set;
++  GList          *order = NULL;
++  GeglRectangle   r;
++  gboolean        any   = FALSE;
++  cairo_t        *cr;
++
++  if (vl->sprite_off || vl->rest)
++    return vl->rest != NULL;
++
++  vl->sprite_off = TRUE;   /* until made */
++
++  if (g_getenv ("CHOPGIMP_NO_DRAG_SPRITE") || vl->legacy || sprite_unsupported (vl->root) ||
++      gimp_rasterizable_is_rasterized (GIMP_RASTERIZABLE (layer)))
++    return FALSE;
++
++  set = g_hash_table_new (NULL, NULL);
++  for (guint i = 0; i < objs->len; i++)
++    {
++      g_hash_table_add (set, objs->pdata[i]);
++      dirty_of (layer, objs->pdata[i], &r, &any);
++    }
++
++  if (! any)
++    {
++      g_hash_table_unref (set);
++      return FALSE;
++    }
++
++  gimp_item_get_offset (item, &vl->rest_r.x, &vl->rest_r.y);
++  vl->rest_r.width  = gimp_item_get_width  (item);
++  vl->rest_r.height = gimp_item_get_height (item);
++
++  if ((gint64) vl->rest_r.width * vl->rest_r.height > 64 * 1024 * 1024 ||
++      (gint64) r.width * r.height > 64 * 1024 * 1024)
++    {
++      g_hash_table_unref (set);
++      return FALSE;
++    }
++
++  /*  the rest: everything but the moved objects  */
++  vl->rest = cairo_image_surface_create (CAIRO_FORMAT_ARGB32,
++                                         vl->rest_r.width, vl->rest_r.height);
++  cr = cairo_create (vl->rest);
++  cairo_translate (cr, -vl->rest_r.x, -vl->rest_r.y);
++  composite_skip = set;
++  composite (cr, layer, vl->root, &vl->rest_r, space);
++  composite_skip = NULL;
++  cairo_destroy (cr);
++  cairo_surface_flush (vl->rest);
++
++  /*  the sprite: the moved objects, in their order  */
++  vl->sprite_r = r;
++  vl->shown_r  = r;
++  vl->sprite   = cairo_image_surface_create (CAIRO_FORMAT_ARGB32, r.width, r.height);
++  cr = cairo_create (vl->sprite);
++  cairo_translate (cr, -r.x, -r.y);
++  sprite_collect (vl->root, set, &order);
++  order = g_list_reverse (order);
++  for (GList *l = order; l; l = l->next)
++    composite (cr, layer, l->data, &r, space);
++  cairo_destroy (cr);
++  cairo_surface_flush (vl->sprite);
++
++  g_list_free (order);
++  g_hash_table_unref (set);
++
++  vl->sdx = vl->sdy = 0.0;
++  vl->sprite_off = FALSE;
++
++  return TRUE;
++}
++
++/*  shows the sprite moved by (sdx, sdy), rounded to whole pixels  */
++static void
++sprite_show (GimpVectorLayer *layer)
++{
++  ChopGimpVLayer *vl       = layer->vobjects;
++  GimpDrawable   *drawable = GIMP_DRAWABLE (layer);
++  GimpItem       *item     = GIMP_ITEM (layer);
++  const Babl     *space    = babl_format_get_space (gimp_drawable_get_format (drawable));
++  const Babl     *fmt      = babl_format_with_space ("cairo-ARGB32", space);
++  GeglRectangle   cur, now, d;
++  cairo_surface_t *surf;
++  cairo_t        *cr;
++
++  now        = vl->sprite_r;
++  now.x     += (gint) floor (vl->sdx + 0.5);
++  now.y     += (gint) floor (vl->sdy + 0.5);
++
++  gimp_item_get_offset (item, &cur.x, &cur.y);
++  cur.width  = gimp_item_get_width  (item);
++  cur.height = gimp_item_get_height (item);
++
++  /*  the layer grows (never shrinks during the gesture)  */
++  {
++    GeglRectangle u;
++
++    gegl_rectangle_bounding_box (&u, &cur, &now);
++
++    if (! gegl_rectangle_equal (&u, &cur))
++      {
++        /*  with a margin: not a new buffer at each step of the drag (the
++         *  exact bounds are set at the end of the gesture)
++         */
++        gint m = MAX (256, MAX (vl->sprite_r.width, vl->sprite_r.height) / 2);
++
++        if (now.x < cur.x)                             u.x -= m, u.width += m;
++        if (now.y < cur.y)                             u.y -= m, u.height += m;
++        if (now.x + now.width > cur.x + cur.width)     u.width += m;
++        if (now.y + now.height > cur.y + cur.height)   u.height += m;
++
++        GeglBuffer *old = g_object_ref (gimp_drawable_get_buffer (drawable));
++        GeglBuffer *nb  = gegl_buffer_new (GEGL_RECTANGLE (0, 0, u.width, u.height),
++                                           gimp_drawable_get_format (drawable));
++
++        gegl_buffer_copy (old, GEGL_RECTANGLE (0, 0, cur.width, cur.height),
++                          GEGL_ABYSS_NONE, nb,
++                          GEGL_RECTANGLE (cur.x - u.x, cur.y - u.y,
++                                          cur.width, cur.height));
++        g_object_unref (old);
++
++        g_object_freeze_notify (G_OBJECT (drawable));
++        gimp_drawable_set_buffer (drawable, FALSE, NULL, nb);
++        g_object_unref (nb);
++        gimp_item_set_offset (item, u.x, u.y);
++        g_object_thaw_notify (G_OBJECT (drawable));
++
++        cur = u;
++      }
++  }
++
++  gegl_rectangle_bounding_box (&d, &vl->shown_r, &now);
++  if (! gegl_rectangle_intersect (&d, &d, &cur))
++    return;
++
++  surf = cairo_image_surface_create (CAIRO_FORMAT_ARGB32, d.width, d.height);
++  cr   = cairo_create (surf);
++  cairo_translate (cr, -d.x, -d.y);
++  cairo_set_source_surface (cr, vl->rest, vl->rest_r.x, vl->rest_r.y);
++  cairo_paint (cr);
++  cairo_set_source_surface (cr, vl->sprite, now.x, now.y);
++  cairo_paint (cr);
++  cairo_destroy (cr);
++  cairo_surface_flush (surf);
++
++  gegl_buffer_set (gimp_drawable_get_buffer (drawable),
++                   GEGL_RECTANGLE (d.x - cur.x, d.y - cur.y, d.width, d.height),
++                   0, fmt, cairo_image_surface_get_data (surf),
++                   cairo_image_surface_get_stride (surf));
++  cairo_surface_destroy (surf);
++
++  gimp_drawable_update (drawable, d.x - cur.x, d.y - cur.y, d.width, d.height);
++
++  vl->shown_r = now;
++}
++
+ void
+ chopgimp_vlayer_transform (GimpVectorLayer   *layer,
+                            const guint       *ids,
+@@ -5679,6 +6325,8 @@ chopgimp_vlayer_transform (GimpVectorLayer   *layer,
+   GPtrArray     *objs;
+   GeglRectangle  r;
+   gboolean       any = FALSE;
++  gboolean       shift;
++  gboolean       sprite = FALSE;
+ 
+   if (! matrix || ! chopgimp_vlayer_get_root (layer))
+     return;
+@@ -5712,6 +6360,12 @@ chopgimp_vlayer_transform (GimpVectorLayer   *layer,
+       return;
+     }
+ 
++  shift = (! bake && layer->vobjects->interactive > 0 && fast_drag_enabled () &&
++           matrix_is_translation (matrix));
++
++  /*  3.29.2: the sprite is made from the objects before they move  */
++  sprite = shift && layer_usable (layer) && sprite_begin (layer, objs);
++
+   for (guint i = 0; i < objs->len; i++)
+     {
+       ChopGimpVObject *o = objs->pdata[i];
+@@ -5749,12 +6403,33 @@ chopgimp_vlayer_transform (GimpVectorLayer   *layer,
+             keep_stroke_widths_rec (o, s);
+         }
+ 
+-      vobj_invalidate (o);
++      if (shift)
++        {
++          /*  3.29.2: the renderings move, exact rendering at the end  */
++          vobj_shift (o, matrix->coeff[0][2], matrix->coeff[1][2]);
++          g_hash_table_add (layer->vobjects->moved, GUINT_TO_POINTER (o->id));
++        }
++      else
++        {
++          vobj_invalidate (o);
++        }
++
+       dirty_of (layer, o, &r, &any);
+     }
+ 
+   g_ptr_array_free (objs, TRUE);
+ 
++  if (sprite)
++    {
++      layer->vobjects->sdx += matrix->coeff[0][2];
++      layer->vobjects->sdy += matrix->coeff[1][2];
++      sprite_show (layer);
++      layer->vobjects->hooking++;   /* no live paint / symbols: see sprite_unsupported() */
++      vlayer_commit (layer, CHANGE_GEOMETRY, NULL);
++      layer->vobjects->hooking--;
++      return;
++    }
++
+   vlayer_commit (layer, CHANGE_GEOMETRY, any ? &r : NULL);
+ }
+ 
+diff --git a/app/path/chopgimp-vobject.h b/app/path/chopgimp-vobject.h
+index 44a24b1..4d61adc 100644
+--- a/app/path/chopgimp-vobject.h
++++ b/app/path/chopgimp-vobject.h
+@@ -239,6 +239,8 @@ struct _ChopGimpVObject
+   gint                 ref_count;
+   gpointer             cache;         /* cairo_surface_t * of the rendering  */
+   gint                 cache_x, cache_y;
++  gdouble              cache_fx, cache_fy; /* 3.29.2: sub-pixel shift of the
++                                            * cache while dragging           */
+   gboolean             bounds_valid[2];
+   gdouble              bounds[2][4];
+   GimpPath            *effective;     /* path after the live effects         */
+@@ -578,6 +580,16 @@ void              chopgimp_vlayer_push_undo        (GimpVectorLayer  *layer,
+ /*  between freeze and thaw, rendering and the legacy path update wait  */
+ void              chopgimp_vlayer_freeze           (GimpVectorLayer  *layer);
+ void              chopgimp_vlayer_thaw             (GimpVectorLayer  *layer);
++
++/*  3.29.2 « vectoriel rapide »: an interactive gesture (drag of the
++ *  objects tool). Between begin and end, a translation moves the cached
++ *  renderings and bounds instead of rasterizing again, the legacy path is
++ *  not rewritten and "objects-changed" is sent once, at the end (the
++ *  exact rendering is made then). CHOPGIMP_NO_FAST_DRAG=1: off.
++ */
++void              chopgimp_vlayer_begin_interactive (GimpVectorLayer *layer);
++void              chopgimp_vlayer_end_interactive   (GimpVectorLayer *layer);
++gboolean          chopgimp_vlayer_is_interactive    (GimpVectorLayer *layer);
+ /*  @object (NULL: all) was changed in place (path, style fields…)  */
+ void              chopgimp_vlayer_object_changed   (GimpVectorLayer  *layer,
+                                                     ChopGimpVObject  *object);
+diff --git a/app/path/gimpvectorlayer.c b/app/path/gimpvectorlayer.c
+index b0bb1a9..80af67b 100644
+--- a/app/path/gimpvectorlayer.c
++++ b/app/path/gimpvectorlayer.c
+@@ -848,6 +848,16 @@ gimp_vector_layer_refresh (GimpVectorLayer *layer)
+ {
+   if (layer->options)
+     {
++      /*  ChopGimp 3.29.2: a layer of a XCF with its objects (parasite)
++       *  that are not read yet: chopgimp_vlayer_xcf_load() draws them
++       *  just after; drawing the whole legacy path first was ~90 % of
++       *  the time to open the file (its pixels are those of the file)
++       */
++      if (! layer->vobjects && chopgimp_vobjects_enabled () &&
++          gimp_item_parasite_find (GIMP_ITEM (layer), "chopgimp-vobjects") &&
++          g_getenv ("CHOPGIMP_NO_FAST_LOAD") == NULL)
++        return;
++
+       /*  ChopGimp: the objects are drawn again from scratch  */
+       if (! gimp_item_is_attached (GIMP_ITEM (layer)) ||
+           ! chopgimp_vlayer_render (layer, TRUE))
+diff --git a/app/pdb/chopgimp-cmds.c b/app/pdb/chopgimp-cmds.c
+index 0a65b81..f5388ce 100644
+--- a/app/pdb/chopgimp-cmds.c
++++ b/app/pdb/chopgimp-cmds.c
+@@ -247,7 +247,42 @@ chopgimp_vmaterial_command (GimpVectorLayer *layer,
+ 
+   *done = FALSE;
+ 
+-  if (! strcmp (v[0], "select-at") && n >= 3)
++  if (! strcmp (v[0], "drag-sim") && n >= 4)
++    {
++      /*  3.29.2 (bench, tests): an interactive drag of the selected
++       *  objects, @steps translations of (dx, dy) as the objects tool
++       *  makes them, then the end of the gesture
++       */
++      const guint *sel;
++      gint         n_sel = 0;
++      gdouble      dx    = g_ascii_strtod (v[1], NULL);
++      gdouble      dy    = g_ascii_strtod (v[2], NULL);
++      gint         steps = CLAMP (atoi (v[3]), 1, 10000);
++
++      sel = chopgimp_vlayer_get_selection (layer, &n_sel);
++
++      if (n_sel > 0)
++        {
++          guint *ids = g_memdup2 (sel, n_sel * sizeof (guint));
++
++          chopgimp_vlayer_push_undo (layer, "Déplacer les objets");
++          chopgimp_vlayer_begin_interactive (layer);
++
++          for (gint i = 0; i < steps; i++)
++            chopgimp_vlayer_translate (layer, ids, n_sel, dx, dy, FALSE);
++
++          chopgimp_vlayer_end_interactive (layer);
++          g_free (ids);
++          *done = TRUE;
++        }
++    }
++  else if ((! strcmp (v[0], "bench-undo") || ! strcmp (v[0], "bench-redo")))
++    {
++      GimpImage *image = gimp_item_get_image (GIMP_ITEM (layer));
++
++      *done = (v[0][6] == 'u') ? gimp_image_undo (image) : gimp_image_redo (image);
++    }
++  else if (! strcmp (v[0], "select-at") && n >= 3)
+     {
+       /*  the selectable object at (x, y), image coordinates (tests)  */
+       ChopGimpVObject *o = chopgimp_vlayer_hit_test (layer,
+diff --git a/app/tools/chopgimp-vobjecttool.c b/app/tools/chopgimp-vobjecttool.c
+index 19c6ff4..107fc26 100644
+--- a/app/tools/chopgimp-vobjecttool.c
++++ b/app/tools/chopgimp-vobjecttool.c
+@@ -112,6 +112,7 @@ struct _ChopGimpVSel
+   GimpMatrix3      applied;     /* scale / rotate applied so far        */
+   gdouble          dx_applied, dy_applied;
+   gboolean         pushed;
++  gboolean         interactive;  /* 3.29.2: begin_interactive() called   */
+   gboolean         duplicate;
+   guint           *ids;
+   gint             n_ids;
+@@ -170,6 +171,12 @@ vsel_watch (ChopGimpVSel    *vsel,
+ 
+   if (vsel->layer)
+     {
++      if (vsel->interactive)
++        {
++          vsel->interactive = FALSE;
++          chopgimp_vlayer_end_interactive (vsel->layer);
++        }
++
+       g_signal_handlers_disconnect_by_data (vsel->layer, vsel);
+       g_object_remove_weak_pointer (G_OBJECT (vsel->layer),
+                                     (gpointer *) &vsel->layer);
+@@ -401,6 +408,15 @@ vsel_ensure_drawing (ChopGimpVSel *vsel,
+ static void
+ vsel_end_drag (ChopGimpVSel *vsel)
+ {
++  /*  3.29.2: exact rendering, legacy path and signals of the gesture  */
++  if (vsel->interactive)
++    {
++      vsel->interactive = FALSE;
++
++      if (vsel->layer)
++        chopgimp_vlayer_end_interactive (vsel->layer);
++    }
++
+   vsel->drag = DRAG_NONE;
+   g_clear_pointer (&vsel->ids, g_free);
+   vsel->n_ids = 0;
+@@ -724,6 +740,9 @@ vsel_start_change (ChopGimpVSel *vsel,
+   chopgimp_vlayer_push_undo (vsel->layer, desc);
+   vsel->pushed = TRUE;
+ 
++  chopgimp_vlayer_begin_interactive (vsel->layer);
++  vsel->interactive = TRUE;
++
+   /*  Alt+drag: the copies move, the originals stay  */
+   if (vsel->duplicate && chopgimp_vobjects_duplicate_selection (vsel->layer, FALSE))
+     vsel_take_ids (vsel);
+-- 
+2.53.0
+

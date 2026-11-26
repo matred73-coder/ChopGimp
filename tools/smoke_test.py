@@ -1890,6 +1890,70 @@ try:
     except Exception:
         report(False, "3.29.1", traceback.format_exc().replace("\n", " | ")[:400])
 
+    # 3.29.2 (vectoriel rapide) : glisser par caches, annulation par copie
+    # de l'arbre, ouverture XCF sans rendu de l'ancien tracé ; le rendu
+    # doit rester identique au pixel près
+    try:
+        import random as _r
+
+        def px(layer):
+            b = layer.get_buffer()
+            e = b.get_extent()
+            return (layer.get_offsets()[1:], e.width, e.height,
+                    bytes(b.get(e, 1.0, "R'G'B'A u8", Gegl.AbyssPolicy.NONE)))
+
+        def vx2(layer):
+            r = run("chopgimp-vobjects-get-xml", layer=layer)
+            return r.index(1) if r is not None and r.index(0) == Gimp.PDBStatusType.SUCCESS else ""
+
+        def vc2(image, c):
+            r = run("chopgimp-vobjects-command", image=image, command=c)
+            return r is not None and r.index(0) == Gimp.PDBStatusType.SUCCESS and r.index(1)
+
+        imf = Gimp.Image.new(400, 400, Gimp.ImageBaseType.RGB)
+        pf = Gimp.Path.new(imf, "Formes")
+        imf.insert_path(pf, None, 0)
+        rnd = _r.Random(3)
+        for i in range(40):
+            x, y = rnd.uniform(10, 300), rnd.uniform(10, 300)
+            sid = pf.bezier_stroke_new_moveto(x, y)
+            pf.bezier_stroke_lineto(sid, x + rnd.uniform(10, 80), y + rnd.uniform(-5, 5))
+            pf.bezier_stroke_lineto(sid, x + rnd.uniform(0, 40), y + rnd.uniform(10, 80))
+            pf.stroke_close(sid)
+        vf = Gimp.VectorLayer.new(imf, pf)
+        imf.insert_layer(vf, None, 0)
+        vf.refresh()
+        imf.set_selected_layers([vf])
+        vc2(imf, "split-new")
+        p0 = px(vf)
+        vc2(imf, "select-all")
+        moved = vc2(imf, "drag-sim:1.3:0.7:30")
+        p1 = px(vf)
+        x1 = vx2(vf)
+        u = vc2(imf, "bench-undo")
+        p2 = px(vf)
+        report(u and p2 == p0, "3.29.2 annuler (copie de l'arbre) : pixels d'origine",
+               "annulé=%s" % u)
+        rr = vc2(imf, "bench-redo")
+        p3 = px(vf)
+        report(rr and p3 == p1, "3.29.2 rétablir : pixels après le glisser", "rétabli=%s" % rr)
+        run("chopgimp-vobjects-set-xml", layer=vf, xml=x1)
+        p1b = px(vf)
+        report(moved and p1 == p1b and p1 != p0,
+               "3.29.2 glisser par caches : rendu final identique à un rendu complet",
+               "déplacé=%s identique=%s" % (moved, p1 == p1b))
+        pathf = os.path.join(TMP, "perf-3292.xcf")
+        os.makedirs(TMP, exist_ok=True)
+        Gimp.file_save(Gimp.RunMode.NONINTERACTIVE, imf, Gio.File.new_for_path(pathf), None)
+        imf2 = Gimp.file_load(Gimp.RunMode.NONINTERACTIVE, Gio.File.new_for_path(pathf))
+        lf2 = [l for l in imf2.get_layers() if l.get_name() == vf.get_name()]
+        report(bool(lf2) and px(lf2[0]) == p3 and vx2(lf2[0]).count("<path") == x1.count("<path"),
+               "3.29.2 XCF rouvert sans rendu de l'ancien tracé : mêmes pixels, mêmes objets")
+        imf2.delete()
+        imf.delete()
+    except Exception:
+        report(False, "3.29.2", traceback.format_exc().replace("\n", " | ")[:400])
+
     # 4. Réglages d'usine présents (thème, icônes, menus, raccourcis)
     data = Gimp.data_directory()
     sysconf = Gimp.sysconf_directory()
