@@ -1,0 +1,2707 @@
+From f4f10ae4bd43a5aa0b012de7358a5379dd993028 Mon Sep 17 00:00:00 2001
+From: ChopGimp <mathieu.redon@proton.me>
+Date: Thu, 26 Nov 2026 18:38:44 +0100
+Subject: [PATCH] ChopGimp 3.32.0: lot 5 (interface): Satin (chopgimp:satin)
+ and Incrustation de motif (chopgimp:pattern-overlay) layer styles as
+ subclasses of the stroke sharing its fills, modes, mipmap levels and
+ compositing (inside the layer, alpha kept; fill_coverage / fill_margin
+ hooks), in the Style de calque window (Photoshop's order), Calque > Style de
+ calque actions, own dialogs, new ones placed under the stroke / bevel / inner
+ effects (CHOPGIMP_NO_INNER_STYLES); PSD export as ChFX and patternFill with
+ the document's patterns (Patt block after the layer info); a tool's plain key
+ selects the tool its group shows (CHOPGIMP_NO_GROUP_KEY); width profile kept
+ first in the options bar; status bar with the zoom first and document info
+ (Doc sizes, dimensions, profile, resolution, layers, active tool;
+ CHOPGIMP_CLASSIC_STATUSBAR); Photoshop-like document tabs (name @ zoom
+ (layer, mode/bits)*, close button on every tab; CHOPGIMP_CLASSIC_TABS)
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ app/actions/filters-actions.c              |  22 +
+ app/actions/tools-commands.c               |  98 ++++
+ app/core/chopgimp-fx-cache.c               |   4 +-
+ app/core/gimpdrawablefilter.c              |  55 ++
+ app/display/chopgimp-statusbar-info.c      | 389 ++++++++++++++
+ app/display/chopgimp-statusbar-info.h      |  27 +
+ app/display/gimpimagewindow.c              | 113 ++++-
+ app/display/gimpoptionsbar.c               |  14 +-
+ app/display/gimpstatusbar.c                |  35 ++
+ app/display/gimpstatusbar.h                |   3 +
+ app/display/meson.build                    |   1 +
+ app/gegl/gimp-gegl-graph-lock.c            |   3 +
+ app/operations/chopgimp-layer-styles.h     |  43 +-
+ app/operations/gimp-operations.c           |   4 +
+ app/operations/gimpoperationcontour.c      |  76 ++-
+ app/operations/gimpoperationcontour.h      |  20 +
+ app/operations/gimpoperationinnereffects.c | 562 +++++++++++++++++++++
+ app/operations/gimpoperationinnereffects.h |  88 ++++
+ app/operations/meson.build                 |   1 +
+ app/propgui/gimppropgui-layer-style.c      |  97 ++++
+ app/propgui/gimppropgui-layer-style.h      |  20 +
+ app/propgui/gimppropgui.c                  |   4 +
+ app/tools/gimpfiltertool.c                 |   7 +
+ plug-ins/file-psd/psd-chopgimp.c           | 392 +++++++++++++-
+ plug-ins/file-psd/psd-chopgimp.h           |   7 +
+ plug-ins/file-psd/psd-export.c             |  19 +-
+ 26 files changed, 2075 insertions(+), 29 deletions(-)
+ create mode 100644 app/display/chopgimp-statusbar-info.c
+ create mode 100644 app/display/chopgimp-statusbar-info.h
+ create mode 100644 app/operations/gimpoperationinnereffects.c
+ create mode 100644 app/operations/gimpoperationinnereffects.h
+
+diff --git a/app/actions/filters-actions.c b/app/actions/filters-actions.c
+index e03d224..0ffaf26 100644
+--- a/app/actions/filters-actions.c
++++ b/app/actions/filters-actions.c
+@@ -309,6 +309,17 @@ static const GimpStringActionEntry filters_interactive_actions[] =
+     CHOPGIMP_LAYER_STYLE_INNER_GLOW,
+     NULL },
+ 
++  /*  3.32.0: Satin, Incrustation de motif (gimpoperationinnereffects.c)  */
++  { "filters-chopgimp-satin", GIMP_ICON_GEGL,
++    NC_("filters-action", "Satin..."), NULL, { NULL }, NULL,
++    CHOPGIMP_LAYER_STYLE_SATIN,
++    NULL },
++
++  { "filters-chopgimp-pattern-overlay", GIMP_ICON_GEGL,
++    NC_("filters-action", "Incrustation de motif..."), NULL, { NULL }, NULL,
++    CHOPGIMP_LAYER_STYLE_PATTERN_OVERLAY,
++    NULL },
++
+   { "filters-edge", GIMP_ICON_GEGL,
+     NC_("filters-action", "_Edge..."), NULL, { NULL }, NULL,
+     "gegl:edge",
+@@ -975,6 +986,15 @@ filters_actions_setup (GimpActionGroup *group)
+ 
+   g_free (entries);
+ 
++  /*  ChopGimp 3.32.0: CHOPGIMP_NO_INNER_STYLES=1 hides Satin and
++   *  Incrustation de motif (chopgimp-layer-styles.h)
++   */
++  if (g_getenv ("CHOPGIMP_NO_INNER_STYLES"))
++    {
++      gimp_action_group_set_action_visible (group, "filters-chopgimp-satin", FALSE);
++      gimp_action_group_set_action_visible (group, "filters-chopgimp-pattern-overlay", FALSE);
++    }
++
+   g_signal_connect_object (group->gimp, "filter-history-changed",
+                            G_CALLBACK (filters_actions_history_changed),
+                            group, 0);
+@@ -1107,6 +1127,8 @@ filters_actions_update (GimpActionGroup *group,
+   SET_SENSITIVE ("filters-chopgimp-outer-glow",     writable && alpha);
+   SET_SENSITIVE ("filters-chopgimp-inner-shadow",   writable && alpha);
+   SET_SENSITIVE ("filters-chopgimp-inner-glow",     writable && alpha);
++  SET_SENSITIVE ("filters-chopgimp-satin",          writable && alpha);
++  SET_SENSITIVE ("filters-chopgimp-pattern-overlay", writable && alpha);
+   SET_SENSITIVE ("filters-edge",                    writable && !is_group);
+   SET_SENSITIVE ("filters-hue-saturation",          writable && !gray);
+   SET_SENSITIVE ("filters-long-shadow",             writable && alpha);
+diff --git a/app/actions/tools-commands.c b/app/actions/tools-commands.c
+index e2d9662..b8e533f 100644
+--- a/app/actions/tools-commands.c
++++ b/app/actions/tools-commands.c
+@@ -32,6 +32,7 @@
+ #include "core/gimpimage.h"
+ #include "core/gimpimage-undo.h"
+ #include "core/gimplayer.h"
++#include "core/gimptoolgroup.h"
+ #include "core/gimptoolinfo.h"
+ 
+ #include "paint/gimpinkoptions.h"
+@@ -83,6 +84,100 @@ tools_swap_cmd_callback (GimpAction *action,
+   tool_manager_swap_tools (gimp, FALSE);
+ }
+ 
++/*  ChopGimp 3.32.0: the tool shown by its group in the toolbox when the
++ *  tool's own key (a plain letter, as in Photoshop: L, M, W…) selected
++ *  @tool_info; a tool of the group with a key of its own (another plain
++ *  letter) keeps it. Not for the menus (no key press, or not the action's
++ *  key); CHOPGIMP_NO_GROUP_KEY=1 for GIMP's behavior.
++ */
++static GimpToolInfo *
++tools_select_group_shown (Gimp         *gimp,
++                          GimpAction   *action,
++                          GimpToolInfo *tool_info)
++{
++  GdkEvent      *event;
++  GimpViewable  *parent;
++  GimpToolInfo  *shown;
++  const gchar  **accels;
++  gchar         *pressed = NULL;
++  gchar         *name;
++  GimpAction    *shown_action;
++  gboolean       is_key = FALSE;
++  gint           i;
++
++  if (g_getenv ("CHOPGIMP_NO_GROUP_KEY") || ! tool_info)
++    return tool_info;
++
++  parent = gimp_viewable_get_parent (GIMP_VIEWABLE (tool_info));
++
++  if (! GIMP_IS_TOOL_GROUP (parent))
++    return tool_info;
++
++  shown = gimp_tool_group_get_active_tool_info (GIMP_TOOL_GROUP (parent));
++
++  if (! shown || shown == tool_info ||
++      ! gimp_tool_item_get_visible (GIMP_TOOL_ITEM (shown)))
++    return tool_info;
++
++  event = gtk_get_current_event ();
++
++  if (event)
++    {
++      if (event->type == GDK_KEY_PRESS &&
++          ! (event->key.state & gtk_accelerator_get_default_mod_mask ()))
++        {
++          guint keyval = gdk_keyval_to_lower (event->key.keyval);
++
++          pressed = gtk_accelerator_name (keyval, 0);
++        }
++
++      gdk_event_free (event);
++    }
++
++  if (! pressed)
++    return tool_info;
++
++  /*  the key is the action's own shortcut  */
++  accels = gimp_action_get_accels (action);
++
++  for (i = 0; accels && accels[i]; i++)
++    if (! g_ascii_strcasecmp (accels[i], pressed))
++      is_key = TRUE;
++
++  if (! is_key)
++    {
++      g_free (pressed);
++      return tool_info;
++    }
++
++  /*  the shown tool has a plain key of its own: it keeps it  */
++  name         = gimp_tool_info_get_action_name (shown);
++  shown_action = GIMP_ACTION (g_action_map_lookup_action (G_ACTION_MAP (gimp->app),
++                                                          name));
++  g_free (name);
++
++  accels = shown_action ? gimp_action_get_accels (shown_action) : NULL;
++
++  for (i = 0; accels && accels[i]; i++)
++    {
++      guint           key  = 0;
++      GdkModifierType mods = 0;
++
++      gtk_accelerator_parse (accels[i], &key, &mods);
++
++      if (key && ! (mods & gtk_accelerator_get_default_mod_mask ()) &&
++          g_ascii_strcasecmp (accels[i], pressed))
++        {
++          g_free (pressed);
++          return tool_info;
++        }
++    }
++
++  g_free (pressed);
++
++  return shown;
++}
++
+ void
+ tools_select_cmd_callback (GimpAction *action,
+                            GVariant   *value,
+@@ -116,6 +211,9 @@ tools_select_cmd_callback (GimpAction *action,
+ 
+   tool_info = gimp_get_tool_info (gimp, tool_name);
+ 
++  if (! set_transform_type)
++    tool_info = tools_select_group_shown (gimp, action, tool_info);
++
+   context = gimp_get_user_context (gimp);
+ 
+   /*  always allocate a new tool when selected from the image menu
+diff --git a/app/core/chopgimp-fx-cache.c b/app/core/chopgimp-fx-cache.c
+index fffeaed..a4dac09 100644
+--- a/app/core/chopgimp-fx-cache.c
++++ b/app/core/chopgimp-fx-cache.c
+@@ -662,7 +662,9 @@ fx_key_properties (FxKey       *key,
+        *  gradient or pattern follows is part of the key
+        */
+       if (! strcmp (pspec->name, "align-with-layer") &&
+-          ! strcmp (operation, "chopgimp:stroke"))
++          (! strcmp (operation, "chopgimp:stroke") ||
++           ! strcmp (operation, "chopgimp:satin") ||
++           ! strcmp (operation, "chopgimp:pattern-overlay")))
+         {
+           GeglOperation *op = gegl_node_get_gegl_operation (node);
+ 
+diff --git a/app/core/gimpdrawablefilter.c b/app/core/gimpdrawablefilter.c
+index 319f88f..dc28e0b 100644
+--- a/app/core/gimpdrawablefilter.c
++++ b/app/core/gimpdrawablefilter.c
+@@ -2028,6 +2028,60 @@ gimp_drawable_filter_is_active (GimpDrawableFilter *filter)
+          filter->preview_enabled;
+ }
+ 
++/*  ChopGimp 3.32.0: a new Satin or Incrustation de motif (made by the
++ *  filter tool) goes under the stroke, the bevel and the inner shadows /
++ *  glows of the layer, as Photoshop stacks its effects: otherwise the
++ *  overlay, composited inside the layer's alpha, would cover the stroke
++ *  outside the layer. Once, when first added (undo / redo keep their
++ *  position).
++ */
++static void
++gimp_drawable_filter_place_style (GimpDrawableFilter *filter)
++{
++  GimpContainer *filters;
++  const gchar   *op;
++  GList         *list;
++  gint           index;
++  gint           below = -1;
++  gint           i;
++
++  if (! g_object_get_data (G_OBJECT (filter), "chopgimp-place-style"))
++    return;
++
++  g_object_set_data (G_OBJECT (filter), "chopgimp-place-style", NULL);
++
++  op = gegl_node_get_operation (filter->operation);
++
++  if (! op || (strcmp (op, "chopgimp:satin") &&
++               strcmp (op, "chopgimp:pattern-overlay")))
++    return;
++
++  filters = gimp_drawable_get_filters (filter->drawable);
++  index   = gimp_container_get_child_index (filters, GIMP_OBJECT (filter));
++
++  /*  index 0 is the top of the stack (rendered last)  */
++  for (list = GIMP_LIST (filters)->queue->head, i = 0;
++       list;
++       list = g_list_next (list), i++)
++    {
++      GimpFilter  *other = list->data;
++      const gchar *o;
++
++      if (other == GIMP_FILTER (filter) || ! GIMP_IS_DRAWABLE_FILTER (other))
++        continue;
++
++      o = gegl_node_get_operation (GIMP_DRAWABLE_FILTER (other)->operation);
++
++      if (o && (! strcmp (o, "chopgimp:stroke") ||
++                ! strcmp (o, "gegl:bevel")      ||
++                ! strcmp (o, "gegl:inner-glow")))
++        below = i;
++    }
++
++  if (below > index)
++    gimp_container_reorder (filters, GIMP_OBJECT (filter), below);
++}
++
+ static gboolean
+ gimp_drawable_filter_add_filter (GimpDrawableFilter *filter)
+ {
+@@ -2055,6 +2109,7 @@ gimp_drawable_filter_add_filter (GimpDrawableFilter *filter)
+ 
+       gimp_drawable_add_filter (filter->drawable,
+                                 GIMP_FILTER (filter));
++      gimp_drawable_filter_place_style (filter);
+       gimp_drawable_filter_sync_format (filter);
+ 
+       gimp_drawable_update_bounding_box (filter->drawable);
+diff --git a/app/display/chopgimp-statusbar-info.c b/app/display/chopgimp-statusbar-info.c
+new file mode 100644
+index 0000000..509a3b7
+--- /dev/null
++++ b/app/display/chopgimp-statusbar-info.c
+@@ -0,0 +1,389 @@
++/* GIMP - The GNU Image Manipulation Program
++ * Copyright (C) 1995 Spencer Kimball and Peter Mattis
++ *
++ * chopgimp-statusbar-info.c
++ * ChopGimp 3.32.0 (lot E) : informations du document dans la barre
++ * d'état, comme Photoshop — « Doc : 2,6 Mo / 7,9 Mo » par défaut ; un
++ * clic ouvre le menu du choix (taille du document, dimensions, profil,
++ * résolution, calques, outil actif), retenu dans chopgimprc.
++ *
++ * This program is free software: you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation; either version 3 of the License, or
++ * (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License
++ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
++ */
++
++#include "config.h"
++
++#include <string.h>
++
++#include <gegl.h>
++#include <gtk/gtk.h>
++
++#include "libgimpbase/gimpbase.h"
++#include "libgimpcolor/gimpcolor.h"
++#include "libgimpwidgets/gimpwidgets.h"
++
++#include "display-types.h"
++
++#include "core/gimp.h"
++#include "core/gimpcontext.h"
++#include "core/gimpdrawable.h"
++#include "core/gimpimage.h"
++#include "core/gimplayer.h"
++#include "core/gimplayermask.h"
++#include "core/gimptoolinfo.h"
++
++#include "widgets/chopgimp-rc.h"
++
++#include "chopgimp-statusbar-info.h"
++
++
++#define INFO_KEY  "chopgimp-statusbar-info"
++#define RC_GROUP  "statusbar"
++#define RC_KEY    "info"
++
++
++typedef struct
++{
++  Gimp      *gimp;
++  GimpImage *image;      /*  weak  */
++  GtkWidget *button;
++  GtkWidget *label;
++  guint      idle_id;
++} StatusInfo;
++
++static const struct
++{
++  const gchar *key;
++  const gchar *label;
++} info_modes[] =
++{
++  { "document",   "Taille du document"    },
++  { "dimensions", "Dimensions du document" },
++  { "profile",    "Profil du document"    },
++  { "resolution", "Résolution"            },
++  { "layers",     "Calques"               },
++  { "tool",       "Outil actif"           }
++};
++
++
++static gchar *
++status_info_mode (void)
++{
++  gchar *mode = chopgimp_rc_get_string (RC_GROUP, RC_KEY, "document");
++  gint   i;
++
++  for (i = 0; i < G_N_ELEMENTS (info_modes); i++)
++    if (! strcmp (mode, info_modes[i].key))
++      return mode;
++
++  g_free (mode);
++
++  return g_strdup ("document");
++}
++
++/*  bytes of a drawable's pixels  */
++static guint64
++status_info_drawable_bytes (GimpDrawable *drawable)
++{
++  const Babl *format = gimp_drawable_get_format (drawable);
++
++  return (guint64) gimp_item_get_width  (GIMP_ITEM (drawable)) *
++         (guint64) gimp_item_get_height (GIMP_ITEM (drawable)) *
++         (guint64) babl_format_get_bytes_per_pixel (format);
++}
++
++static gchar *
++status_info_text (StatusInfo *si,
++                  const gchar *mode)
++{
++  GimpImage *image = si->image;
++
++  if (! strcmp (mode, "tool"))
++    {
++      GimpToolInfo *tool = gimp_context_get_tool (gimp_get_user_context (si->gimp));
++
++      return tool ? gimp_strip_uline (tool->label) : g_strdup ("");
++    }
++
++  if (! image)
++    return g_strdup ("");
++
++  if (! strcmp (mode, "dimensions"))
++    {
++      gdouble xres, yres;
++
++      gimp_image_get_resolution (image, &xres, &yres);
++
++      return g_strdup_printf ("%d × %d px (%.0f ppp)",
++                              gimp_image_get_width (image),
++                              gimp_image_get_height (image), xres);
++    }
++
++  if (! strcmp (mode, "resolution"))
++    {
++      gdouble xres, yres;
++
++      gimp_image_get_resolution (image, &xres, &yres);
++
++      return g_strdup_printf ("%.0f ppp", xres);
++    }
++
++  if (! strcmp (mode, "profile"))
++    {
++      GimpColorProfile *profile =
++        gimp_color_managed_get_color_profile (GIMP_COLOR_MANAGED (image));
++
++      return g_strdup (profile ? gimp_color_profile_get_label (profile) :
++                                 "Sans profil");
++    }
++
++  if (! strcmp (mode, "layers"))
++    {
++      GList *layers = gimp_image_get_layer_list (image);
++      gint   n      = g_list_length (layers);
++
++      g_list_free (layers);
++
++      return g_strdup_printf (n > 1 ? "%d calques" : "%d calque", n);
++    }
++
++  /*  « Doc » : the flattened image (no alpha) / the layers, masks and
++   *  channels, as Photoshop's « Document Sizes »
++   */
++  {
++    const Babl *flat   = gimp_image_get_layer_format (image, FALSE);
++    guint64     merged = (guint64) gimp_image_get_width (image) *
++                         (guint64) gimp_image_get_height (image) *
++                         (guint64) babl_format_get_bytes_per_pixel (flat);
++    guint64     total  = 0;
++    GList      *list;
++    GList      *iter;
++    gchar      *a, *b, *text;
++
++    list = gimp_image_get_layer_list (image);
++    for (iter = list; iter; iter = g_list_next (iter))
++      {
++        GimpLayer *layer = iter->data;
++
++        if (gimp_viewable_get_children (GIMP_VIEWABLE (layer)))
++          continue;
++
++        total += status_info_drawable_bytes (GIMP_DRAWABLE (layer));
++
++        if (gimp_layer_get_mask (layer))
++          total += status_info_drawable_bytes (GIMP_DRAWABLE (gimp_layer_get_mask (layer)));
++      }
++    g_list_free (list);
++
++    list = gimp_image_get_channel_list (image);
++    for (iter = list; iter; iter = g_list_next (iter))
++      total += status_info_drawable_bytes (GIMP_DRAWABLE (iter->data));
++    g_list_free (list);
++
++    a    = g_format_size (merged);
++    b    = g_format_size (MAX (total, merged));
++    text = g_strdup_printf ("Doc : %s / %s", a, b);
++
++    g_free (a);
++    g_free (b);
++
++    return text;
++  }
++}
++
++static gboolean
++status_info_update_idle (gpointer data)
++{
++  StatusInfo *si   = data;
++  gchar      *mode = status_info_mode ();
++  gchar      *text = status_info_text (si, mode);
++  gint        i;
++
++  si->idle_id = 0;
++
++  gtk_label_set_text (GTK_LABEL (si->label), text);
++
++  for (i = 0; i < G_N_ELEMENTS (info_modes); i++)
++    if (! strcmp (mode, info_modes[i].key))
++      gimp_help_set_help_data (si->button, info_modes[i].label, NULL);
++
++  g_free (text);
++  g_free (mode);
++
++  return G_SOURCE_REMOVE;
++}
++
++static void
++status_info_queue_update (StatusInfo *si)
++{
++  if (! si->idle_id)
++    si->idle_id = g_idle_add_full (G_PRIORITY_LOW, status_info_update_idle,
++                                   si, NULL);
++}
++
++static void
++status_info_mode_activate (GtkMenuItem *item,
++                           StatusInfo  *si)
++{
++  if (! gtk_check_menu_item_get_active (GTK_CHECK_MENU_ITEM (item)))
++    return;
++
++  chopgimp_rc_set_string (RC_GROUP, RC_KEY,
++                          g_object_get_data (G_OBJECT (item), "mode"));
++  status_info_queue_update (si);
++}
++
++static void
++status_info_clicked (GtkButton  *button,
++                     StatusInfo *si)
++{
++  GtkWidget *menu  = gtk_menu_new ();
++  GSList    *group = NULL;
++  gchar     *mode  = status_info_mode ();
++  gint       i;
++
++  for (i = 0; i < G_N_ELEMENTS (info_modes); i++)
++    {
++      GtkWidget *item = gtk_radio_menu_item_new_with_label (group,
++                                                            info_modes[i].label);
++
++      group = gtk_radio_menu_item_get_group (GTK_RADIO_MENU_ITEM (item));
++      g_object_set_data (G_OBJECT (item), "mode", (gpointer) info_modes[i].key);
++      gtk_check_menu_item_set_active (GTK_CHECK_MENU_ITEM (item),
++                                      ! strcmp (mode, info_modes[i].key));
++      g_signal_connect (item, "toggled",
++                        G_CALLBACK (status_info_mode_activate), si);
++      gtk_menu_shell_append (GTK_MENU_SHELL (menu), item);
++      gtk_widget_set_visible (item, TRUE);
++    }
++
++  g_free (mode);
++
++  gtk_menu_attach_to_widget (GTK_MENU (menu), GTK_WIDGET (button), NULL);
++  g_signal_connect (menu, "deactivate",
++                    G_CALLBACK (gtk_widget_destroy), NULL);
++  gtk_menu_popup_at_widget (GTK_MENU (menu), GTK_WIDGET (button),
++                            GDK_GRAVITY_NORTH_WEST, GDK_GRAVITY_SOUTH_WEST,
++                            NULL);
++}
++
++static void
++status_info_free (StatusInfo *si)
++{
++  if (si->idle_id)
++    g_source_remove (si->idle_id);
++
++  if (si->image)
++    {
++      g_signal_handlers_disconnect_by_data (si->image, si);
++      g_clear_weak_pointer (&si->image);
++    }
++
++  g_slice_free (StatusInfo, si);
++}
++
++
++/*  public functions  */
++
++GtkWidget *
++chopgimp_statusbar_info_new (Gimp *gimp)
++{
++  StatusInfo *si;
++  GtkWidget  *hbox;
++  GtkWidget  *arrow;
++
++  g_return_val_if_fail (GIMP_IS_GIMP (gimp), NULL);
++
++  si = g_slice_new0 (StatusInfo);
++  si->gimp = gimp;
++
++  si->button = gtk_button_new ();
++  gtk_button_set_relief (GTK_BUTTON (si->button), GTK_RELIEF_NONE);
++  gtk_widget_set_can_focus (si->button, FALSE);
++  gtk_widget_set_name (si->button, "chopgimp-statusbar-info");
++
++  hbox = gtk_box_new (GTK_ORIENTATION_HORIZONTAL, 2);
++  gtk_container_add (GTK_CONTAINER (si->button), hbox);
++  gtk_widget_set_visible (hbox, TRUE);
++
++  si->label = gtk_label_new (NULL);
++  gtk_label_set_ellipsize (GTK_LABEL (si->label), PANGO_ELLIPSIZE_END);
++  gtk_label_set_max_width_chars (GTK_LABEL (si->label), 32);
++  gtk_box_pack_start (GTK_BOX (hbox), si->label, FALSE, FALSE, 0);
++  gtk_widget_set_visible (si->label, TRUE);
++
++  arrow = gtk_image_new_from_icon_name ("pan-end-symbolic", GTK_ICON_SIZE_MENU);
++  gtk_box_pack_start (GTK_BOX (hbox), arrow, FALSE, FALSE, 0);
++  gtk_widget_set_visible (arrow, TRUE);
++
++  g_object_set_data_full (G_OBJECT (si->button), INFO_KEY, si,
++                          (GDestroyNotify) status_info_free);
++
++  g_signal_connect (si->button, "clicked",
++                    G_CALLBACK (status_info_clicked), si);
++
++  /*  « Outil actif »; disconnected with the button  */
++  g_signal_connect_object (gimp_get_user_context (gimp), "tool-changed",
++                           G_CALLBACK (chopgimp_statusbar_info_update),
++                           si->button, G_CONNECT_SWAPPED);
++
++  status_info_queue_update (si);
++
++  return si->button;
++}
++
++void
++chopgimp_statusbar_info_set_image (GtkWidget *info,
++                                   GimpImage *image)
++{
++  static const gchar * const signals[] =
++  {
++    "size-changed", "mode-changed", "precision-changed", "resolution-changed",
++    "profile-changed", "dirty", "clean"
++  };
++  StatusInfo *si;
++  gint        i;
++
++  g_return_if_fail (GTK_IS_WIDGET (info));
++  g_return_if_fail (image == NULL || GIMP_IS_IMAGE (image));
++
++  si = g_object_get_data (G_OBJECT (info), INFO_KEY);
++
++  if (! si || si->image == image)
++    return;
++
++  if (si->image)
++    g_signal_handlers_disconnect_by_data (si->image, si);
++
++  g_set_weak_pointer (&si->image, image);
++
++  if (image)
++    for (i = 0; i < G_N_ELEMENTS (signals); i++)
++      g_signal_connect_swapped (image, signals[i],
++                                G_CALLBACK (status_info_queue_update), si);
++
++  status_info_queue_update (si);
++}
++
++void
++chopgimp_statusbar_info_update (GtkWidget *info)
++{
++  StatusInfo *si;
++
++  g_return_if_fail (GTK_IS_WIDGET (info));
++
++  si = g_object_get_data (G_OBJECT (info), INFO_KEY);
++
++  if (si)
++    status_info_queue_update (si);
++}
+diff --git a/app/display/chopgimp-statusbar-info.h b/app/display/chopgimp-statusbar-info.h
+new file mode 100644
+index 0000000..52abbf0
+--- /dev/null
++++ b/app/display/chopgimp-statusbar-info.h
+@@ -0,0 +1,27 @@
++/* GIMP - The GNU Image Manipulation Program
++ * Copyright (C) 1995 Spencer Kimball and Peter Mattis
++ *
++ * chopgimp-statusbar-info.h
++ * ChopGimp 3.32.0 (lot E) : informations du document dans la barre d'état
++ *
++ * This program is free software: you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation; either version 3 of the License, or
++ * (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License
++ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
++ */
++
++#pragma once
++
++
++GtkWidget * chopgimp_statusbar_info_new       (Gimp      *gimp);
++void        chopgimp_statusbar_info_set_image (GtkWidget *info,
++                                               GimpImage *image);
++void        chopgimp_statusbar_info_update    (GtkWidget *info);
+diff --git a/app/display/gimpimagewindow.c b/app/display/gimpimagewindow.c
+index cafe845..92963a6 100644
+--- a/app/display/gimpimagewindow.c
++++ b/app/display/gimpimagewindow.c
+@@ -2991,6 +2991,84 @@ gimp_image_window_shell_close_button_callback (GimpDisplayShell *shell)
+     gimp_display_shell_close (shell, FALSE);
+ }
+ 
++/*  ChopGimp 3.32.0 (lot F): Photoshop's document tabs — a small view,
++ *  « nom.xcf @ 66,7 % (Calque, RVB/8)* », the full path as tooltip, the
++ *  close button on every tab; CHOPGIMP_CLASSIC_TABS=1 for GIMP's tabs
++ *  (a large view, the close button on the active one)
++ */
++static gboolean
++chopgimp_classic_tabs (void)
++{
++  return g_getenv ("CHOPGIMP_CLASSIC_TABS") != NULL;
++}
++
++static void
++chopgimp_tab_title_update (GimpDisplayShell *shell,
++                           const GParamSpec *pspec,
++                           GtkWidget        *label)
++{
++  GimpImage   *image = shell->display ? gimp_display_get_image (shell->display) : NULL;
++  GString     *text;
++  GList       *layers;
++  const gchar *base  = "RVB";
++  gdouble      zoom;
++  gchar       *z;
++  gint         bits  = 8;
++
++  if (! image)
++    {
++      gtk_label_set_text (GTK_LABEL (label), "");
++      return;
++    }
++
++  switch (gimp_image_get_base_type (image))
++    {
++    case GIMP_GRAY:    base = "Niveaux de gris"; break;
++    case GIMP_INDEXED: base = "Indexé";          break;
++    default:           base = "RVB";             break;
++    }
++
++  switch (gimp_image_get_component_type (image))
++    {
++    case GIMP_COMPONENT_TYPE_U16:
++    case GIMP_COMPONENT_TYPE_HALF:   bits = 16; break;
++    case GIMP_COMPONENT_TYPE_U32:
++    case GIMP_COMPONENT_TYPE_FLOAT:  bits = 32; break;
++    case GIMP_COMPONENT_TYPE_DOUBLE: bits = 64; break;
++    default:                         bits = 8;  break;
++    }
++
++  zoom = 100.0 * gimp_zoom_model_get_factor (shell->zoom);
++
++  if (fabs (zoom - RINT (zoom)) < 0.05)
++    z = g_strdup_printf ("%d", (gint) RINT (zoom));
++  else
++    z = g_strdup_printf ("%.1f", zoom);
++
++  /*  French decimal separator  */
++  g_strdelimit (z, ".", ',');
++
++  text = g_string_new (gimp_image_get_display_name (image));
++  g_string_append_printf (text, " @ %s %% (", z);
++
++  layers = gimp_image_get_selected_layers (image);
++  if (g_list_length (layers) == 1)
++    g_string_append_printf (text, "%s, ",
++                            gimp_object_get_name (GIMP_OBJECT (layers->data)));
++
++  g_string_append_printf (text, "%s/%d)", base, bits);
++
++  if (gimp_image_is_dirty (image))
++    g_string_append_c (text, '*');
++
++  gtk_label_set_text (GTK_LABEL (label), text->str);
++  gimp_help_set_help_data (gtk_widget_get_parent (label),
++                           gimp_image_get_display_path (image), NULL);
++
++  g_string_free (text, TRUE);
++  g_free (z);
++}
++
+ static GtkWidget *
+ gimp_image_window_create_tab_label (GimpImageWindow  *window,
+                                     GimpDisplayShell *shell)
+@@ -3000,14 +3078,21 @@ gimp_image_window_create_tab_label (GimpImageWindow  *window,
+   GimpImage *image;
+   GtkWidget *button;
+   GtkWidget *gtk_image;
++  gboolean   classic   = chopgimp_classic_tabs ();
++  gint       view_size = classic ? GIMP_VIEW_SIZE_LARGE : GIMP_VIEW_SIZE_SMALL;
+ 
+-  hbox = gtk_box_new (GTK_ORIENTATION_HORIZONTAL, 2);
++  hbox = gtk_box_new (GTK_ORIENTATION_HORIZONTAL, classic ? 2 : 4);
+   gtk_widget_set_visible (hbox, TRUE);
+ 
++  if (! classic)
++    gtk_style_context_add_class (gtk_widget_get_style_context (hbox),
++                                 "chopgimp-image-tab");
++
++  /*  the view stays the first child (gimp_image_window_image_notify())  */
+   view = gimp_view_new_by_types (gimp_get_user_context (shell->display->gimp),
+                                  GIMP_TYPE_VIEW, GIMP_TYPE_IMAGE,
+-                                 GIMP_VIEW_SIZE_LARGE, 0, FALSE);
+-  gtk_widget_set_size_request (view, GIMP_VIEW_SIZE_LARGE, -1);
++                                 view_size, 0, FALSE);
++  gtk_widget_set_size_request (view, view_size, -1);
+   gimp_view_renderer_set_color_config (GIMP_VIEW (view)->renderer,
+                                        gimp_display_shell_get_color_config (shell));
+   gtk_box_pack_start (GTK_BOX (hbox), view, FALSE, FALSE, 0);
+@@ -3017,6 +3102,24 @@ gimp_image_window_create_tab_label (GimpImageWindow  *window,
+   if (image)
+     gimp_view_set_viewable (GIMP_VIEW (view), GIMP_VIEWABLE (image));
+ 
++  if (! classic)
++    {
++      GtkWidget *label = gtk_label_new (NULL);
++
++      gtk_label_set_ellipsize (GTK_LABEL (label), PANGO_ELLIPSIZE_MIDDLE);
++      gtk_label_set_max_width_chars (GTK_LABEL (label), 36);
++      gtk_box_pack_start (GTK_BOX (hbox), label, FALSE, FALSE, 0);
++      gtk_widget_set_visible (label, TRUE);
++
++      /*  the title is formatted again on every change (zoom, name,
++       *  dirty, active layer…): the tab follows it
++       */
++      g_signal_connect_object (shell, "notify::title",
++                               G_CALLBACK (chopgimp_tab_title_update),
++                               label, 0);
++      chopgimp_tab_title_update (shell, NULL, label);
++    }
++
+   button = gtk_button_new ();
+   gtk_widget_set_can_focus (button, FALSE);
+   gtk_button_set_relief (GTK_BUTTON (button), GTK_RELIEF_NONE);
+@@ -3057,7 +3160,9 @@ gimp_image_window_update_tab_labels (GimpImageWindow *window)
+ 
+       close_button = g_object_get_data (G_OBJECT (tab_widget), "close-button");
+ 
+-      if (gimp_context_get_display (gimp_get_user_context (private->gimp)) ==
++      /*  ChopGimp 3.32.0 (lot F): on every tab, as Photoshop  */
++      if (! chopgimp_classic_tabs () ||
++          gimp_context_get_display (gimp_get_user_context (private->gimp)) ==
+           GIMP_DISPLAY_SHELL (shell)->display)
+         {
+           gtk_widget_set_visible (close_button, TRUE);
+diff --git a/app/display/gimpoptionsbar.c b/app/display/gimpoptionsbar.c
+index 9df54f5..f484f82 100644
+--- a/app/display/gimpoptionsbar.c
++++ b/app/display/gimpoptionsbar.c
+@@ -273,7 +273,15 @@ gimp_options_bar_priority (const gchar *prop)
+     "move-current", "zoom-type", "orientation", "draw-mode", "mode", "clone-type",
+     "sample-average", "blob-type", "fixed-rule-active", "fixed-rule",
+     "enable-fill", "fill-foreground", "enable-stroke", "stroke-foreground",
+-    "stroke-width", "align-reference", "@nodes", "flip-type", "@vobjects", NULL
++    "stroke-width", "align-reference", "@nodes", "flip-type", "@vobjects",
++    NULL
++  };
++  /*  3.32.0: the main option of its tool, kept before everything else
++   *  (the Width tool's profile went into « ⋯ » before the objects' bar)
++   */
++  static const gchar *const top[] =
++  {
++    "@widthprofile", NULL
+   };
+   static const gchar *const medium[] =
+   {
+@@ -296,6 +304,10 @@ gimp_options_bar_priority (const gchar *prop)
+   };
+   gint i;
+ 
++  for (i = 0; top[i]; i++)
++    if (! strcmp (prop, top[i]))
++      return 100;
++
+   for (i = 0; high[i]; i++)
+     if (! strcmp (prop, high[i]))
+       return 90;
+diff --git a/app/display/gimpstatusbar.c b/app/display/gimpstatusbar.c
+index 359f85e..c2edb71 100644
+--- a/app/display/gimpstatusbar.c
++++ b/app/display/gimpstatusbar.c
+@@ -47,6 +47,7 @@
+ #include "gimpimagewindow.h"
+ #include "gimpscalecombobox.h"
+ #include "gimpstatusbar.h"
++#include "chopgimp-statusbar-info.h"
+ 
+ #include "gimp-intl.h"
+ 
+@@ -331,6 +332,13 @@ gimp_statusbar_init (GimpStatusbar *statusbar)
+                     G_CALLBACK (gimp_statusbar_scale_changed),
+                     statusbar);
+ 
++  /*  ChopGimp 3.32.0 (lot E): the zoom first, as in Photoshop (the
++   *  document info follows it, added with the display's Gimp);
++   *  CHOPGIMP_CLASSIC_STATUSBAR=1 for GIMP's bar
++   */
++  if (! g_getenv ("CHOPGIMP_CLASSIC_STATUSBAR"))
++    gtk_box_reorder_child (GTK_BOX (hbox), statusbar->scale_combo, 0);
++
+   g_signal_connect (statusbar->scale_combo, "entry-activated",
+                     G_CALLBACK (gimp_statusbar_scale_activated),
+                     statusbar);
+@@ -1300,6 +1308,21 @@ gimp_statusbar_set_shell (GimpStatusbar    *statusbar,
+                       statusbar);
+ 
+   statusbar->gimp = gimp_display_get_gimp (statusbar->shell->display);
++
++  /*  ChopGimp 3.32.0 (lot E): « Doc : … » after the zoom  */
++  if (statusbar->gimp && ! statusbar->chopgimp_info &&
++      ! g_getenv ("CHOPGIMP_CLASSIC_STATUSBAR"))
++    {
++      GtkWidget *hbox = gtk_widget_get_parent (statusbar->scale_combo);
++
++      statusbar->chopgimp_info = chopgimp_statusbar_info_new (statusbar->gimp);
++      gtk_box_pack_start (GTK_BOX (hbox), statusbar->chopgimp_info,
++                          FALSE, FALSE, 0);
++      gtk_box_reorder_child (GTK_BOX (hbox), statusbar->chopgimp_info, 1);
++      gimp_statusbar_add_size_widget (statusbar, statusbar->chopgimp_info);
++      gtk_widget_set_visible (statusbar->chopgimp_info, TRUE);
++    }
++
+   if (statusbar->gimp)
+     {
+       GimpContext *context;
+@@ -2072,6 +2095,18 @@ gimp_statusbar_shell_set_image (GimpStatusbar *statusbar,
+ 
+   g_set_weak_pointer (&statusbar->image, image);
+ 
++  /*  ChopGimp 3.32.0: the info of the display's own image  */
++  if (statusbar->chopgimp_info)
++    {
++      GimpImage *own = NULL;
++
++      if (statusbar->shell && statusbar->shell->display)
++        own = gimp_display_get_image (statusbar->shell->display);
++
++      chopgimp_statusbar_info_set_image (statusbar->chopgimp_info,
++                                         own ? own : image);
++    }
++
+   if (statusbar->image)
+     {
+       g_signal_connect (statusbar->image, "simulation-profile-changed",
+diff --git a/app/display/gimpstatusbar.h b/app/display/gimpstatusbar.h
+index 225d289..62a3aaa 100644
+--- a/app/display/gimpstatusbar.h
++++ b/app/display/gimpstatusbar.h
+@@ -92,6 +92,9 @@ struct _GimpStatusbar
+   GtkWidget           *out_of_gamut_toggle;
+ 
+   GSList              *size_widgets;
++
++  /*  ChopGimp 3.32.0 (lot E): document info (chopgimp-statusbar-info.c)  */
++  GtkWidget           *chopgimp_info;
+ };
+ 
+ struct _GimpStatusbarClass
+diff --git a/app/display/meson.build b/app/display/meson.build
+index a47e6f7..63c772e 100644
+--- a/app/display/meson.build
++++ b/app/display/meson.build
+@@ -45,6 +45,7 @@ libappdisplay_sources = [
+   'chopgimp-canvasartboards.c',
+   'chopgimp-canvashighlight.c',
+   'chopgimp-canvastrace.c',
++  'chopgimp-statusbar-info.c',
+   'chopgimp-popup-palette.c',
+   'gimpcanvasrectangleguides.c',
+   'gimpcanvassamplepoint.c',
+diff --git a/app/gegl/gimp-gegl-graph-lock.c b/app/gegl/gimp-gegl-graph-lock.c
+index e780eec..f245b37 100644
+--- a/app/gegl/gimp-gegl-graph-lock.c
++++ b/app/gegl/gimp-gegl-graph-lock.c
+@@ -673,6 +673,9 @@ gimp_gegl_graph_check_draftable (GeglNode      *node,
+      *  the mipmapped layer), and the effects' sizes (a close draft)
+      */
+     "chopgimp:stroke",
++    /*  3.32.0: the same compositing, sizes scaled with the level  */
++    "chopgimp:satin",
++    "chopgimp:pattern-overlay",
+     "chopgimp:layer-style-fused",
+     /*  a point composer (behind effects, chopgimp-behind-effects.c)  */
+     "chopgimp:behind-knockout",
+diff --git a/app/operations/chopgimp-layer-styles.h b/app/operations/chopgimp-layer-styles.h
+index d9e485d..96fb4bf 100644
+--- a/app/operations/chopgimp-layer-styles.h
++++ b/app/operations/chopgimp-layer-styles.h
+@@ -74,6 +74,20 @@
+ #define CHOPGIMP_LAYER_STYLE_COLOR_OVERLAY \
+   "gegl:color-overlay"
+ 
++/*  3.32.0 (app/operations/gimpoperationinnereffects.c): Satin in
++ *  Photoshop's defaults (black, multiply, 50 %, 19°, 11 px, 14 px,
++ *  inverted), Incrustation de motif (the chooser's pattern, stored when
++ *  the dialog opens)
++ */
++#define CHOPGIMP_LAYER_STYLE_SATIN \
++  "chopgimp:satin\n" \
++  "(color (color-rgba 0.0 0.0 0.0 1.0))(opacity 0.5)(mode multiply)" \
++  "(angle 19.0)(distance 11.0)(size 14.0)(invert yes)(contour gaussian)"
++
++#define CHOPGIMP_LAYER_STYLE_PATTERN_OVERLAY \
++  "chopgimp:pattern-overlay\n" \
++  "(fill-type pattern)(opacity 1.0)"
++
+ 
+ /*  name of the preset holding the user's defaults of a style  */
+ #define CHOPGIMP_LAYER_STYLE_DEFAULT_NAME "Par défaut (%s)"
+@@ -102,7 +116,13 @@ static const ChopGimpLayerStyle chopgimp_layer_styles[] =
+   { NULL,                            "gegl:bevel",      "Biseautage",
+     CHOPGIMP_LAYER_STYLE_BEVEL        },
+   { NULL,                            "gegl:color-overlay", "Incrustation couleur",
+-    CHOPGIMP_LAYER_STYLE_COLOR_OVERLAY }
++    CHOPGIMP_LAYER_STYLE_COLOR_OVERLAY },
++  /*  3.32.0  */
++  { "filters-chopgimp-satin",        "chopgimp:satin",  "Satin",
++    CHOPGIMP_LAYER_STYLE_SATIN        },
++  { "filters-chopgimp-pattern-overlay", "chopgimp:pattern-overlay",
++    "Incrustation de motif",
++    CHOPGIMP_LAYER_STYLE_PATTERN_OVERLAY }
+ };
+ 
+ 
+@@ -177,20 +197,31 @@ chopgimp_layer_style_find_by_action (const gchar *action)
+ }
+ 
+ /*  rank of a style in Photoshop's « Style de calque » window (Biseautage,
+- *  Contour, Ombre interne, Lueur interne, Incrustation couleur, Lueur
+- *  externe, Ombre portée), -1 if unknown
++ *  Contour, Ombre interne, Lueur interne, Satin, Incrustation couleur,
++ *  Incrustation de motif, Lueur externe, Ombre portée), -1 if unknown;
++ *  CHOPGIMP_NO_INNER_STYLES=1 leaves out Satin and Incrustation de motif
++ *  (3.32.0)
+  */
++static inline gboolean
++chopgimp_layer_style_hidden (const ChopGimpLayerStyle *style)
++{
++  return (style && g_getenv ("CHOPGIMP_NO_INNER_STYLES") &&
++          (! strcmp (style->operation, "chopgimp:satin") ||
++           ! strcmp (style->operation, "chopgimp:pattern-overlay")));
++}
++
+ static inline gint
+ chopgimp_layer_style_rank (const ChopGimpLayerStyle *style)
+ {
+   static const gchar * const order[] =
+   {
+-    "Biseautage", "Contour", "Ombre interne", "Lueur interne",
+-    "Incrustation couleur", "Lueur externe", "Ombre portée"
++    "Biseautage", "Contour", "Ombre interne", "Lueur interne", "Satin",
++    "Incrustation couleur", "Incrustation de motif", "Lueur externe",
++    "Ombre portée"
+   };
+   gint i;
+ 
+-  if (! style)
++  if (! style || chopgimp_layer_style_hidden (style))
+     return -1;
+ 
+   for (i = 0; i < G_N_ELEMENTS (order); i++)
+diff --git a/app/operations/gimp-operations.c b/app/operations/gimp-operations.c
+index ec20e9f..4af1a02 100644
+--- a/app/operations/gimp-operations.c
++++ b/app/operations/gimp-operations.c
+@@ -38,6 +38,7 @@
+ #include "gimpoperationbehindknockout.h"
+ #include "gimpoperationcontour.h"
+ #include "gimpoperationlayerstylefused.h"
++#include "gimpoperationinnereffects.h"
+ #include "gimpoperationequalize.h"
+ #include "gimpoperationfillsource.h"
+ #include "gimpoperationflood.h"
+@@ -136,6 +137,9 @@ gimp_operations_init (Gimp *gimp)
+   g_type_class_ref (GIMP_TYPE_OPERATION_CAGE_TRANSFORM);
+   g_type_class_ref (GIMP_TYPE_OPERATION_COMPOSE_CROP);
+   g_type_class_ref (GIMP_TYPE_OPERATION_CONTOUR);
++  /*  ChopGimp 3.32.0: Satin, Incrustation de motif  */
++  g_type_class_ref (GIMP_TYPE_OPERATION_SATIN);
++  g_type_class_ref (GIMP_TYPE_OPERATION_PATTERN_OVERLAY);
+   g_type_class_ref (GIMP_TYPE_OPERATION_LAYER_STYLE_FUSED);
+   g_type_class_ref (GIMP_TYPE_OPERATION_EQUALIZE);
+   g_type_class_ref (GIMP_TYPE_OPERATION_FILL_SOURCE);
+diff --git a/app/operations/gimpoperationcontour.c b/app/operations/gimpoperationcontour.c
+index ad13a16..6813b33 100644
+--- a/app/operations/gimpoperationcontour.c
++++ b/app/operations/gimpoperationcontour.c
+@@ -995,7 +995,9 @@ gimp_operation_contour_get_grow (GimpOperationContour *self)
+ {
+   gdouble half;
+ 
+-  if (self->position == GIMP_CONTOUR_POSITION_INSIDE)
++  /*  ChopGimp 3.32.0: Satin, Incrustation de motif stay inside  */
++  if (self->position == GIMP_CONTOUR_POSITION_INSIDE ||
++      GIMP_OPERATION_CONTOUR_GET_CLASS (self)->fill_coverage)
+     return 0;
+ 
+   if (self->position == GIMP_CONTOUR_POSITION_CENTER)
+@@ -1021,7 +1023,11 @@ static gint
+ gimp_operation_contour_get_margin_scaled (GimpOperationContour *self,
+                                           gdouble               scale)
+ {
+-  gdouble half;
++  GimpOperationContourClass *klass = GIMP_OPERATION_CONTOUR_GET_CLASS (self);
++  gdouble                    half;
++
++  if (klass->fill_coverage)
++    return klass->fill_margin ? klass->fill_margin (self, scale) : 0;
+ 
+   if (self->position == GIMP_CONTOUR_POSITION_CENTER)
+     half = self->width / 2.0;
+@@ -1043,6 +1049,10 @@ gimp_operation_contour_get_margin (GimpOperationContour *self)
+ static gboolean
+ gimp_operation_contour_is_local (GimpOperationContour *self)
+ {
++  /*  the inside effects only read around each pixel  */
++  if (GIMP_OPERATION_CONTOUR_GET_CLASS (self)->fill_coverage)
++    return TRUE;
++
+   return self->dash_preset == GIMP_CONTOUR_DASH_LINE;
+ }
+ 
+@@ -1713,6 +1723,7 @@ struct _GimpContourComposite
+   gfloat                  strength;
+   gboolean                behind;
+   gboolean                clip_alpha;
++  gboolean                atop;        /*  inside effect, alpha kept  */
+   gboolean                simple;
+   GimpContourFill        *fill;
+   GimpContourFillType     fill_type;
+@@ -1949,6 +1960,16 @@ gimp_operation_contour_composite_new (GimpOperationContour *self,
+                       ! self->overprint);
+   comp->clip_alpha = (self->position == GIMP_CONTOUR_POSITION_INSIDE);
+ 
++  /*  ChopGimp 3.32.0: Satin, Incrustation de motif: the effect is
++   *  composited inside the layer, whose alpha stays (Photoshop's overlays)
++   */
++  if (GIMP_OPERATION_CONTOUR_GET_CLASS (self)->fill_coverage)
++    {
++      comp->atop       = TRUE;
++      comp->behind     = FALSE;
++      comp->clip_alpha = FALSE;
++    }
++
+   if (! comp->behind && self->mode != GIMP_LAYER_MODE_NORMAL)
+     comp->blend_func = gimp_layer_mode_get_blend_function (self->mode);
+ 
+@@ -2058,6 +2079,17 @@ gimp_operation_contour_composite_row (GimpContourComposite *comp,
+               out[2] = in[2];
+               out[3] = in[3];
+             }
++          else if (comp->atop)
++            {
++              /*  inside effect: mixed with the layer, alpha kept  */
++              sa = MIN (sa, 1.0f);
++
++              for (c = 0; c < 3; c++)
++                out[c] = in[c] + (color[c] - in[c]) * sa;
++
++              out[3] = la;
++              a      = la;
++            }
+           else
+             {
+               if (clip_alpha)
+@@ -2275,7 +2307,22 @@ gimp_operation_contour_composite_row (GimpContourComposite *comp,
+               continue;
+             }
+ 
+-          if (behind)
++          if (comp->atop)
++            {
++              /*  inside effect (Satin, Incrustation de motif): mixed
++               *  with the layer's colors (blended in the mode), the
++               *  layer's alpha kept
++               */
++              const gfloat *X = comp->blend_func ? layer_row + 4 * x : S;
++
++              sa = MIN (sa, 1.0f);
++
++              for (c = 0; c < 3; c++)
++                o[c] = L[c] + (X[c] - L[c]) * sa;
++
++              a = la;
++            }
++          else if (behind)
+             {
+               /*  layer OVER stroke  */
+               gfloat k = sa * (1.0f - la);
+@@ -2349,6 +2396,7 @@ gimp_operation_contour_process (GeglOperation       *operation,
+                                 gint                 level)
+ {
+   GimpOperationContour *self    = GIMP_OPERATION_CONTOUR (operation);
++  GimpOperationContourClass *klass = GIMP_OPERATION_CONTOUR_GET_CLASS (self);
+   const Babl           *format  = gegl_operation_get_format (operation, "output");
+   const GeglRectangle  *in_rect0;
+   GeglRectangle         in_rect;
+@@ -2393,6 +2441,26 @@ gimp_operation_contour_process (GeglOperation       *operation,
+   /*  the input's extent at the level  */
+   gimp_operation_contour_scale_rect (in_rect0, level, &in_rect);
+ 
++  /*  ChopGimp 3.32.0: Satin, Incrustation de motif: their own coverage
++   *  of the layer's inside, then the stroke's compositing
++   */
++  if (klass->fill_coverage)
++    {
++      stride = gimp_operation_contour_mask_stride (roi->width);
++      mask   = g_try_malloc0 ((gsize) stride * roi->height);
++
++      if (! mask ||
++          ! klass->fill_coverage (self, input, &in_rect, roi, level,
++                                  mask, stride))
++        {
++          g_free (mask);
++          gimp_operation_contour_copy (input, output, roi, level);
++          return TRUE;
++        }
++
++      goto composite;
++    }
++
+   /*  1. the outline of the layer's alpha, at the threshold: around the
+    *  region for a solid stroke, of the whole layer (cached) for dashes
+    */
+@@ -2457,6 +2525,8 @@ gimp_operation_contour_process (GeglOperation       *operation,
+ 
+   /*  3. composite the stroke with the layer, in linear light  */
+ 
++ composite:
++
+   comp = gimp_operation_contour_composite_new (self, format, in_rect0, level,
+                                                roi->width);
+ 
+diff --git a/app/operations/gimpoperationcontour.h b/app/operations/gimpoperationcontour.h
+index 37a76ef..6b9d26d 100644
+--- a/app/operations/gimpoperationcontour.h
++++ b/app/operations/gimpoperationcontour.h
+@@ -129,6 +129,26 @@ struct _GimpOperationContour
+ struct _GimpOperationContourClass
+ {
+   GeglOperationFilterClass  parent_class;
++
++  /*  ChopGimp 3.32.0: effects covering the inside of the layer instead of
++   *  stroking its edge (Satin, Incrustation de motif), subclasses of the
++   *  stroke sharing its fills, modes and compositing. fill_coverage()
++   *  renders the coverage of roi (level coordinates, A8 mask of the
++   *  given stride, cleared) from the input whose extent at the level is
++   *  in_rect; FALSE: nothing to draw. fill_margin() is how far around a
++   *  pixel the input is read, at the given scale (1 / 2^level). The
++   *  effect is composited inside the layer ("source-atop": the layer's
++   *  alpha is kept).
++   */
++  gboolean (* fill_coverage) (GimpOperationContour *self,
++                              GeglBuffer           *input,
++                              const GeglRectangle  *in_rect,
++                              const GeglRectangle  *roi,
++                              gint                  level,
++                              guchar               *mask,
++                              gint                  mask_stride);
++  gint     (* fill_margin)   (GimpOperationContour *self,
++                              gdouble               scale);
+ };
+ 
+ 
+diff --git a/app/operations/gimpoperationinnereffects.c b/app/operations/gimpoperationinnereffects.c
+new file mode 100644
+index 0000000..a217fe6
+--- /dev/null
++++ b/app/operations/gimpoperationinnereffects.c
+@@ -0,0 +1,562 @@
++/* GIMP - The GNU Image Manipulation Program
++ * Copyright (C) 1995 Spencer Kimball and Peter Mattis
++ *
++ * gimpoperationinnereffects.c
++ * ChopGimp 3.32.0 : styles de calque « Satin » et « Incrustation de
++ * motif », comme ceux de Photoshop.
++ *
++ * Ce sont des sous-classes du Contour (chopgimp:stroke,
++ * gimpoperationcontour.c) : elles en gardent les remplissages (couleur,
++ * dégradé, motif avec échelle, angle, décalage, « Lier au calque »), le
++ * mode de fusion, l'opacité, le rendu par niveaux de mipmap et le
++ * compositing, mais leur couverture est l'intérieur du calque au lieu
++ * d'un trait sur son bord (GimpOperationContourClass::fill_coverage) ;
++ * l'effet est posé dans le calque, dont l'alpha ne change pas.
++ *
++ *  - chopgimp:satin : l'alpha du calque flouté (taille), décalé de la
++ *    distance dans les deux sens selon l'angle ; la différence des deux
++ *    copies, passée par le contour (courbe de Photoshop) et inversée au
++ *    besoin, donne la couverture de la couleur (Produit par défaut) ;
++ *  - chopgimp:pattern-overlay : le motif couvre tout le calque.
++ *
++ * Ce sont des filtres GEGL ordinaires : modifiables (icône fx, fenêtre
++ * Style de calque), enregistrés dans le XCF, exportés en PSD comme les
++ * effets « ChFX » et « patternFill » de Photoshop (psd-chopgimp.c).
++ *
++ * This program is free software: you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation; either version 3 of the License, or
++ * (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License
++ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
++ */
++
++#include "config.h"
++
++#include <math.h>
++#include <string.h>
++
++#include <gegl.h>
++#include <gdk-pixbuf/gdk-pixbuf.h>
++
++#include "libgimpbase/gimpbase.h"
++
++#include "operations-types.h"
++
++#include "gimpoperationinnereffects.h"
++
++
++enum
++{
++  PROP_0,
++  PROP_ANGLE,
++  PROP_DISTANCE,
++  PROP_SIZE,
++  PROP_INVERT,
++  PROP_CONTOUR
++};
++
++
++/*  ─── contours ─────────────────────────────────────────────────────── */
++
++GType
++gimp_satin_contour_get_type (void)
++{
++  static const GEnumValue values[] =
++  {
++    { GIMP_SATIN_CONTOUR_LINEAR,        "GIMP_SATIN_CONTOUR_LINEAR",        "linear"        },
++    { GIMP_SATIN_CONTOUR_CONE,          "GIMP_SATIN_CONTOUR_CONE",          "cone"          },
++    { GIMP_SATIN_CONTOUR_CONE_INVERTED, "GIMP_SATIN_CONTOUR_CONE_INVERTED", "cone-inverted" },
++    { GIMP_SATIN_CONTOUR_GAUSSIAN,      "GIMP_SATIN_CONTOUR_GAUSSIAN",      "gaussian"      },
++    { GIMP_SATIN_CONTOUR_HALF_ROUND,    "GIMP_SATIN_CONTOUR_HALF_ROUND",    "half-round"    },
++    { GIMP_SATIN_CONTOUR_RING,          "GIMP_SATIN_CONTOUR_RING",          "ring"          },
++    { GIMP_SATIN_CONTOUR_RING_DOUBLE,   "GIMP_SATIN_CONTOUR_RING_DOUBLE",   "ring-double"   },
++    { 0, NULL, NULL }
++  };
++
++  static const GimpEnumDesc descs[] =
++  {
++    { GIMP_SATIN_CONTOUR_LINEAR,        "Linéaire",       NULL },
++    { GIMP_SATIN_CONTOUR_CONE,          "Cône",           NULL },
++    { GIMP_SATIN_CONTOUR_CONE_INVERTED, "Cône inversé",   NULL },
++    { GIMP_SATIN_CONTOUR_GAUSSIAN,      "Gaussienne",     NULL },
++    { GIMP_SATIN_CONTOUR_HALF_ROUND,    "Demi-cercle",    NULL },
++    { GIMP_SATIN_CONTOUR_RING,          "Anneau",         NULL },
++    { GIMP_SATIN_CONTOUR_RING_DOUBLE,   "Double anneau",  NULL },
++    { 0, NULL, NULL }
++  };
++
++  static GType type = 0;
++
++  if (G_UNLIKELY (! type))
++    {
++      type = g_enum_register_static ("GimpSatinContour", values);
++      gimp_enum_set_value_descriptions (type, descs);
++    }
++
++  return type;
++}
++
++/*  the points of Photoshop's named curves (0 – 255), as the PSD export
++ *  writes them (psd-chopgimp.c, d_contour())
++ */
++static const struct
++{
++  gint    n;
++  gdouble pts[5][2];
++} satin_contours[] =
++{
++  { 2, { { 0, 0 }, { 255, 255 } } },
++  { 3, { { 0, 0 }, { 128, 255 }, { 255, 0 } } },
++  { 3, { { 0, 255 }, { 128, 0 }, { 255, 255 } } },
++  { 4, { { 0, 0 }, { 64, 26 }, { 191, 229 }, { 255, 255 } } },
++  { 3, { { 0, 0 }, { 64, 166 }, { 255, 255 } } },
++  { 4, { { 0, 0 }, { 85, 255 }, { 170, 255 }, { 255, 0 } } },
++  { 5, { { 0, 0 }, { 64, 255 }, { 128, 0 }, { 191, 255 }, { 255, 0 } } },
++};
++
++/*  the curve at v (0 – 1), piecewise linear  */
++static gfloat
++satin_contour_map (GimpSatinContour contour,
++                   gfloat           v)
++{
++  gint    k = CLAMP ((gint) contour, 0, (gint) G_N_ELEMENTS (satin_contours) - 1);
++  gdouble x = CLAMP (v, 0.0f, 1.0f) * 255.0;
++  gint    i;
++
++  for (i = 1; i < satin_contours[k].n; i++)
++    {
++      const gdouble *p0 = satin_contours[k].pts[i - 1];
++      const gdouble *p1 = satin_contours[k].pts[i];
++
++      if (x <= p1[0] || i == satin_contours[k].n - 1)
++        {
++          gdouble t = (p1[0] > p0[0]) ? (x - p0[0]) / (p1[0] - p0[0]) : 1.0;
++
++          t = CLAMP (t, 0.0, 1.0);
++
++          return (p0[1] + (p1[1] - p0[1]) * t) / 255.0;
++        }
++    }
++
++  return v;
++}
++
++
++/*  ─── Satin ─────────────────────────────────────────────────────────── */
++
++static void     gimp_operation_satin_get_property (GObject              *object,
++                                                   guint                 property_id,
++                                                   GValue               *value,
++                                                   GParamSpec           *pspec);
++static void     gimp_operation_satin_set_property (GObject              *object,
++                                                   guint                 property_id,
++                                                   const GValue         *value,
++                                                   GParamSpec           *pspec);
++static gboolean gimp_operation_satin_coverage     (GimpOperationContour *contour,
++                                                   GeglBuffer           *input,
++                                                   const GeglRectangle  *in_rect,
++                                                   const GeglRectangle  *roi,
++                                                   gint                  level,
++                                                   guchar               *mask,
++                                                   gint                  mask_stride);
++static gint     gimp_operation_satin_margin       (GimpOperationContour *contour,
++                                                   gdouble               scale);
++
++
++G_DEFINE_TYPE (GimpOperationSatin, gimp_operation_satin,
++               GIMP_TYPE_OPERATION_CONTOUR)
++
++
++static void
++gimp_operation_satin_class_init (GimpOperationSatinClass *klass)
++{
++  GObjectClass              *object_class    = G_OBJECT_CLASS (klass);
++  GeglOperationClass        *operation_class = GEGL_OPERATION_CLASS (klass);
++  GimpOperationContourClass *contour_class   = GIMP_OPERATION_CONTOUR_CLASS (klass);
++  GParamSpec                *pspec;
++
++  object_class->set_property = gimp_operation_satin_set_property;
++  object_class->get_property = gimp_operation_satin_get_property;
++
++  gegl_operation_class_set_keys (operation_class,
++                                 "name",        "chopgimp:satin",
++                                 "title",       "Satin",
++                                 "categories",  "light",
++                                 "description", "Ombrage satiné à l'intérieur "
++                                                "du calque (style de calque)",
++                                 NULL);
++
++  contour_class->fill_coverage = gimp_operation_satin_coverage;
++  contour_class->fill_margin   = gimp_operation_satin_margin;
++
++  pspec = gegl_param_spec_double ("angle",
++                                  "Angle",
++                                  "Direction du décalage, en degrés",
++                                  -180.0, 180.0, 19.0,
++                                  -180.0, 180.0, 1.0,
++                                  G_PARAM_READWRITE |
++                                  G_PARAM_CONSTRUCT);
++  gegl_param_spec_set_property_key (pspec, "unit", "degree");
++  g_object_class_install_property (object_class, PROP_ANGLE, pspec);
++
++  pspec = gegl_param_spec_double ("distance",
++                                  "Distance",
++                                  "Décalage des deux copies du calque, en pixels",
++                                  0.0, 250.0, 11.0,
++                                  0.0, 100.0, 1.5,
++                                  G_PARAM_READWRITE |
++                                  G_PARAM_CONSTRUCT);
++  gegl_param_spec_set_property_key (pspec, "unit", "pixel-distance");
++  g_object_class_install_property (object_class, PROP_DISTANCE, pspec);
++
++  pspec = gegl_param_spec_double ("size",
++                                  "Taille",
++                                  "Flou du satin, en pixels",
++                                  0.0, 250.0, 14.0,
++                                  0.0, 100.0, 1.5,
++                                  G_PARAM_READWRITE |
++                                  G_PARAM_CONSTRUCT);
++  gegl_param_spec_set_property_key (pspec, "unit", "pixel-distance");
++  g_object_class_install_property (object_class, PROP_SIZE, pspec);
++
++  g_object_class_install_property (object_class, PROP_INVERT,
++                                   g_param_spec_boolean ("invert",
++                                                         "Inverser",
++                                                         "Inverser le satin",
++                                                         TRUE,
++                                                         G_PARAM_READWRITE |
++                                                         G_PARAM_CONSTRUCT));
++
++  g_object_class_install_property (object_class, PROP_CONTOUR,
++                                   g_param_spec_enum ("contour",
++                                                      "Contour",
++                                                      "Courbe appliquée au satin",
++                                                      GIMP_TYPE_SATIN_CONTOUR,
++                                                      GIMP_SATIN_CONTOUR_GAUSSIAN,
++                                                      G_PARAM_READWRITE |
++                                                      G_PARAM_CONSTRUCT));
++}
++
++static void
++gimp_operation_satin_init (GimpOperationSatin *self)
++{
++}
++
++static void
++gimp_operation_satin_get_property (GObject    *object,
++                                   guint       property_id,
++                                   GValue     *value,
++                                   GParamSpec *pspec)
++{
++  GimpOperationSatin *self = GIMP_OPERATION_SATIN (object);
++
++  switch (property_id)
++    {
++    case PROP_ANGLE:
++      g_value_set_double (value, self->angle);
++      break;
++
++    case PROP_DISTANCE:
++      g_value_set_double (value, self->distance);
++      break;
++
++    case PROP_SIZE:
++      g_value_set_double (value, self->size);
++      break;
++
++    case PROP_INVERT:
++      g_value_set_boolean (value, self->invert);
++      break;
++
++    case PROP_CONTOUR:
++      g_value_set_enum (value, self->contour);
++      break;
++
++    default:
++      G_OBJECT_WARN_INVALID_PROPERTY_ID (object, property_id, pspec);
++      break;
++    }
++}
++
++static void
++gimp_operation_satin_set_property (GObject      *object,
++                                   guint         property_id,
++                                   const GValue *value,
++                                   GParamSpec   *pspec)
++{
++  GimpOperationSatin *self = GIMP_OPERATION_SATIN (object);
++
++  switch (property_id)
++    {
++    case PROP_ANGLE:
++      self->angle = g_value_get_double (value);
++      break;
++
++    case PROP_DISTANCE:
++      self->distance = g_value_get_double (value);
++      break;
++
++    case PROP_SIZE:
++      self->size = g_value_get_double (value);
++      break;
++
++    case PROP_INVERT:
++      self->invert = g_value_get_boolean (value);
++      break;
++
++    case PROP_CONTOUR:
++      self->contour = g_value_get_enum (value);
++      break;
++
++    default:
++      G_OBJECT_WARN_INVALID_PROPERTY_ID (object, property_id, pspec);
++      return;
++    }
++
++  /*  the region read around each pixel may have changed  */
++  gimp_operation_contour_input_changed (GIMP_OPERATION_CONTOUR (self));
++}
++
++/*  the radius of each of the 3 box blurs approximating a gaussian of
++ *  standard deviation size / 2 (Photoshop's size, as for the glows:
++ *  psd-chopgimp.c, size_spread())
++ */
++static gint
++gimp_operation_satin_box_radius (gdouble size)
++{
++  gdouble sigma = size / 2.0;
++  gdouble w     = sqrt (4.0 * sigma * sigma + 1.0);
++
++  return MAX (0, (gint) floor ((w - 1.0) / 2.0 + 0.5));
++}
++
++static gint
++gimp_operation_satin_margin (GimpOperationContour *contour,
++                             gdouble               scale)
++{
++  GimpOperationSatin *self = GIMP_OPERATION_SATIN (contour);
++  gint                r    = gimp_operation_satin_box_radius (self->size * scale);
++
++  return (gint) ceil (self->distance * scale) + 3 * r + 2;
++}
++
++/*  one box blur of radius r along n values (stride apart), zero outside  */
++static void
++satin_box_1d (gfloat *data,
++              gint    n,
++              gint    stride,
++              gint    r,
++              gfloat *tmp)
++{
++  gfloat sum = 0.0f;
++  gfloat inv = 1.0f / (2 * r + 1);
++  gint   i;
++
++  for (i = 0; i < n; i++)
++    tmp[i] = data[(gsize) i * stride];
++
++  for (i = 0; i < MIN (r, n); i++)
++    sum += tmp[i];
++
++  for (i = 0; i < n; i++)
++    {
++      if (i + r < n)
++        sum += tmp[i + r];
++
++      if (i - r - 1 >= 0)
++        sum -= tmp[i - r - 1];
++
++      data[(gsize) i * stride] = MAX (sum, 0.0f) * inv;
++    }
++}
++
++/*  the blurred alpha at x, y (buffer coordinates, pixel centers at
++ *  .5), bilinear, zero outside
++ */
++static gfloat
++satin_sample (const gfloat *buf,
++              gint          w,
++              gint          h,
++              gdouble       x,
++              gdouble       y)
++{
++  gdouble fx = floor (x - 0.5);
++  gdouble fy = floor (y - 0.5);
++  gfloat  tx = (x - 0.5) - fx;
++  gfloat  ty = (y - 0.5) - fy;
++  gint    x0 = (gint) fx;
++  gint    y0 = (gint) fy;
++  gfloat  v[4];
++  gint    k;
++
++  for (k = 0; k < 4; k++)
++    {
++      gint xx = x0 + (k & 1);
++      gint yy = y0 + (k >> 1);
++
++      v[k] = (xx >= 0 && yy >= 0 && xx < w && yy < h) ?
++             buf[(gsize) yy * w + xx] : 0.0f;
++    }
++
++  return (v[0] * (1.0f - tx) + v[1] * tx) * (1.0f - ty) +
++         (v[2] * (1.0f - tx) + v[3] * tx) * ty;
++}
++
++static gboolean
++gimp_operation_satin_coverage (GimpOperationContour *contour,
++                               GeglBuffer           *input,
++                               const GeglRectangle  *in_rect,
++                               const GeglRectangle  *roi,
++                               gint                  level,
++                               guchar               *mask,
++                               gint                  mask_stride)
++{
++  GimpOperationSatin *self  = GIMP_OPERATION_SATIN (contour);
++  gdouble             scale = 1.0 / (1 << MAX (level, 0));
++  gdouble             angle = self->angle * G_PI / 180.0;
++  gdouble             dist  = self->distance * scale;
++  gint                r     = gimp_operation_satin_box_radius (self->size * scale);
++  gint                margin;
++  gdouble             ox, oy;
++  GeglRectangle       area;
++  gfloat             *buf;
++  gfloat             *tmp;
++  gint                x, y, pass;
++
++  /*  the offset of the light angle, as the drop shadow's
++   *  (x = -cos a × d, y = sin a × d)
++   */
++  ox = -cos (angle) * dist;
++  oy =  sin (angle) * dist;
++
++  margin = (gint) ceil (dist) + 3 * r + 2;
++
++  area.x      = roi->x - margin;
++  area.y      = roi->y - margin;
++  area.width  = roi->width  + 2 * margin;
++  area.height = roi->height + 2 * margin;
++
++  if (! gegl_rectangle_intersect (&area, &area, in_rect))
++    return FALSE;
++
++  buf = g_try_new (gfloat, (gsize) area.width * area.height);
++  tmp = g_try_new (gfloat, MAX (area.width, area.height));
++
++  if (! buf || ! tmp)
++    {
++      g_free (buf);
++      g_free (tmp);
++      return FALSE;
++    }
++
++  gegl_buffer_get (input, &area, scale, babl_format ("A float"),
++                   buf, GEGL_AUTO_ROWSTRIDE, GEGL_ABYSS_NONE);
++
++  /*  the blur: 3 box blurs each way (outside the input, alpha is 0)  */
++  if (r > 0)
++    {
++      for (pass = 0; pass < 3; pass++)
++        {
++          for (y = 0; y < area.height; y++)
++            satin_box_1d (buf + (gsize) y * area.width, area.width, 1, r, tmp);
++
++          for (x = 0; x < area.width; x++)
++            satin_box_1d (buf + x, area.height, area.width, r, tmp);
++        }
++    }
++
++  /*  the difference of the two shifted copies, through the contour  */
++  for (y = 0; y < roi->height; y++)
++    {
++      guchar  *m  = mask + (gsize) y * mask_stride;
++      gdouble  py = roi->y + y + 0.5 - area.y;
++
++      for (x = 0; x < roi->width; x++)
++        {
++          gdouble px = roi->x + x + 0.5 - area.x;
++          gfloat  a  = satin_sample (buf, area.width, area.height,
++                                     px + ox, py + oy);
++          gfloat  b  = satin_sample (buf, area.width, area.height,
++                                     px - ox, py - oy);
++          gfloat  v  = satin_contour_map (self->contour, fabsf (a - b));
++
++          if (self->invert)
++            v = 1.0f - v;
++
++          m[x] = (guchar) (CLAMP (v, 0.0f, 1.0f) * 255.0f + 0.5f);
++        }
++    }
++
++  g_free (buf);
++  g_free (tmp);
++
++  return TRUE;
++}
++
++
++/*  ─── Incrustation de motif ─────────────────────────────────────────── */
++
++static gboolean gimp_operation_pattern_overlay_coverage (GimpOperationContour *contour,
++                                                         GeglBuffer           *input,
++                                                         const GeglRectangle  *in_rect,
++                                                         const GeglRectangle  *roi,
++                                                         gint                  level,
++                                                         guchar               *mask,
++                                                         gint                  mask_stride);
++
++
++G_DEFINE_TYPE (GimpOperationPatternOverlay, gimp_operation_pattern_overlay,
++               GIMP_TYPE_OPERATION_CONTOUR)
++
++
++static void
++gimp_operation_pattern_overlay_class_init (GimpOperationPatternOverlayClass *klass)
++{
++  GeglOperationClass        *operation_class = GEGL_OPERATION_CLASS (klass);
++  GimpOperationContourClass *contour_class   = GIMP_OPERATION_CONTOUR_CLASS (klass);
++
++  gegl_operation_class_set_keys (operation_class,
++                                 "name",        "chopgimp:pattern-overlay",
++                                 "title",       "Incrustation de motif",
++                                 "categories",  "light",
++                                 "description", "Recouvre le calque d'un motif "
++                                                "(style de calque)",
++                                 NULL);
++
++  contour_class->fill_coverage = gimp_operation_pattern_overlay_coverage;
++  contour_class->fill_margin   = NULL;
++}
++
++static void
++gimp_operation_pattern_overlay_init (GimpOperationPatternOverlay *self)
++{
++}
++
++static gboolean
++gimp_operation_pattern_overlay_coverage (GimpOperationContour *contour,
++                                         GeglBuffer           *input,
++                                         const GeglRectangle  *in_rect,
++                                         const GeglRectangle  *roi,
++                                         gint                  level,
++                                         guchar               *mask,
++                                         gint                  mask_stride)
++{
++  /*  no pattern chosen yet: nothing (not the stroke's black fallback)  */
++  if (contour->fill_type == GIMP_CONTOUR_FILL_PATTERN &&
++      (! contour->pattern_data || ! *contour->pattern_data))
++    return FALSE;
++
++  if (! gegl_rectangle_intersect (NULL, roi, in_rect))
++    return FALSE;
++
++  memset (mask, 255, (gsize) mask_stride * roi->height);
++
++  return TRUE;
++}
+diff --git a/app/operations/gimpoperationinnereffects.h b/app/operations/gimpoperationinnereffects.h
+new file mode 100644
+index 0000000..0e19ee5
+--- /dev/null
++++ b/app/operations/gimpoperationinnereffects.h
+@@ -0,0 +1,88 @@
++/* GIMP - The GNU Image Manipulation Program
++ * Copyright (C) 1995 Spencer Kimball and Peter Mattis
++ *
++ * gimpoperationinnereffects.h
++ * ChopGimp 3.32.0 : styles de calque « Satin » (chopgimp:satin) et
++ * « Incrustation de motif » (chopgimp:pattern-overlay)
++ *
++ * This program is free software: you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation; either version 3 of the License, or
++ * (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License
++ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
++ */
++
++#pragma once
++
++#include "gimpoperationcontour.h"
++
++
++/*  Photoshop's contours (the same nicks as GEGL's "contour" of
++ *  gegl:dropshadow / gegl:inner-glow, which the PSD export maps to
++ *  Photoshop's named curves)
++ */
++typedef enum
++{
++  GIMP_SATIN_CONTOUR_LINEAR,
++  GIMP_SATIN_CONTOUR_CONE,
++  GIMP_SATIN_CONTOUR_CONE_INVERTED,
++  GIMP_SATIN_CONTOUR_GAUSSIAN,
++  GIMP_SATIN_CONTOUR_HALF_ROUND,
++  GIMP_SATIN_CONTOUR_RING,
++  GIMP_SATIN_CONTOUR_RING_DOUBLE
++} GimpSatinContour;
++
++#define GIMP_TYPE_SATIN_CONTOUR (gimp_satin_contour_get_type ())
++
++GType gimp_satin_contour_get_type (void) G_GNUC_CONST;
++
++
++#define GIMP_TYPE_OPERATION_SATIN            (gimp_operation_satin_get_type ())
++#define GIMP_OPERATION_SATIN(obj)            (G_TYPE_CHECK_INSTANCE_CAST ((obj), GIMP_TYPE_OPERATION_SATIN, GimpOperationSatin))
++#define GIMP_IS_OPERATION_SATIN(obj)         (G_TYPE_CHECK_INSTANCE_TYPE ((obj), GIMP_TYPE_OPERATION_SATIN))
++
++#define GIMP_TYPE_OPERATION_PATTERN_OVERLAY  (gimp_operation_pattern_overlay_get_type ())
++#define GIMP_IS_OPERATION_PATTERN_OVERLAY(obj) (G_TYPE_CHECK_INSTANCE_TYPE ((obj), GIMP_TYPE_OPERATION_PATTERN_OVERLAY))
++
++
++typedef struct _GimpOperationSatin                GimpOperationSatin;
++typedef struct _GimpOperationSatinClass           GimpOperationSatinClass;
++typedef struct _GimpOperationPatternOverlay       GimpOperationPatternOverlay;
++typedef struct _GimpOperationPatternOverlayClass  GimpOperationPatternOverlayClass;
++
++struct _GimpOperationSatin
++{
++  GimpOperationContour  parent_instance;
++
++  gdouble               angle;      /*  degrees, Photoshop's light angle  */
++  gdouble               distance;   /*  pixels                            */
++  gdouble               size;       /*  pixels (blur)                     */
++  gboolean              invert;
++  GimpSatinContour      contour;
++};
++
++struct _GimpOperationSatinClass
++{
++  GimpOperationContourClass  parent_class;
++};
++
++struct _GimpOperationPatternOverlay
++{
++  GimpOperationContour  parent_instance;
++};
++
++struct _GimpOperationPatternOverlayClass
++{
++  GimpOperationContourClass  parent_class;
++};
++
++
++GType   gimp_operation_satin_get_type           (void) G_GNUC_CONST;
++GType   gimp_operation_pattern_overlay_get_type (void) G_GNUC_CONST;
+diff --git a/app/operations/meson.build b/app/operations/meson.build
+index 40e076f..e45e658 100644
+--- a/app/operations/meson.build
++++ b/app/operations/meson.build
+@@ -36,6 +36,7 @@ libappoperations_sources = [
+   'gimpoperationcolorize.c',
+   'gimpoperationcomposecrop.c',
+   'gimpoperationcontour.c',
++  'gimpoperationinnereffects.c',
+   'gimpoperationlayerstylefused.c',
+   'gimpoperationcurves.c',
+   'gimpoperationdesaturate.c',
+diff --git a/app/propgui/gimppropgui-layer-style.c b/app/propgui/gimppropgui-layer-style.c
+index 4d6c59f..6db73bd 100644
+--- a/app/propgui/gimppropgui-layer-style.c
++++ b/app/propgui/gimppropgui-layer-style.c
+@@ -1122,6 +1122,103 @@ _gimp_prop_gui_new_chopgimp_stroke (GObject                  *config,
+   return main_vbox;
+ }
+ 
++/*  ChopGimp 3.32.0: Satin (chopgimp:satin), as Photoshop's: Structure
++ *  (mode, color, opacity, angle, distance, size, contour, invert)
++ */
++GtkWidget *
++_gimp_prop_gui_new_chopgimp_satin (GObject                  *config,
++                                   GParamSpec              **param_specs,
++                                   guint                     n_param_specs,
++                                   GeglRectangle            *area,
++                                   GimpContext              *context,
++                                   GimpCreatePickerFunc      create_picker_func,
++                                   GimpCreateControllerFunc  create_controller_func,
++                                   gpointer                  creator)
++{
++  GtkWidget *main_vbox;
++  GtkWidget *vbox;
++
++  g_return_val_if_fail (G_IS_OBJECT (config), NULL);
++  g_return_val_if_fail (GIMP_IS_CONTEXT (context), NULL);
++
++  main_vbox = gtk_box_new (GTK_ORIENTATION_VERTICAL, 6);
++
++  vbox = layer_style_frame (main_vbox, "Structure");
++
++  layer_style_add_mode (vbox, config, "mode");
++  layer_style_add_prop (vbox, config, "color", "Couleur",
++                        area, context, create_picker_func, creator);
++  layer_style_add_prop (vbox, config, "opacity", "Opacité",
++                        area, context, create_picker_func, creator);
++  layer_style_add_prop (vbox, config, "angle", "Angle",
++                        area, context, create_picker_func, creator);
++  layer_style_add_prop (vbox, config, "distance", "Distance",
++                        area, context, create_picker_func, creator);
++  layer_style_add_prop (vbox, config, "size", "Taille",
++                        area, context, create_picker_func, creator);
++  layer_style_add_prop (vbox, config, "contour", "Contour",
++                        area, context, create_picker_func, creator);
++  layer_style_add_prop (vbox, config, "invert", "Inverser",
++                        area, context, create_picker_func, creator);
++
++  return main_vbox;
++}
++
++/*  ChopGimp 3.32.0: Incrustation de motif (chopgimp:pattern-overlay), as
++ *  Photoshop's: mode, opacity, the pattern, angle, scale, « Lier au
++ *  calque », the offset (also moved by dragging on the image)
++ */
++GtkWidget *
++_gimp_prop_gui_new_chopgimp_pattern_overlay (GObject                  *config,
++                                             GParamSpec              **param_specs,
++                                             guint                     n_param_specs,
++                                             GeglRectangle            *area,
++                                             GimpContext              *context,
++                                             GimpCreatePickerFunc      create_picker_func,
++                                             GimpCreateControllerFunc  create_controller_func,
++                                             gpointer                  creator)
++{
++  GtkWidget *main_vbox;
++  GtkWidget *vbox;
++  GtkWidget *box;
++
++  g_return_val_if_fail (G_IS_OBJECT (config), NULL);
++  g_return_val_if_fail (GIMP_IS_CONTEXT (context), NULL);
++
++  main_vbox = gtk_box_new (GTK_ORIENTATION_VERTICAL, 6);
++
++  vbox = layer_style_frame (main_vbox, "Motif");
++
++  layer_style_add_mode (vbox, config, "mode");
++  layer_style_add_prop (vbox, config, "opacity", "Opacité",
++                        area, context, create_picker_func, creator);
++
++  /*  GimpContourFillType 2: the pattern (stored at once if none is)  */
++  box = layer_style_resource_box (config, "pattern", STORE_PATTERN,
++                                  context, "fill-type", 2);
++  gtk_box_pack_start (GTK_BOX (vbox), box, FALSE, FALSE, 0);
++  gtk_widget_set_visible (box, TRUE);
++
++  layer_style_add_prop (vbox, config, "pattern-angle", "Angle",
++                        area, context, create_picker_func, creator);
++  layer_style_add_prop (vbox, config, "pattern-scale", "Échelle (%)",
++                        area, context, create_picker_func, creator);
++  layer_style_add_prop (vbox, config, "align-with-layer",
++                        "Lier au calque",
++                        area, context, create_picker_func, creator);
++  layer_style_add_offset (main_vbox, vbox, config,
++                          "pattern-offset-x", "pattern-offset-y",
++                          area, context, create_picker_func, creator);
++  layer_style_add_hint (vbox,
++                        "Faites glisser sur l'image pour déplacer le motif.");
++
++  layer_style_add_offset_controller (config, area, stroke_offset_props,
++                                     "Motif : ",
++                                     create_controller_func, creator);
++
++  return main_vbox;
++}
++
+ /*  Ombre portée / Lueur externe (gegl:dropshadow) and Ombre interne /
+  *  Lueur interne (gegl:inner-glow), as Photoshop's: Structure (mode,
+  *  opacity, noise, color or gradient), Éléments (size, spread), Qualité
+diff --git a/app/propgui/gimppropgui-layer-style.h b/app/propgui/gimppropgui-layer-style.h
+index 78c2463..b02be34 100644
+--- a/app/propgui/gimppropgui-layer-style.h
++++ b/app/propgui/gimppropgui-layer-style.h
+@@ -48,3 +48,23 @@ GtkWidget * _gimp_prop_gui_new_inner_glow      (GObject                  *config
+                                                 GimpCreatePickerFunc      create_picker_func,
+                                                 GimpCreateControllerFunc  create_controller_func,
+                                                 gpointer                  creator);
++
++/*  ChopGimp 3.32.0  */
++GtkWidget * _gimp_prop_gui_new_chopgimp_satin  (GObject                  *config,
++                                                GParamSpec              **param_specs,
++                                                guint                     n_param_specs,
++                                                GeglRectangle            *area,
++                                                GimpContext              *context,
++                                                GimpCreatePickerFunc      create_picker_func,
++                                                GimpCreateControllerFunc  create_controller_func,
++                                                gpointer                  creator);
++
++GtkWidget * _gimp_prop_gui_new_chopgimp_pattern_overlay
++                                               (GObject                  *config,
++                                                GParamSpec              **param_specs,
++                                                guint                     n_param_specs,
++                                                GeglRectangle            *area,
++                                                GimpContext              *context,
++                                                GimpCreatePickerFunc      create_picker_func,
++                                                GimpCreateControllerFunc  create_controller_func,
++                                                gpointer                  creator);
+diff --git a/app/propgui/gimppropgui.c b/app/propgui/gimppropgui.c
+index 3a36104..4e7416e 100644
+--- a/app/propgui/gimppropgui.c
++++ b/app/propgui/gimppropgui.c
+@@ -496,6 +496,10 @@ gui_new_funcs[] =
+   /*  ChopGimp: layer styles laid out as Photoshop's  */
+   { "GimpGegl-chopgimp-stroke-config",
+     _gimp_prop_gui_new_chopgimp_stroke },
++  { "GimpGegl-chopgimp-satin-config",
++    _gimp_prop_gui_new_chopgimp_satin },
++  { "GimpGegl-chopgimp-pattern-overlay-config",
++    _gimp_prop_gui_new_chopgimp_pattern_overlay },
+   { "GimpGegl-gegl-dropshadow-config",
+     _gimp_prop_gui_new_dropshadow },
+   { "GimpGegl-gegl-inner-glow-config",
+diff --git a/app/tools/gimpfiltertool.c b/app/tools/gimpfiltertool.c
+index ee97fbc..988c48d 100644
+--- a/app/tools/gimpfiltertool.c
++++ b/app/tools/gimpfiltertool.c
+@@ -1760,6 +1760,13 @@ gimp_filter_tool_create_filter (GimpFilterTool *filter_tool)
+                                                   filter_tool->operation,
+                                                   gimp_tool_get_icon_name (tool));
+ 
++  /*  ChopGimp 3.32.0: a new filter, placed among the layer styles when
++   *  first added (gimp_drawable_filter_place_style())
++   */
++  if (! filter_tool->existing_filter)
++    g_object_set_data (G_OBJECT (filter_tool->filter),
++                       "chopgimp-place-style", GINT_TO_POINTER (TRUE));
++
+   gimp_filter_tool_update_filter (filter_tool);
+ 
+   g_signal_connect (filter_tool->filter, "flush",
+diff --git a/plug-ins/file-psd/psd-chopgimp.c b/plug-ins/file-psd/psd-chopgimp.c
+index b7ad1f7..03130ed 100644
+--- a/plug-ins/file-psd/psd-chopgimp.c
++++ b/plug-ins/file-psd/psd-chopgimp.c
+@@ -11,7 +11,10 @@
+  *    gegl:dropshadow, gegl:inner-glow, chopgimp:stroke, gegl:bevel,
+  *    gegl:color-overlay) and the gradient overlays of chopgimp_fx as
+  *    Photoshop's effects (lfx2: DrSh, OrGl, IrSh, IrGl, FrFX, ebbl, SoFi,
+- *    GrFl); a style without equivalent is pixelized in a layer of its own,
++ *    GrFl); 3.32.0: chopgimp:satin → ChFX, chopgimp:pattern-overlay →
++ *    patternFill, its pattern in the document's patterns (Patt, written
++ *    by chopgimp_psd_write_patterns()); a style without equivalent is
++ *    pixelized in a layer of its own,
+  *    the other filters merged into the pixels (the original kept hidden);
+  *    everything is in the report (chopgimp_psd_last_report);
+  *  - vector layers as shape layers (vmsk + vscg SoCo / GdFl + vstk); when
+@@ -368,6 +371,21 @@ fx_nick (GObject     *c,
+   return r;
+ }
+ 
++/*  3.32.0: a boolean property (FALSE when missing)  */
++static gboolean
++fx_bool (GObject     *c,
++         const gchar *p,
++         gboolean     def)
++{
++  GParamSpec *ps = fx_spec (c, p);
++  gboolean    v  = def;
++
++  if (ps && ps->value_type == G_TYPE_BOOLEAN)
++    g_object_get (c, p, &v, NULL);
++
++  return v;
++}
++
+ static gboolean
+ fx_rgba (GObject     *c,
+          const gchar *p,
+@@ -444,10 +462,13 @@ ps_blend_mode (GimpLayerMode mode)
+ 
+ /*  ─── Photoshop effects (lfx2) ──────────────────────────────────────── */
+ 
+-/*  GEGL's contour presets are Photoshop's: TrnS by name  */
++/*  GEGL's contour presets are Photoshop's: TrnS (MpgS for the satin) by
++ *  name
++ */
+ static void
+-d_contour (Desc        *d,
+-           const gchar *nick)
++d_contour_key (Desc        *d,
++               const gchar *key,
++               const gchar *nick)
+ {
+   static const struct { const gchar *nick, *name; gint n; gdouble pts[5][2]; } c[] =
+   {
+@@ -476,7 +497,14 @@ d_contour (Desc        *d,
+       d_doub (&pts[i], "Vrtc", c[k].pts[i][1]);
+     }
+   d_objs (&sh, "Crv ", "CrPt", pts, c[k].n);
+-  d_obj (d, "TrnS", "ShpC", &sh);
++  d_obj (d, key, "ShpC", &sh);
++}
++
++static void
++d_contour (Desc        *d,
++           const gchar *nick)
++{
++  d_contour_key (d, "TrnS", nick);
+ }
+ 
+ typedef struct
+@@ -489,9 +517,14 @@ typedef struct
+ enum
+ {
+   FX_DRSH = 1 << 0, FX_IRSH = 1 << 1, FX_ORGL = 1 << 2, FX_IRGL = 1 << 3,
+-  FX_EBBL = 1 << 4, FX_FRFX = 1 << 5, FX_SOFI = 1 << 6, FX_GRFL = 1 << 7
++  FX_EBBL = 1 << 4, FX_FRFX = 1 << 5, FX_SOFI = 1 << 6, FX_GRFL = 1 << 7,
++  FX_CHFX = 1 << 8, FX_PATT = 1 << 9
+ };
+ 
++static const gchar * patt_add (ChopPsd     *ctx,
++                               const gchar *data,
++                               gchar      **name);
++
+ static void
+ fx_add (ChopFx      *fx,
+         const gchar *key,
+@@ -534,7 +567,8 @@ offset_angle (gdouble x,
+ 
+ /*  @report: what was approximated  */
+ static gboolean
+-fx_convert (ChopFx              *fx,
++fx_convert (ChopPsd             *ctx,
++            ChopFx              *fx,
+             GimpDrawableFilter  *f,
+             GString             *approx)
+ {
+@@ -768,6 +802,100 @@ fx_convert (ChopFx              *fx,
+           ok = TRUE;
+         }
+     }
++  /*  3.32.0: Satin (gimpoperationinnereffects.c) → ChFX: the same
++   *  angle, distance, size, contour, invert; the stroke's mode and
++   *  opacity (the filter's own mode and opacity multiply it)
++   */
++  else if (! strcmp (op, "chopgimp:satin"))
++    {
++      gchar       *mode    = fx_nick (c, "mode");
++      gchar       *fill    = fx_nick (c, "fill-type");
++      gchar       *contour = fx_nick (c, "contour");
++      const gchar *md      = ps_blend (mode ? mode : "multiply");
++
++      fx_rgba (c, "color", rgba);
++
++      if (fmode != GIMP_LAYER_MODE_NORMAL && fmode != GIMP_LAYER_MODE_REPLACE)
++        md = NULL;
++
++      if (! (fx->used & FX_CHFX) && md && (! fill || ! strcmp (fill, "color")))
++        {
++          e = d_new ();
++          d_common (&e, visible);
++          d_enum (&e, "Md  ", "BlnM", md);
++          d_rgb (&e, "Clr ", rgba);
++          d_bool (&e, "AntA", FALSE);
++          d_bool (&e, "Invr", fx_bool (c, "invert", TRUE));
++          d_unit (&e, "Opct", "#Prc",
++                  CLAMP (fx_num (c, "opacity", 0.5) * rgba[3] * fop, 0, 1) * 100.0);
++          d_unit (&e, "lagl", "#Ang", fx_num (c, "angle", 19.0));
++          d_unit (&e, "Dstn", "#Pxl", fx_num (c, "distance", 11.0));
++          d_unit (&e, "blur", "#Pxl", fx_num (c, "size", 14.0));
++          d_contour_key (&e, "MpgS", contour);
++          fx_add (fx, "ChFX", &e);
++          fx->used |= FX_CHFX;
++          ok = TRUE;
++          g_string_append_printf (approx, "%s : contour du satin rendu par la courbe "
++                                  "nommée de Photoshop\n", name);
++        }
++
++      g_free (mode);
++      g_free (fill);
++      g_free (contour);
++    }
++  /*  3.32.0: Incrustation de motif → patternFill, its pattern added to
++   *  the document's patterns (Patt) under a stable identifier
++   */
++  else if (! strcmp (op, "chopgimp:pattern-overlay"))
++    {
++      gchar       *mode = fx_nick (c, "mode");
++      gchar       *fill = fx_nick (c, "fill-type");
++      gchar       *data = fx_nick (c, "pattern");
++      gchar       *pname = NULL;
++      const gchar *md   = ps_blend (mode ? mode : "normal");
++      const gchar *id   = NULL;
++
++      if (fmode != GIMP_LAYER_MODE_NORMAL && fmode != GIMP_LAYER_MODE_REPLACE)
++        md = NULL;
++
++      if (! (fx->used & FX_PATT) && md && fill && ! strcmp (fill, "pattern") &&
++          data && *data)
++        id = patt_add (ctx, data, &pname);
++
++      if (id)
++        {
++          Desc    ptrn = d_new ();
++          Desc    phase = d_new ();
++          gdouble angle = fx_num (c, "pattern-angle", 0.0);
++
++          d_text (&ptrn, "Nm  ", pname ? pname : "ChopGimp");
++          d_text (&ptrn, "Idnt", id);
++
++          d_doub (&phase, "Hrzn", fx_num (c, "pattern-offset-x", 0.0));
++          d_doub (&phase, "Vrtc", fx_num (c, "pattern-offset-y", 0.0));
++
++          e = d_new ();
++          d_common (&e, visible);
++          d_enum (&e, "Md  ", "BlnM", md);
++          d_unit (&e, "Opct", "#Prc",
++                  CLAMP (fx_num (c, "opacity", 1.0) * fop, 0, 1) * 100.0);
++          d_obj (&e, "Ptrn", "Ptrn", &ptrn);
++          d_unit (&e, "Scl ", "#Prc", CLAMP (fx_num (c, "pattern-scale", 100.0), 1, 1000));
++          d_bool (&e, "Algn", fx_bool (c, "align-with-layer", TRUE));
++          d_obj (&e, "phase", "Pnt ", &phase);
++          /*  Photoshop 22+: the pattern's angle (older versions ignore it)  */
++          if (angle != 0.0)
++            d_unit (&e, "Angl", "#Ang", -angle);
++          fx_add (fx, "patternFill", &e);
++          fx->used |= FX_PATT;
++          ok = TRUE;
++        }
++
++      g_free (pname);
++      g_free (mode);
++      g_free (fill);
++      g_free (data);
++    }
+ 
+   g_free (op);
+   g_free (name);
+@@ -979,6 +1107,8 @@ struct _ChopPsd
+   GHashTable *layers;       /* tattoo → ChopLayer *                      */
+   GString    *report;
+   gboolean    styles;
++  GByteArray *patt;         /* 3.32.0: the patterns (Patt) of the overlays */
++  GHashTable *patt_ids;     /* MD5 of the pattern data → identifier      */
+ };
+ 
+ static GString *chop_last_report = NULL;
+@@ -1167,7 +1297,10 @@ is_style_op (const gchar *op)
+ {
+   return op && (! strcmp (op, "gegl:dropshadow") || ! strcmp (op, "gegl:inner-glow") ||
+                 ! strcmp (op, "chopgimp:stroke") || ! strcmp (op, "gegl:bevel") ||
+-                ! strcmp (op, "gegl:color-overlay"));
++                ! strcmp (op, "gegl:color-overlay") ||
++                /*  3.32.0  */
++                ! strcmp (op, "chopgimp:satin") ||
++                ! strcmp (op, "chopgimp:pattern-overlay"));
+ }
+ 
+ static gboolean
+@@ -1273,7 +1406,7 @@ prepare_layer (ChopPsd   *ctx,
+       gchar *op = gimp_drawable_filter_get_operation_name (fl[i]);
+ 
+       if (as_style (ctx, op))
+-        conv[i] = fx_convert (&cl->fx, fl[i], approx);
++        conv[i] = fx_convert (ctx, &cl->fx, fl[i], approx);
+       else if (gimp_drawable_filter_get_visible (fl[i]))
+         any_generic = TRUE;
+ 
+@@ -1418,6 +1551,10 @@ chopgimp_psd_free (ChopPsd *ctx)
+ 
+   g_hash_table_destroy (ctx->layers);
+   g_string_free (ctx->report, TRUE);
++  if (ctx->patt)
++    g_byte_array_free (ctx->patt, TRUE);
++  if (ctx->patt_ids)
++    g_hash_table_destroy (ctx->patt_ids);
+   g_free (ctx);
+ }
+ 
+@@ -1428,6 +1565,243 @@ chopgimp_psd_last_report (void)
+ }
+ 
+ 
++/*  ─── 3.32.0: patterns of the « Incrustation de motif » (Patt) ─────────
++ *
++ *  The overlay stores its pattern as base64 of a zlib-compressed GIMP
++ *  .pat file (app/propgui/gimppropgui-layer-style.c); Photoshop finds the
++ *  pattern of a patternFill effect by its identifier among the patterns
++ *  of the document: the « Patt » block after the layers (Adobe « Photoshop
++ *  File Formats »: pattern, version 1, RGB, then a virtual memory array
++ *  list of 24 channels + user mask (the alpha) + sheet mask, raw 8 bits).
++ */
++
++static guint32
++be32 (const guchar *p)
++{
++  return ((guint32) p[0] << 24) | ((guint32) p[1] << 16) | ((guint32) p[2] << 8) | p[3];
++}
++
++/*  → RGBA 8 bits (width × height × 4), NULL if unreadable  */
++static guchar *
++pat_decode (const gchar *data,
++            gint        *width,
++            gint        *height,
++            gchar      **name)
++{
++  guchar        *z;
++  gsize          nz;
++  GInputStream  *mem;
++  GInputStream  *in;
++  GConverter    *dec;
++  GByteArray    *raw = g_byte_array_new ();
++  guchar         buf[16384];
++  gssize         r;
++  guchar        *rgba = NULL;
++  guint32        hsize, version, w, h, bpp;
++
++  z = g_base64_decode (data, &nz);
++  if (! z || nz == 0)
++    {
++      g_free (z);
++      g_byte_array_free (raw, TRUE);
++      return NULL;
++    }
++
++  mem = g_memory_input_stream_new_from_data (z, nz, g_free);
++  dec = G_CONVERTER (g_zlib_decompressor_new (G_ZLIB_COMPRESSOR_FORMAT_ZLIB));
++  in  = g_converter_input_stream_new (mem, dec);
++
++  while ((r = g_input_stream_read (in, buf, sizeof (buf), NULL, NULL)) > 0 &&
++         raw->len < (256u << 20))
++    g_byte_array_append (raw, buf, r);
++
++  g_object_unref (in);
++  g_object_unref (dec);
++  g_object_unref (mem);
++
++  if (raw->len < 24 || memcmp (raw->data + 20, "GPAT", 4))
++    goto out;
++
++  hsize   = be32 (raw->data);
++  version = be32 (raw->data + 4);
++  w       = be32 (raw->data + 8);
++  h       = be32 (raw->data + 12);
++  bpp     = be32 (raw->data + 16);
++
++  if (version != 1 || bpp < 1 || bpp > 4 || w == 0 || h == 0 ||
++      w > 30000 || h > 30000 || hsize < 24 || hsize > raw->len ||
++      (guint64) hsize + (guint64) w * h * bpp > raw->len)
++    goto out;
++
++  if (name)
++    *name = (hsize > 24) ? g_strndup ((const gchar *) raw->data + 24, hsize - 24) : NULL;
++
++  rgba = g_malloc ((gsize) w * h * 4);
++
++  for (gsize i = 0; i < (gsize) w * h; i++)
++    {
++      const guchar *p = raw->data + hsize + i * bpp;
++      guchar       *o = rgba + i * 4;
++
++      switch (bpp)
++        {
++        case 1: o[0] = o[1] = o[2] = p[0]; o[3] = 255;  break;
++        case 2: o[0] = o[1] = o[2] = p[0]; o[3] = p[1]; break;
++        case 3: o[0] = p[0]; o[1] = p[1]; o[2] = p[2]; o[3] = 255;  break;
++        default: o[0] = p[0]; o[1] = p[1]; o[2] = p[2]; o[3] = p[3]; break;
++        }
++    }
++
++  *width  = w;
++  *height = h;
++
++ out:
++  g_byte_array_free (raw, TRUE);
++
++  return rgba;
++}
++
++/*  one channel of a pattern: a written virtual memory array, raw 8 bits  */
++static void
++patt_channel (GByteArray   *b,
++              const guchar *rgba,
++              gint          w,
++              gint          h,
++              gint          c)
++{
++  put32 (b, 1);                         /* written            */
++  put32 (b, 23 + (guint32) w * h);      /* length of the rest */
++  put32 (b, 8);                         /* depth              */
++  put32 (b, 0); put32 (b, 0); put32 (b, h); put32 (b, w);
++  put16 (b, 8);                         /* pixel depth        */
++  g_byte_array_append (b, (const guint8 *) "\0", 1);   /* raw  */
++
++  for (gsize i = 0; i < (gsize) w * h; i++)
++    g_byte_array_append (b, rgba + i * 4 + c, 1);
++}
++
++/*  the identifier of the pattern (added to ctx->patt once), NULL if the
++ *  data can't be read; @name: the pattern's name (to free)
++ */
++static const gchar *
++patt_add (ChopPsd     *ctx,
++          const gchar *data,
++          gchar      **name)
++{
++  gchar       *md5 = g_compute_checksum_for_string (G_CHECKSUM_MD5, data, -1);
++  const gchar *id;
++  GByteArray  *p, *vm;
++  guchar      *rgba;
++  gchar       *pname = NULL;
++  gchar       *uuid;
++  gint         w = 0, h = 0;
++  gboolean     alpha = FALSE;
++
++  if (! ctx->patt_ids)
++    ctx->patt_ids = g_hash_table_new_full (g_str_hash, g_str_equal, g_free, g_free);
++  if (! ctx->patt)
++    ctx->patt = g_byte_array_new ();
++
++  id = g_hash_table_lookup (ctx->patt_ids, md5);
++  if (id)
++    {
++      g_free (md5);
++      *name = NULL;
++      return id;
++    }
++
++  rgba = pat_decode (data, &w, &h, &pname);
++  if (! rgba)
++    {
++      g_free (md5);
++      return NULL;
++    }
++
++  /*  an identifier like Photoshop's (a UUID), stable for the same data  */
++  uuid = g_strdup_printf ("%.8s-%.4s-%.4s-%.4s-%.12s",
++                          md5, md5 + 8, md5 + 12, md5 + 16, md5 + 20);
++
++  for (gsize i = 0; i < (gsize) w * h && ! alpha; i++)
++    alpha = rgba[i * 4 + 3] != 255;
++
++  p = g_byte_array_new ();
++  put32 (p, 1);                         /* version  */
++  put32 (p, 3);                         /* RGB      */
++  put16 (p, h);
++  put16 (p, w);
++  put_ustr (p, pname ? pname : "ChopGimp");
++  {
++    guint8 n = (guint8) strlen (uuid);
++
++    g_byte_array_append (p, &n, 1);
++    put_raw (p, uuid);
++  }
++
++  vm = g_byte_array_new ();
++  put32 (vm, 0); put32 (vm, 0); put32 (vm, h); put32 (vm, w);
++  put32 (vm, 24);                       /* channels (+ user and sheet masks) */
++  for (gint c = 0; c < 24; c++)
++    {
++      if (c < 3)
++        patt_channel (vm, rgba, w, h, c);
++      else
++        put32 (vm, 0);
++    }
++  if (alpha)
++    patt_channel (vm, rgba, w, h, 3);   /* user mask: the alpha */
++  else
++    put32 (vm, 0);
++  put32 (vm, 0);                        /* sheet mask */
++
++  put32 (p, 3);                         /* list version */
++  put32 (p, vm->len);
++  g_byte_array_append (p, vm->data, vm->len);
++  g_byte_array_free (vm, TRUE);
++
++  put32 (ctx->patt, p->len);
++  g_byte_array_append (ctx->patt, p->data, p->len);
++  while (ctx->patt->len & 3)
++    g_byte_array_append (ctx->patt, (const guint8 *) "\0", 1);
++  g_byte_array_free (p, TRUE);
++
++  g_hash_table_insert (ctx->patt_ids, md5, uuid);
++  g_free (rgba);
++
++  *name = pname;
++
++  return uuid;
++}
++
++/*  after the layers: the global layer mask info (none) and the « Patt »
++ *  block of the overlays' patterns, if any
++ */
++gboolean
++chopgimp_psd_write_patterns (GOutputStream *output,
++                             ChopPsd       *ctx,
++                             GError       **error)
++{
++  GByteArray *head;
++  gboolean    ok;
++
++  if (! ctx || ! ctx->patt || ctx->patt->len == 0)
++    return TRUE;
++
++  head = g_byte_array_new ();
++  put32 (head, 0);                      /* global layer mask info: none */
++  put_raw (head, "8BIM");
++  put_raw (head, "Patt");
++  put32 (head, ctx->patt->len);         /* a multiple of 4 */
++
++  ok = g_output_stream_write_all (output, head->data, head->len, NULL, NULL, error) &&
++       g_output_stream_write_all (output, ctx->patt->data, ctx->patt->len,
++                                  NULL, NULL, error);
++
++  g_byte_array_free (head, TRUE);
++
++  return ok;
++}
++
++
+ /*  ─── shapes ────────────────────────────────────────────────────────── */
+ 
+ static void
+diff --git a/plug-ins/file-psd/psd-chopgimp.h b/plug-ins/file-psd/psd-chopgimp.h
+index 89f954b..05d036c 100644
+--- a/plug-ins/file-psd/psd-chopgimp.h
++++ b/plug-ins/file-psd/psd-chopgimp.h
+@@ -28,4 +28,11 @@ gboolean      chopgimp_psd_write_editable (GOutputStream *output,
+                                            gboolean       texts,
+                                            GError       **error);
+ 
++/*  3.32.0: after the layer info: the patterns of the pattern overlays
++ *  (global mask info + « Patt »), nothing when there are none
++ */
++gboolean      chopgimp_psd_write_patterns (GOutputStream *output,
++                                           ChopPsd       *ctx,
++                                           GError       **error);
++
+ #endif
+diff --git a/plug-ins/file-psd/psd-export.c b/plug-ins/file-psd/psd-export.c
+index da8acbb..189010c 100644
+--- a/plug-ins/file-psd/psd-export.c
++++ b/plug-ins/file-psd/psd-export.c
+@@ -1480,6 +1480,7 @@ save_layer_and_mask (GOutputStream       *output,
+   gint           bpc;                    /* Image BPC */
+ 
+   goffset        eof_pos;                /* Position: End of file */
++  goffset        section_end;            /* ChopGimp: after the Patt block */
+   goffset        ExtraDataPos;           /* Position: Extra data length */
+   goffset        LayerMaskPos;           /* Position: Layer & Mask section length */
+   goffset        LayerInfoPos;           /* Position: Layer info section length*/
+@@ -1821,6 +1822,14 @@ save_layer_and_mask (GOutputStream       *output,
+   gimp_progress_update (PSDImageData.nLayers / (PSDImageData.nLayers + 1.0));
+   eof_pos = g_seekable_tell (G_SEEKABLE (output));
+ 
++  /*  ChopGimp 3.32.0: the patterns of the pattern overlays (Patt), after
++   *  the layer info, in the layer and mask information section
++   */
++  if (! chopgimp_psd_write_patterns (output, chop_psd, error))
++    return FALSE;
++
++  section_end = g_seekable_tell (G_SEEKABLE (output));
++
+   /* Write actual size of Layer info section */
+ 
+   if (! g_seekable_seek (G_SEEKABLE (output), LayerInfoPos, G_SEEK_SET, NULL, error))
+@@ -1849,23 +1858,23 @@ save_layer_and_mask (GOutputStream       *output,
+ 
+   if (! options->psb)
+     {
+-      WRITE_RETURN (gint32, output, eof_pos - LayerMaskPos - sizeof (gint32),
++      WRITE_RETURN (gint32, output, section_end - LayerMaskPos - sizeof (gint32),
+                     "layers & mask information length", ;);
+       IFDBG(1) g_debug ("\t\tTotal layers & mask information length: %d",
+-                        (gint) (eof_pos - LayerMaskPos - sizeof (gint32)));
++                        (gint) (section_end - LayerMaskPos - sizeof (gint32)));
+     }
+   else
+     {
+-      WRITE_RETURN (gint64, output, eof_pos - LayerMaskPos - sizeof (gint64),
++      WRITE_RETURN (gint64, output, section_end - LayerMaskPos - sizeof (gint64),
+                     "layers & mask information length", ;);
+       IFDBG(1) g_debug ("\t\tTotal layers & mask information length: %"
+                         G_GINT64_FORMAT,
+-                        (gint64) (eof_pos - LayerMaskPos - sizeof (gint64)));
++                        (gint64) (section_end - LayerMaskPos - sizeof (gint64)));
+     }
+ 
+   /* Return to EOF to continue writing */
+ 
+-  return g_seekable_seek (G_SEEKABLE (output), eof_pos, G_SEEK_SET, NULL, error);
++  return g_seekable_seek (G_SEEKABLE (output), section_end, G_SEEK_SET, NULL, error);
+ }
+ 
+ static gboolean
+-- 
+2.53.0
+

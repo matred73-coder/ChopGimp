@@ -2828,6 +2828,131 @@ try:
     except Exception:
         report(False, "3.31.0 partie 2", traceback.format_exc().replace("\n", " | ")[:400])
 
+    # 3.32.0 (lot 5) : Satin, Incrustation de motif (rendu, PSD aller-retour),
+    # menus sans doublon façon Photoshop, icônes de la boîte à outils
+    try:
+        import base64
+        import struct
+        import sys as _sys
+        import zlib
+
+        def pat_b64(w, h, rgba, name="Test"):
+            nm = name.encode() + b"\x00"
+            head = struct.pack(">5I", 24 + len(nm), 1, w, h, 4) + b"GPAT" + nm
+            return base64.b64encode(zlib.compress(head + rgba)).decode("ascii")
+
+        def rgba_at(l, x, y):
+            x0, y0 = l.get_offsets()[1:]
+            return tuple(round(c * 255) for c in l.get_pixel(x - x0, y - y0).get_rgba_with_space(None))
+
+        def styled(im, op, name, props, mode=None):
+            l = Gimp.Layer.new(im, name, 200, 200, Gimp.ImageType.RGBA_IMAGE, 100, Gimp.LayerMode.NORMAL)
+            im.insert_layer(l, None, 0)
+            l.fill(Gimp.FillType.TRANSPARENT)
+            im.select_rectangle(Gimp.ChannelOps.REPLACE, 50, 50, 100, 100)
+            Gimp.context_set_foreground(color(1, 1, 1))
+            l.edit_fill(Gimp.FillType.FOREGROUND)
+            Gimp.Selection.none(im)
+            f = Gimp.DrawableFilter.new(l, op, name)
+            cfg = f.get_config()
+            for k, v in props.items():
+                cfg.set_property(k, v)
+            if mode is not None:
+                f.set_blend_mode(mode)
+            f.update()
+            l.append_filter(f)
+            return l
+
+        im = Gimp.Image.new(200, 200, Gimp.ImageBaseType.RGB)
+        sat = styled(im, "chopgimp:satin", "Satin",
+                     {"color": color(0, 0, 0), "opacity": 1.0, "mode": Gimp.LayerMode.NORMAL,
+                      "distance": 20.0, "size": 10.0, "invert": False, "contour": "linear"})
+        sat_copy = sat.copy()
+        im.insert_layer(sat_copy, None, 0)
+        sat_copy.merge_filters()
+        centre, bord, dehors = rgba_at(sat_copy, 100, 100), rgba_at(sat_copy, 55, 100), rgba_at(sat_copy, 20, 20)
+        report(centre[:3] == (255, 255, 255) and bord[0] < 250 and bord[3] == 255 and dehors[3] == 0,
+               "3.32.0 Satin : ombré près des bords, centre intact, alpha du calque gardé",
+               "centre %s bord %s dehors %s" % (centre, bord, dehors))
+        im.remove_layer(sat_copy)
+
+        checker = bytes([255, 0, 0, 255, 0, 0, 255, 255, 0, 0, 255, 255, 255, 0, 0, 255])
+        pov = styled(im, "chopgimp:pattern-overlay", "Incrustation de motif",
+                     {"fill-type": "pattern", "pattern": pat_b64(2, 2, checker), "opacity": 1.0})
+        pov_copy = pov.copy()
+        im.insert_layer(pov_copy, None, 0)
+        pov_copy.merge_filters()
+        a, b, out = rgba_at(pov_copy, 60, 60), rgba_at(pov_copy, 61, 60), rgba_at(pov_copy, 20, 20)
+        report({a[:3], b[:3]} == {(255, 0, 0), (0, 0, 255)} and out[3] == 0,
+               "3.32.0 Incrustation de motif : le motif couvre le calque, rien autour",
+               "%s %s %s" % (a, b, out))
+        im.remove_layer(pov_copy)
+
+        psd = os.path.join(TMP, "styles-332.psd")
+        r = run("file-psd-export", **{"run-mode": Gimp.RunMode.NONINTERACTIVE, "image": im,
+                                      "file": Gio.File.new_for_path(psd)})
+        raw = open(psd, "rb").read() if os.path.exists(psd) else b""
+        miss = [k for k in (b"ChFX", b"MpgS", b"patternFill", b"Patt", b"8BIMPatt") if k not in raw]
+        report(r.index(0) == Gimp.PDBStatusType.SUCCESS and not miss,
+               "3.32.0 Export PSD : satin (ChFX) et incrustation de motif (patternFill + Patt)",
+               "manque %s" % miss)
+        for d in ("/app/lib/gimp/3.0/plug-ins/chopgimp_psd",):
+            if d not in _sys.path:
+                _sys.path.insert(0, d)
+        import psdparse
+        pd = psdparse.parse(psd)
+        pats = psdparse.document_patterns(pd)
+        ok_pat = any(w == 2 and h == 2 and rgba == checker for _, w, h, rgba in pats.values())
+        fxs = [L.effects() or {} for L in pd.layers]
+        report(ok_pat and any("ChFX" in e for e in fxs) and any("patternFill" in e for e in fxs),
+               "3.32.0 PSD relu (psdparse) : effets et motif du document", "%d motif(s)" % len(pats))
+        im2 = Gimp.file_load(Gimp.RunMode.NONINTERACTIVE, Gio.File.new_for_path(psd))
+        ops = sorted(f.get_operation_name() for l in walk_all(im2.get_layers())
+                     for f in (l.get_filters() or []))
+        report("chopgimp:satin" in ops and "chopgimp:pattern-overlay" in ops,
+               "3.32.0 PSD relu dans ChopGimp : satin et incrustation de motif", ", ".join(ops))
+        im2.delete()
+        im.delete()
+    except Exception:
+        report(False, "3.32.0 styles", traceback.format_exc().replace("\n", " | ")[:400])
+
+    try:
+        menus = os.path.join(Gimp.data_directory(), "menus", "image-menu.ui")
+        txt = open(menus, encoding="utf-8").read()
+        acts_ = re.findall(r'name="action">app\.([^<]+)<', txt)
+        dups = sorted(set(a for a in acts_ if acts_.count(a) > 1))
+        report(not dups, "3.32.0 Menus : une seule place par commande", ", ".join(dups[:8]))
+
+        def menu_actions(label):
+            i = txt.index(">%s</attribute>" % label)
+            j = txt.find("\n    </submenu>", i)
+            return re.findall(r'name="action">app\.([^<]+)<', txt[i:j])
+        fic, edi, sel = menu_actions("_File"), menu_actions("_Edit"), menu_actions("_Select")
+        tex, cal = menu_actions("_Texte"), menu_actions("_Layer")
+        report("file-export-artboards" in fic and "chopgimp-batch" in fic and
+               "dialogs-action-search" in edi and "windows-edit-toolbar" in edi and
+               "python-fu-select-and-mask" in sel and "chopgimp-ia-select-subject" in sel and
+               not any(a.startswith("dialogs-") for a in tex) and "layers-text-to-path" not in cal and
+               "filters-chopgimp-satin" in cal and "filters-chopgimp-pattern-overlay" in cal,
+               "3.32.0 Menus Fichier / Édition / Sélection / Texte / Calque façon Photoshop")
+        stray = []
+        for proc in ("chopgimp-text-outline", "chopgimp-content-aware-fill", "python-fu-command-search",
+                     "python-fu-select-and-mask", "chopgimp-export-web", "chopgimp-ia-select-subject"):
+            pr = pdb.lookup_procedure(proc)
+            if pr is not None:
+                stray += [p_ for p_ in (pr.get_menu_paths() or []) if p_.startswith("<Image>")]
+        report(not stray, "3.32.0 Plug-ins placés par les menus (plus de chemin en double)",
+               ", ".join(stray))
+        icons = os.path.join(Gimp.data_directory(), "icons", "PS-Line", "scalable", "apps")
+        miss = [n for n in ("gimp-tool-hand", "gimp-tool-rotate-view", "gimp-tool-shape",
+                            "gimp-tool-levels", "gimp-tool-curves", "gimp-tool-threshold",
+                            "gimp-tool-brightness-contrast")
+                if not os.path.exists(os.path.join(icons, n + ".svg"))]
+        report(not miss, "3.32.0 Icônes de la boîte à outils (Main, Rotation, Forme, réglages)",
+               ", ".join(miss))
+    except Exception:
+        report(False, "3.32.0 menus", traceback.format_exc().replace("\n", " | ")[:400])
+
     # 4. Réglages d'usine présents (thème, icônes, menus, raccourcis)
     data = Gimp.data_directory()
     sysconf = Gimp.sysconf_directory()

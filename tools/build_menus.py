@@ -14,6 +14,11 @@ Ordre Photoshop :
   une action d'origine de GIMP disparaît des menus.
 - Le menu « Outils » de GIMP passe dans « Fenêtres > Outils ».
 - Nouveau menu « Texte ».
+- 3.32.0 (lot 5) : Fichier, Édition, Sélection, Fenêtres, Aide dans l'ordre
+  de Photoshop (Exporter ▸, Générer ▸, Automatisation ▸ ; Rechercher et
+  Barre d'outils dans Édition ; Sujet, Sélectionner et masquer dans
+  Sélection) ; une seule place par commande (les panneaux et les outils
+  dans Fenêtres) ; garde-fous : pas de doublon, ancrages des plug-ins gardés.
 
 tools/install_data.sh recopie les .ui produits dans share/gimp/3.0/menus
 (ils remplacent ceux de GIMP). Le dossier de sortie contient TOUS les .ui.
@@ -84,7 +89,9 @@ PANNEAUX = [["dialogs-layers", "dialogs-channels", "dialogs-paths",
              "dialogs-brushes", "dialogs-fonts"],
             ["dialogs-character", "dialogs-paragraph", "dialogs-glyphs", "dialogs-text-styles",
              "dialogs-fonts-preview", "dialogs-document-texts"],
-            ["dialogs-undo-history", "dialogs-navigation", "dialogs-histogram", "dialogs-cursor"]]
+            ["dialogs-undo-history", "dialogs-navigation", "dialogs-histogram", "dialogs-cursor"],
+            # 3.32.0 : Compositions de calques, Références (plug-ins)
+            ["chopgimp-layer-comps", "chopgimp-references"]]
 panneaux = []
 for sec in PANNEAUX:
     panneaux.append("      <section>")
@@ -159,9 +166,13 @@ def adjustment_submenu(indent):
             [i + "  </section>", i + "</submenu>"])
 # Contour, Lueur externe, Ombre interne : actions ChopGimp filters-chopgimp-*
 # (fenêtre du filtre, comme l'ombre portée, avec des réglages de départ)
+# 3.32.0 : Satin et Incrustation de motif (gimpoperationinnereffects.c) ;
+# Ombre longue et Estampage, qui ne sont pas des styles de Photoshop,
+# restent dans Filtres seulement (une seule place par commande)
 STYLE_NATIFS = ["filters-dropshadow", "filters-chopgimp-stroke", "filters-chopgimp-outer-glow",
-                "filters-chopgimp-inner-shadow", "filters-chopgimp-inner-glow", "filters-gegl-bevel",
-                "filters-gegl-color-overlay", "filters-long-shadow", "filters-emboss"]
+                "filters-chopgimp-inner-shadow", "filters-chopgimp-inner-glow",
+                "filters-chopgimp-satin", "filters-gegl-bevel",
+                "filters-gegl-color-overlay", "filters-chopgimp-pattern-overlay"]
 
 # Fenêtre « Style de calque » unifiée (ChopGimp 3.26, lot B) : tous les effets
 # du calque, à cocher et à régler (tools/gimpfiltertool-layerstyle.c)
@@ -577,31 +588,181 @@ affichage = insert_before_close(vue, ["      <section>"] + ["  " + l for l in ap
                                  '        <item><attribute name="action">app.view-timelapse</attribute></item>',
                                  "      </section>"])
 
-# 3.31.0 (lot 4a) : Fichier > Exporter les plans de travail, après « Exporter sous »
-fichier = insert_after_section_of(get["_File"], "app.file-export-as<",
-                                  ["      <section>"] + acts(["file-export-artboards"], 8) +
-                                  ["      </section>"])
+# ── 3.32.0 (lot 5) : Fichier, Édition, Sélection, Fenêtres, Aide façon
+# Photoshop ; une seule place par commande (dédoublonnage plus bas) ───────
+# Les sections nommées et les sous-menus de GIMP sont gardés (les plug-ins
+# s'y accrochent : « <Image>/File/[Send] », « Open _Recent »…) ; un
+# garde-fou le vérifie. Les commandes des plug-ins ChopGimp sont placées
+# par leur nom (app.<procédure>) : ces plug-ins ne déclarent plus de
+# chemin dans la barre de menus.
+def sec_(lines, name=None):
+    """Section de 1er niveau (indentation 6), nommée au besoin."""
+    head_ = ["      <section>"]
+    if name:
+        head_.append('        <attribute name="section-name" translatable="no">%s</attribute>' % name)
+    return head_ + lines + ["      </section>"]
+
+
+def drop(lines, actions):
+    """Retire les éléments (une ligne) de ces actions."""
+    pat = re.compile(r'name="action">app\.([^<]+)<')
+    out_ = []
+    for l in lines:
+        m = pat.search(l)
+        if m and m.group(1) in actions and l.strip().startswith("<item>") and l.strip().endswith("</item>"):
+            continue
+        out_.append(l)
+    return out_
+
+
+def item_mac(action, indent):
+    """Élément masqué dans la barre de menus de macOS (comme GIMP)."""
+    return [" " * indent + '<item><attribute name="hidden-when">macos-menubar</attribute>'
+            '<attribute name="action">app.%s</attribute></item>' % action]
+
+
+_F = get["_File"]
+CREER = drop(sub_block(_F, ">Crea_te<"), ["edit-paste-as-new-image"])   # captures (plug-ins)
+RECENTS = drop(sub_block(_F, ">Open _Recent<"), ["dialogs-document-history"])
+DEBUG = sub_block(_F, ">_Debug<")
+
+# Fichier (Photoshop) : Nouveau, Créer, Ouvrir, Importer (en calques, liés),
+# Ouvrir récent ; Fermer ; Enregistrer ; Exporter ▸ ; Générer ▸,
+# Automatisation ▸ ; Envoyer (impression), Informations ; Quitter
+fichier = _F[:2] + \
+    sec_(acts(["image-new"], 8) + CREER +
+         acts(["file-open", "file-open-as-layers", "file-open-as-link-layers",
+               "file-open-location"], 8) + RECENTS, "Open") + \
+    sec_(acts(["view-close", "file-close-all"], 8), "Close") + \
+    sec_(acts(["file-save", "file-save-as", "file-save-a-copy", "file-revert"], 8), "Save") + \
+    sec_(submenu("E_xporter", [["file-export", "file-overwrite", "file-export-as"],
+                               ["file-export-artboards"],
+                               ["chopgimp-export-web", "photogimp-multi-page-pdf",
+                                "chopgimp-timelapse-export"]], 8) +
+         acts(["file-create-template"], 8), "Export") + \
+    sec_(submenu("_Générer", [["chopgimp-generate-assets", "chopgimp-generator-toggle"],
+                              ["python-fu-icon-generator"]], 8) +
+         submenu("_Automatisation", [["chopgimp-batch"]], 8)) + \
+    sec_([], "Send") + \
+    sec_(acts(["file-copy-location", "file-show-in-file-manager"], 8), "Info") + \
+    sec_(DEBUG) + \
+    sec_(item_mac("file-quit", 8)) + _F[-1:]
+
+# Édition (Photoshop) : Annuler / Rétablir / pas à pas ; Couper, Copier,
+# Copier avec fusion, Coller, Collage spécial ▸, Tampon ▸, Effacer ;
+# Rechercher ; Remplir… / Contour… (avec Remplir d'après le contenu) ;
+# Actions ▸ ; Barre d'outils, Préférences, Raccourcis…
+_E = get["_Edit"]
+PREFS = pick(layer_sections(_E), "app.dialogs-preferences<")
+edition = _E[:2] + \
+    sec_(acts(["edit-undo", "edit-redo", "edit-strong-undo", "edit-strong-redo"], 8), "Undo") + \
+    sec_(acts(["edit-cut", "edit-copy", "edit-copy-visible", "edit-paste",
+               "edit-paste-in-place"], 8) +
+         sub_block(_E, ">Paste _as<") + sub_block(_E, ">_Buffer<") +
+         acts(["edit-clear"], 8), "Paste") + \
+    sec_(acts(["dialogs-action-search"], 8)) + \
+    sec_(acts(["edit-fill-fg", "edit-fill-bg", "edit-fill-pattern", "select-fill", "paths-fill",
+               "chopgimp-content-aware-fill", "select-stroke", "paths-stroke"], 8), "Stroke") + \
+    sec_(submenu("Actions", [["edit-macro-record", "edit-macro-play"]], 8)) + \
+    PREFS[:-1] + acts(["windows-edit-toolbar", "chopgimp-ia-models"], 8) + PREFS[-1:] + \
+    _E[-1:]
+
+# Sélection (Photoshop) : Tout, Désélectionner, Intervertir ; Plage de
+# couleurs, Sujet, Sélectionner et masquer, Masques de luminosité ;
+# Modifier (Cadre, Lisser, Dilater, Contracter, Contour progressif) ;
+# tracés ↔ sélection, Flottante ▸ ; Mode Masque, Mémoriser la sélection
+_S = get["_Select"]
+selection = _S[:2] + \
+    sec_(acts(["select-all", "select-none", "select-invert"], 8)) + \
+    sec_(acts(["tools-by-color-select-short", "chopgimp-ia-select-subject",
+               "python-fu-select-and-mask", "python-fu-luminosity-masks"], 8)) + \
+    sec_(acts(["select-border", "select-sharpen", "select-grow", "select-shrink",
+               "select-feather", "select-flood"], 8), "Modify") + \
+    sec_(acts(["paths-selection-from-paths", "paths-selection-to-path"], 8) +
+         sub_block(_S, ">_Float<")) + \
+    sec_(acts(["quick-mask-toggle", "select-save"], 8)) + _S[-1:]
+
+# Affichage : croquis et guides de perspective (plug-in chopgimp_atelier)
+# avec les guides
+affichage = insert_after_section_of(affichage, "app.image-configure-grid<",
+                                    sec_(acts(["chopgimp-perspective-guides",
+                                               "chopgimp-sketch-toggle"], 8)))
+
+# Aide : « Rechercher » est dans Édition (Ctrl+F)
+aide = get["_Help"]
 
 order = [
     fichier,
-    insert_before_close(get["_Edit"], [
-        "      <section>",
-        "        <submenu>",
-        '          <attribute name="label" translatable="no">Actions</attribute>',
-        '          <item><attribute name="action">app.edit-macro-record</attribute></item>',
-        '          <item><attribute name="action">app.edit-macro-play</attribute></item>',
-        "        </submenu>",
-        "      </section>"]),
+    edition,
     image,
     calque,
     objet,
     texte,
-    get["_Select"],
+    selection,
     get["Filte_rs"],
     affichage,
     fenetre,
-    get["_Help"],
+    aide,
 ]
+
+# ── Une seule place par commande (3.32.0) ─────────────────────────────
+# Une action présente plusieurs fois reste dans son menu « maison » :
+# les panneaux et les outils dans Fenêtres (Fenêtres > Outils), le reste
+# là où Photoshop la range ; ailleurs, sa première place.
+HOME = {
+    "edit-paste-as-new-image": "_Edit",
+    "dialogs-action-search": "_Edit",
+    "windows-edit-toolbar": "_Edit",
+    "filters-dropshadow": "_Layer",         # style de calque
+    "filters-semi-flatten": "_Layer",       # Calque > Transparence
+    "layers-text-to-path": "_Texte",
+    "layers-text-along-path": "_Texte",
+    "layers-image-trace": "_Vecteur",
+    "view-perspective-attach": "_Vecteur",
+    "view-perspective-release": "_Vecteur",
+    "view-perspective-grid-show": "_View",
+}
+
+
+def menu_of(block):
+    m = re.search(r'name="label"[^>]*>([^<]+)<', block[1])
+    return m.group(1) if m else ""
+
+
+def dedupe(blocks):
+    pat = re.compile(r'name="action">app\.([^<]+)<')
+    seen = {}
+    for b in blocks:
+        for l in b:
+            m = pat.search(l)
+            if m:
+                seen.setdefault(m.group(1), []).append(menu_of(b))
+    home = {}
+    for a, menus in seen.items():
+        if len(menus) < 2:
+            continue
+        h = HOME.get(a)
+        if h is None and (a.startswith("dialogs-") or a.startswith("tools-")) and "_Windows" in menus:
+            h = "_Windows"
+        home[a] = h if h in menus else menus[0]
+    kept, result = set(), []
+    for b in blocks:
+        top = menu_of(b)
+        nb = []
+        for l in b:
+            m = pat.search(l)
+            st = l.strip()
+            if m and m.group(1) in home and st.startswith("<item>") and st.endswith("</item>"):
+                a = m.group(1)
+                if top != home[a] or a in kept:
+                    continue
+                kept.add(a)
+            nb.append(l)
+        result.append(nb)
+    return result
+
+
+order = dedupe(order)
 
 out = list(head)
 out[0:0] = []
@@ -616,6 +777,19 @@ _act = re.compile(r'name="action">app\.([^<]+)<')
 _lost = sorted(set(_act.findall("\n".join(lines))) - set(_act.findall(text)))
 if _lost:
     sys.exit("Actions GIMP perdues par la réorganisation des menus : %s" % ", ".join(_lost))
+# 3.32.0 : plus de doublon dans la barre de menus
+_all = _act.findall(text)
+_dup = sorted(set(a for a in _all if _all.count(a) > 1))
+if _dup:
+    sys.exit("Actions en double dans la barre de menus : %s" % ", ".join(_dup))
+# 3.32.0 : les points d'ancrage des plug-ins (sections nommées, sous-menus
+# de GIMP) restent
+_anchor = re.compile(r'name="(?:section-name|label)"[^>]*>([^<]+)<')
+_src_anchors = set(_anchor.findall("\n".join(lines)))
+# (le menu Couleurs est fondu dans Image > Réglages : patch 0139)
+_missing = sorted(_src_anchors - set(_anchor.findall(text)) - {"_Colors"})
+if _missing:
+    sys.exit("Ancrages de menus GIMP perdus : %s" % ", ".join(_missing))
 open(os.path.join(out_dir, "image-menu.ui"), "w", encoding="utf-8").write(text)
 
 # ── Clic droit du panneau Calques : ordre du menu contextuel Photoshop ──

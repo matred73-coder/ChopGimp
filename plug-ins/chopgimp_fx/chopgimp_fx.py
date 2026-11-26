@@ -803,10 +803,15 @@ PROCS = {
                                       ("boolean", "reverse", "Inverser", None, None, False),
                                       ("color", "color1", "Couleur de départ", None, None, (0, 0, 0)),
                                       ("color", "color2", "Couleur d'arrivée", None, None, (1, 1, 1))]),
-    "chopgimp-layer-style": ("Style de calque (fenêtre)…", [STYLE, STYLE_L], []),
-    "chopgimp-fx-edit": ("Modifier l'effet…", [TRACE, TRACE_L, STYLE, STYLE_L], []),
-    "chopgimp-fx-remove": ("Supprimer l'effet", [TRACE, TRACE_L, STYLE, STYLE_L], []),
-    "chopgimp-content-aware-fill": ("Remplir d'après le contenu", ["<Image>/Edit"], []),
+    # 3.32.0 (une seule place par commande) : la fenêtre « Style de calque »
+    # est celle de ChopGimp (Calque > Style de calque > Options de fusion…) ;
+    # cette procédure reste pour les scripts. Modifier / Supprimer l'effet
+    # sont dans Vecteur > Effets de tracé (tools/build_menus.py) et au clic
+    # droit ; Remplir d'après le contenu dans Édition (build_menus.py).
+    "chopgimp-layer-style": ("Style de calque (fenêtre)…", [], []),
+    "chopgimp-fx-edit": ("Modifier l'effet…", [TRACE, TRACE_L, STYLE_L], []),
+    "chopgimp-fx-remove": ("Supprimer l'effet", [TRACE, TRACE_L, STYLE_L], []),
+    "chopgimp-content-aware-fill": ("Remplir d'après le contenu", [], []),
 }
 VECTOR_FX = {"chopgimp-fx-zigzag", "chopgimp-fx-roughen", "chopgimp-fx-wave", "chopgimp-fx-pucker",
              "chopgimp-fx-twist", "chopgimp-fx-width", "chopgimp-fx-arrows",

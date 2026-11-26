@@ -58,4 +58,17 @@
 - PSD, calques de forme : drapeau 0x18 (pixels sans importance) ; opérations des sous-tracés (1er de chaque objet : union, les autres : ou exclusif) ; dégradé de forme (GdFl) : angle, échelle et décalage déduits de la boîte des contours (approché).
 - PSD, texte : texte de point (pas de cadre de paragraphe : les retours à la ligne sont gardés) ; tailles des balises de mise en forme supposées dans l'unité du calque ; ligne de base du 1er rang ≈ haut + taille ; EngineData sans /Rendered détaillé — à ouvrir et modifier dans Photoshop.
 - Blocs privés cgFX / cgVX / cgTX / cgPX : Photoshop les ignore-t-il sans avertissement ? Import : les calques d'effets pixellisés retirés, le groupe « Group added by GIMP » défait s'il ne garde qu'un calque ; filtres reposés par `Gimp.DrawableFilter.new` (opérations de l'application comme `chopgimp:stroke` acceptées ?), énumérations GEGL passées en chaînes, celles de GIMP en entiers.
-- Satin et Incrustation de motif : ChopGimp n'a pas ces effets, rien à exporter ; l'import les signale toujours comme ignorés.
+- Satin et Incrustation de motif : faits au lot 5 (voir ci-dessous).
+
+## Lot 5 (3.32.0, patch 0164)
+
+- Satin : rendu comparé à Photoshop (valeurs par défaut supposées : Produit, noir, 50 %, 19°, 11 px, 14 px, inversé, contour gaussien ; flou = 3 flous boîte de σ = taille / 2 ; sens de l'angle comme l'ombre portée) ; contour personnalisé d'un PSD rendu en gaussienne.
+- Sous-classes GEGL de `chopgimp:stroke` : propriétés héritées bien copiées dans la config GIMP (`GimpGegl-chopgimp-satin-config`), XCF relu, cache des effets (clé avec `align-with-layer`), rendu par niveaux de mipmap.
+- Placement d'un nouvel effet sous le contour (`gimp_drawable_filter_place_style`) : annuler / rétablir gardent la position ; un effet glissé ensuite par l'utilisateur n'est plus déplacé.
+- PSD : bloc Patt (masque global vide puis Patt dans la section calques et masques, longueur multiple de 4) relu par Photoshop et psd-tools ; `Angl` du patternFill (Photoshop 22+) ; échelle et décalage (`phase`) ; motif retrouvé par son identifiant à l'import.
+- Touche d'un outil → outil affiché du groupe : `gtk_get_current_event()` donne bien l'appui de touche pendant l'action ; L avec le Lasso magnétique affiché ; K / U / Maj+M dans les groupes vectoriels gardent leur outil.
+- Barre d'état : hauteur avec le nouveau bouton, mise à jour de « Doc » sur gros fichiers (coût du parcours des calques à chaque modification), barre dans chaque fenêtre en mode multi-fenêtres.
+- Onglets : libellé mis à jour au zoom, au changement de calque et à l'enregistrement (`notify::title`) ; largeur avec beaucoup de documents ; croix sur chaque onglet.
+- Menus : actions des plug-ins sans chemin de menu bien créées (`app.<procédure>`) ; sous-menus « Exporter », « Générer », « Automatisation » et sections vides (Texte, Aide) affichés proprement ; libellés anglais de GIMP traduits.
+- CSS : focus, menus, barres de défilement, onglets dans les 7 variantes.
+

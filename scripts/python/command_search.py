@@ -335,7 +335,7 @@ class CommandSearch(Gimp.PlugIn):
             name)
         procedure.set_menu_label(_("_Recherche de commande..."))
         procedure.set_attribution("PhotoGIMP Pro", "GPL v3+", "2026")
-        procedure.add_menu_path("<Image>/Edit")
+        # 3.32.0 : plus dans les menus (doublon de Édition > Rechercher, Ctrl+F)
 
         procedure.add_string_argument("procedure-name",
                                       _("_Nom de la procedure"),

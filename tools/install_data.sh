@@ -44,8 +44,15 @@ sed -i -e 's/^Name=.*/Name=PS-Line/' -e '/^Hidden=/d' \
 # 3b. Icônes des boutons de panneaux : aussi dans le thème de secours de GIMP,
 #     pour qu'elles existent quel que soit le thème d'icônes choisi
 mkdir -p "$DATA/icons/hicolor/scalable/actions"
+#     3.32.0 (lot D) : aussi les outils propres à ChopGimp et les alias
+#     gimp-tool-hand / rotate-view / shape (absents du thème Default)
 for i in "$SRC/icons/PS-Line/overlay/scalable/apps/"chopgimp-panel-*.svg \
-         "$SRC/icons/PS-Line/overlay/scalable/apps/"chopgimp-dock-*.svg; do
+         "$SRC/icons/PS-Line/overlay/scalable/apps/"chopgimp-dock-*.svg \
+         "$SRC/icons/PS-Line/overlay/scalable/apps/"chopgimp-tool-*.svg \
+         "$SRC/icons/PS-Line/overlay/scalable/apps/"gimp-tool-hand.svg \
+         "$SRC/icons/PS-Line/overlay/scalable/apps/"gimp-tool-hand-symbolic.svg \
+         "$SRC/icons/PS-Line/overlay/scalable/apps/"gimp-tool-rotate-view*.svg \
+         "$SRC/icons/PS-Line/overlay/scalable/apps/"gimp-tool-shape*.svg; do
     install -m 644 "$i" "$DATA/icons/hicolor/scalable/actions/"
 done
 

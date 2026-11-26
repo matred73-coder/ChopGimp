@@ -463,10 +463,6 @@ def apply_effects(image, L, layer, fx, psd, report, cg_only=False):
                 report.approximate(L.name, "dégradé à %d couleurs ramené à 2" % len(stops))
         else:
             report.ignore(L.name, "incrustation de dégradé illisible")
-    for key, label in (("ChFX", "satin"), ("patternFill", "incrustation de motif")):
-        e = fx.get(key)
-        if isinstance(e, dict) and e.get("enab", False):
-            report.ignore(L.name, label + " (sans équivalent dans ChopGimp)")
 
 
 # ─── 3.31.0 (lot 4b) : styles Photoshop → filtres de styles ChopGimp ────
@@ -517,7 +513,8 @@ def style_filter(layer, op, name, props, mode=None, opacity=None, visible=True):
 
 
 def lfx2_filters(layer, fx, psd, scale, report, lname):
-    """Ombres, lueurs, contour, biseau, incrustation couleur (lfx2) → les
+    """Ombres, lueurs, satin, contour, biseau, incrustations couleur et
+    motif (lfx2) → les
     filtres de la fenêtre Style de calque. Taille S et étendue p (%) de
     Photoshop → grossi S·p/100 et flou S·(1 − p/100)/2 de GEGL."""
     def num(e, k, default=0.0):
@@ -569,6 +566,9 @@ def lfx2_filters(layer, fx, psd, scale, report, lname):
                           "range": max(0.01, num(e, "Inpr", 100.0) / 100.0)},
                          visible=e.get("enab", True))
             made.append(name.lower())
+    # 3.32.0 : Satin et Incrustation de motif, sous les ombres et lueurs
+    # internes et le contour (ordre des effets de Photoshop)
+    made += inner_filters(layer, fx, psd, scale, report, lname)
     for key, multi in (("IrSh", "innerShadowMulti"), ("IrGl", "innerGlowMulti")):
         for e in _all(fx, key, multi):
             grow, blur = grow_blur(e)
@@ -608,6 +608,76 @@ def lfx2_filters(layer, fx, psd, scale, report, lname):
                       "overprint": bool(e.get("overprint", False))},
                      visible=e.get("enab", True))
         made.append("contour")
+    return made
+
+
+SATIN_CONTOURS = CONTOURS
+
+
+def pat_string(name, w, h, rgba):
+    """Motif → chaîne du style (base64 d'un .pat GIMP compressé zlib,
+    comme app/propgui/gimppropgui-layer-style.c)."""
+    import base64
+    import struct
+    import zlib
+    nm = (name or "Motif PSD").encode("utf-8") + b"\x00"
+    head = struct.pack(">5I", 24 + len(nm), 1, w, h, 4) + b"GPAT" + nm
+    return base64.b64encode(zlib.compress(head + rgba)).decode("ascii")
+
+
+def inner_filters(layer, fx, psd, scale, report, lname):
+    """3.32.0 : Satin (ChFX) → chopgimp:satin ; Incrustation de motif
+    (patternFill) → chopgimp:pattern-overlay, son motif pris dans les motifs
+    du document (Patt). L'export PSD fait l'inverse (psd-chopgimp.c)."""
+    def num(e, k, default=0.0):
+        try:
+            return float(e.get(k, default))
+        except (TypeError, ValueError):
+            return default
+
+    made = []
+    e = fx.get("ChFX")
+    if isinstance(e, dict) and e.get("present", True):
+        c = psdparse._color({"Clr ": e["Clr "]}) if isinstance(e.get("Clr "), dict) else None
+        t = e.get("MpgS")
+        contour = SATIN_CONTOURS.get(str(t.get("Nm  ", "")) if isinstance(t, dict) else "",
+                                     "gaussian")
+        if isinstance(t, dict) and str(t.get("Nm  ", "")) not in SATIN_CONTOURS:
+            report.approximate(lname, "contour du satin personnalisé rendu en gaussienne")
+        style_filter(layer, "chopgimp:satin", "Satin",
+                     {"color": gegl_color(c or (0, 0, 0)),
+                      "opacity": num(e, "Opct", 50.0) / 100.0,
+                      "mode": layer_mode(BLEND_NICKS.get(str(e.get("Md  ", "Mltp")), "multiply")),
+                      "angle": num(e, "lagl", 19.0),
+                      "distance": num(e, "Dstn", 11.0) * scale,
+                      "size": num(e, "blur", 14.0) * scale,
+                      "invert": bool(e.get("Invr", True)),
+                      "contour": contour},
+                     visible=e.get("enab", True))
+        made.append("satin")
+    e = fx.get("patternFill")
+    if isinstance(e, dict) and e.get("present", True):
+        if not hasattr(psd, "chopgimp_patterns"):
+            psd.chopgimp_patterns = psdparse.document_patterns(psd)
+        pt = e.get("Ptrn") if isinstance(e.get("Ptrn"), dict) else {}
+        pat = psd.chopgimp_patterns.get(str(pt.get("Idnt", "")))
+        if pat is None:
+            report.ignore(lname, "incrustation de motif (motif « %s » absent du fichier)"
+                          % pt.get("Nm  ", "?"))
+        else:
+            ph = e.get("phase") if isinstance(e.get("phase"), dict) else {}
+            style_filter(layer, "chopgimp:pattern-overlay", "Incrustation de motif",
+                         {"fill-type": "pattern",
+                          "pattern": pat_string(*pat),
+                          "opacity": num(e, "Opct", 100.0) / 100.0,
+                          "mode": layer_mode(BLEND_NICKS.get(str(e.get("Md  ", "Nrml")), "normal")),
+                          "pattern-scale": num(e, "Scl ", 100.0) * scale,
+                          "pattern-angle": -num(e, "Angl", 0.0),
+                          "pattern-offset-x": num(ph, "Hrzn", 0.0),
+                          "pattern-offset-y": num(ph, "Vrtc", 0.0),
+                          "align-with-layer": bool(e.get("Algn", True))},
+                         visible=e.get("enab", True))
+            made.append("incrustation de motif")
     return made
 
 

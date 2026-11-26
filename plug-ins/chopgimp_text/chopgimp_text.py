@@ -28,7 +28,9 @@ from gi.repository import Gimp, GimpUi, GLib, GObject, Gtk
 from chopgimp_common import ok, fail, pdb_call as call, walk_layers, dialog_box, spin_scale, form_grid
 
 AUTHOR, YEAR = "ChopGimp", "2026"
-TXT = "<Image>/Layer/Texte"
+# 3.32.0 : barre de menus : menu « Texte », placé par tools/build_menus.py
+# (l'ancien sous-menu Calque > Texte faisait doublon) ; le clic droit du
+# panneau Calques garde son sous-menu Texte
 TXT_L = "<Layers>/Layers Menu/Texte"
 
 LOREM = ("Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor "
@@ -364,15 +366,15 @@ def lorem(image, layers):
 # ─── déclaration ────────────────────────────────────────────────────────
 
 PROCS = {
-    "chopgimp-text-outline": ("Vectoriser le texte", [TXT, TXT_L]),
-    "chopgimp-text-outline-letters": ("Vectoriser lettre par lettre", [TXT, TXT_L]),
-    "chopgimp-text-work-path": ("Créer un tracé de travail", [TXT, TXT_L]),
-    "chopgimp-text-find-replace": ("Rechercher et remplacer…", [TXT]),
-    "chopgimp-text-lorem": ("Texte de remplissage (Lorem ipsum)", [TXT]),
-    "chopgimp-text-warp": ("Déformer le texte…", [TXT, TXT_L]),
-    "chopgimp-text-on-path": ("Texte sur le tracé…", [TXT, TXT_L]),
-    "chopgimp-text-in-shape": ("Texte dans la forme…", [TXT, TXT_L]),
-    "chopgimp-text-fx-clear": ("Supprimer l'effet de texte", [TXT, TXT_L]),
+    "chopgimp-text-outline": ("Vectoriser le texte", [TXT_L]),
+    "chopgimp-text-outline-letters": ("Vectoriser lettre par lettre", [TXT_L]),
+    "chopgimp-text-work-path": ("Créer un tracé de travail", [TXT_L]),
+    "chopgimp-text-find-replace": ("Rechercher et remplacer…", []),
+    "chopgimp-text-lorem": ("Texte de remplissage (Lorem ipsum)", []),
+    "chopgimp-text-warp": ("Déformer le texte…", [TXT_L]),
+    "chopgimp-text-on-path": ("Texte sur le tracé…", [TXT_L]),
+    "chopgimp-text-in-shape": ("Texte dans la forme…", [TXT_L]),
+    "chopgimp-text-fx-clear": ("Supprimer l'effet de texte", [TXT_L]),
 }
 
 FX_PROCS = ("chopgimp-text-warp", "chopgimp-text-on-path", "chopgimp-text-in-shape",

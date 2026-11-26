@@ -246,6 +246,7 @@ Ils sont produits automatiquement par GitHub Actions à chaque tag `v*`
 | 3.30 | Pinceau goutte, formes de pinceau (calligraphique, Art, Motif, Dispersion), répétitions radiale / grille / miroir modifiables (3.30.0, non compilé) |
 | 3.31 | Plans de travail (outil, panneau, export par plan), grille de perspective à 1, 2 ou 3 points de fuite et Sélection de perspective (3.31.0 partie 1, non compilé) |
 | 3.31 | Export PDF / EPS vectoriel par plan de travail, calques PDF, export PSD façon Photoshop (styles, formes, textes) (3.31.0 partie 2, non compilé) |
+| 3.32 | Interface : icônes de la boîte à outils, barre d'état « Doc », onglets de documents façon Photoshop, menus Fichier / Édition / Sélection / Fenêtres sans doublon, styles Satin et Incrustation de motif (aussi en PSD) (3.32.0, non compilé) |
 
 Le détail de chaque version (ce qui est fait, vérifié, et ce qui reste) se trouve
 dans [`docs/SUIVI.md`](docs/SUIVI.md). Le plan du chantier vectoriel est dans

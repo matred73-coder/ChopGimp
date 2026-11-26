@@ -47,12 +47,13 @@ MODELS = {
 SEG_MODELS = ("u2netp", "silueta", "isnet")
 
 PROCS = {
-    "chopgimp-ia-select-subject": ("Sujet (IA)", "<Image>/Select"),
-    # None : placés dans Image par tools/build_menus.py
+    # None : placés par tools/build_menus.py (Image ; 3.32.0 : Sélection,
+    # Édition > Préférences)
+    "chopgimp-ia-select-subject": ("Sujet (IA)", None),
     "chopgimp-ia-remove-background": ("Supprimer l'arrière-plan (IA)", None),
     "chopgimp-ia-upscale": ("Agrandir (IA)…", None),
     "chopgimp-ia-denoise": ("Réduire le bruit…", "<Image>/Filters/Enhance"),
-    "chopgimp-ia-models": ("Modèles d'IA…", "<Image>/File"),
+    "chopgimp-ia-models": ("Modèles d'IA…", None),
 }
 
 

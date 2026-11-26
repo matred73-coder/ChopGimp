@@ -1300,3 +1300,109 @@ GimpColorEditor.chopgimp-panels GimpColorSelect button.chopgimp-channel-menu lab
   font-size: 0.9em;
   font-weight: bold;
 }
+
+/* ── 3.32.0 (lots E et F) : onglets de documents, barre d'état, styles ──
+ * Onglets façon Photoshop : petite vignette, « nom @ 66,7 % (Calque,
+ * RVB/8)* », croix sur chaque onglet (app/display/gimpimagewindow.c) ;
+ * l'onglet actif est souligné de la couleur d'accent. */
+GimpImageWindow notebook > header tabs tab {
+  border-bottom: 2px solid transparent;
+}
+
+GimpImageWindow notebook > header tabs tab:checked {
+  border-bottom-color: @ps-accent;
+}
+
+GimpImageWindow notebook > header tabs tab:checked box.chopgimp-image-tab label {
+  color: @ps-strong-fg;
+}
+
+box.chopgimp-image-tab label {
+  color: @dimmed-fg-color;
+  font-size: 0.85rem;
+}
+
+box.chopgimp-image-tab button {
+  min-height: 16px;
+  min-width: 16px;
+  padding: 0;
+  border: none;
+  border-radius: 3px;
+  background-image: none;
+  background-color: transparent;
+  box-shadow: none;
+  opacity: 0.6;
+}
+
+box.chopgimp-image-tab button:hover {
+  background-color: @hover-color;
+  opacity: 1;
+}
+
+/* Barre d'état : zoom à gauche puis « Doc : … ▸ »
+ * (app/display/chopgimp-statusbar-info.c) */
+#chopgimp-statusbar-info {
+  min-height: 18px;
+  padding: 0 4px;
+  border: none;
+  border-radius: 3px;
+  background-image: none;
+  background-color: transparent;
+  box-shadow: none;
+}
+
+#chopgimp-statusbar-info:hover {
+  background-color: @hover-color;
+}
+
+#chopgimp-statusbar-info label {
+  color: @dimmed-fg-color;
+  font-size: 0.85rem;
+}
+
+/* Styles d'interface : coins arrondis homogènes, focus à la couleur
+ * d'accent, menus et fenêtres surgissantes aérés, barres de défilement
+ * fines qui s'épaississent au survol. */
+button:focus,
+entry:focus,
+spinbutton:focus {
+  outline-color: @ps-accent;
+}
+
+popover,
+popover.background {
+  border: 1px solid @edge-border-color;
+  border-radius: 6px;
+}
+
+menu,
+.menu {
+  padding: 4px 0;
+}
+
+menu menuitem {
+  min-height: 22px;
+  padding: 2px 8px;
+}
+
+menu separator {
+  margin: 4px 0;
+}
+
+scrollbar slider {
+  min-width: 6px;
+  min-height: 6px;
+  border-radius: 6px;
+}
+
+scrollbar:hover slider {
+  min-width: 9px;
+  min-height: 9px;
+}
+
+checkbutton check:checked,
+radiobutton radio:checked,
+menuitem check:checked,
+menuitem radio:checked {
+  color: @ps-accent;
+}

@@ -41,7 +41,8 @@ BD = "<Image>/Filters/BD"
 PROCS = {
     # None : placé par tools/build_menus.py (Calque, Vecteur), pas de chemin ici
     "chopgimp-sketch-layer": ("Nouveau calque de croquis", None),
-    "chopgimp-sketch-toggle": ("Croquis : afficher / masquer", "<Image>/View"),
+    # 3.32.0 : None = placé dans la barre de menus par tools/build_menus.py
+    "chopgimp-sketch-toggle": ("Croquis : afficher / masquer", None),
     "chopgimp-flats": ("Aplats sous l'encrage…", None),
     "chopgimp-comic-panels": ("Cases…", BD),
     "chopgimp-comic-balloon": ("Bulle", BD),
@@ -49,10 +50,10 @@ PROCS = {
     "chopgimp-speed-lines": ("Lignes de vitesse…", BD),
     "chopgimp-focus-lines": ("Lignes concentriques…", BD),
     "chopgimp-vector-eraser": ("Gomme vectorielle (retirer la sélection)", None),
-    "chopgimp-perspective-guides": ("Guides de perspective…", "<Image>/View"),
+    "chopgimp-perspective-guides": ("Guides de perspective…", None),
     "chopgimp-harmonies": ("Harmonies de couleurs…", "<Image>/Image/Réglages/Info"),
-    "chopgimp-references": ("Références…", "<Image>/Windows"),
-    "chopgimp-timelapse-export": ("Exporter le timelapse…", "<Image>/File/Export"),
+    "chopgimp-references": ("Références…", None),
+    "chopgimp-timelapse-export": ("Exporter le timelapse…", None),
 }
 SKETCH = "chopgimp-sketch"
 

@@ -36,11 +36,11 @@ from chopgimp_common import (ok, fail, walk_layers, get_parasite_json, set_paras
                              vbox, spin_scale, form_grid, frame)
 
 PROCS = {
-    "chopgimp-export-web": ("Exporter pour le web…", "<Image>/File/Export"),
-    "chopgimp-generate-assets": ("Générer les ressources", "<Image>/File/Export"),
-    "chopgimp-generator-toggle": ("Générer les ressources à chaque enregistrement", "<Image>/File/Export"),
-    "chopgimp-batch": ("Traitement par lots…", "<Image>/File/Export"),
-    "chopgimp-layer-comps": ("Compositions de calques…", "<Image>/Windows"),
+    "chopgimp-export-web": ("Exporter pour le web…", None),
+    "chopgimp-generate-assets": ("Générer les ressources", None),
+    "chopgimp-generator-toggle": ("Générer les ressources à chaque enregistrement", None),
+    "chopgimp-batch": ("Traitement par lots…", None),
+    "chopgimp-layer-comps": ("Compositions de calques…", None),
 }
 GEN_PARASITE = "chopgimp-generator-on"
 COMPS_PARASITE = "chopgimp-layer-comps"
@@ -494,7 +494,10 @@ class ChopGimpWeb(Gimp.PlugIn):
         p = Gimp.ImageProcedure.new(self, name, Gimp.PDBProcType.PLUGIN, self.run, None)
         p.set_image_types("*")
         p.set_menu_label(label)
-        p.add_menu_path(menu)
+        # 3.32.0 : None = placé par tools/build_menus.py (Fichier > Exporter,
+        # Générer, Automatisation ; Fenêtres)
+        if menu:
+            p.add_menu_path(menu)
         p.set_documentation(label.rstrip("…"), label.rstrip("…"), name)
         p.set_attribution("ChopGimp", "ChopGimp", "2026")
         p.set_sensitivity_mask(Gimp.ProcedureSensitivityMask.DRAWABLE |

@@ -737,11 +737,113 @@ def _parse_map(m, path):
         elif key in ("Lr16", "Lr32", "Layr") and not psd.layers:
             sub = Reader(m, start, start + bl)
             psd.layers = _read_layer_info(sub, psd, bl)
-        elif bl < (4 << 20):
+        elif bl < (4 << 20) or (key in ("Patt", "Pat2", "Pat3") and bl < (256 << 20)):
+            # 3.32.0 : les motifs des incrustations de motif (parse_patterns)
             doc[key] = m[start:start + bl]
         section.pos = min(start + bl + (bl & 1), section.end)
     psd.doc_blocks = doc
     return psd
+
+
+# ─── 3.32.0 : motifs du document (Patt) ─────────────────────────────────
+
+def _unpack_rle(data, w, h):
+    """PackBits ligne par ligne (en-tête : longueur de chaque ligne)."""
+    r = Reader(data)
+    counts = [r.u16() for _ in range(h)]
+    out = bytearray()
+    for n in counts:
+        row = r.read(n)
+        i, line = 0, bytearray()
+        while i < len(row) and len(line) < w:
+            c = row[i]
+            i += 1
+            if c < 128:
+                line += row[i:i + c + 1]
+                i += c + 1
+            elif c > 128:
+                line += bytes([row[i]]) * (257 - c)
+                i += 1
+        out += bytes(line[:w]).ljust(w, b"\x00")
+    return bytes(out)
+
+
+def _vm_array(r):
+    """Un tableau de mémoire virtuelle : (largeur, hauteur, octets 8 bits) ou None."""
+    if not r.u32():
+        return None
+    n = r.u32()
+    if not n:
+        return None
+    end = r.pos + n
+    depth = r.u32()
+    top, left, bottom, right = r.fmt("4I")
+    r.u16()
+    comp = r.u8()
+    data = r.read(end - r.pos)
+    w, h = right - left, bottom - top
+    if comp == 1:
+        data = _unpack_rle(data, w * (depth // 8 or 1), h)
+    if depth == 16:
+        data = data[0::2]
+    elif depth != 8:
+        return None
+    return w, h, data
+
+
+def parse_patterns(data):
+    """Bloc Patt / Pat2 / Pat3 → {identifiant: (nom, largeur, hauteur, RGBA)}."""
+    out = {}
+    r = Reader(data)
+    while r.left() >= 4:
+        n = r.u32()
+        if n == 0 or n > r.left():
+            break
+        sub = r.sub(n)
+        r.skip((4 - n % 4) % 4 if r.left() >= (4 - n % 4) % 4 else 0)
+        try:
+            sub.u32()                                   # version
+            mode = sub.u32()
+            h, w = sub.fmt("2h")
+            name = sub.unicode()
+            pid = sub.pascal(1)
+            if mode == 2:
+                sub.skip(256 * 3 + 4)                   # table des couleurs indexées
+            sub.u32()                                   # version de la liste
+            end = sub.pos + sub.u32()
+            sub.fmt("4I")
+            nch = sub.u32()
+            chans = [_vm_array(sub) for _ in range(nch + 2)]
+            sub.pos = end
+        except PARSE_ERRORS:
+            continue
+        planes = [c for c in chans[:nch] if c]
+        alpha = chans[nch] if len(chans) > nch else None
+        if not planes:
+            continue
+        if mode in (1, 8) or len(planes) < 3:           # niveaux de gris, bichromie
+            planes = [planes[0]] * 3
+        w, h = planes[0][0], planes[0][1]
+        size = w * h
+        if any(len(p[2]) < size for p in planes[:3]) or (alpha and len(alpha[2]) < size):
+            continue
+        rgba = bytearray(size * 4)
+        for c in range(3):
+            rgba[c::4] = planes[c][2][:size]
+        rgba[3::4] = alpha[2][:size] if alpha else b"\xff" * size
+        out[pid] = (name, w, h, bytes(rgba))
+    return out
+
+
+def document_patterns(psd):
+    pats = {}
+    for key in ("Patt", "Pat2", "Pat3"):
+        if key in psd.doc_blocks:
+            try:
+                pats.update(parse_patterns(bytes(psd.doc_blocks[key])))
+            except PARSE_ERRORS:
+                pass
+    return pats
 
 
 def _read_resources(r, psd):

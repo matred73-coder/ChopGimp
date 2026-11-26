@@ -1150,8 +1150,68 @@ def _perspective_select_tool():
     return s
 
 
+# ─── 3.32.0 (lot D) : icônes de la boîte à outils ───────────────────────
+# Les outils Main, Rotation de la vue et Forme sont enregistrés sous les
+# noms « gimp-tool-* » (app/tools/chopgimp-viewtools.c, chopgimp-shapetool.c),
+# absents du thème Default de GIMP : sans ces alias, leur icône manquait
+# dans les options d'outil, le menu Fenêtres > Outils et les préréglages.
+ALIASES = {
+    "gimp-tool-hand": "chopgimp-tool-hand",
+    "gimp-tool-rotate-view": "chopgimp-tool-rotate-view",
+    "gimp-tool-shape": "chopgimp-tool-shape",
+}
+
+
+@icon("gimp-tool-levels")
+def _levels():
+    # Histogramme + trois curseurs (noir, gris, blanc)
+    s = polygon([(1.0, 11.0), (3.0, 7.0), (5.0, 8.5), (7.5, 3.0), (10.0, 6.5),
+                 (12.5, 4.5), (15.0, 11.0)], 0.75)
+    s += rect(1.0, 11.6, 14.0, 0.9)
+    s += polygon([(1.6, 15.0), (3.0, 12.8), (4.4, 15.0)])
+    s += polygon([(6.6, 15.0), (8.0, 12.8), (9.4, 15.0)], 0.6)
+    s += polygon([(11.6, 15.0), (13.0, 12.8), (14.4, 15.0)])
+    return s
+
+
+@icon("gimp-tool-curves")
+def _curves():
+    # Cadre + courbe en S + points
+    s = rect_outline(1.0, 1.0, 14.0, 14.0, 0.9)
+    pts_ = [(1.5 + 13.0 * t, 14.5 - 13.0 * (3 * t * t - 2 * t * t * t)) for t in
+            [i / 12.0 for i in range(13)]]
+    s += polyline(pts_, 1.2)
+    s += circle(5.0, 11.6, 1.2) + circle(11.0, 4.4, 1.2)
+    return s
+
+
+@icon("gimp-tool-brightness-contrast")
+def _brightness_contrast():
+    # Soleil à moitié plein (luminosité / contraste)
+    s = ring(8.0, 8.0, 3.6, 1.1)
+    s += polygon([(8.0 + 3.6 * math.cos(math.radians(a)), 8.0 + 3.6 * math.sin(math.radians(a)))
+                  for a in range(90, 271, 15)])
+    for k in range(8):
+        a = math.radians(k * 45)
+        s += line(8.0 + 5.2 * math.cos(a), 8.0 + 5.2 * math.sin(a),
+                  8.0 + 7.0 * math.cos(a), 8.0 + 7.0 * math.sin(a), 1.0)
+    return s
+
+
+@icon("gimp-tool-threshold")
+def _threshold():
+    # Carré coupé en noir / blanc avec un curseur
+    s = rect_outline(1.5, 1.5, 13.0, 10.0, 0.9)
+    s += rect(1.5, 1.5, 6.5, 10.0)
+    s += rect(1.0, 13.0, 14.0, 0.9)
+    s += polygon([(6.6, 15.4), (8.0, 13.2), (9.4, 15.4)])
+    return s
+
+
 def main():
     os.makedirs(OUT, exist_ok=True)
+    for alias, target in ALIASES.items():
+        ICONS[alias] = ICONS[target]
     for name, fn in sorted(ICONS.items()):
         body = fn()
         for fname in (name + ".svg", name + "-symbolic.svg"):

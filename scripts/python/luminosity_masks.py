@@ -128,7 +128,7 @@ class LuminosityMasks(Gimp.PlugIn):
             name)
         procedure.set_menu_label(_("_Masques de luminosité"))
         procedure.set_attribution("PhotoGIMP Pro", "GPL v3+", "2026")
-        procedure.add_menu_path("<Image>/Select")
+        # 3.32.0 : placé dans Sélection par tools/build_menus.py
 
         return procedure
 

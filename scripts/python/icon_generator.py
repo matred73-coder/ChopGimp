@@ -256,7 +256,7 @@ class IconGenerator(Gimp.PlugIn):
                 name)
             procedure.set_menu_label(_("Generer des _icones..."))
             procedure.set_attribution("PhotoGIMP Pro", "GPL v3+", "2026")
-            procedure.add_menu_path("<Image>/File")
+            # 3.32.0 : placé dans Fichier > Générer par tools/build_menus.py
             return procedure
 
         return None

@@ -102,7 +102,7 @@ class SelectAndMask(Gimp.PlugIn):
             name)
         procedure.set_menu_label(_("_Sélection et masque…"))
         procedure.set_attribution("PhotoGIMP Pro", "GPL v3+", "2026")
-        procedure.add_menu_path("<Image>/Select")
+        # 3.32.0 : placé dans Sélection par tools/build_menus.py
 
         procedure.add_int_argument("smooth-radius",
                                    _("_Lissage (rayon)"),

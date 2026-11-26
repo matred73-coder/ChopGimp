@@ -126,7 +126,7 @@ class MultiPagePdf(Gimp.PlugIn):
         procedure = Gimp.ImageProcedure.new(self, name, Gimp.PDBProcType.PLUGIN, pdf_export_run, None)
         procedure.set_menu_label("Exporter PDF multi-pages...")
         procedure.set_icon_name("document-save")
-        procedure.add_menu_path("<Image>/File/")
+        # 3.32.0 : placé dans Fichier > Exporter par tools/build_menus.py
         procedure.set_documentation("Multi-Page PDF", "Export layers as PDF pages", name)
         procedure.set_attribution("PhotoGIMP Pro", "PhotoGIMP Pro", "2026")
         procedure.add_string_argument("output-file", "Fichier de sortie", "PDF output path", os.path.expanduser("~/output.pdf"), GObject.ParamFlags.READWRITE)

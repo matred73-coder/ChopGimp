@@ -1168,6 +1168,57 @@ bancs et livraison au lot 6). VERSION inchangée (3.29.4).
 - **Limites acceptées** : contours de profil préparés pour rien quand moins de
   8 objets sont à dessiner (rendu alors un par un).
 
+## 3.32.0 (non compilé) — Interface (lot 5 du plan final)
+
+Patch 0164. Code écrit, relu et vérifié à la syntaxe (gcc -fsyntax-only dans le SDK
+GNOME), **ni compilé ni testé dans ChopGimp** (compilation, tests et livraison au lot 6).
+VERSION inchangée.
+
+- **Lot D — boîte à outils et icônes** : Main, Rotation de la vue et Forme sont enregistrés
+  sous `gimp-tool-hand` / `rotate-view` / `shape`, absents de tout thème (icône manquante
+  dans les options d'outil, Fenêtres > Outils, préréglages) : alias PS-Line, copiés aussi dans
+  hicolor avec les `chopgimp-tool-*` (autre thème d'icônes) ; icônes PS-Line de Niveaux,
+  Courbes, Luminosité-contraste, Seuil (`icons/build_icons.py`).
+- **Lot E — barre d'état** : zoom en premier, puis « Doc : 2,6 Mo / 7,9 Mo ▸ » ; un clic
+  choisit l'information (taille du document, dimensions, profil, résolution, calques, outil
+  actif), retenue dans chopgimprc (`app/display/chopgimp-statusbar-info.c`).
+  `CHOPGIMP_CLASSIC_STATUSBAR=1`.
+- **Lot F — onglets et styles** : onglets de documents façon Photoshop (petite vignette,
+  « nom @ 66,7 % (Calque, RVB/8)* », chemin en info-bulle, croix sur chaque onglet, onglet
+  actif souligné d'accent ; `CHOPGIMP_CLASSIC_TABS=1`) ; styles : focus à l'accent, menus et
+  fenêtres surgissantes aérés, barres de défilement fines qui s'épaississent au survol, cases
+  cochées à l'accent (`themes/src/ps-overrides.css`).
+- **Restes** :
+  - sous-menu Calque > Texte (plug-in chopgimp_text) retiré : tout est dans le menu Texte ;
+  - onglet Accueil : déjà en français depuis la 3.27.5 (vérifié dans le code, plus aucun
+    texte anglais) ;
+  - la touche d'un outil (lettre seule : L, M, W…) active l'outil affiché par son groupe ;
+    un outil du groupe qui a sa propre lettre la garde ; les menus ne changent pas
+    (`CHOPGIMP_NO_GROUP_KEY=1`) ;
+  - profil de largeur : priorité la plus haute de la barre d'options, il ne part plus dans « ⋯ ».
+- **Menus façon Photoshop (suite de la 3.28.0)** : Fichier (Ouvrir, Importer, Ouvrir récent ;
+  Fermer ; Enregistrer ; Exporter ▸ avec plans de travail, web, PDF multi-pages, timelapse ;
+  Générer ▸ ; Automatisation ▸ ; Informations ; Quitter), Édition (pas à pas, Collage
+  spécial, Effacer, Rechercher Ctrl+F, Remplir d'après le contenu, Actions, Barre d'outils,
+  Modèles d'IA), Sélection (Plage de couleurs, Sujet, Sélectionner et masquer, Masques de
+  luminosité, Modifier dans l'ordre de Photoshop, Mode Masque), Affichage (croquis, guides de
+  perspective), Fenêtres (Compositions de calques, Références), Aide. **Une seule place par
+  commande** : les panneaux et les outils dans Fenêtres, Ombre longue / Estampage dans Filtres,
+  Vectoriser et Attacher à la perspective dans Vecteur ; doublons de plug-ins retirés
+  (Recherche de commande, « Style de calque (fenêtre) », chemins `<Image>/…` placés par
+  `tools/build_menus.py`). Garde-fous : aucun doublon, ancrages des plug-ins gardés.
+- **Ajout : Satin et Incrustation de motif** (`app/operations/gimpoperationinnereffects.c`),
+  sous-classes du Contour (remplissages, mode, opacité, niveaux de mipmap, compositing
+  « dans le calque », alpha gardé) : Satin (angle, distance, taille, contour, inverser ;
+  Produit noir 50 % par défaut), Incrustation de motif (motif, angle, échelle, lier au calque,
+  décalage glissé sur l'image). Dans la fenêtre Style de calque (ordre de Photoshop) et
+  Calque > Style de calque ; un nouvel effet se place sous le contour, le biseau et les
+  effets internes. Export PSD : ChFX et patternFill, motif dans le bloc Patt du document ;
+  import : repris depuis lfx2 (motif lu dans Patt) ou cgFX. `CHOPGIMP_NO_INNER_STYLES=1`.
+- Tests : 8 nouveaux (rendu satin et motif, PSD exporté / relu par psdparse / réimporté,
+  menus sans doublon et façon Photoshop, plug-ins sans chemin en double, icônes).
+- **À vérifier à la compilation (lot 6)** : docs/dev/A-VERIFIER-4.0.md, section « Lot 5 ».
+
 ## 3.31.0 (non compilé) — partie 2 : exports PDF, EPS et PSD (lot 4b du plan final)
 
 Patch 0163. Code écrit, relu et vérifié à la syntaxe (gcc -fsyntax-only dans le SDK
