@@ -136,6 +136,7 @@ def workspace_books(name):
     if name == "illustration":
         return (book(None, [dockable("gimp-color-editor"), dockable("gimp-palette-editor"),
                             dockable("chopgimp-global-colors"), dockable("chopgimp-symbols"),
+                            dockable("chopgimp-brushes"),   # 3.30.0 : Formes
                             dockable("gimp-gradient-list")]),
                 # 3.27.2 : Aspect et Contour des objets vectoriels en tête
                 # 3.29.5 : groupe du milieu plus haut (Aspect n'y est plus tassé)

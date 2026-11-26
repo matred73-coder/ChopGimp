@@ -1170,41 +1170,50 @@ bancs et livraison au lot 6). VERSION inchangée (3.29.4).
 
 ## 3.30.0 (non compilé) — Blocs vectoriels 4 et 5 (lot 3 du plan final)
 
-Patch 0160. Code écrit et relu, **ni compilé ni testé** (compilation, tests,
-bancs et livraison au lot 6). VERSION inchangée (3.29.4).
+Patchs 0160 et 0161. Code écrit et relu, **ni compilé ni testé** (compilation,
+tests, bancs et livraison au lot 6). VERSION inchangée (3.29.4).
 
 - **Pinceau goutte** (outil `gimp-vblob-tool`, groupe N de la boîte à outils) :
   chaque coup (pinceau rond de la taille choisie, lissé par « Fidélité »)
-  devient une forme remplie de la couleur de fond des options, fusionnée avec
-  les objets libres de même fond uni et sans contour qu'il touche (option
-  « Fusionner avec la sélection », « Garder la sélection ») ; sans calque
-  vectoriel actif, un nouveau calque. Maj+B (Illustrator) est pris par le
-  Crayon de GIMP : pas de raccourci (`CHOPGIMP_NO_BLOB_MERGE` : jamais de
+  devient une forme remplie de la **couleur du contour** des options (celle du
+  fond s'il n'y a pas de contour), comme Illustrator, fusionnée avec les
+  objets libres de même fond uni et sans contour qu'il touche (« Fusionner
+  avec la sélection », « Garder la sélection ») ; sans calque vectoriel actif,
+  un nouveau calque. Maj+B (Illustrator) est pris par le Crayon de GIMP : pas
+  de raccourci, seule limite acceptée (`CHOPGIMP_NO_BLOB_MERGE` : jamais de
   fusion).
-- **Formes de pinceau** (Vecteur > Formes de pinceau) : Calligraphique (plume
-  elliptique angle / arrondi / taille, somme exacte faite comme le contour rond
-  du tracé dans l'espace de la plume), Art (illustration étirée le long du
-  tracé), Motif (tuiles répétées, étirées pour tomber juste), Dispersion
-  (copies semées : espacement, écart, rotation, variation de taille, tirage
-  fixe). Le tracé devient la clé d'un groupe dynamique (comme la Transition) :
-  son contour, masqué, pilote la forme (couleur, épaisseur), qui est refaite
-  dès que le tracé ou les options changent ; « Définir l'illustration » (la
-  sélection, gardée dans la spec), Teintes, Options, Retirer, Décomposer
-  l'aspect (`CHOPGIMP_NO_VBRUSHES`).
+- **Formes de pinceau** (Vecteur > Formes de pinceau) :
+  - Calligraphique : plume elliptique (angle, arrondi, diamètre), somme exacte
+    faite comme le contour rond du tracé dans l'espace de la plume ; chaque
+    réglage **Fixe, Aléatoire** (une valeur par sous-tracé, tirage fixe) **ou
+    Pression** (pression enregistrée dans les points : enveloppe des plumes
+    le long du tracé, plumes d'extrémité en bouts) ;
+  - Art (illustration étirée) ; Motif avec **tuiles de côté, d'angle
+    extérieur, d'angle intérieur, de début et de fin** (angles : virage de
+    plus de 30°, tuile posée sur la bissectrice, côtés ajustés entre les
+    angles) ; Dispersion (espacement, écart, rotation, taille, tirage fixe) ;
+  - le tracé devient la clé d'un groupe dynamique (comme la Transition) : son
+    contour, masqué, pilote la forme, refaite quand le tracé ou les options
+    changent ; Options, Retirer, Décomposer l'aspect (`CHOPGIMP_NO_VBRUSHES`).
+- **Panneau Formes** (Fenêtres, espace de travail Illustration) : appliquer
+  (double-clic), modifier (les tracés de l'image qui l'utilisent suivent),
+  définir une tuile de motif depuis la sélection, dupliquer, renommer,
+  supprimer. Bibliothèque enregistrée dans `<dossier GIMP>/chopgimp-brushes`
+  (comme les profils de largeur) et gardée dans le XCF (parasite
+  `chopgimp-brushes`, repris dans la bibliothèque à l'ouverture de l'image).
+  « Définir l'illustration » y ajoute une forme Art.
 - **Répétitions** (Vecteur > Répétition) : radiale, en grille (retournement
   d'une rangée / colonne sur deux), en miroir ; la source reste modifiable
-  (entrer dans le groupe), les instances suivent ; Options, Libérer,
-  Décomposer (`CHOPGIMP_NO_REPEAT`).
-- **Clic sur une forme ou une instance** : sélectionne le groupe ; Sélection
-  directe sur une forme de pinceau édite son tracé (`CHOPGIMP_NO_PART_HIT`).
+  (entrer dans le groupe), les instances suivent ; **poignées sur le canevas**
+  avec l'outil Déplacement (V) : radiale — centre, rayon, nombre d'instances ;
+  grille — espacements horizontal et vertical, colonnes et rangées ; miroir —
+  axe déplaçable et orientable ; Options, Libérer, Décomposer
+  (`CHOPGIMP_NO_REPEAT`).
+- **Clic** sur une forme : son tracé ; sur une instance : la répétition
+  entière (`CHOPGIMP_NO_PART_HIT`).
 - **XCF et export SVG** : groupes ordinaires avec leur spec (attribut
   `blend` du XML, `chopgimp:dynamic` en SVG).
-- **Tests** : 13 tests ajoutés à `tools/smoke_test.py` (commandes PDB
-  `repeat-*`, `brush-*`, `blob:`).
+- **Tests** : 19 tests ajoutés à `tools/smoke_test.py` (commandes PDB
+  `repeat-*`, `repeat-handle`, `brush-*`, `brush-lib-*`, `blob:`).
 - **À vérifier à la compilation (lot 6)** : docs/dev/A-VERIFIER-4.0.md,
   section « Lot 3 ».
-- **Limites acceptées** : formes Motif sans tuiles d'angle ni de début / fin ;
-  calligraphique sans variation aléatoire ni pression ; illustration définie
-  gardée pour la session (et dans chaque tracé qui l'utilise), pas de panneau
-  Formes ; pas de poignées sur le canevas pour les répétitions (fenêtre
-  Options).

@@ -160,8 +160,9 @@ Ils sont produits automatiquement par GitHub Actions à chaque tag `v*`
   complet ×1,8 (`CHOPGIMP_NO_FAST_BABL=1`, `CHOPGIMP_NO_PAR_RENDER=1` pour revenir).
 - **Pinceau goutte, formes de pinceau, répétitions** (3.30.0, non compilé) : outil Pinceau
   goutte (les coups de même couleur fusionnent en une forme) ; formes de pinceau
-  Calligraphique, Art, Motif et Dispersion qui suivent le tracé ; répétitions radiale, en
-  grille et en miroir qui restent modifiables (menu Vecteur).
+  Calligraphique (variations aléatoire et pression), Art, Motif (tuiles d'angle, de début
+  et de fin) et Dispersion qui suivent le tracé, panneau Formes (bibliothèque gardée) ;
+  répétitions radiale, en grille et en miroir modifiables, avec poignées sur le canevas.
 - **Masques d'opacité** et **motifs vectoriels** (grille, briques, hexagonal, mode de
   modification, exportés en `<pattern>` SVG).
 

@@ -2497,6 +2497,60 @@ try:
                "%d puis %d objets" % (x1.count("<path "), x2.count("<path ")))
         im.delete()
 
+        # répétitions : poignées (espacement de grille, nombre d'instances)
+        im, vl, c = scene18(400, 400, [sq18(20, 20, 40)])
+        c("select-all"); c("repeat-grid:2:1")
+        ok_h = c("repeat-handle:3:160:40")
+        report(ok_h and a18(vl, 180, 40) > 0 and a18(vl, 90, 40) == 0,
+               "3.30.0 Répétition : poignée d'espacement de la grille",
+               "alpha (180,40)=%d (90,40)=%d" % (a18(vl, 180, 40), a18(vl, 90, 40)))
+        im.delete()
+        im, vl, c = scene18(400, 400, [sq18(180, 40, 40)])
+        c("select-all"); c("repeat-radial")
+        ok_n = c("repeat-handle:2:260:120")
+        x = vx18(vl)
+        report(ok_n and x.count('blend="rinst"') == 3,
+               "3.30.0 Répétition radiale : poignée du nombre d'instances (8 → 4)",
+               "%d instances" % x.count('blend="rinst"'))
+        im.delete()
+
+        # calligraphique : variation aléatoire de l'angle et du diamètre
+        im, vl, c = scene18(400, 200, [([(50, 100), (350, 100)], False)], fill=False, stroke=True)
+        c("select-all")
+        ok_cr = c("brush-callig-random:30:6")
+        x = vx18(vl)
+        report(ok_cr and "am=1" in x and "dm=1" in x and a18(vl, 200, 100) > 0,
+               "3.30.0 Forme calligraphique : variation aléatoire")
+        im.delete()
+
+        # panneau Formes : motif avec tuiles d'angle, de début et de fin ;
+        # bibliothèque persistante (fichier) et gardée dans l'image ;
+        # modifier la forme : les tracés suivent
+        im, vl, c = scene18(400, 400, [([(50, 300), (300, 300), (300, 80)], False),
+                                       sq18(20, 20, 10),
+                                       ([(60, 20), (70, 25), (60, 30)], True)],
+                            fill=True, stroke=True)
+        c("select-at:25:25")
+        ok_la = c("brush-lib-add:2")
+        c("select-at:63:25")
+        ok_t = all(c("brush-lib-tile:%d" % t) for t in (1, 2, 3, 4))
+        c("select-at:150:300")
+        ok_ap = c("brush-lib-apply")
+        x = vx18(vl)
+        report(ok_la and ok_t and ok_ap and "art-outer=" in x and "art-end=" in x and
+               " def=" in x and x.count("<path ") == 7,
+               "3.30.0 Motif : tuiles de côté, d'angle, de début et de fin",
+               "%d tracés" % x.count("<path "))
+        ok_sz = c("brush-lib-size:200")
+        x = vx18(vl)
+        report(ok_sz and "size=200" in x, "3.30.0 Formes : modifier la forme, les tracés suivent")
+        par = im.get_parasite("chopgimp-brushes")
+        report(par is not None and
+               os.path.exists(os.path.join(Gimp.directory(), "chopgimp-brushes")),
+               "3.30.0 Formes : bibliothèque enregistrée (dossier GIMP et XCF)")
+        c("brush-lib-remove")
+        im.delete()
+
         tr = open(os.path.join(Gimp.sysconf_directory(), "toolrc")).read()
         report('"gimp-vblob-tool"' in tr, "3.30.0 Pinceau goutte dans la boîte à outils")
     except Exception:

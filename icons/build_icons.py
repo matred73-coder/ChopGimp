@@ -1064,6 +1064,19 @@ def _vblob_tool():
     return s
 
 
+@icon("chopgimp-brushes")
+def _brushes_panel():
+    # Panneau Formes : un trait calligraphique (plume en biais) et des points semés
+    s = ""
+    for i in range(13):
+        t = i / 12.0
+        x, y = 1.5 + 8.0 * t, 9.0 - 5.0 * math.sin(math.pi * t)
+        s += polygon(rotate([(x - 1.4, y), (x, y - 0.5), (x + 1.4, y), (x, y + 0.5)], x, y, -40))
+    for x, y in ((11.5, 12.5), (14.0, 9.5), (13.0, 14.5)):
+        s += circle(x, y, 1.1)
+    return s
+
+
 @icon("chopgimp-repeat-radial")
 def _repeat_radial():
     # Six pétales autour d'un centre

@@ -32,6 +32,10 @@
                 (tab-style automatic)
                 (aux-info
                     (show-button-bar "true")))
+            (dockable "chopgimp-brushes"
+                (tab-style automatic)
+                (aux-info
+                    (show-button-bar "true")))
             (dockable "gimp-gradient-list"
                 (tab-style automatic)
                 (aux-info

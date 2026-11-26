@@ -1204,7 +1204,8 @@
                         "../patches/gimp-3.2.8/0157-ChopGimp-3.29.5-Lasso-magn-tique-a-mouse-jump-of-mor.patch",
                         "../patches/gimp-3.2.8/0158-ChopGimp-3.29.5-Red-finir-les-couleurs-Assigner-les-.patch",
                         "../patches/gimp-3.2.8/0159-ChopGimp-3.29.6-complete-vector-performance-16-32-bi.patch",
-                        "../patches/gimp-3.2.8/0160-ChopGimp-3.30.0-vector-blocks-4-and-5-Blob-Brush-too.patch"
+                        "../patches/gimp-3.2.8/0160-ChopGimp-3.30.0-vector-blocks-4-and-5-Blob-Brush-too.patch",
+                        "../patches/gimp-3.2.8/0161-ChopGimp-3.30.0-lot-3-completed-Blob-Brush-takes-the.patch"
                     ]
                 }
             ],

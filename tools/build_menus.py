@@ -78,7 +78,7 @@ outils = ["      <section>"] + ["  " + l for l in get["_Tools"]] + ["      </sec
 # « Fenêtres ancrables ».
 PANNEAUX = [["dialogs-layers", "dialogs-channels", "dialogs-paths",
              "dialogs-appearance", "dialogs-stroke", "dialogs-global-colors",
-             "dialogs-symbols", "dialogs-transform"],
+             "dialogs-symbols", "dialogs-transform", "dialogs-vbrushes"],
             ["dialogs-colors", "dialogs-palettes", "dialogs-gradients", "dialogs-patterns",
              "dialogs-brushes", "dialogs-fonts"],
             ["dialogs-character", "dialogs-paragraph", "dialogs-glyphs", "dialogs-text-styles",
@@ -347,7 +347,7 @@ VECTEUR_MENU = [
      ("Formes de pi_nceau", [["layers-vobjects-brush-calligraphic", "layers-vobjects-brush-art",
                               "layers-vobjects-brush-pattern", "layers-vobjects-brush-scatter",
                               "layers-vobjects-brush-options"],
-                             ["layers-vobjects-brush-define"],
+                             ["layers-vobjects-brush-define", "dialogs-vbrushes"],
                              ["layers-vobjects-brush-release", "layers-vobjects-brush-expand"]])],
     # 3.28.1 (lot V6 points 6 et 7) : Peinture dynamique, Symboles
     [("_Peinture dynamique", [["layers-vobjects-livepaint-make", "layers-vobjects-livepaint-add"],
