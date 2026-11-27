@@ -14,12 +14,12 @@ Anciens patchs : 0024, 0028, 0033, 0034, 0056, 0057, 0058, 0059, 0060, 0061, 006
  app/path/chopgimp-inkscape-pathstroke.h  |   42 +
  app/pdb/chopgimp-cmds.c                  | 2675 ++++++++++++++
  app/pdb/chopgimp-cmds.h                  |    8 +
- app/tools/chopgimp-shapebuildertool.c    |  937 +++++
+ app/tools/chopgimp-shapebuildertool.c    |  939 +++++
  app/tools/chopgimp-shapebuildertool.h    |   27 +
  app/tools/chopgimp-shapetool.c           | 1285 +++++++
  app/tools/chopgimp-shapetool.h           |   85 +
  app/widgets/gimpsessioninfo-dock.c       |   16 +
- 13 files changed, 10673 insertions(+)
+ 13 files changed, 10675 insertions(+)
  create mode 100644 app/path/chopgimp-geom.cc
  create mode 100644 app/path/chopgimp-geom.h
  create mode 100644 app/path/chopgimp-inkscape-pathstroke.cc
@@ -8443,10 +8443,10 @@ index 0000000..75e28ba
 +void   register_chopgimp_procs (GimpPDB *pdb);
 diff --git a/app/tools/chopgimp-shapebuildertool.c b/app/tools/chopgimp-shapebuildertool.c
 new file mode 100644
-index 0000000..392f316
+index 0000000..11779b1
 --- /dev/null
 +++ b/app/tools/chopgimp-shapebuildertool.c
-@@ -0,0 +1,937 @@
+@@ -0,0 +1,939 @@
 +/* GIMP - The GNU Image Manipulation Program
 + * Copyright (C) 1995 Spencer Kimball and Peter Mattis
 + *
@@ -9324,7 +9324,9 @@ index 0000000..392f316
 +                "gimp-direct-select-tool",
 +                _("Sélection directe"),
 +                _("Sélection directe : modifier les nœuds d'une forme ou d'un chemin "
-+                  "(glisser dans le vide : sélection au cadre)"),
++                  "(glisser sur un nœud : le déplacer ; glisser sur une forme : la "
++                  "déplacer, Alt : une copie ; glisser dans le vide : sélection au "
++                  "cadre ; flèches : déplacer)"),
 +                N_("Sélection _directe"), "A",
 +                NULL, GIMP_HELP_TOOL_PATH,
 +                "chopgimp-tool-direct-select",

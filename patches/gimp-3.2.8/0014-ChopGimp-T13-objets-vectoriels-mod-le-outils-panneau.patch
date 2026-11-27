@@ -40,12 +40,12 @@ Anciens patchs : 0118, 0119, 0120, 0121, 0122, 0123, 0124, 0125, 0126, 0144, 015
  app/path/chopgimp-vrecolor.h                |  159 +
  app/path/gimpvectorlayer.c                  |  174 +-
  app/path/gimpvectorlayer.h                  |    3 +
- app/tools/chopgimp-vobjecttool.c            | 1661 ++++
- app/tools/chopgimp-vobjecttool.h            |   75 +
+ app/tools/chopgimp-vobjecttool.c            | 1710 ++++
+ app/tools/chopgimp-vobjecttool.h            |   93 +
  app/tools/chopgimp-vsnap.c                  | 1422 +++
  app/tools/chopgimp-vsnap.h                  |   93 +
- app/tools/gimppathtool.c                    |  958 +-
- app/tools/gimppathtool.h                    |   30 +
+ app/tools/gimppathtool.c                    | 1318 ++-
+ app/tools/gimppathtool.h                    |   39 +
  app/widgets/chopgimp-appearance-editor.c    | 2306 +++++
  app/widgets/chopgimp-appearance-editor.h    |   21 +
  app/widgets/chopgimp-global-colors-editor.c |  947 ++
@@ -56,7 +56,7 @@ Anciens patchs : 0118, 0119, 0120, 0121, 0122, 0123, 0124, 0125, 0126, 0144, 015
  app/widgets/meson.build                     |   10 +
  plug-ins/common/file-svg-vobjects.h         | 2222 +++++
  plug-ins/common/file-svg.c                  |  165 +-
- 46 files changed, 30573 insertions(+), 41 deletions(-)
+ 46 files changed, 31009 insertions(+), 41 deletions(-)
  create mode 100644 app/actions/vector-objects-commands.c
  create mode 100644 app/actions/vector-objects-commands.h
  create mode 100644 app/dialogs/chopgimp-recolor-dialog.c
@@ -20099,10 +20099,10 @@ index cde9e07..536881a 100644
  struct _GimpVectorLayerClass
 diff --git a/app/tools/chopgimp-vobjecttool.c b/app/tools/chopgimp-vobjecttool.c
 new file mode 100644
-index 0000000..db69536
+index 0000000..50d570f
 --- /dev/null
 +++ b/app/tools/chopgimp-vobjecttool.c
-@@ -0,0 +1,1661 @@
+@@ -0,0 +1,1710 @@
 +/* GIMP - The GNU Image Manipulation Program
 + * Copyright (C) 1995 Spencer Kimball and Peter Mattis
 + *
@@ -20966,6 +20966,55 @@ index 0000000..db69536
 +  return TRUE;
 +}
 +
++void
++chopgimp_vsel_begin_move (ChopGimpVSel     *vsel,
++                          GimpVectorLayer  *layer,
++                          const GimpCoords *coords,
++                          GdkModifierType   state,
++                          GimpDisplay      *display)
++{
++  GimpTool *tool = GIMP_TOOL (vsel->tool);
++
++  g_return_if_fail (GIMP_IS_VECTOR_LAYER (layer));
++
++  vsel_ensure_context (vsel, display);
++  vsel_watch (vsel, layer);
++  vsel_end_drag (vsel);
++
++  vsel->px            = coords->x;
++  vsel->py            = coords->y;
++  vsel->pushed        = FALSE;
++  vsel->duplicate     = (state & GDK_MOD1_MASK) != 0;
++  vsel->dx_applied    = vsel->dy_applied = 0.0;
++  vsel->from_center   = FALSE;
++  vsel->key_candidate = 0;
++  gimp_matrix3_identity (&vsel->applied);
++
++  vsel->drag = DRAG_MOVE;
++  vsel_box (layer, &vsel->bx1, &vsel->by1, &vsel->bx2, &vsel->by2);
++  vsel_take_ids (vsel);
++
++  gimp_tool_control_activate (tool->control);
++  vsel_ensure_drawing (vsel, display);
++}
++
++gboolean
++chopgimp_vsel_is_dragging (ChopGimpVSel *vsel)
++{
++  return vsel && vsel->drag != DRAG_NONE;
++}
++
++gboolean
++chopgimp_vsel_get_move (ChopGimpVSel *vsel,
++                        gdouble      *dx,
++                        gdouble      *dy)
++{
++  *dx = vsel->drag == DRAG_MOVE ? vsel->dx_applied : 0.0;
++  *dy = vsel->drag == DRAG_MOVE ? vsel->dy_applied : 0.0;
++
++  return vsel->drag == DRAG_MOVE && vsel->pushed;
++}
++
 +static void
 +vsel_start_change (ChopGimpVSel *vsel,
 +                   const gchar  *desc)
@@ -21766,10 +21815,10 @@ index 0000000..db69536
 +}
 diff --git a/app/tools/chopgimp-vobjecttool.h b/app/tools/chopgimp-vobjecttool.h
 new file mode 100644
-index 0000000..a2239f4
+index 0000000..c5096e1
 --- /dev/null
 +++ b/app/tools/chopgimp-vobjecttool.h
-@@ -0,0 +1,75 @@
+@@ -0,0 +1,93 @@
 +/* GIMP - The GNU Image Manipulation Program
 + * chopgimp-vobjecttool.h — ChopGimp 3.27 (lot V2): object mode of the
 + * Move tool (V) on vector layers with several objects, like Illustrator's
@@ -21825,6 +21874,24 @@ index 0000000..a2239f4
 +                                             const GimpCoords  *coords,
 +                                             GdkModifierType    state,
 +                                             GimpDisplay       *display);
++/*  4.2.9: Direct Selection (A) drags whole objects with this code: starts
++ *  a move of the selected objects of @layer from @coords (Alt: a copy
++ *  moves), then chopgimp_vsel_motion() / _button_release() /
++ *  _draw() as for V (Shift: 45°, smart guides, Ctrl: no snapping, one
++ *  undo step, fast rendering)
++ */
++void           chopgimp_vsel_begin_move     (ChopGimpVSel      *vsel,
++                                             GimpVectorLayer   *layer,
++                                             const GimpCoords  *coords,
++                                             GdkModifierType    state,
++                                             GimpDisplay       *display);
++gboolean       chopgimp_vsel_is_dragging    (ChopGimpVSel      *vsel);
++/*  TRUE once the drag passed the threshold (the objects moved); the
++ *  offset applied so far
++ */
++gboolean       chopgimp_vsel_get_move       (ChopGimpVSel      *vsel,
++                                             gdouble           *dx,
++                                             gdouble           *dy);
 +/*  from GimpDrawTool::draw(); TRUE when it drew the objects' box  */
 +gboolean       chopgimp_vsel_draw           (ChopGimpVSel      *vsel);
 +
@@ -23373,7 +23440,7 @@ index 0000000..d7b1d94
 +
 +G_END_DECLS
 diff --git a/app/tools/gimppathtool.c b/app/tools/gimppathtool.c
-index aa4c067..f8bb1bd 100644
+index aa4c067..bebb758 100644
 --- a/app/tools/gimppathtool.c
 +++ b/app/tools/gimppathtool.c
 @@ -20,6 +20,9 @@
@@ -23400,15 +23467,26 @@ index aa4c067..f8bb1bd 100644
  
  #include "widgets/gimpdialogfactory.h"
  #include "widgets/gimpdockcontainer.h"
-@@ -60,6 +68,7 @@
+@@ -60,6 +68,8 @@
  
  #include "gimppathoptions.h"
  #include "gimppathtool.h"
 +#include "chopgimp-tools.h"
++#include "chopgimp-vobjecttool.h"
  #include "gimptoolcontrol.h"
  
  #include "dialogs/fill-dialog.h"
-@@ -172,6 +181,13 @@ static void     gimp_path_tool_confirm_response   (GimpViewableDialog    *dialog
+@@ -108,6 +118,9 @@ static void     gimp_path_tool_cursor_update      (GimpTool              *tool,
+                                                    const GimpCoords      *coords,
+                                                    GdkModifierType        state,
+                                                    GimpDisplay           *display);
++static gboolean gimp_path_tool_key_press          (GimpTool              *tool,
++                                                   GdkEventKey           *kevent,
++                                                   GimpDisplay           *display);
+ 
+ static void     gimp_path_tool_start              (GimpPathTool          *path_tool,
+                                                    GimpDisplay           *display);
+@@ -172,6 +185,13 @@ static void     gimp_path_tool_confirm_response   (GimpViewableDialog    *dialog
                                                     GimpPathTool          *path_tool);
  
  
@@ -23422,16 +23500,18 @@ index aa4c067..f8bb1bd 100644
  G_DEFINE_TYPE (GimpPathTool, gimp_path_tool, GIMP_TYPE_DRAW_TOOL)
  
  #define parent_class gimp_path_tool_parent_class
-@@ -212,6 +228,8 @@ gimp_path_tool_class_init (GimpPathToolClass *klass)
+@@ -211,7 +231,10 @@ gimp_path_tool_class_init (GimpPathToolClass *klass)
+   tool_class->motion         = gimp_path_tool_motion;
    tool_class->modifier_key   = gimp_path_tool_modifier_key;
    tool_class->cursor_update  = gimp_path_tool_cursor_update;
++  tool_class->key_press      = gimp_path_tool_key_press;   /* 4.2.9 */
    tool_class->is_destructive = FALSE;
 +
 +  GIMP_DRAW_TOOL_CLASS (klass)->draw = gimp_path_tool_draw;   /* 3.29.1 */
  }
  
  static void
-@@ -226,6 +244,7 @@ gimp_path_tool_init (GimpPathTool *path_tool)
+@@ -226,6 +249,7 @@ gimp_path_tool_init (GimpPathTool *path_tool)
                                              GIMP_TOOL_CURSOR_PATHS);
  
    path_tool->saved_mode = GIMP_PATH_MODE_DESIGN;
@@ -23439,7 +23519,7 @@ index aa4c067..f8bb1bd 100644
  }
  
  static void
-@@ -260,6 +279,12 @@ gimp_path_tool_dispose (GObject *object)
+@@ -260,6 +284,14 @@ gimp_path_tool_dispose (GObject *object)
  
    gimp_path_tool_image_changed (path_tool, NULL, NULL);
  
@@ -23449,10 +23529,12 @@ index aa4c067..f8bb1bd 100644
 +      path_tool->vobj_prev_sel = NULL;
 +    }
 +
++  g_clear_pointer (&path_tool->vsel, chopgimp_vsel_free);   /* 4.2.9 */
++
    G_OBJECT_CLASS (parent_class)->dispose (object);
  }
  
-@@ -287,6 +312,572 @@ gimp_path_tool_control (GimpTool       *tool,
+@@ -287,6 +319,818 @@ gimp_path_tool_control (GimpTool       *tool,
    GIMP_TOOL_CLASS (parent_class)->control (tool, action, display);
  }
  
@@ -23895,18 +23977,202 @@ index aa4c067..f8bb1bd 100644
 +  return TRUE;
 +}
 +
-+/*  TRUE when the press was used  */
-+static gboolean
-+gimp_path_tool_vobj_press (GimpPathTool     *path_tool,
++/*  4.2.9: what the path widget of the edited object of @layer has under
++ *  @coords (GIMP_HIT_NONE when it edits nothing there)
++ */
++static GimpHit
++gimp_path_tool_widget_hit (GimpPathTool     *path_tool,
++                           GimpVectorLayer  *layer,
 +                           const GimpCoords *coords,
 +                           GdkModifierType   state,
 +                           GimpDisplay      *display)
 +{
++  if (path_tool->vobj_layer == layer && path_tool->widget &&
++      GIMP_TOOL (path_tool)->display == display)
++    return gimp_tool_widget_hit (path_tool->widget, coords, state, TRUE);
++
++  return GIMP_HIT_NONE;
++}
++
++static ChopGimpVObject *
++gimp_path_tool_vobj_leaf_at (GimpVectorLayer  *layer,
++                             const GimpCoords *coords,
++                             GimpDisplay      *display)
++{
++  GimpDisplayShell *shell = gimp_display_get_shell (display);
++
++  return chopgimp_vlayer_hit_test (layer, coords->x, coords->y,
++                                   3.0 / MAX (shell->scale_x, 1e-6),
++                                   CHOPGIMP_HIT_LEAF);
++}
++
++/*  4.2.9: TRUE when a press at @coords drags a whole object (cursor)  */
++static gboolean
++gimp_path_tool_vobj_move_at (GimpPathTool     *path_tool,
++                             const GimpCoords *coords,
++                             GdkModifierType   state,
++                             GimpDisplay      *display)
++{
++  GimpVectorLayer *layer;
++  ChopGimpVObject *leaf;
++
++  if (! gimp_path_tool_is_direct (path_tool) || ! chopgimp_vobjects_enabled () ||
++      g_object_get_data (G_OBJECT (path_tool), "chopgimp-direct-lasso") ||
++      (state & gimp_get_extend_selection_mask ()))
++    return FALSE;
++
++  layer = chopgimp_vobjects_get_active_layer (gimp_display_get_image (display));
++
++  if (! layer || ! (leaf = gimp_path_tool_vobj_leaf_at (layer, coords, display)))
++    return FALSE;
++
++  return (state & GDK_MOD1_MASK) ||
++         gimp_path_tool_widget_hit (path_tool, layer, coords, state, display) !=
++         GIMP_HIT_DIRECT;
++}
++
++/*  4.2.9: during the drag the layer renders fast and tells its change at
++ *  the end only: the nodes of the moved objects follow the pointer here
++ *  (no write back, the exact path comes with « objects-changed »)
++ */
++static void
++gimp_path_tool_vobj_follow (GimpPathTool *path_tool)
++{
++  GimpVectorLayer *layer = path_tool->vobj_layer;
++  GimpStroke      *s     = NULL;
++  const guint     *sel;
++  gint             n = 0;
++  gdouble          dx, dy, ix, iy;
++
++  if (! layer || ! path_tool->vobj_path || ! path_tool->vsel)
++    return;
++
++  chopgimp_vsel_get_move (path_tool->vsel, &dx, &dy);
++
++  ix = dx - path_tool->vobj_move_dx;
++  iy = dy - path_tool->vobj_move_dy;
++
++  if (ix == 0.0 && iy == 0.0)
++    return;
++
++  path_tool->vobj_move_dx = dx;
++  path_tool->vobj_move_dy = dy;
++
++  sel = chopgimp_vlayer_get_selection (layer, &n);
++
++  path_tool->vobj_writing = TRUE;
++  gimp_path_freeze (path_tool->vobj_path);
++
++  while ((s = gimp_path_stroke_get_next (path_tool->vobj_path, s)))
++    {
++      guint            id = path_tool->vobj_multi
++                            ? GPOINTER_TO_UINT (g_object_get_data (G_OBJECT (s),
++                                                                   CHOPGIMP_VOBJ_ID_KEY))
++                            : path_tool->vobj_id;
++      ChopGimpVObject *o  = chopgimp_vlayer_get_object (layer, id);
++      gboolean         moved = FALSE;
++
++      for (gint i = 0; i < n && o && ! moved; i++)
++        {
++          ChopGimpVObject *so = chopgimp_vlayer_get_object (layer, sel[i]);
++
++          moved = so && (so == o || chopgimp_vobject_is_ancestor (so, o));
++        }
++
++      if (moved)
++        gimp_stroke_translate (s, ix, iy);
++    }
++
++  gimp_path_thaw (path_tool->vobj_path);
++  path_tool->vobj_writing = FALSE;
++}
++
++/*  4.2.9: after a move, the nodes shown are those of the selection (the
++ *  copies of an Alt+drag); a click without drag on one of several
++ *  selected objects selects it alone
++ */
++static void
++gimp_path_tool_vobj_end_move (GimpPathTool *path_tool,
++                              gboolean      moved,
++                              GimpDisplay  *display)
++{
++  GimpImage       *image = gimp_display_get_image (display);
++  GimpVectorLayer *layer = chopgimp_vobjects_get_active_layer (image);
++  guint            click = path_tool->vobj_click_leaf;
++  const guint     *sel;
++  gint             n = 0;
++  gboolean         covered = TRUE;
++
++  path_tool->vobj_click_leaf = 0;
++
++  if (! layer)
++    return;
++
++  if (! moved)
++    {
++      ChopGimpVObject *o = click ? chopgimp_vlayer_get_object (layer, click) : NULL;
++
++      if (o)
++        gimp_path_tool_vobj_edit (path_tool, layer, o);
++
++      return;
++    }
++
++  sel = chopgimp_vlayer_get_selection (layer, &n);
++
++  for (gint i = 0; i < n && covered; i++)
++    {
++      if (path_tool->vobj_layer != layer)
++        covered = FALSE;
++      else if (path_tool->vobj_multi)
++        {
++          gboolean has = FALSE;
++
++          for (guint k = 0; k < path_tool->vobj_multi->len && ! has; k++)
++            has = g_array_index (path_tool->vobj_multi, guint, k) == sel[i];
++
++          covered = has;
++        }
++      else
++        covered = sel[i] == path_tool->vobj_id;
++    }
++
++  if (covered || n == 0)
++    return;
++
++  if (n == 1)
++    {
++      ChopGimpVObject *o = chopgimp_vlayer_get_object (layer, sel[0]);
++
++      if (o)
++        gimp_path_tool_vobj_edit (path_tool, layer, o);
++    }
++  else
++    {
++      GArray *ids = g_array_new (FALSE, FALSE, sizeof (guint));
++
++      g_array_append_vals (ids, sel, n);
++
++      if (gimp_path_tool_vobj_edit_multi (path_tool, layer, ids))
++        chopgimp_vlayer_set_selection (layer, (const guint *) ids->data, ids->len);
++
++      g_array_free (ids, TRUE);
++    }
++}
++
++/*  TRUE when the press was used  */
++static gboolean
++gimp_path_tool_vobj_press (GimpPathTool        *path_tool,
++                           const GimpCoords    *coords,
++                           GdkModifierType      state,
++                           GimpButtonPressType  press_type,
++                           GimpDisplay         *display)
++{
 +  GimpTool         *tool  = GIMP_TOOL (path_tool);
 +  GimpImage        *image = gimp_display_get_image (display);
-+  GimpDisplayShell *shell = gimp_display_get_shell (display);
 +  GimpVectorLayer  *layer = chopgimp_vobjects_get_active_layer (image);
 +  ChopGimpVObject  *leaf;
++  GimpHit           whit;
 +
 +  if (! layer)
 +    return FALSE;
@@ -23953,15 +24219,23 @@ index aa4c067..f8bb1bd 100644
 +      return FALSE;
 +    }
 +
-+  /*  on the nodes of the edited object: the path widget  */
-+  if (path_tool->vobj_layer == layer && path_tool->widget &&
-+      tool->display == display &&
-+      gimp_tool_widget_hit (path_tool->widget, coords, state, TRUE) != GIMP_HIT_NONE)
++  /*  on the nodes, handles or segments of the edited object: the path
++   *  widget (4.2.9: only a real hit, GIMP_HIT_DIRECT: in Design mode the
++   *  void is a GIMP_HIT_INDIRECT rectangle, which hid the other objects;
++   *  Alt+drag on an object duplicates it, even on its outline)
++   */
++  whit = gimp_path_tool_widget_hit (path_tool, layer, coords, state, display);
++
++  leaf = gimp_path_tool_vobj_leaf_at (layer, coords, display);
++
++  if (whit == GIMP_HIT_DIRECT && ! (leaf && (state & GDK_MOD1_MASK)))
 +    return FALSE;
 +
-+  leaf = chopgimp_vlayer_hit_test (layer, coords->x, coords->y,
-+                                   3.0 / MAX (shell->scale_x, 1e-6),
-+                                   CHOPGIMP_HIT_LEAF);
++  /*  in the void with an edited object: its selection rectangle, as
++   *  before 4.2.9
++   */
++  if (whit != GIMP_HIT_NONE && ! leaf)
++    return FALSE;
 +
 +  if (leaf)
 +    path_tool->vobj_press_leaf = leaf->id;
@@ -23989,6 +24263,60 @@ index aa4c067..f8bb1bd 100644
 +
 +      return FALSE;
 +    }
++
++  /*  4.2.9 (Illustrator): a press on another object selects it at once,
++   *  a drag on its fill or outline moves it (with the other selected
++   *  objects when it is one of them; Alt: a copy)
++   */
++  if (leaf && ! path_tool->vobj_press_shift &&
++      press_type == GIMP_BUTTON_PRESS_NORMAL)
++    {
++      gboolean in_sel = chopgimp_vlayer_is_selected (layer, leaf->id) &&
++                        chopgimp_vobjects_n_selected (layer) > 1;
++
++      path_tool->vobj_click_leaf = 0;
++
++      if (in_sel)
++        {
++          path_tool->vobj_click_leaf = leaf->id;
++        }
++      else if (leaf->id != path_tool->vobj_id || path_tool->vobj_layer != layer ||
++               path_tool->vobj_multi)
++        {
++          gimp_path_tool_vobj_edit (path_tool, layer, leaf);
++          gimp_image_flush (image);
++        }
++
++      if (! path_tool->widget || tool->display != display)
++        return TRUE;
++
++      gimp_tool_widget_hover (path_tool->widget, coords, state, TRUE);
++
++      /*  right on a node of the object just picked: drag the node  */
++      if (! (state & GDK_MOD1_MASK) &&
++          gimp_tool_widget_hit (path_tool->widget, coords, state, TRUE) == GIMP_HIT_DIRECT)
++        {
++          path_tool->vobj_click_leaf = 0;
++          return FALSE;
++        }
++
++      if (! chopgimp_vlayer_is_selected (layer, leaf->id))
++        chopgimp_vlayer_set_selection (layer, &leaf->id, 1);
++
++      if (! path_tool->vsel)
++        path_tool->vsel = chopgimp_vsel_new (GIMP_DRAW_TOOL (path_tool));
++
++      path_tool->vobj_track   = FALSE;
++      path_tool->vobj_move_dx = 0.0;
++      path_tool->vobj_move_dy = 0.0;
++
++      chopgimp_vsel_begin_move (path_tool->vsel, layer, coords, state, display);
++
++      return TRUE;
++    }
++
++  if (leaf && press_type != GIMP_BUTTON_PRESS_NORMAL)
++    return TRUE;
 +
 +  if (leaf && (leaf->id != path_tool->vobj_id || path_tool->vobj_layer != layer ||
 +               path_tool->vobj_multi))
@@ -24025,7 +24353,7 @@ index aa4c067..f8bb1bd 100644
  static void
  gimp_path_tool_button_press (GimpTool            *tool,
                               const GimpCoords    *coords,
-@@ -300,6 +891,100 @@ gimp_path_tool_button_press (GimpTool            *tool,
+@@ -300,6 +1144,100 @@ gimp_path_tool_button_press (GimpTool            *tool,
    if (tool->display && display != tool->display)
      gimp_tool_control (tool, GIMP_TOOL_ACTION_HALT, tool->display);
  
@@ -24057,7 +24385,7 @@ index aa4c067..f8bb1bd 100644
 +
 +  /*  ChopGimp lot V2: Direct Selection on the objects of a vector layer  */
 +  if (gimp_path_tool_is_direct (path_tool) && chopgimp_vobjects_enabled () &&
-+      gimp_path_tool_vobj_press (path_tool, coords, state, display))
++      gimp_path_tool_vobj_press (path_tool, coords, state, press_type, display))
 +    return;
 +
 +  /*  ChopGimp lot V2 (Illustrator): « Ajouter au calque vectoriel actif »:
@@ -24126,7 +24454,7 @@ index aa4c067..f8bb1bd 100644
    if (! tool->display)
      {
        gimp_path_tool_start (path_tool, display);
-@@ -316,6 +1001,75 @@ gimp_path_tool_button_press (GimpTool            *tool,
+@@ -316,6 +1254,75 @@ gimp_path_tool_button_press (GimpTool            *tool,
    gimp_tool_control_activate (tool->control);
  }
  
@@ -24202,8 +24530,28 @@ index aa4c067..f8bb1bd 100644
  static void
  gimp_path_tool_button_release (GimpTool              *tool,
                                 const GimpCoords      *coords,
-@@ -328,12 +1082,34 @@ gimp_path_tool_button_release (GimpTool              *tool,
+@@ -326,14 +1333,54 @@ gimp_path_tool_button_release (GimpTool              *tool,
+ {
+   GimpPathTool *path_tool = GIMP_PATH_TOOL (tool);
  
++  /*  4.2.9: the move of whole objects  */
++  if (chopgimp_vsel_is_dragging (path_tool->vsel))
++    {
++      gdouble  dx, dy;
++      gboolean moved = chopgimp_vsel_get_move (path_tool->vsel, &dx, &dy);
++
++      chopgimp_vsel_button_release (path_tool->vsel, coords, state,
++                                    release_type, display);
++
++      path_tool->vobj_track = FALSE;
++      gimp_path_tool_vobj_end_move (path_tool,
++                                    moved &&
++                                    release_type != GIMP_BUTTON_RELEASE_CANCEL,
++                                    display);
++      gimp_image_flush (gimp_display_get_image (display));
++      return;
++    }
++
    gimp_tool_control_halt (tool->control);
  
 +  if (path_tool->corner_k != -2)   /* 3.29.1 */
@@ -24237,10 +24585,18 @@ index aa4c067..f8bb1bd 100644
  }
  
  static void
-@@ -345,12 +1121,115 @@ gimp_path_tool_motion (GimpTool         *tool,
+@@ -345,12 +1392,130 @@ gimp_path_tool_motion (GimpTool         *tool,
  {
    GimpPathTool *path_tool = GIMP_PATH_TOOL (tool);
  
++  /*  4.2.9: the move of whole objects (as V: Shift 45°, smart guides)  */
++  if (chopgimp_vsel_is_dragging (path_tool->vsel))
++    {
++      chopgimp_vsel_motion (path_tool->vsel, coords, state, display);
++      gimp_path_tool_vobj_follow (path_tool);
++      return;
++    }
++
 +  /*  3.29.1: towards the inside of the corner, a larger radius  */
 +  if (path_tool->corner_k != -2 && path_tool->vobj_layer)
 +    {
@@ -24326,6 +24682,13 @@ index aa4c067..f8bb1bd 100644
 +
 +  GIMP_DRAW_TOOL_CLASS (parent_class)->draw (draw_tool);
 +
++  /*  4.2.9: outlines, box and smart guides of the objects being moved  */
++  if (chopgimp_vsel_is_dragging (path_tool->vsel))
++    {
++      chopgimp_vsel_draw (path_tool->vsel);
++      return;
++    }
++
 +  if (! gimp_path_tool_is_direct (path_tool) || ! path_tool->vobj_layer ||
 +      ! path_tool->vobj_id || path_tool->vobj_multi || ! draw_tool->display)
 +    return;
@@ -24353,7 +24716,91 @@ index aa4c067..f8bb1bd 100644
  static void
  gimp_path_tool_modifier_key (GimpTool        *tool,
                               GdkModifierType  key,
-@@ -445,6 +1324,16 @@ gimp_path_tool_start (GimpPathTool *path_tool,
+@@ -429,9 +1594,83 @@ gimp_path_tool_cursor_update (GimpTool         *tool,
+       gimp_tool_control_set_tool_cursor (tool->control, tool_cursor);
+     }
+ 
++  /*  4.2.9: over the fill or outline of an object, a drag moves it  */
++  if (gimp_path_tool_vobj_move_at (path_tool, coords, state, display))
++    {
++      gimp_tool_set_cursor (tool, display, GIMP_CURSOR_MOUSE,
++                            gimp_tool_control_get_tool_cursor (tool->control),
++                            GIMP_CURSOR_MODIFIER_MOVE);
++      return;
++    }
++
+   GIMP_TOOL_CLASS (parent_class)->cursor_update (tool, coords, state, display);
+ }
+ 
++/*  4.2.9 (Illustrator): with selected nodes the arrows move the nodes
++ *  (the path widget), else the selected objects: 1 px, Maj: 10 px, one
++ *  undo step per key press (as V)
++ */
++static gboolean
++gimp_path_tool_has_selected_nodes (GimpPathTool *path_tool)
++{
++  GimpStroke *s = NULL;
++
++  if (! path_tool->path)
++    return FALSE;
++
++  while ((s = gimp_path_stroke_get_next (path_tool->path, s)))
++    for (GList *l = s->anchors->head; l; l = l->next)
++      if (((GimpAnchor *) l->data)->selected &&
++          ((GimpAnchor *) l->data)->type == GIMP_ANCHOR_ANCHOR)
++        return TRUE;
++
++  return FALSE;
++}
++
++static gboolean
++gimp_path_tool_key_press (GimpTool    *tool,
++                          GdkEventKey *kevent,
++                          GimpDisplay *display)
++{
++  GimpPathTool    *path_tool = GIMP_PATH_TOOL (tool);
++  GimpVectorLayer *layer     = NULL;
++  gdouble          step      = (kevent->state & gimp_get_extend_selection_mask ()) ? 10.0 : 1.0;
++  gdouble          dx        = 0.0, dy = 0.0;
++
++  switch (kevent->keyval)
++    {
++    case GDK_KEY_Left:  case GDK_KEY_KP_Left:  dx = -step; break;
++    case GDK_KEY_Right: case GDK_KEY_KP_Right: dx =  step; break;
++    case GDK_KEY_Up:    case GDK_KEY_KP_Up:    dy = -step; break;
++    case GDK_KEY_Down:  case GDK_KEY_KP_Down:  dy =  step; break;
++    default: break;
++    }
++
++  if ((dx != 0.0 || dy != 0.0)                              &&
++      gimp_path_tool_is_direct (path_tool)                  &&
++      chopgimp_vobjects_enabled ()                          &&
++      ! chopgimp_vsel_is_dragging (path_tool->vsel)         &&
++      (layer = chopgimp_vobjects_get_active_layer (gimp_display_get_image (display))) &&
++      chopgimp_vobjects_n_selected (layer) > 0              &&
++      ! gimp_path_tool_has_selected_nodes (path_tool))
++    {
++      const guint *ids;
++      guint       *copy;
++      gint         n = 0;
++
++      ids  = chopgimp_vlayer_get_selection (layer, &n);
++      copy = g_memdup2 (ids, sizeof (guint) * n);
++      chopgimp_vlayer_translate (layer, copy, n, dx, dy, TRUE);
++      g_free (copy);
++
++      gimp_image_flush (gimp_display_get_image (display));
++
++      return TRUE;
++    }
++
++  return GIMP_TOOL_CLASS (parent_class)->key_press (tool, kevent, display);
++}
++
+ static void
+ gimp_path_tool_start (GimpPathTool *path_tool,
+                       GimpDisplay  *display)
+@@ -445,6 +1684,16 @@ gimp_path_tool_start (GimpPathTool *path_tool,
  
    path_tool->widget = widget = gimp_tool_path_new (shell);
  
@@ -24370,7 +24817,7 @@ index aa4c067..f8bb1bd 100644
    gimp_draw_tool_set_widget (GIMP_DRAW_TOOL (tool), widget);
  
    g_object_bind_property (G_OBJECT (options), "path-edit-mode",
-@@ -555,7 +1444,16 @@ gimp_path_tool_update_selected_layers (GimpPathTool *path_tool,
+@@ -555,7 +1804,16 @@ gimp_path_tool_update_selected_layers (GimpPathTool *path_tool,
      {
        vector_layer = current_layers->data;
  
@@ -24388,7 +24835,7 @@ index aa4c067..f8bb1bd 100644
          {
            gimp_path_tool_set_layer (path_tool, vector_layer);
          }
-@@ -620,7 +1518,11 @@ gimp_path_tool_tool_path_begin_change (GimpToolWidget *tool_path,
+@@ -620,7 +1878,11 @@ gimp_path_tool_tool_path_begin_change (GimpToolWidget *tool_path,
    GimpDisplayShell *shell = gimp_tool_widget_get_shell (tool_path);
    GimpImage        *image = gimp_display_get_image (shell->display);
  
@@ -24401,7 +24848,7 @@ index aa4c067..f8bb1bd 100644
  }
  
  static void
-@@ -631,7 +1533,15 @@ gimp_path_tool_tool_path_end_change (GimpToolWidget *tool_path,
+@@ -631,7 +1893,15 @@ gimp_path_tool_tool_path_end_change (GimpToolWidget *tool_path,
    GimpDisplayShell *shell = gimp_tool_widget_get_shell (tool_path);
    GimpImage        *image = gimp_display_get_image (shell->display);
  
@@ -24418,7 +24865,7 @@ index aa4c067..f8bb1bd 100644
      {
        GimpUndo            *undo;
        GimpUndoAccumulator  accum = { 0, };
-@@ -705,6 +1615,10 @@ gimp_path_tool_set_path (GimpPathTool    *path_tool,
+@@ -705,6 +1975,10 @@ gimp_path_tool_set_path (GimpPathTool    *path_tool,
    if (path == path_tool->path)
      return;
  
@@ -24429,7 +24876,7 @@ index aa4c067..f8bb1bd 100644
    if (path_tool->current_vector_layer && path && ! layer)
      {
        GimpImage *image      = path_tool->current_image;
-@@ -861,6 +1775,7 @@ gimp_path_tool_create_vector_layer (GimpPathTool *path_tool)
+@@ -861,6 +2135,7 @@ gimp_path_tool_create_vector_layer (GimpPathTool *path_tool)
    GimpVectorLayer *layer;
    GimpPathOptions *options = GIMP_PATH_TOOL_GET_OPTIONS (path_tool);
    gboolean         needs_new_path;
@@ -24437,7 +24884,7 @@ index aa4c067..f8bb1bd 100644
  
    if (! path_tool->current_image)
      return;
-@@ -916,6 +1831,9 @@ gimp_path_tool_create_vector_layer (GimpPathTool *path_tool)
+@@ -916,6 +2191,9 @@ gimp_path_tool_create_vector_layer (GimpPathTool *path_tool)
                          -1,
                          TRUE);
  
@@ -24447,7 +24894,7 @@ index aa4c067..f8bb1bd 100644
    if (needs_new_path)
      gimp_image_undo_group_end (image);
  
-@@ -947,6 +1865,14 @@ gimp_path_tool_vector_change_notify (GObject          *options,
+@@ -947,6 +2225,14 @@ gimp_path_tool_vector_change_notify (GObject          *options,
  
    image = gimp_item_get_image (GIMP_ITEM (layer));
  
@@ -24462,7 +24909,7 @@ index aa4c067..f8bb1bd 100644
    g_signal_handlers_block_by_func (options,
                                     gimp_path_tool_vector_change_notify,
                                     layer);
-@@ -1026,6 +1952,8 @@ gimp_path_tool_set_layer (GimpPathTool    *path_tool,
+@@ -1026,6 +2312,8 @@ gimp_path_tool_set_layer (GimpPathTool    *path_tool,
  
    options = GIMP_PATH_TOOL_GET_OPTIONS (path_tool);
  
@@ -24471,7 +24918,7 @@ index aa4c067..f8bb1bd 100644
    if (path_tool->current_vector_layer)
      {
        layer_options = gimp_vector_layer_get_options (path_tool->current_vector_layer);
-@@ -1060,14 +1988,22 @@ gimp_path_tool_set_layer (GimpPathTool    *path_tool,
+@@ -1060,14 +2348,22 @@ gimp_path_tool_set_layer (GimpPathTool    *path_tool,
                                 G_CALLBACK (gimp_path_tool_vector_layer_path_changed),
                                 path_tool, 0);
  
@@ -24503,10 +24950,10 @@ index aa4c067..f8bb1bd 100644
        g_signal_connect_object (options, "notify::enable-fill",
                                 G_CALLBACK (gimp_path_tool_vector_change_notify),
 diff --git a/app/tools/gimppathtool.h b/app/tools/gimppathtool.h
-index 7c993a8..e828dd9 100644
+index 7c993a8..83cc30e 100644
 --- a/app/tools/gimppathtool.h
 +++ b/app/tools/gimppathtool.h
-@@ -50,6 +50,36 @@ struct _GimpPathTool
+@@ -50,6 +50,45 @@ struct _GimpPathTool
    GimpToolWidget  *grab_widget;
  
    GtkWidget       *confirm_dialog;
@@ -24540,6 +24987,15 @@ index 7c993a8..e828dd9 100644
 +  gboolean         vobj_press_shift;
 +  guint            vobj_press_leaf;
 +  GArray          *vobj_prev_sel;
++
++  /*  4.2.9: Direct Selection (A) drags whole objects (the move of the
++   *  objects mode of V, chopgimp-vobjecttool.c): the drag, the object
++   *  clicked among several selected (alone at a release without drag),
++   *  the offset already given to the edited nodes
++   */
++  gpointer         vsel;            /* ChopGimpVSel */
++  guint            vobj_click_leaf;
++  gdouble          vobj_move_dx, vobj_move_dy;
  };
  
  struct _GimpPathToolClass
