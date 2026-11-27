@@ -24,9 +24,9 @@ Anciens patchs : 0138, 0140, 0141, 0146, 0147, 0149, 0153, 0154, 0155, 0156.
  app/display/gimpdisplayshell-dnd.c           |   73 +-
  app/path/chopgimp-vdistort.c                 |  976 +++++
  app/path/chopgimp-vdistort.h                 |  119 +
- app/path/chopgimp-vlivepaint.c               | 1233 ++++++
+ app/path/chopgimp-vlivepaint.c               | 1221 ++++++
  app/path/chopgimp-vlivepaint.h               |  102 +
- app/path/chopgimp-vmaterial.c                | 3747 ++++++++++++++++++
+ app/path/chopgimp-vmaterial.c                | 3690 ++++++++++++++++++
  app/path/chopgimp-vmaterial.h                |  277 ++
  app/path/chopgimp-vsymbols.c                 |  912 +++++
  app/path/chopgimp-vsymbols.h                 |  102 +
@@ -36,7 +36,7 @@ Anciens patchs : 0138, 0140, 0141, 0146, 0147, 0149, 0153, 0154, 0155, 0156.
  app/tools/chopgimp-envelopetool.h            |   15 +
  app/tools/chopgimp-livepainttool.c           |  680 ++++
  app/tools/chopgimp-livepainttool.h           |   15 +
- app/tools/chopgimp-materialtools.c           | 1319 ++++++
+ app/tools/chopgimp-materialtools.c           | 1319 +++++++
  app/tools/chopgimp-materialtools.h           |   54 +
  app/tools/chopgimp-vpentools.c               | 1234 ++++++
  app/tools/chopgimp-vpentools.h               |   25 +
@@ -57,7 +57,7 @@ Anciens patchs : 0138, 0140, 0141, 0146, 0147, 0149, 0153, 0154, 0155, 0156.
  app/widgets/chopgimp-transform-editor.h      |   16 +
  app/widgets/chopgimp-width-profile-box.c     |  306 ++
  app/widgets/chopgimp-width-profile-box.h     |   19 +
- 48 files changed, 18118 insertions(+), 11 deletions(-)
+ 48 files changed, 18049 insertions(+), 11 deletions(-)
  create mode 100644 app/dialogs/chopgimp-distort-dialog.c
  create mode 100644 app/dialogs/chopgimp-distort-dialog.h
  create mode 100644 app/dialogs/chopgimp-material-dialogs.c
@@ -4131,10 +4131,10 @@ index 0000000..f0ecc01
 +G_END_DECLS
 diff --git a/app/path/chopgimp-vlivepaint.c b/app/path/chopgimp-vlivepaint.c
 new file mode 100644
-index 0000000..3785a2c
+index 0000000..8dc8656
 --- /dev/null
 +++ b/app/path/chopgimp-vlivepaint.c
-@@ -0,0 +1,1233 @@
+@@ -0,0 +1,1221 @@
 +/* GIMP - The GNU Image Manipulation Program
 + * chopgimp-vlivepaint.c — ChopGimp 3.27.7 (lot V6 point 6): « Peinture
 + * dynamique » (see chopgimp-vlivepaint.h)
@@ -4170,6 +4170,7 @@ index 0000000..3785a2c
 +#include "chopgimp-geom.h"
 +#include "chopgimp-vobject.h"
 +#include "chopgimp-vutil.h"
++#include "chopgimp-vobject-ops.h"
 +#include "chopgimp-vlivepaint.h"
 +
 +#include "gimp-intl.h"
@@ -4284,27 +4285,6 @@ index 0000000..3785a2c
 +}
 +
 +static void
-+collect_leaves (ChopGimpVObject  *o,
-+                GList           **list)
-+{
-+  if (o->kind == CHOPGIMP_VOBJECT_PATH)
-+    *list = g_list_prepend (*list, o);
-+  else
-+    for (guint i = 0; i < o->children->len; i++)
-+      collect_leaves (g_ptr_array_index (o->children, i), list);
-+}
-+
-+static GList *
-+leaves_of (ChopGimpVObject *o)
-+{
-+  GList *list = NULL;
-+
-+  collect_leaves (o, &list);
-+
-+  return g_list_reverse (list);
-+}
-+
-+static void
 +collect_groups (ChopGimpVObject  *o,
 +                GList           **list)
 +{
@@ -4396,10 +4376,12 @@ index 0000000..3785a2c
 +  return g_string_free (s, FALSE);
 +}
 +
++static gint env_lp_no_incremental = -1;
++
 +static gboolean
 +lp_incremental (void)
 +{
-+  return g_getenv ("CHOPGIMP_LP_NO_INCREMENTAL") == NULL;
++  return ! chopgimp_env_flag ("CHOPGIMP_LP_NO_INCREMENTAL", &env_lp_no_incremental);
 +}
 +
 +static void
@@ -4447,6 +4429,7 @@ index 0000000..3785a2c
 +  GimpImage        *image   = gimp_item_get_image (GIMP_ITEM (layer));
 +  ChopGimpVObject  *sources = lp_sources (g);
 +  GList            *leaves;
++  GPtrArray        *leaf_arr;           /* the leaves by index (esrc) */
 +  GPtrArray        *paths;
 +  GString          *sigsrc;
 +  gchar            *sig, *old_sig;
@@ -4466,8 +4449,9 @@ index 0000000..3785a2c
 +  if (! sources)
 +    return FALSE;
 +
-+  leaves = leaves_of (sources);
-+  paths  = g_ptr_array_new_with_free_func (g_object_unref);
++  leaves   = chopgimp_vobjects_leaves_of (sources);
++  leaf_arr = g_ptr_array_new ();
++  paths    = g_ptr_array_new_with_free_func (g_object_unref);
 +  sigsrc = g_string_new (NULL);
 +
 +  g_string_append_printf (sigsrc, "gap=%.3f;", gap);
@@ -4482,6 +4466,7 @@ index 0000000..3785a2c
 +
 +      g_object_ref_sink (p);
 +      g_ptr_array_add (paths, p);
++      g_ptr_array_add (leaf_arr, l->data);
 +
 +      d = chopgimp_vpath_to_d (p);
 +      g_string_append_printf (sigsrc, "%d:%s;", i, d);
@@ -4497,6 +4482,7 @@ index 0000000..3785a2c
 +      g_free (sig);
 +      g_free (old_sig);
 +      g_ptr_array_free (paths, TRUE);
++      g_ptr_array_free (leaf_arr, TRUE);
 +      g_list_free (leaves);
 +      return FALSE;
 +    }
@@ -4759,7 +4745,8 @@ index 0000000..3785a2c
 +        }
 +      else
 +        {
-+          ChopGimpVObject *src = g_list_nth_data (leaves, esrc[i]);
++          ChopGimpVObject *src = (esrc[i] >= 0 && (guint) esrc[i] < leaf_arr->len) ?
++                                 g_ptr_array_index (leaf_arr, esrc[i]) : NULL;
 +
 +          style_for_edge (&st, src ? &src->style : NULL);
 +        }
@@ -4807,6 +4794,7 @@ index 0000000..3785a2c
 +  old_pieces_free (old_faces);
 +  old_pieces_free (old_edges);
 +  g_ptr_array_free (paths, TRUE);
++  g_ptr_array_free (leaf_arr, TRUE);
 +  g_list_free (leaves);
 +  g_free (sig);
 +
@@ -5478,10 +5466,10 @@ index 0000000..784f125
 +G_END_DECLS
 diff --git a/app/path/chopgimp-vmaterial.c b/app/path/chopgimp-vmaterial.c
 new file mode 100644
-index 0000000..70aba23
+index 0000000..47fff32
 --- /dev/null
 +++ b/app/path/chopgimp-vmaterial.c
-@@ -0,0 +1,3747 @@
+@@ -0,0 +1,3690 @@
 +/* GIMP - The GNU Image Manipulation Program
 + * chopgimp-vmaterial.c — ChopGimp 3.29.1: « couleur et matière » of the
 + * vector objects (see chopgimp-vmaterial.h)
@@ -6722,6 +6710,8 @@ index 0000000..70aba23
 +  chopgimp_vmaterial_stroke_gradient_profile (cr, flat, paint, mode, width, NULL, space);
 +}
 +
++static gint env_no_local_across = -1;
++
 +void
 +chopgimp_vmaterial_stroke_gradient_profile (cairo_t             *cr,
 +                                            cairo_path_t        *flat,
@@ -6737,7 +6727,8 @@ index 0000000..70aba23
 +  if (! flat || ! paint || ! paint->stops || paint->stops->len == 0)
 +    return;
 +
-+  prof = (mode == 2 && ! g_getenv ("CHOPGIMP_NO_LOCAL_ACROSS")) ? profile_parse (profile) : NULL;
++  prof = (mode == 2 && ! chopgimp_env_flag ("CHOPGIMP_NO_LOCAL_ACROSS", &env_no_local_across)) ?
++         profile_parse (profile) : NULL;
 +
 +  /*  sub-path by sub-path: its length, then its segments  */
 +  while (i < flat->num_data)
@@ -6888,6 +6879,7 @@ index 0000000..70aba23
 +  gint             w, h, sstride, dstride;
 +  guchar          *src, *dst;
 +  cairo_surface_t *a8;
++  gboolean         invert, clip;
 +
 +  if (! argb || cairo_surface_status (argb) != CAIRO_STATUS_SUCCESS)
 +    return NULL;
@@ -6905,6 +6897,18 @@ index 0000000..70aba23
 +
 +  cairo_surface_flush (a8);
 +
++  /*  premultiplied ARGB: the luminance times alpha is the luminance of
++   *  the premultiplied components (no un-premultiply), in integers:
++   *  Rec. 709 weights scaled to 65536 (13933 + 46871 + 4732), within
++   *  1/255 of the former floating point computation
++   *
++   *  Illustrator: with « Découpe » the outside of the mask is black
++   *  (hidden), without it white (shown): v = lum·a + (1 − a), inverted
++   *  (1 − lum)·a
++   */
++  invert = (flags & CHOPGIMP_OPMASK_INVERT) != 0;
++  clip   = (flags & CHOPGIMP_OPMASK_CLIP)   != 0;
++
 +  for (gint y = 0; y < h; y++)
 +    {
 +      const guint32 *s = (const guint32 *) (src + y * sstride);
@@ -6913,33 +6917,20 @@ index 0000000..70aba23
 +      for (gint x = 0; x < w; x++)
 +        {
 +          guint32 px = s[x];
-+          gdouble a  = ((px >> 24) & 0xff) / 255.0;
-+          gdouble r, g, b, lum, v;
++          gint    a  = (px >> 24) & 0xff;
++          gint    lp = (13933 * (gint) ((px >> 16) & 0xff) +
++                        46871 * (gint) ((px >> 8)  & 0xff) +
++                        4732  * (gint) ( px        & 0xff) + 32768) >> 16;
++          gint    v;
 +
-+          /*  premultiplied: un-premultiply for the luminance  */
-+          if (a > 0.0)
-+            {
-+              r = ((px >> 16) & 0xff) / 255.0 / a;
-+              g = ((px >> 8)  & 0xff) / 255.0 / a;
-+              b = ( px        & 0xff) / 255.0 / a;
-+            }
++          if (invert)
++            v = a - lp;
++          else if (clip)
++            v = lp;
 +          else
-+            r = g = b = 0.0;
++            v = lp + 255 - a;
 +
-+          lum = 0.2126 * r + 0.7152 * g + 0.0722 * b;
-+
-+          if (flags & CHOPGIMP_OPMASK_INVERT)
-+            lum = 1.0 - lum;
-+
-+          /*  Illustrator: with « Découpe » the outside of the mask is
-+           *  black (hidden), without it white (shown)
-+           */
-+          if (flags & CHOPGIMP_OPMASK_CLIP)
-+            v = lum * a;
-+          else
-+            v = lum * a + (1.0 - a) * ((flags & CHOPGIMP_OPMASK_INVERT) ? 0.0 : 1.0);
-+
-+          d[x] = (guchar) CLAMP (floor (v * 255.0 + 0.5), 0, 255);
++          d[x] = (guchar) CLAMP (v, 0, 255);
 +        }
 +    }
 +
@@ -6980,74 +6971,6 @@ index 0000000..70aba23
 +  g_list_free (sel);
 +
 +  return list;
-+}
-+
-+/*  the selected objects with a common parent, bottom → top (g_list_free);
-+ *  NULL unless there are at least @min
-+ */
-+static GList *
-+selected_siblings (GimpVectorLayer *layer,
-+                   gint             min)
-+{
-+  GList           *sel    = chopgimp_vlayer_get_selected_objects (layer);
-+  ChopGimpVObject *parent = NULL;
-+  GList           *list   = NULL;
-+
-+  for (GList *l = sel; l; l = l->next)
-+    {
-+      ChopGimpVObject *o = l->data;
-+
-+      if (! parent)
-+        parent = o->parent;
-+
-+      if (o->parent != parent)
-+        {
-+          g_list_free (sel);
-+          g_list_free (list);
-+          return NULL;
-+        }
-+
-+      list = g_list_append (list, o);
-+    }
-+
-+  g_list_free (sel);
-+
-+  if ((gint) g_list_length (list) < min)
-+    {
-+      g_list_free (list);
-+      return NULL;
-+    }
-+
-+  /*  bottom → top, by index in the parent  */
-+  {
-+    GList *sorted = NULL;
-+
-+    for (guint i = 0; parent && i < parent->children->len; i++)
-+      if (g_list_find (list, g_ptr_array_index (parent->children, i)))
-+        sorted = g_list_append (sorted, g_ptr_array_index (parent->children, i));
-+
-+    g_list_free (list);
-+    list = sorted;
-+  }
-+
-+  return list;
-+}
-+
-+static ChopGimpVObject *
-+group_of_selection (GimpVectorLayer *layer,
-+                    gboolean (*test) (ChopGimpVObject *))
-+{
-+  GList           *sel = chopgimp_vlayer_get_selected_objects (layer);
-+  ChopGimpVObject *g   = NULL;
-+
-+  for (GList *l = sel; l && ! g; l = l->next)
-+    for (ChopGimpVObject *o = l->data; o && ! g; o = o->parent)
-+      if (test (o))
-+        g = o;
-+
-+  g_list_free (sel);
-+
-+  return g;
 +}
 +
 +
@@ -7220,14 +7143,14 @@ index 0000000..70aba23
 +gboolean
 +chopgimp_vmaterial_opmask_any (GimpVectorLayer *layer)
 +{
-+  return group_of_selection (layer, is_opmask_group) != NULL;
++  return chopgimp_vlayer_group_of_selection (layer, is_opmask_group) != NULL;
 +}
 +
 +gboolean
 +chopgimp_vmaterial_opmask_make (GimpVectorLayer *layer,
 +                                gint             flags)
 +{
-+  GList           *list = selected_siblings (layer, 2);
++  GList           *list = chopgimp_vlayer_selected_siblings (layer, 2);
 +  GArray          *ids;
 +  ChopGimpVObject *g;
 +
@@ -7260,7 +7183,7 @@ index 0000000..70aba23
 +gboolean
 +chopgimp_vmaterial_opmask_release (GimpVectorLayer *layer)
 +{
-+  ChopGimpVObject *g = group_of_selection (layer, is_opmask_group);
++  ChopGimpVObject *g = chopgimp_vlayer_group_of_selection (layer, is_opmask_group);
 +
 +  if (! g)
 +    return FALSE;
@@ -7274,7 +7197,7 @@ index 0000000..70aba23
 +chopgimp_vmaterial_opmask_toggle (GimpVectorLayer *layer,
 +                                  gint             flag)
 +{
-+  ChopGimpVObject *g = group_of_selection (layer, is_opmask_group);
++  ChopGimpVObject *g = chopgimp_vlayer_group_of_selection (layer, is_opmask_group);
 +
 +  if (! g)
 +    return FALSE;
@@ -8544,6 +8467,8 @@ index 0000000..70aba23
 + *  tracé »), the step also turns with the spine's direction, relative to
 + *  the chord (CHOPGIMP_NO_BLEND_ORIENT=1: never turned).
 + */
++static gint env_no_blend_orient = -1;
++
 +static void
 +spine_place (GPtrArray *paths,
 +             GArray    *spine,
@@ -8572,7 +8497,8 @@ index 0000000..70aba23
 +          gimp_stroke_translate (st, dx, dy);
 +      }
 +
-+  if (orient && ! g_getenv ("CHOPGIMP_NO_BLEND_ORIENT") && length > 1e-6)
++  if (orient && length > 1e-6 &&
++      ! chopgimp_env_flag ("CHOPGIMP_NO_BLEND_ORIENT", &env_no_blend_orient))
 +    {
 +      gdouble e = MIN (0.01, 1.0 / length);
 +      gdouble px, py, nx, ny, ang, cx, cy;
@@ -8619,12 +8545,15 @@ index 0000000..70aba23
 +      blend_leaves_rec (g_ptr_array_index (o->children, i), out);
 +}
 +
++static gint env_no_blend_groups = -1;
++
 +static GPtrArray *
 +blend_leaves (ChopGimpVObject *key)
 +{
 +  GPtrArray *out = g_ptr_array_new ();
 +
-+  if (key->kind == CHOPGIMP_VOBJECT_PATH || ! g_getenv ("CHOPGIMP_NO_BLEND_GROUPS"))
++  if (key->kind == CHOPGIMP_VOBJECT_PATH ||
++      ! chopgimp_env_flag ("CHOPGIMP_NO_BLEND_GROUPS", &env_no_blend_groups))
 +    blend_leaves_rec (key, out);
 +
 +  return out;
@@ -8866,7 +8795,7 @@ index 0000000..70aba23
 +gboolean
 +chopgimp_vblend_can_make (GimpVectorLayer *layer)
 +{
-+  GList   *list = selected_siblings (layer, 2);
++  GList   *list = chopgimp_vlayer_selected_siblings (layer, 2);
 +  gboolean ok   = list != NULL;
 +
 +  for (GList *l = list; l; l = l->next)
@@ -8906,7 +8835,7 @@ index 0000000..70aba23
 +ChopGimpVObject *
 +chopgimp_vblend_make (GimpVectorLayer *layer)
 +{
-+  GList           *list = selected_siblings (layer, 2);
++  GList           *list = chopgimp_vlayer_selected_siblings (layer, 2);
 +  GArray          *ids;
 +  ChopGimpVObject *g;
 +
@@ -8961,7 +8890,7 @@ index 0000000..70aba23
 +gboolean
 +chopgimp_vblend_any (GimpVectorLayer *layer)
 +{
-+  return group_of_selection (layer, is_blend_group) != NULL;
++  return chopgimp_vlayer_group_of_selection (layer, is_blend_group) != NULL;
 +}
 +
 +gboolean
@@ -8970,7 +8899,7 @@ index 0000000..70aba23
 +                             gdouble              *value,
 +                             gboolean             *orient_path)
 +{
-+  ChopGimpVObject *g = group_of_selection (layer, is_blend_group);
++  ChopGimpVObject *g = chopgimp_vlayer_group_of_selection (layer, is_blend_group);
 +
 +  if (! g)
 +    return FALSE;
@@ -8986,7 +8915,7 @@ index 0000000..70aba23
 +                             gdouble               value,
 +                             gboolean              orient_path)
 +{
-+  ChopGimpVObject *g = group_of_selection (layer, is_blend_group);
++  ChopGimpVObject *g = chopgimp_vlayer_group_of_selection (layer, is_blend_group);
 +
 +  if (! g)
 +    return FALSE;
@@ -9002,7 +8931,7 @@ index 0000000..70aba23
 +gboolean
 +chopgimp_vblend_release (GimpVectorLayer *layer)
 +{
-+  ChopGimpVObject *g = group_of_selection (layer, is_blend_group);
++  ChopGimpVObject *g = chopgimp_vlayer_group_of_selection (layer, is_blend_group);
 +  GPtrArray       *keep;
 +
 +  if (! g)
@@ -9038,7 +8967,7 @@ index 0000000..70aba23
 +gboolean
 +chopgimp_vblend_expand (GimpVectorLayer *layer)
 +{
-+  ChopGimpVObject *g = group_of_selection (layer, is_blend_group);
++  ChopGimpVObject *g = chopgimp_vlayer_group_of_selection (layer, is_blend_group);
 +
 +  if (! g)
 +    return FALSE;
@@ -9062,10 +8991,12 @@ index 0000000..70aba23
 +  return TRUE;
 +}
 +
++static gint env_no_spine_keys = -1;
++
 +gboolean
 +chopgimp_vblend_replace_spine (GimpVectorLayer *layer)
 +{
-+  ChopGimpVObject *g     = group_of_selection (layer, is_blend_group);
++  ChopGimpVObject *g     = chopgimp_vlayer_group_of_selection (layer, is_blend_group);
 +  ChopGimpVObject *spine = NULL;
 +  GList           *sel;
 +  GimpPath        *local;
@@ -9154,7 +9085,7 @@ index 0000000..70aba23
 +   *  one at its end, the others spread along it), as Illustrator does
 +   *  (CHOPGIMP_NO_SPINE_KEYS=1: they stay where they are)
 +   */
-+  if (! g_getenv ("CHOPGIMP_NO_SPINE_KEYS"))
++  if (! chopgimp_env_flag ("CHOPGIMP_NO_SPINE_KEYS", &env_no_spine_keys))
 +    {
 +      gdouble    len = 0.0;
 +      GArray    *sp  = spine_parse (g->blend, &len);
@@ -9206,7 +9137,7 @@ index 0000000..70aba23
 +gboolean
 +chopgimp_vblend_reverse (GimpVectorLayer *layer)
 +{
-+  ChopGimpVObject *g = group_of_selection (layer, is_blend_group);
++  ChopGimpVObject *g = chopgimp_vlayer_group_of_selection (layer, is_blend_group);
 +  guint            n;
 +
 +  if (! g)

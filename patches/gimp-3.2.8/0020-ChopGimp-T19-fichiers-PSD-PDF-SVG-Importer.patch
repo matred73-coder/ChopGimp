@@ -5834,7 +5834,7 @@ index 2198a85..189010c 100644
  
    gtk_widget_set_visible (dialog, TRUE);
 diff --git a/plug-ins/file-psd/psd.c b/plug-ins/file-psd/psd.c
-index ccffe9e..1988eaa 100644
+index ccffe9e..02a543f 100644
 --- a/plug-ins/file-psd/psd.c
 +++ b/plug-ins/file-psd/psd.c
 @@ -28,6 +28,7 @@
@@ -5935,7 +5935,7 @@ index ccffe9e..1988eaa 100644
 +
 +            gimp_image_attach_parasite (orig, p);
 +            gimp_parasite_free (p);
-+            g_printerr ("ChopGimp PSD export:\n%s", report);
++            g_debug ("ChopGimp PSD export:\n%s", report);
 +
 +            if (run_mode == GIMP_RUN_INTERACTIVE)
 +              {

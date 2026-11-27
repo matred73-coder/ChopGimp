@@ -32,10 +32,21 @@ from gi.repository import Gimp, GimpUi, Gegl, Gio, GLib, Gtk
 from chopgimp_common import (ok, fail, get_parasite_text, set_parasite_text, dialog_box, vbox,
                              spin_scale, frame)
 
-try:                        # accélère les options de fusion « Si » (facultatif)
-    import numpy as np
-except Exception:
-    np = None
+# numpy accélère les options de fusion « Si »
+_NUMPY = False                # numpy importé à la première utilisation (facultatif)
+
+
+def _numpy():
+    """numpy, ou None s'il est absent ; importé au premier appel seulement
+    (chargement du greffon plus rapide)."""
+    global _NUMPY
+    if _NUMPY is False:
+        try:
+            import numpy
+            _NUMPY = numpy
+        except Exception:
+            _NUMPY = None
+    return _NUMPY
 
 # Calque > Nouveau calque de remplissage : placé par tools/build_menus.py
 # (app.<procédure>), pas de chemin ici (sinon en double)
@@ -416,6 +427,7 @@ def blend_if_below(image, layer, mask, below):
                                    Gegl.AbyssPolicy.NONE)
     finally:
         image.remove_layer(under)
+    np = _numpy()
     if np is not None:
         a = np.frombuffer(m, dtype=np.uint8).astype(np.uint32)
         b = np.frombuffer(u, dtype=np.uint8).astype(np.uint32)

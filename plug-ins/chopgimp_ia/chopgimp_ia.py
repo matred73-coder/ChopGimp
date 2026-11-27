@@ -15,6 +15,7 @@ première utilisation, après accord, dans <dossier GIMP>/ia-modeles/, puis
 vérifié (SHA-256). Rien n'est envoyé : les images restent sur l'ordinateur.
 """
 import hashlib
+import importlib.util
 import json
 import os
 import sys
@@ -440,10 +441,10 @@ class ChopGimpIA(Gimp.PlugIn):
     def run(self, procedure, run_mode, image, drawables, config, data):
         name = procedure.get_name()
         interactive = run_mode == Gimp.RunMode.INTERACTIVE
-        try:
-            import numpy  # noqa: F401
-            import onnxruntime  # noqa: F401
-        except ImportError:
+        # présence du moteur sans l'importer (numpy et onnxruntime sont lourds :
+        # importés seulement par les procédures qui s'en servent)
+        if (importlib.util.find_spec("numpy") is None or
+                importlib.util.find_spec("onnxruntime") is None):
             if name not in ("chopgimp-ia-denoise", "chopgimp-ia-models"):
                 return fail(procedure, "Le moteur d'IA (onnxruntime) est absent du paquet.")
         msg = None

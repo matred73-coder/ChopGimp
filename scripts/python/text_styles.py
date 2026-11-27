@@ -53,8 +53,6 @@ def _get_text_layer_style(layer):
     size = layer.get_font_size()
     size_val = size.size if hasattr(size, 'size') else size
 
-    # Get color via PDB
-    pdb = Gimp.get_pdb()
     color = layer.get_color()
 
     # Try to get letter and line spacing
@@ -77,7 +75,6 @@ def _get_text_layer_style(layer):
 
 def _apply_style_to_layer(layer, style):
     """Apply a style dict to a text layer."""
-    pdb = Gimp.get_pdb()
 
     # Font
     if "font" in style:

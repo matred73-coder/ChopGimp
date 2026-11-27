@@ -116,8 +116,6 @@ def sample_average(procedure, run_mode, image, drawables, config, data):
 
     Gimp.context_push()
 
-    # Read pixels using GEGL buffer
-    buffer = drawable.get_buffer()
     # Use Babl format for RGB
     try:
         # Sample the region and compute average

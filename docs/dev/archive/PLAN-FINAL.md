@@ -37,7 +37,7 @@ Exécution d'une traite, lot après lot, sans arrêt entre les lots.
 - **Vectorisation dynamique** : elle suit la mise à l'échelle de l'image.
 - **Lasso magnétique** : quand la souris saute de plus de 100 px, il ne pose plus de points hors du bord.
 
-## Lot 2 — 3.29.6 : performance complète (voir PLAN-PERF-VECTEUR.md, « Reste »)
+## Lot 2 — 3.29.6 : performance complète (voir docs/PLAN-PERF-VECTEUR.md, « Reste »)
 - **Calques 16/32 bits** : une conversion rapide en flottant.
 - **Rastérisation parallèle étendue** aux filets, dégradés libres, motifs, flèches et contours variables.
 - **Annulation partielle** : seuls les objets modifiés sont enregistrés. `get_xml` coûte environ 150 ms ; ce coût disparaît.

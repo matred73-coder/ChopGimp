@@ -144,10 +144,10 @@ def generate_css(image, visible_only=True):
 
     # Container
     css_lines.append(".canvas {")
-    css_lines.append(f"  position: relative;")
+    css_lines.append("  position: relative;")
     css_lines.append(f"  width: {image.get_width()}px;")
     css_lines.append(f"  height: {image.get_height()}px;")
-    css_lines.append(f"  overflow: hidden;")
+    css_lines.append("  overflow: hidden;")
     css_lines.append("}")
     css_lines.append("")
 
@@ -176,7 +176,7 @@ def format_layer_css(props):
     cls = props["class"]
     lines.append(f".{cls} {{")
     lines.append(f"  /* Layer: {props['name']} */")
-    lines.append(f"  position: absolute;")
+    lines.append("  position: absolute;")
     lines.append(f"  left: {props['left']}px;")
     lines.append(f"  top: {props['top']}px;")
     lines.append(f"  width: {props['width']}px;")
@@ -198,7 +198,7 @@ def format_layer_css(props):
 
     if props.get("is_shadow"):
         # Approximate a box-shadow from layer offset relative to canvas center
-        lines.append(f"  /* Detected as shadow layer */")
+        lines.append("  /* Detected as shadow layer */")
         lines.append(f"  box-shadow: {props['left']}px {props['top']}px 10px rgba(0, 0, 0, {props['opacity']});")
 
     lines.append("}")

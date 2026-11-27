@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-PhotoGIMP Pro — fonctions de calques façon Photoshop (GIMP 3.2).
+ChopGimp — fonctions de calques façon Photoshop (GIMP 3.2).
 
   Calque > Créer / annuler le masque d'écrêtage      (Ctrl+Alt+G)
   Calque > Style de calque > Contour / Lueur externe / Ombre interne / Effacer
@@ -20,7 +20,7 @@ from gi.repository import Gimp, GLib
 
 from chopgimp_common import ok, fail, srgb, copy_vector_style, remove_layer_and_paths
 
-AUTHOR = "PhotoGIMP Pro"
+AUTHOR = "ChopGimp"
 YEAR = "2026"
 
 # ── Styles de calque (gegl:dropshadow détourné, comme le font les pros GIMP) ──

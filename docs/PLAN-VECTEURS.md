@@ -150,7 +150,7 @@ L'utilisateur trouve la gestion vectorielle poussive :
 - **Actions et menus :** `app/actions/` (objets), `tools/build_menus.py`.
 - **Interface :** `app/widgets/gimplayertreeview.c` (objets), `app/display/gimpoptionsbar.c`.
 - **Greffons :** `plug-ins/chopgimp_vector/`, `plug-ins/chopgimp_pdf/chopgimp_pdf.py`, `build/gimp-src/plug-ins/common/file-svg.c`.
-- **Vectoriser :** nouveau `plug-ins/chopgimp-trace/` en C/C++ (potrace, autotrace, depixelize), et le module potrace dans `tools/make_manifest.py`.
+- **Vectoriser :** moteur dans GIMP, `app/path/chopgimp-trace.cc` (potrace, et autotrace / depixelize embarqués dans `app/path/trace/`), calque de vectorisation `app/core/chopgimp-trace-layer.c`, et le module potrace dans `tools/make_manifest.py`.
 
 ## Vérification
 

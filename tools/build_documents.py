@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-PhotoGIMP Pro — génère :
+ChopGimp — génère :
   config/templaterc        modèles « Nouveau document » classés comme Photoshop
                            (Photo, Impression, Illustration, Web, Mobile,
                            Vidéo, Réseaux sociaux)
@@ -87,7 +87,7 @@ for name, w, h in [("Instagram publication 1080×1080", 1080, 1080),
 
 
 def templaterc():
-    out = ["# GIMP templaterc — PhotoGIMP Pro (modèles « Nouveau document » façon Photoshop)",
+    out = ["# GIMP templaterc — ChopGimp (modèles « Nouveau document » façon Photoshop)",
            "# Généré par tools/build_documents.py", ""]
     for cat, name, w, h, unit, ppi, fill in T:
         out.append('(GimpTemplate "%s — %s"\n    (width %d)\n    (height %d)\n    (unit %s)\n'
@@ -136,7 +136,7 @@ def preset(name, tool, icon, brush, size, opacity, dyn):
         dyn_lines = '    (dynamics "%s")\n    (dynamics-enabled yes)\n' % dyn
     else:
         dyn_lines = "    (dynamics-enabled no)\n"
-    return ('# GIMP tool preset file — PhotoGIMP Pro\n\n'
+    return ('# GIMP tool preset file — ChopGimp\n\n'
             '(icon-name "%s")\n(name "%s")\n(tool-options "%s"\n'
             '    (tool "%s")\n    (brush "%s")\n%s    (brush-size %.1f)\n'
             '    (opacity %.2f)\n%s)\n'

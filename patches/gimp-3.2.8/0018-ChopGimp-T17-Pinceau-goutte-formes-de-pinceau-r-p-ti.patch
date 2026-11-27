@@ -11,13 +11,13 @@ Anciens patchs : 0160, 0161, 0177.
 ---
  app/dialogs/chopgimp-brushes-panel.c |  616 ++++++
  app/dialogs/chopgimp-brushes-panel.h |   16 +
- app/path/chopgimp-vbrush.c           | 2748 ++++++++++++++++++++++++++
+ app/path/chopgimp-vbrush.c           | 2736 ++++++++++++++++++++++++++
  app/path/chopgimp-vbrush.h           |  228 +++
- app/path/chopgimp-vrepeat.c          |  966 +++++++++
+ app/path/chopgimp-vrepeat.c          |  911 +++++++++
  app/path/chopgimp-vrepeat.h          |  137 ++
  app/tools/chopgimp-blobtool.c        |  603 ++++++
  app/tools/chopgimp-blobtool.h        |   14 +
- 8 files changed, 5328 insertions(+)
+ 8 files changed, 5261 insertions(+)
  create mode 100644 app/dialogs/chopgimp-brushes-panel.c
  create mode 100644 app/dialogs/chopgimp-brushes-panel.h
  create mode 100644 app/path/chopgimp-vbrush.c
@@ -673,10 +673,10 @@ index 0000000..5256bd8
 +                                        gint               view_size);
 diff --git a/app/path/chopgimp-vbrush.c b/app/path/chopgimp-vbrush.c
 new file mode 100644
-index 0000000..5067db5
+index 0000000..bef91db
 --- /dev/null
 +++ b/app/path/chopgimp-vbrush.c
-@@ -0,0 +1,2748 @@
+@@ -0,0 +1,2736 @@
 +/* GIMP - The GNU Image Manipulation Program
 + * chopgimp-vbrush.c — ChopGimp 3.30.0: « Formes de pinceau » and
 + * « Pinceau goutte », see chopgimp-vbrush.h. The brushes are built like
@@ -775,20 +775,6 @@ index 0000000..5067db5
 +      return TRUE;
 +
 +  return FALSE;
-+}
-+
-+static ChopGimpVObject *
-+group_of_selection (GimpVectorLayer *layer)
-+{
-+  GList           *sel = chopgimp_vlayer_get_selected_objects (layer);
-+  ChopGimpVObject *g   = NULL;
-+
-+  for (GList *l = sel; l && ! g; l = l->next)
-+    g = chopgimp_vbrush_group_of (l->data);
-+
-+  g_list_free (sel);
-+
-+  return g;
 +}
 +
 +
@@ -1544,6 +1530,7 @@ index 0000000..5067db5
 +          gboolean  closed = FALSE;
 +          GArray   *pts    = gimp_stroke_interpolate (stroke, 0.5, &closed);
 +          gdouble  *left, *right, *nib;
++          gsize     len;   /* allocations sized from len: bounded, not signed */
 +          gint      n;
 +
 +          if (! pts || pts->len < 2)
@@ -1553,10 +1540,11 @@ index 0000000..5067db5
 +              continue;
 +            }
 +
-+          n     = pts->len;
-+          left  = g_new (gdouble, 2 * n);
-+          right = g_new (gdouble, 2 * n);
-+          nib   = g_new (gdouble, 3 * n);   /* d, round, angle */
++          len   = pts->len;
++          n     = (gint) len;
++          left  = g_new (gdouble, 2 * len);
++          right = g_new (gdouble, 2 * len);
++          nib   = g_new (gdouble, 3 * len);   /* d, round, angle */
 +
 +          for (gint i = 0; i < n; i++)
 +            {
@@ -1599,7 +1587,7 @@ index 0000000..5067db5
 +            {
 +              GimpPath *l = chopgimp_geom_fit_points (out, left, n, 0.25, TRUE);
 +              GimpPath *r;
-+              gdouble  *rev = g_new (gdouble, 2 * n);
++              gdouble  *rev = g_new (gdouble, 2 * len);
 +
 +              for (gint i = 0; i < n; i++)
 +                {
@@ -1626,7 +1614,7 @@ index 0000000..5067db5
 +            }
 +          else
 +            {
-+              gdouble  *poly = g_new (gdouble, 4 * n);
++              gdouble  *poly = g_new (gdouble, 4 * len);
 +              GimpPath *band, *ends[3], *u;
 +
 +              for (gint i = 0; i < n; i++)
@@ -2342,7 +2330,7 @@ index 0000000..5067db5
 +  if (! chopgimp_vbrush_enabled () || ! layer || ! chopgimp_vlayer_get_root (layer))
 +    return FALSE;
 +
-+  if (group_of_selection (layer))
++  if (chopgimp_vlayer_group_of_selection (layer, is_brush_group))
 +    return TRUE;
 +
 +  list = brushable_leaves (layer);
@@ -2481,14 +2469,14 @@ index 0000000..5067db5
 +chopgimp_vbrush_any (GimpVectorLayer *layer)
 +{
 +  return layer && chopgimp_vbrush_enabled () && chopgimp_vlayer_get_root (layer) &&
-+         group_of_selection (layer) != NULL;
++         chopgimp_vlayer_group_of_selection (layer, is_brush_group) != NULL;
 +}
 +
 +gboolean
 +chopgimp_vbrush_get_options (GimpVectorLayer       *layer,
 +                             ChopGimpVBrushOptions *options)
 +{
-+  ChopGimpVObject *g = chopgimp_vbrush_any (layer) ? group_of_selection (layer) : NULL;
++  ChopGimpVObject *g = chopgimp_vbrush_any (layer) ? chopgimp_vlayer_group_of_selection (layer, is_brush_group) : NULL;
 +
 +  if (! g)
 +    return FALSE;
@@ -3114,7 +3102,7 @@ index 0000000..5067db5
 +gboolean
 +chopgimp_vbrush_release (GimpVectorLayer *layer)
 +{
-+  ChopGimpVObject *g = chopgimp_vbrush_any (layer) ? group_of_selection (layer) : NULL;
++  ChopGimpVObject *g = chopgimp_vbrush_any (layer) ? chopgimp_vlayer_group_of_selection (layer, is_brush_group) : NULL;
 +  ChopGimpVObject *key = NULL;
 +  guint            gid;
 +
@@ -3170,7 +3158,7 @@ index 0000000..5067db5
 +gboolean
 +chopgimp_vbrush_expand (GimpVectorLayer *layer)
 +{
-+  ChopGimpVObject *g = chopgimp_vbrush_any (layer) ? group_of_selection (layer) : NULL;
++  ChopGimpVObject *g = chopgimp_vbrush_any (layer) ? chopgimp_vlayer_group_of_selection (layer, is_brush_group) : NULL;
 +  ChopGimpVObject *key = NULL;
 +
 +  if (! g)
@@ -3661,10 +3649,10 @@ index 0000000..7cbf793
 +G_END_DECLS
 diff --git a/app/path/chopgimp-vrepeat.c b/app/path/chopgimp-vrepeat.c
 new file mode 100644
-index 0000000..043d4af
+index 0000000..0928eb7
 --- /dev/null
 +++ b/app/path/chopgimp-vrepeat.c
-@@ -0,0 +1,966 @@
+@@ -0,0 +1,911 @@
 +/* GIMP - The GNU Image Manipulation Program
 + * chopgimp-vrepeat.c — ChopGimp 3.30.0: « Répétition » (radial, grid,
 + * mirror), see chopgimp-vrepeat.h. Built like the Transition of
@@ -3743,61 +3731,6 @@ index 0000000..043d4af
 +      return o;
 +
 +  return NULL;
-+}
-+
-+static ChopGimpVObject *
-+group_of_selection (GimpVectorLayer *layer)
-+{
-+  GList           *sel = chopgimp_vlayer_get_selected_objects (layer);
-+  ChopGimpVObject *g   = NULL;
-+
-+  for (GList *l = sel; l && ! g; l = l->next)
-+    g = chopgimp_vrepeat_group_of (l->data);
-+
-+  g_list_free (sel);
-+
-+  return g;
-+}
-+
-+/*  the selected objects with a common parent, bottom → top (g_list_free)  */
-+static GList *
-+selected_siblings (GimpVectorLayer *layer)
-+{
-+  GList           *sel    = chopgimp_vlayer_get_selected_objects (layer);
-+  ChopGimpVObject *parent = NULL;
-+  GList           *list   = NULL;
-+
-+  for (GList *l = sel; l; l = l->next)
-+    {
-+      ChopGimpVObject *o = l->data;
-+
-+      if (! list)
-+        parent = o->parent;
-+      else if (o->parent != parent)
-+        {
-+          g_list_free (sel);
-+          g_list_free (list);
-+          return NULL;
-+        }
-+
-+      list = g_list_append (list, o);
-+    }
-+
-+  g_list_free (sel);
-+
-+  if (list && parent)
-+    {
-+      GList *sorted = NULL;
-+
-+      for (guint i = 0; i < parent->children->len; i++)
-+        if (g_list_find (list, g_ptr_array_index (parent->children, i)))
-+          sorted = g_list_append (sorted, g_ptr_array_index (parent->children, i));
-+
-+      g_list_free (list);
-+      list = sorted;
-+    }
-+
-+  return list;
 +}
 +
 +/*  the box of the curves of @path (interpolated); FALSE when empty  */
@@ -4204,7 +4137,7 @@ index 0000000..043d4af
 +  if (! chopgimp_vrepeat_enabled () || ! layer || ! chopgimp_vlayer_get_root (layer))
 +    return FALSE;
 +
-+  list = selected_siblings (layer);
++  list = chopgimp_vlayer_selected_siblings (layer, 1);
 +  ok   = list != NULL;
 +
 +  for (GList *l = list; l; l = l->next)
@@ -4231,7 +4164,7 @@ index 0000000..043d4af
 +  if (! chopgimp_vrepeat_can_make (layer))
 +    return NULL;
 +
-+  list = selected_siblings (layer);
++  list = chopgimp_vlayer_selected_siblings (layer, 1);
 +  ids  = g_array_new (FALSE, FALSE, sizeof (guint));
 +
 +  for (GList *l = list; l; l = l->next)
@@ -4281,14 +4214,14 @@ index 0000000..043d4af
 +chopgimp_vrepeat_any (GimpVectorLayer *layer)
 +{
 +  return layer && chopgimp_vrepeat_enabled () && chopgimp_vlayer_get_root (layer) &&
-+         group_of_selection (layer) != NULL;
++         chopgimp_vlayer_group_of_selection (layer, is_repeat_group) != NULL;
 +}
 +
 +gboolean
 +chopgimp_vrepeat_get_options (GimpVectorLayer       *layer,
 +                              ChopGimpRepeatOptions *options)
 +{
-+  ChopGimpVObject *g = chopgimp_vrepeat_any (layer) ? group_of_selection (layer) : NULL;
++  ChopGimpVObject *g = chopgimp_vrepeat_any (layer) ? chopgimp_vlayer_group_of_selection (layer, is_repeat_group) : NULL;
 +
 +  if (! g)
 +    return FALSE;
@@ -4302,7 +4235,7 @@ index 0000000..043d4af
 +chopgimp_vrepeat_set_options (GimpVectorLayer             *layer,
 +                              const ChopGimpRepeatOptions *options)
 +{
-+  ChopGimpVObject *g = chopgimp_vrepeat_any (layer) ? group_of_selection (layer) : NULL;
++  ChopGimpVObject *g = chopgimp_vrepeat_any (layer) ? chopgimp_vlayer_group_of_selection (layer, is_repeat_group) : NULL;
 +
 +  if (! g)
 +    return FALSE;
@@ -4318,7 +4251,7 @@ index 0000000..043d4af
 +gboolean
 +chopgimp_vrepeat_release (GimpVectorLayer *layer)
 +{
-+  ChopGimpVObject *g = chopgimp_vrepeat_any (layer) ? group_of_selection (layer) : NULL;
++  ChopGimpVObject *g = chopgimp_vrepeat_any (layer) ? chopgimp_vlayer_group_of_selection (layer, is_repeat_group) : NULL;
 +  GPtrArray       *keep;
 +  guint            gid;
 +
@@ -4361,7 +4294,7 @@ index 0000000..043d4af
 +gboolean
 +chopgimp_vrepeat_expand (GimpVectorLayer *layer)
 +{
-+  ChopGimpVObject *g = chopgimp_vrepeat_any (layer) ? group_of_selection (layer) : NULL;
++  ChopGimpVObject *g = chopgimp_vrepeat_any (layer) ? chopgimp_vlayer_group_of_selection (layer, is_repeat_group) : NULL;
 +
 +  if (! g)
 +    return FALSE;

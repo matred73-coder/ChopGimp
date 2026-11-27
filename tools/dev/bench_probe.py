@@ -26,7 +26,6 @@ import sys
 import threading
 import time
 
-import gi
 from gi.repository import Gio, GLib
 
 H, PID, DONE = sys.argv[1], int(sys.argv[2]), sys.argv[3]

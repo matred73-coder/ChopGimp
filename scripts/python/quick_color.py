@@ -83,7 +83,7 @@ def quick_color(procedure, run_mode, image, drawables, config, data):
     # Extract RGBA components (float 0-1)
     # In GIMP 3.0, GeglColor provides get_rgba()
     rgba = fg_color.get_rgba()
-    r, g, b, a = rgba.red, rgba.green, rgba.blue, rgba.alpha
+    r, g, b = rgba.red, rgba.green, rgba.blue
 
     # Compute values
     r8 = int(round(r * 255))

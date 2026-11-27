@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-PhotoGIMP Pro — génère les fichiers d'installation du dépôt Flatpak privé :
+ChopGimp — génère les fichiers d'installation du dépôt Flatpak privé :
   dist/chopgimp.flatpakrepo     (ajouter le dépôt : flatpak remote-add)
   dist/ChopGimp.flatpakref   (installer en un clic / une commande)
 

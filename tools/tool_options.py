@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-PhotoGIMP Pro — options par défaut des outils, façon Photoshop.
+ChopGimp — options par défaut des outils, façon Photoshop.
 
 Fusionne les valeurs ci-dessous dans ~/.config/GIMP/3.2/tool-options/<outil>
 (les autres réglages de l'utilisateur sont conservés). Propriétés et valeurs

@@ -1568,7 +1568,7 @@ Patchs 0170 à 0173 (nouveaux commits, aucun patch réécrit).
   autrefois copiés dans vbrush, vrepeat, vmaterial, vcolors, vobject, vlivepaint, vrecolor
   et les outils Forme et Plume.
 - **smoke_test.py** : 8 aides communes au lieu de ~30 copies par section (mêmes tests).
-- **Patchs** : proposition de regroupement en 21 thèmes, `docs/dev/PLAN-PATCHS-4.1.md`.
+- **Patchs** : proposition de regroupement en 21 thèmes, `docs/dev/archive/PLAN-PATCHS-4.1.md`.
 - Compilé (LTO + PGO) sur la base de la 4.0.2, aucun nouvel avertissement ; smoke : 273 OK,
   0 échec (les scènes du bloc 3.30.0 gardent leurs réglages : sans contour, épaisseur 4).
 - **Banc vectoriel** (`bench_vector.sh`, ms, cas A) : meilleure mesure 4.1.0 glisser 8,7,
@@ -1689,7 +1689,7 @@ Patchs 0170 à 0173 (nouveaux commits, aucun patch réécrit).
   « Ouvrir le dossier ». Au démarrage suivant, un message discret dans la barre d'état
   signale le rapport ; il remplace la fenêtre « ChopGimp s'est arrêté » de la 3.19.1 (le
   rapport du traceur reste dans `CrashLog/`).
-- **Patchs regroupés** (plan `docs/dev/PLAN-PATCHS-4.1.md`, adapté) : 182 patchs
+- **Patchs regroupés** (plan `docs/dev/archive/PLAN-PATCHS-4.1.md`, adapté) : 182 patchs
   (0001–0181 et le commit 4.2.1) → **23** (22 thèmes + l'icône Windows, ancien 0045, gardé
   octet pour octet). Un fichier = un thème (`docs/dev/patchs-4.2-fichiers.tsv`, 491
   fichiers). Branche `photogimp-v2` dans `build/gimp-src`, ancienne branche renommée
@@ -1731,3 +1731,17 @@ Patchs 0170 à 0173 (nouveaux commits, aucun patch réécrit).
 - **Barre d'options**, menu déroulant Fond / Contour / couleur de texte : le bouton « Sélecteur de couleur… » n'ouvrait rien. Le bouton couleur caché qu'il déclenche (`GimpColorPanel`) n'avait pas de contexte, et `gimp_color_dialog_new` refusait de créer la fenêtre (avertissement critique seulement). Il reçoit maintenant le contexte utilisateur (`gimpoptionsbar.c`, T04).
 - **Grille de perspective** : même défaut sur les trois boutons de couleur des plans, corrigé avec le contexte des options d'outil (`chopgimp-pgridtools.c`, T18).
 
+
+## 4.2.6 — Affichage des effets pendant le trait ; nettoyage et optimisations (audit)
+
+- **Peinture et gomme sur un calque à effets** : des traits gris fins (bouts d'ancienne ombre aux bords droits) restaient affichés pendant le trait. Seuls les rectangles des touches de pinceau étaient redessinés, alors que les effets (décalage et flou de l'ombre, contour…) changent bien au-delà. `gimp_drawable_flush_paint` redessine maintenant aussi la zone invalidée par les effets (`gimp_drawable_pop_filters_invalidated`, comme les groupes depuis le T11) ; la zone est remise à zéro au début du trait (`gimpdrawable.c`, T11).
+
+- **Thème** : coche des menus de nouveau visible (fond accent, coche contrastée : la règle des cases à cocher ne vise plus les `menuitem`) ; doublons fusionnés dans `ps-overrides.css` (menus, séparateurs, barres de défilement, fenêtres surgissantes : une définition, valeurs inchangées ; correctif 4.2.2 gardé).
+- **Export PSD** : le rapport ne s'écrit plus sur la sortie d'erreur (`g_debug`, T19).
+- **Avertissements C** : déclaration en milieu de bloc (`chopgimp-vobject.c`), tailles d'allocation non signées (`chopgimp-vbrush.c`).
+- **Python** : imports et variables inutiles retirés (pyflakes), `color_name` en double remplacé par `vobjects._color_name` ; numpy importé à la première utilisation (`chopgimp_base`, `chopgimp_studio`), présence de numpy / onnxruntime testée par `importlib.util.find_spec` (`chopgimp_ia`).
+- **Vestiges « PhotoGIMP Pro »** dans les textes et commentaires → ChopGimp (noms de procédures, dossier `tool-presets/PhotoGIMP` et identifiants inchangés).
+- **Docs** : anciens plans rangés dans `docs/dev/archive/`, liens corrigés (`patchs-4.2-fichiers.tsv`, moteur de vectorisation `app/path/chopgimp-trace.cc`).
+- **Masque d'opacité en luminance** : calcul en entiers sur les composantes prémultipliées (`chopgimp-vmaterial.c`, T15).
+- **Variables d'environnement** relues une seule fois (`chopgimp_env_flag`, `chopgimp-vutil.c`) dans les chemins chauds (T11, T13, T15).
+- **Factorisation** (`chopgimp-vutil.c`, T16) : `chopgimp_vlayer_selected_siblings` (tri par table de hachage, plus de O(n²)) et `chopgimp_vlayer_group_of_selection` remplacent les copies de `chopgimp-vmaterial.c`, `chopgimp-vrepeat.c`, `chopgimp-vbrush.c` ; les feuilles via `chopgimp_vobjects_leaves_of` ; Peinture dynamique : source d'un segment par tableau au lieu de `g_list_nth_data`.

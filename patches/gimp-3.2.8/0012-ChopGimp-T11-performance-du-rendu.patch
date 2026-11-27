@@ -16,12 +16,12 @@ Anciens patchs : 0096, 0097, 0102, 0103, 0104, 0105, 0106, 0107, 0110, 0111.
  app/core/gimpboundary.c                       |   87 +-
  app/core/gimpchannel.c                        |   13 +-
  app/core/gimpdrawable-filters.c               |  151 +-
- app/core/gimpdrawable-fused-styles.c          |  452 +++
+ app/core/gimpdrawable-fused-styles.c          |  456 +++
  app/core/gimpdrawable-fused-styles.h          |   31 +
  app/core/gimpdrawable-preview.c               |  556 ++-
  app/core/gimpdrawable-preview.h               |    5 +
  app/core/gimpdrawable-private.h               |    5 +
- app/core/gimpdrawable.c                       |  392 ++-
+ app/core/gimpdrawable.c                       |  421 ++-
  app/core/gimpdrawable.h                       |   26 +
  app/core/gimpdrawablefilter.c                 |  427 ++-
  app/core/gimpdrawablefilter.h                 |    5 +
@@ -38,7 +38,7 @@ Anciens patchs : 0096, 0097, 0102, 0103, 0104, 0105, 0106, 0107, 0110, 0111.
  app/gegl/gimptilehandlervalidate.c            |   51 +
  app/gegl/gimptilehandlervalidate.h            |    6 +
  app/gegl/meson.build                          |    1 +
- app/operations/chopgimp-layer-styles.h        |  245 ++
+ app/operations/chopgimp-layer-styles.h        |  250 ++
  .../gimpoperationbuffersourcevalidate.c       |    9 +-
  app/operations/gimpoperationlayerstylefused.c | 2985 +++++++++++++++++
  app/operations/gimpoperationlayerstylefused.h |  153 +
@@ -63,7 +63,7 @@ Anciens patchs : 0096, 0097, 0102, 0103, 0104, 0105, 0106, 0107, 0110, 0111.
  app/xcf/xcf-load.c                            |   66 +
  app/xcf/xcf-private.h                         |   12 +
  app/xcf/xcf-save.c                            |   61 +
- 58 files changed, 15699 insertions(+), 283 deletions(-)
+ 58 files changed, 15737 insertions(+), 283 deletions(-)
  create mode 100644 app/core/chopgimp-alpha-bounds.c
  create mode 100644 app/core/chopgimp-alpha-bounds.h
  create mode 100644 app/core/chopgimp-fx-cache.c
@@ -3207,10 +3207,10 @@ index 41fd9f4..8fd12ad 100644
    GimpApplicator *applicator;
 diff --git a/app/core/gimpdrawable-fused-styles.c b/app/core/gimpdrawable-fused-styles.c
 new file mode 100644
-index 0000000..e513df2
+index 0000000..8968e28
 --- /dev/null
 +++ b/app/core/gimpdrawable-fused-styles.c
-@@ -0,0 +1,452 @@
+@@ -0,0 +1,456 @@
 +/* GIMP - The GNU Image Manipulation Program
 + * Copyright (C) 1995 Spencer Kimball and Peter Mattis
 + *
@@ -3451,11 +3451,12 @@ index 0000000..e513df2
 +                                 GList           *filters,
 +                                 gpointer         user_data)
 +{
-+  State *state    = user_data;
-+  GList *nodes    = NULL;
-+  GList *old_runs = state->runs;
-+  GList *new_runs = NULL;
-+  GList *list;
++  static gint  debug    = -1;   /*  CHOPGIMP_FUSED_STYLES_DEBUG, read once  */
++  State       *state    = user_data;
++  GList       *nodes    = NULL;
++  GList       *old_runs = state->runs;
++  GList       *new_runs = NULL;
++  GList       *list;
 +
 +  /*  suspended: each filter renders itself  */
 +  if (state->suspended)
@@ -3511,7 +3512,10 @@ index 0000000..e513df2
 +          run = gimp_drawable_fused_styles_get_run (state, old_runs,
 +                                                    run_filters, style);
 +
-+          if (g_getenv ("CHOPGIMP_FUSED_STYLES_DEBUG"))
++          if (debug < 0)
++            debug = (g_getenv ("CHOPGIMP_FUSED_STYLES_DEBUG") != NULL);
++
++          if (debug)
 +            g_printerr ("chopgimp: %d layer style filter(s) fused\n",
 +                        (gint) effects->len);
 +
@@ -4390,7 +4394,7 @@ index 1f5c028..dc71595 100644
    GeglRectangle     bounding_box;
  
 diff --git a/app/core/gimpdrawable.c b/app/core/gimpdrawable.c
-index bf355ce..206a71c 100644
+index bf355ce..1585759 100644
 --- a/app/core/gimpdrawable.c
 +++ b/app/core/gimpdrawable.c
 @@ -19,6 +19,7 @@
@@ -4880,6 +4884,49 @@ index bf355ce..206a71c 100644
  GeglRectangle
  gimp_drawable_get_bounding_box (GimpDrawable *drawable)
  {
+@@ -2157,6 +2545,16 @@ gimp_drawable_start_paint (GimpDrawable *drawable)
+       g_return_if_fail (drawable->private->paint_update_region == NULL);
+ 
+       drawable->private->paint_buffer = gimp_gegl_buffer_dup (buffer);
++
++      /*  ChopGimp 4.2.6: forget the effects' area invalidated before the
++       *  stroke, see gimp_drawable_flush_paint()
++       */
++      if (gimp_drawable_has_visible_filters (drawable))
++        {
++          GeglRectangle old;
++
++          gimp_drawable_pop_filters_invalidated (drawable, &old);
++        }
+     }
+ 
+   drawable->private->paint_count++;
+@@ -2241,6 +2639,25 @@ gimp_drawable_flush_paint (GimpDrawable *drawable)
+       g_clear_pointer (&drawable->private->paint_update_region,
+                        cairo_region_destroy);
+ 
++      /*  ChopGimp 4.2.6: with layer effects, a brush dab changes the
++       *  effects much further than the dab (shadow offset and blur,
++       *  stroke margin…). Redraw the whole area the effects invalidated,
++       *  else strips of the old shadow stay on the canvas until the end
++       *  of the stroke (thin straight gray lines). Emitted directly: the
++       *  area may go past the layer, which is wanted.
++       */
++      if (gimp_drawable_has_visible_filters (drawable))
++        {
++          GeglRectangle fx;
++
++          if (gimp_drawable_pop_filters_invalidated (drawable, &fx) &&
++              ! gegl_rectangle_is_empty (&fx))
++            {
++              g_signal_emit (drawable, gimp_drawable_signals[UPDATE], 0,
++                             fx.x, fx.y, fx.width, fx.height);
++            }
++        }
++
+       return TRUE;
+     }
+ 
 diff --git a/app/core/gimpdrawable.h b/app/core/gimpdrawable.h
 index 7a7583f..163f8aa 100644
 --- a/app/core/gimpdrawable.h
@@ -9588,10 +9635,10 @@ index dc60951..61c95ac 100644
    'gimp-gegl-mask.c',
 diff --git a/app/operations/chopgimp-layer-styles.h b/app/operations/chopgimp-layer-styles.h
 new file mode 100644
-index 0000000..96fb4bf
+index 0000000..8bb4ba0
 --- /dev/null
 +++ b/app/operations/chopgimp-layer-styles.h
-@@ -0,0 +1,245 @@
+@@ -0,0 +1,250 @@
 +/* GIMP - The GNU Image Manipulation Program
 + * Copyright (C) 1995 Spencer Kimball and Peter Mattis
 + *
@@ -9799,7 +9846,12 @@ index 0000000..96fb4bf
 +static inline gboolean
 +chopgimp_layer_style_hidden (const ChopGimpLayerStyle *style)
 +{
-+  return (style && g_getenv ("CHOPGIMP_NO_INNER_STYLES") &&
++  static gint no_inner = -1;   /*  the variable is read once  */
++
++  if (no_inner < 0)
++    no_inner = (g_getenv ("CHOPGIMP_NO_INNER_STYLES") != NULL);
++
++  return (style && no_inner &&
 +          (! strcmp (style->operation, "chopgimp:satin") ||
 +           ! strcmp (style->operation, "chopgimp:pattern-overlay")));
 +}

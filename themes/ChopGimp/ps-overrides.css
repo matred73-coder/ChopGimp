@@ -63,10 +63,13 @@ menu,
   padding: 4px 0;
 }
 
+/* ChopGimp 4.2.2 : même boîte au survol qu'au repos (aucun décalage),
+ * pas de transition : seul le surlignage change. */
 menu menuitem,
 menu menuitem:hover {
-  min-height: 18px;
-  padding: 2px 22px 2px 12px;
+  min-height: 22px;
+  padding: 2px 8px;
+  transition: none;
   color: @fg-color;
   background-color: transparent;
 }
@@ -704,7 +707,7 @@ scrollbar slider {
   background-color: @scrollbar-slider-color;
   border: 3px solid transparent;
   background-clip: padding-box;
-  border-radius: 8px;
+  border-radius: 6px;
   min-width: 6px;
   min-height: 6px;
   margin: 0;
@@ -795,7 +798,7 @@ popover,
 popover.background {
   background-color: @bg-color;
   border: 1px solid @edge-border-color;
-  border-radius: 4px;
+  border-radius: 6px;
 }
 
 popover button {
@@ -1360,43 +1363,14 @@ box.chopgimp-image-tab button:hover {
   font-size: 0.85rem;
 }
 
-/* Styles d'interface : coins arrondis homogènes, focus à la couleur
- * d'accent, menus et fenêtres surgissantes aérés, barres de défilement
- * fines qui s'épaississent au survol. */
+/* Styles d'interface : focus à la couleur d'accent, barres de défilement
+ * fines qui s'épaississent au survol. Les arrondis et espacements des
+ * menus, fenêtres surgissantes et barres de défilement sont définis plus
+ * haut avec leurs règles (une seule définition). */
 button:focus,
 entry:focus,
 spinbutton:focus {
   outline-color: @ps-accent;
-}
-
-popover,
-popover.background {
-  border: 1px solid @edge-border-color;
-  border-radius: 6px;
-}
-
-menu,
-.menu {
-  padding: 4px 0;
-}
-
-/* ChopGimp 4.2.2 : même boîte au survol qu'au repos (aucun décalage),
- * pas de transition : seul le surlignage change. */
-menu menuitem,
-menu menuitem:hover {
-  min-height: 22px;
-  padding: 2px 8px;
-  transition: none;
-}
-
-menu separator {
-  margin: 4px 0;
-}
-
-scrollbar slider {
-  min-width: 6px;
-  min-height: 6px;
-  border-radius: 6px;
 }
 
 scrollbar:hover slider {
@@ -1405,8 +1379,6 @@ scrollbar:hover slider {
 }
 
 checkbutton check:checked,
-radiobutton radio:checked,
-menuitem check:checked,
-menuitem radio:checked {
+radiobutton radio:checked {
   color: @ps-accent;
 }

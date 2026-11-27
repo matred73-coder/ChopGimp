@@ -29,7 +29,7 @@ import uuid
 import zipfile
 import zlib
 
-from ocg import Name, Ref, Raw, Reader, ser, decode, text_string, PdfError
+from ocg import Name, Ref, Raw, Reader, ser, decode, PdfError
 
 MM = 72.0 / 25.4
 
@@ -332,7 +332,6 @@ def import_vector_page(doc, src_bytes, convert, srgb_cs, bleed_pt, marks, w_pt, 
     if len(pages) != 1:
         raise PdfError("une page attendue")
     page_ref, page, inherited = pages[0]
-    media = rd.resolve(inherited.get("MediaBox"))
 
     # les flux de contenu : la page, les formulaires et les motifs de pavage
     content_nums = set()

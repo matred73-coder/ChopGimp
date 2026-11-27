@@ -38,7 +38,7 @@ rm -rf "$DATA/icons/PS-Line"
 cp -r "$DATA/icons/Default" "$DATA/icons/PS-Line"
 cp -r "$SRC/icons/PS-Line/overlay/." "$DATA/icons/PS-Line/"
 sed -i -e 's/^Name=.*/Name=PS-Line/' -e '/^Hidden=/d' \
-       -e 's/^Comment=.*/Comment=PhotoGIMP Pro — icônes style Photoshop (originales)/' \
+       -e 's/^Comment=.*/Comment=ChopGimp — icônes style Photoshop (originales)/' \
        "$DATA/icons/PS-Line/index.theme"
 
 # 3b. Icônes des boutons de panneaux : aussi dans le thème de secours de GIMP,

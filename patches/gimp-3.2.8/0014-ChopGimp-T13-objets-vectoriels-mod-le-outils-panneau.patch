@@ -34,7 +34,7 @@ Anciens patchs : 0118, 0119, 0120, 0121, 0122, 0123, 0124, 0125, 0126, 0144, 015
  app/path/chopgimp-vcolors.h                 |  101 +
  app/path/chopgimp-vobject-ops.c             | 2701 ++++++
  app/path/chopgimp-vobject-ops.h             |  289 +
- app/path/chopgimp-vobject.c                 | 8647 +++++++++++++++++++
+ app/path/chopgimp-vobject.c                 | 8630 +++++++++++++++++++
  app/path/chopgimp-vobject.h                 |  717 ++
  app/path/chopgimp-vrecolor.c                | 1444 ++++
  app/path/chopgimp-vrecolor.h                |  159 +
@@ -56,7 +56,7 @@ Anciens patchs : 0118, 0119, 0120, 0121, 0122, 0123, 0124, 0125, 0126, 0144, 015
  app/widgets/meson.build                     |   10 +
  plug-ins/common/file-svg-vobjects.h         | 2222 +++++
  plug-ins/common/file-svg.c                  |  165 +-
- 46 files changed, 30590 insertions(+), 41 deletions(-)
+ 46 files changed, 30573 insertions(+), 41 deletions(-)
  create mode 100644 app/actions/vector-objects-commands.c
  create mode 100644 app/actions/vector-objects-commands.h
  create mode 100644 app/dialogs/chopgimp-recolor-dialog.c
@@ -8780,10 +8780,10 @@ index 0000000..ed6a85c
 +G_END_DECLS
 diff --git a/app/path/chopgimp-vobject.c b/app/path/chopgimp-vobject.c
 new file mode 100644
-index 0000000..b44e4ff
+index 0000000..063c6e8
 --- /dev/null
 +++ b/app/path/chopgimp-vobject.c
-@@ -0,0 +1,8647 @@
+@@ -0,0 +1,8630 @@
 +/* GIMP - The GNU Image Manipulation Program
 + * chopgimp-vobject.c — ChopGimp 3.27: vector layers with several objects
 + * (see chopgimp-vobject.h for the model and the rules)
@@ -8859,6 +8859,7 @@ index 0000000..b44e4ff
 +#include "chopgimp-geom.h"
 +#include "chopgimp-vobject.h"
 +#include "chopgimp-vutil.h"
++#include "chopgimp-vobject-ops.h"
 +#include "chopgimp-vlivepaint.h"
 +#include "chopgimp-vsymbols.h"
 +#include "chopgimp-vmaterial.h"
@@ -10789,32 +10790,6 @@ index 0000000..b44e4ff
 +    gimp_matrix3_mult (&p->transform, matrix);
 +}
 +
-+static void
-+collect_leaves (ChopGimpVObject  *o,
-+                GList           **list)
-+{
-+  if (o->kind == CHOPGIMP_VOBJECT_PATH)
-+    {
-+      *list = g_list_prepend (*list, o);
-+    }
-+  else if (o->children)
-+    {
-+      for (guint i = 0; i < o->children->len; i++)
-+        collect_leaves (g_ptr_array_index (o->children, i), list);
-+    }
-+}
-+
-+static GList *
-+leaves_of (ChopGimpVObject *o)
-+{
-+  GList *list = NULL;
-+
-+  if (o)
-+    collect_leaves (o, &list);
-+
-+  return g_list_reverse (list);
-+}
-+
 +
 +/*  ─── per-layer state ───────────────────────────────────────────────── */
 +
@@ -11070,7 +11045,7 @@ index 0000000..b44e4ff
 +GList *
 +chopgimp_vlayer_get_leaves (GimpVectorLayer *layer)
 +{
-+  return leaves_of (chopgimp_vlayer_get_root (layer));
++  return chopgimp_vobjects_leaves_of (chopgimp_vlayer_get_root (layer));
 +}
 +
 +gint
@@ -11087,7 +11062,7 @@ index 0000000..b44e4ff
 +static ChopGimpVObject *
 +first_leaf (ChopGimpVObject *root)
 +{
-+  GList           *leaves = leaves_of (root);
++  GList           *leaves = chopgimp_vobjects_leaves_of (root);
 +  ChopGimpVObject *first  = leaves ? leaves->data : NULL;
 +
 +  for (GList *l = leaves; l; l = l->next)
@@ -11975,7 +11950,7 @@ index 0000000..b44e4ff
 +
 +  if (g_strcmp0 (spec, vl->layer_lpe))
 +    {
-+      GList *leaves = leaves_of (vl->root);
++      GList *leaves = chopgimp_vobjects_leaves_of (vl->root);
 +
 +      for (GList *l = leaves; l; l = l->next)
 +        {
@@ -13031,10 +13006,12 @@ index 0000000..b44e4ff
 + *  beforehand, see par_prepare_leaf()).  CHOPGIMP_NO_PAR_RENDER_EXT=1:
 + *  the 3.29.4 set only.
 + */
++static gint env_no_par_render_ext = -1;
++
 +static gboolean
 +par_ext_enabled (void)
 +{
-+  return g_getenv ("CHOPGIMP_NO_PAR_RENDER_EXT") == NULL;
++  return ! chopgimp_env_flag ("CHOPGIMP_NO_PAR_RENDER_EXT", &env_no_par_render_ext);
 +}
 +
 +
@@ -13568,9 +13545,10 @@ index 0000000..b44e4ff
 +                  const guchar        *data,
 +                  gint                 stride)
 +{
-+  FloatJob job = { data, stride, rect->width, NULL };
++  static gint env_no_fast_float = -1;
++  FloatJob    job = { data, stride, rect->width, NULL };
 +
-+  if (g_getenv ("CHOPGIMP_NO_FAST_FLOAT"))
++  if (chopgimp_env_flag ("CHOPGIMP_NO_FAST_FLOAT", &env_no_fast_float))
 +    return FALSE;
 +
 +  job.out = g_try_malloc ((gsize) rect->width * rect->height * 4 * sizeof (gfloat));
@@ -13853,7 +13831,7 @@ index 0000000..b44e4ff
 +  if (geometry && options->path)
 +    {
 +      GimpPath *u      = options->path;
-+      GList    *leaves = leaves_of (vl->root);
++      GList    *leaves = chopgimp_vobjects_leaves_of (vl->root);
 +      GArray   *layout = g_array_new (FALSE, FALSE, sizeof (guint));
 +
 +      gimp_path_freeze (u);
@@ -13937,7 +13915,7 @@ index 0000000..b44e4ff
 +   */
 +  vlayer_flush_legacy (layer);
 +
-+  leaves  = leaves_of (vl->root);
++  leaves  = chopgimp_vobjects_leaves_of (vl->root);
 +  strokes = g_ptr_array_new ();
 +
 +  for (s = gimp_path_stroke_get_next (u, NULL); s;
@@ -14363,7 +14341,7 @@ index 0000000..b44e4ff
 +          gboolean        *any)
 +{
 +  GList *leaves = (o->kind == CHOPGIMP_VOBJECT_PATH) ? g_list_prepend (NULL, o)
-+                                                      : leaves_of (o);
++                                                      : chopgimp_vobjects_leaves_of (o);
 +
 +  for (GList *l = leaves; l; l = l->next)
 +    {
@@ -14989,9 +14967,10 @@ index 0000000..b44e4ff
 +static void
 +vlayer_write_legacy_later (GimpVectorLayer *layer)
 +{
-+  ChopGimpVLayer *vl = layer->vobjects;
++  static gint     env_no_lazy_legacy = -1;
++  ChopGimpVLayer *vl                 = layer->vobjects;
 +
-+  if (g_getenv ("CHOPGIMP_NO_LAZY_LEGACY") || vl->legacy)
++  if (chopgimp_env_flag ("CHOPGIMP_NO_LAZY_LEGACY", &env_no_lazy_legacy) || vl->legacy)
 +    {
 +      vlayer_write_legacy (layer, TRUE, FALSE);
 +      return;
@@ -15396,7 +15375,7 @@ index 0000000..b44e4ff
 +                   gboolean         with_effects)
 +{
 +  GList *leaves = (o->kind == CHOPGIMP_VOBJECT_PATH) ? g_list_prepend (NULL, o)
-+                                                      : leaves_of (o);
++                                                      : chopgimp_vobjects_leaves_of (o);
 +
 +  for (GList *l = leaves; l; l = l->next)
 +    {
@@ -15539,6 +15518,8 @@ index 0000000..b44e4ff
 +  return hit;
 +}
 +
++static gint env_no_part_hit = -1;
++
 +static ChopGimpVObject *
 +hit_rec (GimpVectorLayer *layer,
 +         ChopGimpVObject *o,
@@ -15553,7 +15534,7 @@ index 0000000..b44e4ff
 +  if (! o->visible ||
 +      (o->locked && ! (o->blend && (! strcmp (o->blend, "bpart") ||
 +                                    ! strcmp (o->blend, "rinst")) &&
-+                       ! g_getenv ("CHOPGIMP_NO_PART_HIT"))))
++                       ! chopgimp_env_flag ("CHOPGIMP_NO_PART_HIT", &env_no_part_hit))))
 +    return NULL;
 +
 +  if (o->kind == CHOPGIMP_VOBJECT_PATH)
@@ -15621,7 +15602,7 @@ index 0000000..b44e4ff
 +
 +          if (src->kind == CHOPGIMP_VOBJECT_GROUP && ! g_strcmp0 (src->livepaint, "sources"))
 +            {
-+              GList *leaves = leaves_of (src);
++              GList *leaves = chopgimp_vobjects_leaves_of (src);
 +
 +              for (GList *l = g_list_last (leaves); l; l = l->prev)
 +                if (leaf_hit (layer, l->data, x, y, MAX (tolerance, 0.0) + 3.0))
@@ -15948,16 +15929,18 @@ index 0000000..b44e4ff
 +        /*  with a margin: not a new buffer at each step of the drag (the
 +         *  exact bounds are set at the end of the gesture)
 +         */
-+        gint m = MAX (256, MAX (vl->sprite_r.width, vl->sprite_r.height) / 2);
++        gint        m = MAX (256, MAX (vl->sprite_r.width, vl->sprite_r.height) / 2);
++        GeglBuffer *old;
++        GeglBuffer *nb;
 +
 +        if (now.x < cur.x)                             u.x -= m, u.width += m;
 +        if (now.y < cur.y)                             u.y -= m, u.height += m;
 +        if (now.x + now.width > cur.x + cur.width)     u.width += m;
 +        if (now.y + now.height > cur.y + cur.height)   u.height += m;
 +
-+        GeglBuffer *old = g_object_ref (gimp_drawable_get_buffer (drawable));
-+        GeglBuffer *nb  = gegl_buffer_new (GEGL_RECTANGLE (0, 0, u.width, u.height),
-+                                           gimp_drawable_get_format (drawable));
++        old = g_object_ref (gimp_drawable_get_buffer (drawable));
++        nb  = gegl_buffer_new (GEGL_RECTANGLE (0, 0, u.width, u.height),
++                               gimp_drawable_get_format (drawable));
 +
 +        gegl_buffer_copy (old, GEGL_RECTANGLE (0, 0, cur.width, cur.height),
 +                          GEGL_ABYSS_NONE, nb,
@@ -16156,7 +16139,7 @@ index 0000000..b44e4ff
 +    return;
 +
 +  leaves = (o->kind == CHOPGIMP_VOBJECT_PATH) ? g_list_prepend (NULL, o)
-+                                               : leaves_of (o);
++                                               : chopgimp_vobjects_leaves_of (o);
 +
 +  dirty_of (layer, o, &r, &any);
 +
@@ -16722,11 +16705,11 @@ index 0000000..b44e4ff
 +                                                GUINT_TO_POINTER (g_array_index (vl->selection,
 +                                                                                 guint, i)));
 +      if (o)
-+        from = g_list_concat (from, leaves_of (o));
++        from = g_list_concat (from, chopgimp_vobjects_leaves_of (o));
 +    }
 +
 +  if (! from)
-+    from = leaves_of (vl->root);
++    from = chopgimp_vobjects_leaves_of (vl->root);
 +
 +  for (GList *l = from; l; l = l->next)
 +    {
@@ -16922,7 +16905,7 @@ index 0000000..b44e4ff
 +  if (! vl)
 +    return 0;
 +
-+  leaves = leaves_of (vl->root);
++  leaves = chopgimp_vobjects_leaves_of (vl->root);
 +
 +  for (GList *l = leaves; l; l = l->next)
 +    {
@@ -16995,7 +16978,7 @@ index 0000000..b44e4ff
 +vlayer_map_by_position (GimpVectorLayer *layer)
 +{
 +  ChopGimpVLayer *vl     = layer->vobjects;
-+  GList          *leaves = leaves_of (vl->root);
++  GList          *leaves = chopgimp_vobjects_leaves_of (vl->root);
 +
 +  g_hash_table_remove_all (vl->stroke_map);
 +  vl->mapped = 0;
@@ -17400,7 +17383,7 @@ index 0000000..b44e4ff
 +  if (! root || ! cr)
 +    return;
 +
-+  leaves = leaves_of (root);
++  leaves = chopgimp_vobjects_leaves_of (root);
 +
 +  for (GList *l = leaves; l; l = l->next)
 +    {

@@ -90,7 +90,7 @@ def filter_browser_run(procedure, run_mode, image, drawables, config, data):
         gi.require_version('GimpUi', '3.0')
         from gi.repository import GimpUi
         gi.require_version('Gtk', '3.0')
-        from gi.repository import Gtk, GdkPixbuf
+        from gi.repository import Gtk
 
         GimpUi.init('python-fu-filter-browser')
 

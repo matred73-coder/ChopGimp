@@ -134,7 +134,6 @@ def run_google_fonts(procedure, run_mode, image, drawables, config, data):
 
         # Font list: selected, name, category
         store = Gtk.ListStore(bool, str, str)
-        model_filter = store.filter_new()
 
         def populate_store(category="All"):
             store.clear()

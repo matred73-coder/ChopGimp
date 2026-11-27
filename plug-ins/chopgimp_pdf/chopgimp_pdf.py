@@ -215,10 +215,6 @@ def merge_runs(objs, limit):
     return out
 
 
-def color_name(rgba):
-    return "#%02x%02x%02x" % tuple(int(round(max(0, min(1, v)) * 255)) for v in rgba[:3])
-
-
 def build_path_layer(image, o, parent, n):
     path = Gimp.Path.new(image, "Tracé %d" % n)
     for closed, knots in o.path:
@@ -233,7 +229,7 @@ def build_path_layer(image, o, parent, n):
     if o.fill is not None:
         vl.set_enable_fill(True)
         vl.set_fill_color(srgb(*o.fill[:3]))
-        what.append("fond " + color_name(o.fill))
+        what.append("fond " + vobjects._color_name(o.fill))
     else:
         vl.set_enable_fill(False)
     st = o.stroke
@@ -245,7 +241,7 @@ def build_path_layer(image, o, parent, n):
         vl.set_stroke_join_style(JOINS[st["join"]])
         if st["dash"]:
             vl.set_stroke_dash_pattern(st["dash"])
-        what.append("contour " + color_name(st["color"]))
+        what.append("contour " + vobjects._color_name(st["color"]))
     else:
         vl.set_enable_stroke(False)
     alpha = (o.fill or st["color"])[3] if (o.fill or st) else 1.0

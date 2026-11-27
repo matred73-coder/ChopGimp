@@ -30,10 +30,21 @@ from gi.repository import Gimp, GimpUi, Gegl, GLib, GObject, Gtk
 
 from chopgimp_common import ok, fail, dialog_box, vbox, spin_scale, frame
 
-try:                        # accélère la lecture/écriture des pixels (facultatif)
-    import numpy as np
-except Exception:
-    np = None
+# numpy accélère la lecture/écriture des pixels
+_NUMPY = False                # numpy importé à la première utilisation (facultatif)
+
+
+def _numpy():
+    """numpy, ou None s'il est absent ; importé au premier appel seulement
+    (chargement du greffon plus rapide)."""
+    global _NUMPY
+    if _NUMPY is False:
+        try:
+            import numpy
+            _NUMPY = numpy
+        except Exception:
+            _NUMPY = None
+    return _NUMPY
 
 # Image > Recadrage en perspective, Redresser, Mise à l'échelle selon le
 # contenu : placés par tools/build_menus.py (app.<procédure>), pas de
@@ -252,6 +263,7 @@ def read_carver(lib, carver, nw, nh):
     px = ctypes.POINTER(ctypes.c_ubyte)()
     length = (nw if by_row else nh) * 4
     lib.lqr_carver_scan_reset(carver)
+    np = _numpy()
     if np is not None:
         out = np.zeros((nh, nw, 4), np.uint8)
         while lib.lqr_carver_scan_line(carver, ctypes.byref(n), ctypes.byref(px)):
@@ -304,6 +316,7 @@ def liquid_rescale(image, layer, sx, sy, protect):
             _, ox, oy = layer.get_offsets()
             mb = mask.get_buffer().get(Gegl.Rectangle.new(ox, oy, w, h), 1.0, "Y u8",
                                        Gegl.AbyssPolicy.NONE)
+            np = _numpy()
             if np is not None:
                 bias_arr = np.where(np.frombuffer(mb, np.uint8) > 127, 1000.0, 0.0).astype(np.float64)
                 bias = bias_arr.ctypes.data_as(ctypes.POINTER(ctypes.c_double))

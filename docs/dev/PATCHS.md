@@ -2,7 +2,7 @@
 
 Les modifications de GIMP 3.2.8 forment **23 patchs** dans `patches/gimp-3.2.8/` : 22 thèmes
 et le patch de l'icône Windows, gardé tel quel. Ils remplacent les 182 patchs « un par commit »
-de la 4.2.0 et de la 4.2.1 (plan appliqué : `PLAN-PATCHS-4.1.md`, adapté). La série
+de la 4.2.0 et de la 4.2.1 (plan appliqué : `archive/PLAN-PATCHS-4.1.md`, adapté). La série
 s'applique toujours en entier et dans l'ordre. Un thème seul n'a pas à compiler.
 
 ## Les thèmes

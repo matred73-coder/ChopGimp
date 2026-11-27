@@ -207,7 +207,6 @@ def parse(text):
             r[2] + tol >= e[2] and r[3] + tol >= e[3]
 
     page = [0.0, 0.0, 0.0, 0.0]
-    clip_ids = [0]
 
     def add_clip(subs):
         """Découpe en plus des précédentes ; les rectangles qui ne découpent

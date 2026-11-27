@@ -38,7 +38,6 @@ from xml.sax.saxutils import quoteattr
 
 from cairoscript import Matrix
 
-SVG_NS = "{http://www.w3.org/2000/svg}"
 INK_NS = "{http://www.inkscape.org/namespaces/inkscape}"
 SODI_NS = "{http://sodipodi.sourceforge.net/DTD/sodipodi-0.dtd}"
 XLINK_NS = "{http://www.w3.org/1999/xlink}"

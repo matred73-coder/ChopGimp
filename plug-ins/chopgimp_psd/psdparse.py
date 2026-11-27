@@ -628,7 +628,7 @@ def _read_layer_info(r, psd, end):
     psb = psd.version == 2
     count = r.i16()
     count = abs(count)
-    layers, chan_total = [], 0
+    layers = []
     for _ in range(count):
         L = Layer(psd)
         top, left, bottom, right = r.fmt("4i")
@@ -636,7 +636,7 @@ def _read_layer_info(r, psd, end):
         nch = r.u16()
         for _ in range(nch):
             r.i16()
-            chan_total += r.u64() if psb else r.u32()
+            r.read(8 if psb else 4)               # taille des données du canal
         r.read(4)                               # 8BIM
         L.blend = r.read(4).decode("latin-1")
         L.opacity = r.u8()

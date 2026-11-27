@@ -2611,8 +2611,6 @@ try:
     # vectoriels et calques PDF, export PSD façon Photoshop (relu par
     # psd-tools hors du paquet : tools/dev/check_psd_tools.py)
     try:
-        import zlib
-
         def cmd2(proc, im, c, item=None):
             kw = {"image": im, "command": c}
             if item is not None:
@@ -2767,7 +2765,6 @@ try:
         import base64
         import struct
         import sys as _sys
-        import zlib
 
         def pat_b64(w, h, rgba, name="Test"):
             nm = name.encode() + b"\x00"

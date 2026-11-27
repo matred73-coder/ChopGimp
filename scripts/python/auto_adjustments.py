@@ -23,8 +23,6 @@ def auto_levels(procedure, run_mode, image, drawables, config, data):
     Gimp.context_push()
     image.undo_group_start()
 
-    pdb = Gimp.get_pdb()
-
     for drawable in drawables:
         # Stretch each channel independently using levels-stretch (GEGL)
         levels_filter = Gimp.DrawableFilter.new(drawable, "gegl:stretch-contrast", "")

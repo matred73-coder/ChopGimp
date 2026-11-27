@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 """
-PhotoGIMP Pro v3 — génère flatpak/org.cen_na.ChopGimp.json à partir du
+ChopGimp — génère flatpak/org.cen_na.ChopGimp.json à partir du
 manifeste officiel Flathub de GIMP (flatpak/upstream/org.gimp.GIMP.json).
 
 Modifications :
 - identifiant org.cen_na.ChopGimp (installable à côté de GIMP)
 - configuration séparée (pas d'accès à ~/.config/GIMP de l'hôte)
 - pas d'extensions Flathub (plug-ins / manuel) propres à org.gimp.GIMP
-- patchs PhotoGIMP (patches/gimp-3.2.8/*.patch) appliqués sur GIMP 3.2.8
+- patchs ChopGimp (patches/gimp-3.2.8/*.patch) appliqués sur GIMP 3.2.8
 - module « photogimp-data » : réglages, thème, icônes, menus, plug-ins
 
 Usage : make_manifest.py [--vanilla]   (--vanilla : GIMP sans patch ni données)
@@ -322,7 +322,7 @@ if not vanilla:
             "zipfile.ZipFile('eci_offset_2009.zip').read('ECI_Offset_2009/ISOcoated_v2_eci.icc'))\"",
             "install -Dm644 ISOcoated_v2_eci.icc ${FLATPAK_DEST}/share/gimp/3.0/color/ISOcoated_v2_eci.icc"],
     })
-    # Données PhotoGIMP Pro, installées après GIMP (voir tools/install_data.sh)
+    # Données ChopGimp, installées après GIMP (voir tools/install_data.sh)
     m["modules"].append({
         "name": "photogimp-data",
         "buildsystem": "simple",

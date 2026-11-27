@@ -10,11 +10,11 @@ Content-Transfer-Encoding: 8bit
 Anciens patchs : 0148, 0150, 0151, 0152, 0159, 0170, 0175, 0176.
 ---
  app/core/gimpitem.c          |   5 +-
- app/display/gimpcanvaspath.c |  49 ++++++++
+ app/display/gimpcanvaspath.c |  49 ++++++
  app/display/gimpcanvaspath.h |   3 +
- app/path/chopgimp-vutil.c    | 209 +++++++++++++++++++++++++++++++++++
- app/path/chopgimp-vutil.h    |  59 ++++++++++
- 5 files changed, 324 insertions(+), 1 deletion(-)
+ app/path/chopgimp-vutil.c    | 289 +++++++++++++++++++++++++++++++++++
+ app/path/chopgimp-vutil.h    |  76 +++++++++
+ 5 files changed, 421 insertions(+), 1 deletion(-)
  create mode 100644 app/path/chopgimp-vutil.c
  create mode 100644 app/path/chopgimp-vutil.h
 
@@ -128,10 +128,10 @@ index d9bb5ac..7ebfe00 100644
 +                                                  gdouble         opacity);
 diff --git a/app/path/chopgimp-vutil.c b/app/path/chopgimp-vutil.c
 new file mode 100644
-index 0000000..6ad1b90
+index 0000000..7a474de
 --- /dev/null
 +++ b/app/path/chopgimp-vutil.c
-@@ -0,0 +1,209 @@
+@@ -0,0 +1,289 @@
 +/* GIMP - The GNU Image Manipulation Program
 + * chopgimp-vutil.c — ChopGimp 4.1.0: helpers shared by the vector object
 + * modules, see chopgimp-vutil.h.
@@ -341,12 +341,92 @@ index 0000000..6ad1b90
 +
 +  return c;
 +}
++
++/*  ─── 4.2.6: selection helpers and switches (formerly copied in
++ *      chopgimp-vmaterial.c, chopgimp-vrepeat.c and chopgimp-vbrush.c) ── */
++
++GList *
++chopgimp_vlayer_selected_siblings (GimpVectorLayer *layer,
++                                   gint             min)
++{
++  GList           *sel    = chopgimp_vlayer_get_selected_objects (layer);
++  ChopGimpVObject *parent = NULL;
++  GHashTable      *set;
++  GList           *sorted = NULL;
++  gint             n      = 0;
++
++  for (GList *l = sel; l; l = l->next)
++    {
++      ChopGimpVObject *o = l->data;
++
++      if (l == sel)
++        parent = o->parent;
++      else if (o->parent != parent)
++        {
++          g_list_free (sel);
++          return NULL;
++        }
++
++      n++;
++    }
++
++  if (n == 0 || n < min)
++    {
++      g_list_free (sel);
++      return NULL;
++    }
++
++  if (! parent)
++    return sel;
++
++  /*  bottom → top, by index in the parent  */
++  set = g_hash_table_new (NULL, NULL);
++
++  for (GList *l = sel; l; l = l->next)
++    g_hash_table_add (set, l->data);
++
++  for (guint i = 0; i < parent->children->len; i++)
++    if (g_hash_table_contains (set, g_ptr_array_index (parent->children, i)))
++      sorted = g_list_prepend (sorted, g_ptr_array_index (parent->children, i));
++
++  g_hash_table_destroy (set);
++  g_list_free (sel);
++
++  return g_list_reverse (sorted);
++}
++
++ChopGimpVObject *
++chopgimp_vlayer_group_of_selection (GimpVectorLayer *layer,
++                                    gboolean       (*test) (ChopGimpVObject *object))
++{
++  GList           *sel = chopgimp_vlayer_get_selected_objects (layer);
++  ChopGimpVObject *g   = NULL;
++
++  for (GList *l = sel; l && ! g; l = l->next)
++    for (ChopGimpVObject *o = l->data; o && ! g; o = o->parent)
++      if (test (o))
++        g = o;
++
++  g_list_free (sel);
++
++  return g;
++}
++
++gboolean
++chopgimp_env_flag (const gchar *name,
++                   gint        *cache)
++{
++  if (*cache < 0)
++    *cache = (g_getenv (name) != NULL);
++
++  return *cache != 0;
++}
 diff --git a/app/path/chopgimp-vutil.h b/app/path/chopgimp-vutil.h
 new file mode 100644
-index 0000000..5fcd32f
+index 0000000..ea585c7
 --- /dev/null
 +++ b/app/path/chopgimp-vutil.h
-@@ -0,0 +1,59 @@
+@@ -0,0 +1,76 @@
 +/* GIMP - The GNU Image Manipulation Program
 + * chopgimp-vutil.h — ChopGimp 4.1.0: helpers shared by the vector object
 + * modules (formerly copied in chopgimp-vbrush.c, chopgimp-vrepeat.c,
@@ -406,3 +486,20 @@ index 0000000..5fcd32f
 +                                     gdouble          rgba[4]);
 +/*  a new color from R'G'B'A double in sRGB  */
 +GeglColor * chopgimp_srgb_to_color  (const gdouble    rgba[4]);
++
++/*  the selected objects with a common parent, bottom → top (g_list_free);
++ *  NULL unless there are at least @min (and at least one)
++ */
++GList           * chopgimp_vlayer_selected_siblings  (GimpVectorLayer *layer,
++                                                      gint             min);
++/*  the first object, from each selected object up to the root, for which
++ *  @test is TRUE; NULL when none
++ */
++ChopGimpVObject * chopgimp_vlayer_group_of_selection (GimpVectorLayer *layer,
++                                                      gboolean       (*test) (ChopGimpVObject *object));
++
++/*  TRUE when the environment variable @name is set; read once, kept in
++ *  *@cache (a static gint initialized to -1)
++ */
++gboolean          chopgimp_env_flag                  (const gchar     *name,
++                                                      gint            *cache);
