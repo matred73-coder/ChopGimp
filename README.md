@@ -161,7 +161,7 @@ Ils sont produits automatiquement par GitHub Actions à chaque tag `v*`
 - **Rendu vectoriel accéléré** (3.29.4) : conversion rapide des rendus cairo vers les calques
   8 bits (les calques 16 / 32 bits gardent babl) et rastérisation des objets en parallèle :
   glisser ×27 sur une grosse vectorisation (374 → 14 ms par image), recolorer ×3, rendu
-  complet ×1,8 (`CHOPGIMP_NO_FAST_BABL=1`, `CHOPGIMP_NO_PAR_RENDER=1` pour revenir).
+  complet ×1,8.
 - **Plans de travail et grille de perspective** (3.31.0, compilé en 3.99.0) : plusieurs pages
   ou formats dans un même fichier (outil Plan de travail Maj+O, panneau, export d'un
   fichier par plan) ; grille de perspective à 1, 2 ou 3 points de fuite avec ses widgets,
@@ -249,6 +249,15 @@ flatpak run --env=CHOPGIMP_NO_VOBJECTS=1 org.cen_na.ChopGimp
 
 Sous Windows, définissez la variable avant de lancer `chopgimp.exe`.
 
+Depuis la 4.1.0, les fonctions éprouvées (livrées jusqu'à la 3.29.4) n'ont plus d'interrupteur :
+chargement rapide des XCF, glisser et sprite, annulation rapide, conversion rapide et rendu
+parallèle des objets, recoloration et info-bulle des objets, styles fusionnés, modes et calques
+des effets « dessous », cache des effets dans le XCF, brouillons (`CHOPGIMP_NO_FAST_LOAD`,
+`NO_FAST_DRAG`, `NO_DRAG_SPRITE`, `NO_FAST_UNDO`, `NO_FAST_BABL`, `NO_PAR_RENDER`,
+`NO_FG_RECOLOR`, `NO_HOVER_TIP`, `NO_FUSED_STYLES`, `NO_BEHIND_MODES`, `NO_BEHIND_LAYERS`,
+`NO_XCF_FX_CACHE`, `NO_DRAFT`, `LP_NO_THROTTLE` sont sans effet). Le cache des effets reste
+réglable dans `chopgimprc` (`[xcf] fx-cache=false`).
+
 **Interface**
 
 | Variable | Effet |
@@ -258,7 +267,6 @@ Sous Windows, définissez la variable avant de lancer `chopgimp.exe`.
 | `CHOPGIMP_CLASSIC_STATUSBAR` | Barre d'état de GIMP au lieu de la barre « Doc » |
 | `CHOPGIMP_CLASSIC_TABS` | Onglets de documents de GIMP |
 | `CHOPGIMP_NO_GROUP_KEY` | La touche d'un groupe d'outils active le premier outil du groupe, et non l'outil affiché |
-| `CHOPGIMP_NO_HOVER_TIP` | Plus d'info-bulle au survol des objets vectoriels |
 | `CHOPGIMP_NO_INNER_STYLES` | Masque les styles Satin et Incrustation de motif |
 | `CHOPGIMP_FULL_REDRAW` | Plans de travail et grille de perspective : toute la vue est redessinée à chaque changement |
 
@@ -266,11 +274,6 @@ Sous Windows, définissez la variable avant de lancer `chopgimp.exe`.
 
 | Variable | Effet |
 |---|---|
-| `CHOPGIMP_NO_BEHIND_MODES` | Ombre portée et lueur externe sans mode de fusion sur les calques du dessous |
-| `CHOPGIMP_NO_BEHIND_LAYERS` | Pixelliser une ombre portée ou une lueur externe dans son mode : elle n'est plus posée dans un calque à part sous le calque |
-| `CHOPGIMP_NO_FUSED_STYLES` | Effets consécutifs calculés un à un, et non en une passe |
-| `CHOPGIMP_NO_XCF_FX_CACHE` | Effets non mis en cache dans le XCF |
-| `CHOPGIMP_NO_DRAFT` | Pas de brouillon en résolution réduite pendant l'action |
 | `CHOPGIMP_NO_THREADED_RENDER` | Pas de rendu en arrière-plan |
 | `CHOPGIMP_RENDER_THREAD_MIN_US`, `CHOPGIMP_THREADABLE_RECHECK_MS` | Réglages fins du rendu en arrière-plan (durées en µs et en ms) |
 | `CHOPGIMP_NO_LASSO_STEPS` | Lasso magnétique : un grand saut de souris ne suit plus le bord par étapes |
@@ -280,21 +283,17 @@ Sous Windows, définissez la variable avant de lancer `chopgimp.exe`.
 | Variable | Effet |
 |---|---|
 | `CHOPGIMP_NO_VOBJECTS` | Calques vectoriels de GIMP, sans objets (aussi à l'import PDF / AI) |
-| `CHOPGIMP_NO_FAST_LOAD` | À l'ouverture d'un XCF, l'ancien tracé est dessiné avant les objets |
 | `CHOPGIMP_NO_LAZY_LEGACY` | Ancien tracé réécrit tout de suite après chaque annulation |
-| `CHOPGIMP_NO_FAST_UNDO` | Annulation par le XML au lieu d'une copie des objets |
 | `CHOPGIMP_NO_PARTIAL_UNDO` | Annulation : tous les objets sont copiés, pas seulement ceux qui changent |
-| `CHOPGIMP_NO_FAST_DRAG`, `CHOPGIMP_NO_DRAG_SPRITE` | Glisser des objets sans les rendus en cache |
-| `CHOPGIMP_NO_FAST_BABL`, `CHOPGIMP_NO_FAST_FLOAT` | Conversion du rendu vers le calque par babl (8 bits, puis 16 / 32 bits) |
-| `CHOPGIMP_NO_PAR_RENDER`, `CHOPGIMP_NO_PAR_RENDER_EXT` | Objets rastérisés un à un (tous, ou seulement filets, motifs, flèches et profils) |
+| `CHOPGIMP_NO_FAST_FLOAT` | Calques 16 / 32 bits : conversion du rendu par babl au lieu du passage en flottants |
+| `CHOPGIMP_NO_PAR_RENDER_EXT` | Filets, motifs, flèches et profils rastérisés un à un (les autres objets restent en parallèle) |
 | `CHOPGIMP_NO_A8_CACHE` | Cache d'un objet d'une seule couleur en RVBA au lieu de sa seule couverture (4.0.0 : 4× moins de mémoire) |
 | `CHOPGIMP_NO_MULTI_NEW_PATH` | Plume : un sous-tracé dessiné pendant une sélection de plusieurs objets est perdu |
-| `CHOPGIMP_NO_FG_RECOLOR` | Les couleurs de premier plan / d'arrière-plan ne recolorent plus les objets sélectionnés |
 | `CHOPGIMP_NO_AUTO_KEY` | « Aligner sur l'objet clé » sans objet clé : pas d'objet clé automatique |
 | `CHOPGIMP_NO_BLEND_GROUPS`, `CHOPGIMP_NO_BLEND_ORIENT`, `CHOPGIMP_NO_SPINE_KEYS` | Transition : pas de groupes comme objets clés, étapes non orientées le long du tracé, objets clés laissés en place |
 | `CHOPGIMP_NO_GRADIENT_FREEFORM` | L'outil Dégradé ne modifie plus le dégradé libre d'un objet |
 | `CHOPGIMP_NO_LOCAL_ACROSS` | Dégradé en travers d'un contour à profil : largeur moyenne au lieu de l'épaisseur locale |
-| `CHOPGIMP_LP_NO_INCREMENTAL`, `CHOPGIMP_LP_NO_THROTTLE` | Peinture dynamique : recalcul complet, et à chaque mouvement |
+| `CHOPGIMP_LP_NO_INCREMENTAL` | Peinture dynamique : recalcul complet |
 | `CHOPGIMP_NO_BLOB_MERGE` | Pinceau goutte : les coups ne fusionnent jamais |
 | `CHOPGIMP_NO_VBRUSHES` | Pas de formes de pinceau |
 | `CHOPGIMP_NO_REPEAT` | Pas de répétitions |

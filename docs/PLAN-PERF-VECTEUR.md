@@ -17,19 +17,19 @@ vectorisée en « Photo haute fidélité » (3 595 objets, 4,3 Mo de XML). Cas B
 ## Fait en 3.29.2
 - **Ouverture XCF ×17 à ×22** : GIMP redessinait d'abord tout l'ancien tracé
   (un seul tracé géant, fond + contour, ~90 % du temps) avant le rendu par objets.
-  Sauté quand le calque a ses objets (`CHOPGIMP_NO_FAST_LOAD=1` pour revenir).
+  Sauté quand le calque a ses objets (`CHOPGIMP_NO_FAST_LOAD=1`, retiré en 4.1.0).
 - **Glisser interactif** (`chopgimp_vlayer_begin/end_interactive`, outil V) :
   les rendus en cache et les boîtes se décalent au lieu d'être recalculés ;
   pas d'ancien tracé réécrit, pas de réindexation, panneaux prévenus une fois à
   la fin ; rendu exact au relâchement (seuls les objets décalés d'une fraction
   de pixel sont redessinés). « Sprite » : reste du calque et objets déplacés
   faits une fois, chaque image ne fait que copier / coller
-  (`CHOPGIMP_NO_FAST_DRAG=1`, `CHOPGIMP_NO_DRAG_SPRITE=1`).
+  (`CHOPGIMP_NO_FAST_DRAG=1`, `CHOPGIMP_NO_DRAG_SPRITE=1`, retirés en 4.1.0).
 - **Calque qui s'agrandit** : les pixels inchangés sont recopiés, seule la zone
   touchée est redessinée ; marge d'agrandissement pendant un glisser.
 - **Annulation** : copie de l'arbre d'objets (mêmes ids, rendus en cache
   partagés) au lieu d'écrire puis relire tout le XML ; rétablir = échange
-  (`CHOPGIMP_NO_FAST_UNDO=1`).
+  (`CHOPGIMP_NO_FAST_UNDO=1`, retiré en 4.1.0).
 - Rendu identique au pixel près vérifié par 4 tests (glisser, annuler,
   rétablir, XCF rouvert).
 
@@ -37,7 +37,7 @@ vectorisée en « Photo haute fidélité » (3 595 objets, 4,3 Mo de XML). Cas B
 Cas A : glisser **373,5 → 13,7 ms** par image (sous les 33 ms d'une image à
 30 i/s), recolorer 799 → 266, rendu complet 1 197 → 648, annuler 383 → 136.
 Cas B : recolorer 414 → 60, rendu complet 582 → 159 (« avant » = mêmes binaires,
-`CHOPGIMP_NO_FAST_BABL=1 CHOPGIMP_NO_PAR_RENDER=1` ; tableau complet : SUIVI 3.29.4).
+`CHOPGIMP_NO_FAST_BABL=1 CHOPGIMP_NO_PAR_RENDER=1`, interrupteurs retirés en 4.1.0 ; tableau complet : SUIVI 3.29.4).
 - **Conversion de pixels** : dépremultiplication maison (table, en parallèle)
   vers R'G'B'A u8, **calques 8 bits seulement** ; 16 / 32 bits : babl comme avant.
 - **Rastérisation en parallèle** des objets sans cache (fils de GEGL).
