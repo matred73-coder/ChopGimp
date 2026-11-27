@@ -313,7 +313,7 @@
 # Tout sélectionner
 (action "select-all" "<Primary>a")
 # Désélectionner
-(action "select-none" "<Primary>d")
+(action "select-none" "<Primary>d" "<Primary><Shift>a")
 # Intervertir
 (action "select-invert" "<Primary><Shift>i")
 # Contour progressif

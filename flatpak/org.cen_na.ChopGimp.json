@@ -761,6 +761,10 @@
                 {
                     "type": "patch",
                     "path": "../patches/babl-0.1.128/0002-reference-fish-narrow-lock.patch"
+                },
+                {
+                    "type": "patch",
+                    "path": "../patches/babl-0.1.128/0003-ChopGimp-CMYK-profile-without-usable-lcms-transforms.patch"
                 }
             ],
             "buildsystem": "meson",
@@ -1221,7 +1225,9 @@
                         "../patches/gimp-3.2.8/0174-ChopGimp-4.0.2-Layers-list-keeps-at-least-its-header.patch",
                         "../patches/gimp-3.2.8/0175-ChopGimp-4.1.0-established-features-without-their-sw.patch",
                         "../patches/gimp-3.2.8/0176-ChopGimp-4.1.0-dead-code-and-duplicated-helpers-remo.patch",
-                        "../patches/gimp-3.2.8/0177-ChopGimp-4.1.0-sRGB-color-helpers-shared-chopgimp-vu.patch"
+                        "../patches/gimp-3.2.8/0177-ChopGimp-4.1.0-sRGB-color-helpers-shared-chopgimp-vu.patch",
+                        "../patches/gimp-3.2.8/0178-ChopGimp-4.1.1-one-object-selection-for-every-vector.patch",
+                        "../patches/gimp-3.2.8/0179-ChopGimp-4.1.1-fill-color-stroke-color-object-comman.patch"
                     ]
                 }
             ],

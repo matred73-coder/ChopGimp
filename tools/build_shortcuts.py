@@ -208,7 +208,7 @@ PS_MAP = [
 
     # ── Sélection ──────────────────────────────────────────────────────
     ("Sélection", "select-all",            [P + "a"],        "Tout sélectionner"),
-    ("Sélection", "select-none",           [P + "d"],        "Désélectionner"),
+    ("Sélection", "select-none",           [P + "d", P + S + "a"], "Désélectionner"),
     ("Sélection", "select-invert",         [P + S + "i"],    "Intervertir"),
     ("Sélection", "select-feather",        [S + "F6"],       "Contour progressif"),
     ("Sélection", "select-cut-float",      [P + S + "j"],    "Calque par coupure (sélection flottante)"),

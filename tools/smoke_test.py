@@ -2844,6 +2844,142 @@ try:
     except Exception:
         report(False, "3.32.0 styles", traceback.format_exc().replace("\n", " | ")[:400])
 
+    # 4.1.1 : UNE sélection d'objets, toute modification de style va à tous les objets sélectionnés
+    try:
+        im41, v41, c41 = scene(320, 120, [square(20, 20, 60), square(120, 20, 60), square(220, 20, 60)])
+
+        def n41(cmd):
+            r = run("chopgimp-vobjects-command", image=im41, command=cmd)
+            return (bool(r.index(1)), r.index(2)) if r is not None and r.index(0) == Gimp.PDBStatusType.SUCCESS else (False, -1)
+
+        def px(x):
+            return rgba_at(v41, x, 50)[:3]
+
+        RED, GREEN, BLUE, YEL = (255, 0, 0), (0, 255, 0), (0, 0, 255), (255, 255, 0)
+        n41("select-at:50:50"); n41("fill-color:ff0000")
+        n41("select-at:150:50"); n41("fill-color:00ff00")
+        n41("select-at:250:50"); n41("fill-color:0000ff")
+        report((px(50), px(150), px(250)) == (RED, GREEN, BLUE),
+               "4.1.1 Sélection : chaque forme recolorée seule (la sélection, pas l'objet n° 1)",
+               "%s %s %s" % (px(50), px(150), px(250)))
+        ok_all, n_all = n41("select-all")
+        n41("fill-color:ffff00")
+        report(n_all == 3 and (px(50), px(150), px(250)) == (YEL, YEL, YEL),
+               "4.1.1 Sélection : les 3 formes sélectionnées prennent toutes la couleur",
+               "%d sélectionnées, %s %s %s" % (n_all, px(50), px(150), px(250)))
+        n41("select-at:50:50"); n41("select-add-at:250:50")
+        n41("stroke-color:00ff00")
+        x = vxml(v41)
+        report(rgba_at(v41, 20, 50)[:3] == GREEN and rgba_at(v41, 220, 50)[:3] == GREEN and
+               rgba_at(v41, 120, 50)[:3] != GREEN,
+               "4.1.1 Sélection : Maj+clic ajoute, le contour va aux deux objets seulement",
+               "%s %s %s" % (rgba_at(v41, 20, 50)[:3], rgba_at(v41, 120, 50)[:3], rgba_at(v41, 220, 50)[:3]))
+        # objet verrouillé ou masqué : jamais modifié sans être vu
+        n41("select-at:50:50"); n41("lock")
+        n41("select-all"); n41("fill-color:ff0000")
+        report(px(50) == YEL and px(150) == RED and px(250) == RED,
+               "4.1.1 Sélection : un objet verrouillé n'est pas recoloré", "%s %s %s" % (px(50), px(150), px(250)))
+        n41("unlock-all")
+        n41("select-at:150:50"); n41("hide")
+        n41("select-all"); n41("fill-color:0000ff")
+        n41("show-all")
+        report(px(50) == BLUE and px(150) == RED and px(250) == BLUE,
+               "4.1.1 Sélection : un objet masqué n'est pas recoloré", "%s %s %s" % (px(50), px(150), px(250)))
+        # groupe : la couleur va à toutes ses formes
+        n41("select-at:50:50"); n41("select-add-at:150:50"); n41("group")
+        n41("select-none"); n41("select-at:50:50"); n41("fill-color:00ff00")
+        report(px(50) == GREEN and px(150) == GREEN and px(250) == BLUE,
+               "4.1.1 Sélection : un groupe sélectionné recolore toutes ses formes",
+               "%s %s %s" % (px(50), px(150), px(250)))
+        n41("ungroup")
+        # rien de sélectionné : rien ne change
+        ok_none, n_none = n41("select-none")
+        ok_fill, _ = n41("fill-color:ff00ff")
+        report(n_none == 0 and not ok_fill and px(50) == GREEN,
+               "4.1.1 Sélection : rien de sélectionné, aucune forme modifiée")
+        # tout objet créé devient la sélection (duplication, Pathfinder)
+        n41("select-at:250:50")
+        _, n_dup = n41("duplicate")
+        n41("fill-color:ff0000")
+        report(n_dup == 1 and px(250) == RED and px(50) == GREEN,
+               "4.1.1 Sélection : la copie (dupliquer) devient la sélection", "%d" % n_dup)
+        n41("select-at:50:50"); n41("select-add-at:150:50")
+        rp = run("chopgimp-vobjects-pathfinder", image=im41, operation=0)
+        n41("fill-color:0000ff")
+        report(rp is not None and bool(rp.index(1)) and px(50) == BLUE and px(150) == BLUE and
+               px(250) == RED,
+               "4.1.1 Sélection : le résultat du Pathfinder devient la sélection",
+               "%s %s %s" % (px(50), px(150), px(250)))
+        im41.delete()
+    except Exception:
+        report(False, "4.1.1 sélection", traceback.format_exc().replace("\n", " | ")[:400])
+
+    # 4.1.1 : PSD CMJN aplati avec un profil d'entrée sans table B2A (plantage du sélecteur CMJN)
+    try:
+        import struct as _st
+        import tempfile as _tf
+
+        def _icc_cmyk_input():
+            """Profil CMJN de classe « scnr » avec seulement A2B0 (mft2, grille 2) : lcms
+            l'ouvre mais ne sait pas convertir vers le CMJN (comme le profil du fichier signalé)."""
+            def tag_xyz(x, y, z):
+                return b"XYZ \0\0\0\0" + _st.pack(">iii", *(int(v * 65536) for v in (x, y, z)))
+            desc = b"desc\0\0\0\0" + _st.pack(">I", 5) + b"CMJN\0" + b"\0" * 79
+            clut = bytearray()
+            for c in (0, 1):
+                for m in (0, 1):
+                    for y in (0, 1):
+                        for k in (0, 1):
+                            L = max(0.0, 100.0 - 30 * (c + m + y) - 60 * k)
+                            clut += _st.pack(">HHH", int(L / 100 * 65280), 32768, 32768)
+            mft2 = (b"mft2\0\0\0\0" + bytes([4, 3, 2, 0]) +
+                    _st.pack(">9i", 65536, 0, 0, 0, 65536, 0, 0, 0, 65536) +
+                    _st.pack(">HH", 2, 2) + _st.pack(">HH", 0, 65535) * 4 + bytes(clut) +
+                    _st.pack(">HH", 0, 65535) * 3)
+            tags = [(b"desc", desc), (b"wtpt", tag_xyz(0.9642, 1.0, 0.8249)), (b"A2B0", mft2)]
+            off, table, body = 128 + 4 + 12 * len(tags), b"", b""
+            for sig, data in tags:
+                data += b"\0" * (-len(data) % 4)
+                table += sig + _st.pack(">II", off + len(body), len(data))
+                body += data
+            size = off + len(body)
+            head = (_st.pack(">I", size) + b"lcms" + bytes([2, 0x10, 0, 0]) + b"scnrCMYKLab " +
+                    b"\0" * 12 + b"acsp" + b"\0" * 28 + _st.pack(">iii", 63190, 65536, 54061) +
+                    b"\0" * 48)
+            return head + _st.pack(">I", len(tags)) + table + body
+
+        def _psd_cmyk(path, w, h, icc):
+            res = b"8BIM" + _st.pack(">H", 1039) + b"\0\0" + _st.pack(">I", len(icc)) + icc
+            res += b"\0" * (len(icc) & 1)
+            data = b"".join(bytes([v]) * (w * h) for v in (255 - 200, 255 - 30, 255 - 30, 255 - 0))
+            with open(path, "wb") as f:
+                f.write(b"8BPS" + _st.pack(">H", 1) + b"\0" * 6 + _st.pack(">HIIHH", 4, h, w, 8, 4))
+                f.write(_st.pack(">I", 0) + _st.pack(">I", len(res)) + res + _st.pack(">I", 0))
+                f.write(_st.pack(">H", 0) + data)
+
+        icc = _icc_cmyk_input()
+        cpath = os.path.join(_tf.gettempdir(), "chopgimp-smoke-cmjn.psd")
+        _psd_cmyk(cpath, 64, 40, icc)
+        imc = Gimp.file_load(Gimp.RunMode.NONINTERACTIVE, Gio.File.new_for_path(cpath))
+        prof = Gimp.ColorProfile.new_from_icc_profile(icc)
+        okc = imc is not None and imc.get_width() == 64 and len(imc.get_layers()) >= 1
+        # la conversion CMJN qui plantait (babl → lcms sans transformation B2A)
+        conv = "non testée"
+        try:
+            space = prof.get_space(Gimp.ColorRenderingIntent.RELATIVE_COLORIMETRIC)
+            col = Gegl.Color.new("red")
+            cmyk = col.get_cmyk(space)
+            conv = "C %.2f M %.2f J %.2f N %.2f" % tuple(cmyk[:4])
+        except (AttributeError, TypeError) as e:
+            conv = "API absente (%s)" % e
+        report(okc and prof is not None, "4.1.1 PSD CMJN aplati avec profil d'entrée sans B2A : ouvert, "
+               "conversion CMJN sans plantage", conv)
+        if imc is not None:
+            imc.delete()
+        os.unlink(cpath)
+    except Exception:
+        report(False, "4.1.1 PSD CMJN", traceback.format_exc().replace("\n", " | ")[:400])
+
     try:
         menus = os.path.join(Gimp.data_directory(), "menus", "image-menu.ui")
         txt = open(menus, encoding="utf-8").read()

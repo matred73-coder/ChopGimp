@@ -1,0 +1,86 @@
+From ae4ead664449489bbd93628cce62393edf081206 Mon Sep 17 00:00:00 2001
+From: ChopGimp <mathieu.redon@proton.me>
+Date: Fri, 27 Nov 2026 07:17:17 +0100
+Subject: [PATCH] ChopGimp: CMYK profile without usable lcms transforms falls
+ back to the naive conversion
+
+An input-class CMYK profile with only an A2B0 table (no B2A) opens in
+lcms but cmsCreateTransform() from RGB fails: babl then called
+cmsDoTransform() with a NULL transform (crash of the CMYK color
+selector on a CMYK PSD). Both transforms are checked when the space is
+created and before each use; a missing CMYK->CMYK transform keeps the
+values.
+---
+ babl/babl-fish-reference.c | 12 ++++++++----
+ babl/babl-icc.c            | 18 ++++++++++++++++++
+ 2 files changed, 26 insertions(+), 4 deletions(-)
+
+diff --git a/babl/babl-fish-reference.c b/babl/babl-fish-reference.c
+index e2fd967..f510854 100644
+--- a/babl/babl-fish-reference.c
++++ b/babl/babl-fish-reference.c
+@@ -889,7 +889,8 @@ babl_fish_reference_process_double (const Babl *babl,
+         destination_space));
+ 
+ #if HAVE_LCMS
+-    if (destination_space->space.cmyk.lcms_profile)
++    if (destination_space->space.cmyk.lcms_profile &&
++        destination_space->space.cmyk.lcms_from_rgba)   /* ChopGimp */
+     {
+       /* lcms expect floats with normalized range 0.0-100.0 for CMYK data,
+          we also do our inversion from profile here.
+@@ -955,7 +956,8 @@ babl_fish_reference_process_double (const Babl *babl,
+         destination_space));
+ 
+ #if HAVE_LCMS
+-    if (source_space->space.cmyk.lcms_profile)
++    if (source_space->space.cmyk.lcms_profile &&
++        source_space->space.cmyk.lcms_to_rgba)   /* ChopGimp */
+     {
+     {
+       /* lcms expect floats with normalized range 0.0-100.0 for CMYK data,
+@@ -1070,8 +1072,10 @@ babl_fish_reference_process_double (const Babl *babl,
+         cmyka[i * 5 + 3] = (1.0-cmyka[i * 5 + 3])*100.0;
+       }
+ 
+-     cmsDoTransform (cmyk_cmyk_transform[cmyk_cmyk_no],
+-                     cmyka_double_buf, cmyka_double_buf, n);
++     /* ChopGimp: no transform between these profiles: kept as is  */
++     if (cmyk_cmyk_transform[cmyk_cmyk_no])
++       cmsDoTransform (cmyk_cmyk_transform[cmyk_cmyk_no],
++                       cmyka_double_buf, cmyka_double_buf, n);
+ 
+       for (int i = 0; i < n; i++)
+       {
+diff --git a/babl/babl-icc.c b/babl/babl-icc.c
+index d76f735..86df74c 100644
+--- a/babl/babl-icc.c
++++ b/babl/babl-icc.c
+@@ -1038,6 +1038,24 @@ babl_space_from_icc (const char   *icc_data,
+                                                     INTENT_RELATIVE_COLORIMETRIC, cmsFLAGS_BLACKPOINTCOMPENSATION);
+                                                     //  INTENT_PERCEPTUAL,0);//intent & 7, 0);
+        cmsCloseProfile (ret->space.cmyk.lcms_profile); // XXX keep it open in case of CMYK to CMYK transforms needed?
++
++       /* ChopGimp: a CMYK profile lcms can open but not transform with
++        * (missing or invalid AToB / BToA tags…) must never reach
++        * cmsDoTransform () with a NULL transform: fall back to the naive
++        * conversion (lcms_profile is only used as a flag from here on)
++        */
++       if (!ret->space.cmyk.lcms_to_rgba || !ret->space.cmyk.lcms_from_rgba)
++       {
++         if (ret->space.cmyk.lcms_to_rgba)
++           cmsDeleteTransform (ret->space.cmyk.lcms_to_rgba);
++         if (ret->space.cmyk.lcms_from_rgba)
++           cmsDeleteTransform (ret->space.cmyk.lcms_from_rgba);
++         ret->space.cmyk.lcms_to_rgba   = NULL;
++         ret->space.cmyk.lcms_from_rgba = NULL;
++         ret->space.cmyk.lcms_profile   = NULL;
++         babl_log ("babl: CMYK profile without usable lcms transforms, "
++                   "naive CMYK conversion used");
++       }
+ #endif
+        ret->space.icc_type = BablICCTypeCMYK;
+        babl_mutex_unlock (babl_space_mutex);
+-- 
+2.53.0
+

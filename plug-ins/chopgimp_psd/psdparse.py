@@ -714,8 +714,9 @@ def _parse_map(m, path):
     n = r.u64() if psb else r.u32()
     section = r.sub(min(n, r.left()))           # calques et masques
     # info des calques (inclut les pixels des canaux, non copiés grâce au mmap)
-    ln = section.u64() if psb else section.u32()
-    info = section.sub(ln)
+    # 4.1.1 : section vide (PSD aplati, sans calque, ex. CMJN de Photoshop)
+    ln = (section.u64() if psb else section.u32()) if section.left() >= (8 if psb else 4) else 0
+    info = section.sub(min(ln, section.left()))
     if ln:
         psd.layers = _read_layer_info(info, psd, ln)
     # masque global puis blocs de document (Lr16/Lr32 pour 16/32 bits)

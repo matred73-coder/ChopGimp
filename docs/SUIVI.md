@@ -1576,3 +1576,40 @@ Patchs 0170 à 0173 (nouveaux commits, aucun patch réécrit).
   1 371). Machine bruitée (±20 % d'une passe à l'autre) : en passes alternées avec le paquet
   4.0.2, la 4.1.0 est égale ou plus rapide (glisser 10,4 contre 10,2 – 12,9 ; recolorer 125
   contre 140 – 155 ; rendu 515 contre 525 – 545). Pas de régression.
+
+## 4.1.1 — Une seule sélection d'objets ; plantage des PSD CMJN — patchs 0178, 0179 (+ babl 0003)
+
+- **Bug 1** (couleur choisie après avoir dessiné B : c'est A qui change) : les options
+  Fond / Contour de la Plume (et des outils fondés sur l'outil Chemins) écrivaient dans la
+  « vue héritée » du calque vectoriel, c'est-à-dire l'objet n° 1 (le plus bas). Elles vont
+  désormais à la sélection.
+- **Bug 2** (deux objets sélectionnés en A, un seul modifié) : le cadre de la Sélection
+  directe sélectionnait des nœuds sans changer la sélection d'objets. Les objets
+  propriétaires des nœuds sélectionnés deviennent la sélection (+ l'objet cliqué, + la
+  sélection précédente avec Maj ; clic dans le vide : rien) ; Maj+clic ajoute un objet ;
+  les nœuds restent sélectionnés après un changement de style.
+- **Un seul point de vérité** : `chopgimp_vobjects_style_targets()` (feuilles visibles et
+  déverrouillées de la sélection, groupes compris) pour la barre d'options, Aspect, les
+  couleurs, les options des outils ; `chopgimp_vobjects_style_undo()` : une étape
+  d'annulation par modification (rafale fusionnée). Un observateur unique
+  (`chopgimp-tools.c`) : PP / AP suivent l'objet sélectionné sans le modifier et recolorent
+  la sélection avec tout outil vectoriel (V, A, U, Plume, Courbure, Crayon, Pipette…) ;
+  changer de calque désélectionne les objets de l'ancien ; un calque vectoriel ajouté par
+  l'utilisateur a ses objets sélectionnés. Ctrl+A / Ctrl+Maj+A (et Ctrl+D) : tout / aucun
+  objet avec un outil vectoriel. Barre d'options : « mixte » (épaisseur, opacité ; fond et
+  contour estompés) quand les objets diffèrent.
+- **Plantage PSD CMJN** (« Matslogo copier.psd », profil d'entrée `scnr` avec seulement
+  A2B0) : lcms ouvre le profil mais ne crée pas la transformation RVB → CMJN ; babl appelait
+  `cmsDoTransform()` avec NULL (sélecteur CMJN). Patch babl 0003 : repli sur la conversion
+  naïve, transformation vérifiée avant usage. L'import ChopGimp échouait aussi sur un PSD
+  aplati (section calques vide) : corrigé dans `psdparse.py`. Matslogo.psd (gris) s'ouvre.
+- **Tests** : 10 nouveaux dans smoke_test.py (dont un PSD CMJN fabriqué avec un profil sans
+  B2A, qui plantait avant le correctif) — smoke : 283 OK, 0 échec.
+- **Banc graphique** : 3 formes dessinées à la suite puis recolorées une par une (Plume) et
+  ensemble (A au cadre, V + Ctrl+A), annulation (une étape, sélection gardée), vectorisation
+  puis sélection et recoloration ; PSD CMJN et gris ouverts, onglets du sélecteur sans
+  plantage.
+- **Reste / non fait** : pas d'outil « Lasso direct » dans ChopGimp ; pas de copier-coller
+  d'objets (le collage crée un calque) ; « mixte » des panneaux Aspect / Contour non affiché
+  (ils montrent le premier objet, mais modifient bien tous les objets) ; le calque issu de
+  la Vectorisation ne sélectionne pas ses objets automatiquement.

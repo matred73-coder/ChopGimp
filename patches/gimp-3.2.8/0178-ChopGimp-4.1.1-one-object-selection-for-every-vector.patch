@@ -1,0 +1,1813 @@
+From 64a32a67c8acbbae0126d9f2d05cc2ac95279994 Mon Sep 17 00:00:00 2001
+From: ChopGimp <mathieu.redon@proton.me>
+Date: Fri, 27 Nov 2026 07:03:25 +0100
+Subject: [PATCH] ChopGimp 4.1.1: one object selection for every vector tool
+ and panel
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+- chopgimp_vobjects_style_targets(): the visible, unlocked leaves of the
+  selection, the one list every style change edits (options bar, Aspect,
+  colors, tool options); chopgimp_vobjects_style_undo(): one undo step per
+  burst of the same change
+- the fill / stroke options of the Pen, Shape, Curvature, Pencil… tools
+  edit the selected objects, never the legacy view (object #1): a color
+  chosen after drawing B no longer goes to A
+- Direct Selection (A): the objects owning the selected nodes become the
+  selection (rectangle, Shift+click adds an object, click in the void
+  deselects); selected nodes survive a style change
+- one watcher (chopgimp-tools.c): the foreground / background colors
+  follow the selected object and recolor the selection with any vector
+  tool; another active layer deselects the objects of the previous one;
+  a vector layer added by the user has its objects selected
+- Ctrl+A / Ctrl+Shift+A (and Ctrl+D) select all / no objects with a vector
+  tool; the options bar shows « mixte » where the selected objects differ
+---
+ app/actions/select-commands.c            |  41 +++
+ app/core/gimpimage.c                     |   7 +
+ app/display/chopgimp-vobjectbar.c        | 135 +++++++--
+ app/path/chopgimp-vobject-ops.c          | 299 +++++++++++++++++---
+ app/path/chopgimp-vobject-ops.h          |  31 ++-
+ app/tools/chopgimp-shapetool.c           |  98 +------
+ app/tools/chopgimp-tools.c               | 336 +++++++++++++++++++++++
+ app/tools/chopgimp-tools.h               |   7 +
+ app/tools/chopgimp-vobjecttool.c         |  96 +------
+ app/tools/gimp-tools.c                   |   2 +
+ app/tools/gimppathtool.c                 | 214 ++++++++++++++-
+ app/tools/gimppathtool.h                 |  10 +
+ app/widgets/chopgimp-appearance-editor.c |   9 +-
+ app/widgets/chopgimp-value-field.c       |  20 +-
+ app/widgets/chopgimp-value-field.h       |   2 +
+ 15 files changed, 1055 insertions(+), 252 deletions(-)
+
+diff --git a/app/actions/select-commands.c b/app/actions/select-commands.c
+index c2de9cc..2c3961c 100644
+--- a/app/actions/select-commands.c
++++ b/app/actions/select-commands.c
+@@ -30,6 +30,7 @@
+ 
+ #include "core/gimp.h"
+ #include "core/gimpchannel.h"
++#include "core/gimpcontext.h"
+ #include "core/gimpimage.h"
+ #include "core/gimpselection.h"
+ 
+@@ -46,6 +47,9 @@
+ #include "display/gimpdisplay.h"
+ #include "display/gimpdisplayshell.h"
+ 
++#include "tools/tools-types.h"
++#include "tools/chopgimp-tools.h"
++
+ #include "dialogs/dialogs.h"
+ 
+ #include "actions.h"
+@@ -79,6 +83,17 @@ static void   select_float            (GimpAction *action,
+                                        gpointer    data);
+ 
+ 
++/*  ChopGimp 4.1.1: Tout sélectionner / Désélectionner act on the objects
++ *  of the active vector layer while a vector tool is active
++ */
++static gboolean
++select_objects_context (GimpImage *image)
++{
++  return (chopgimp_vobjects_get_target_layer (image) != NULL &&
++          chopgimp_tool_is_vector (gimp_context_get_tool (gimp_get_user_context (image->gimp))));
++}
++
++
+ /*  public functions  */
+ 
+ void
+@@ -89,6 +104,16 @@ select_all_cmd_callback (GimpAction *action,
+   GimpImage *image;
+   return_if_no_image (image, data);
+ 
++  /*  ChopGimp 4.1.1 (Illustrator): with a vector tool on a vector layer,
++   *  Ctrl+A selects all its objects
++   */
++  if (select_objects_context (image))
++    {
++      chopgimp_vobjects_select_all (chopgimp_vobjects_get_target_layer (image));
++      gimp_image_flush (image);
++      return;
++    }
++
+   gimp_channel_all (gimp_image_get_mask (image), TRUE);
+   gimp_image_flush (image);
+ }
+@@ -117,6 +142,22 @@ select_none_cmd_callback (GimpAction *action,
+         }
+     }
+ 
++  /*  ChopGimp 4.1.1: with a vector tool, Ctrl+Maj+A / Ctrl+D deselect
++   *  the objects (no pixel selection)
++   */
++  if (gimp_channel_is_empty (gimp_image_get_mask (image)) &&
++      select_objects_context (image))
++    {
++      GimpVectorLayer *layer = chopgimp_vobjects_get_target_layer (image);
++
++      if (chopgimp_vobjects_n_selected (layer) > 0)
++        {
++          chopgimp_vlayer_set_selection (layer, NULL, 0);
++          gimp_image_flush (image);
++        }
++      return;
++    }
++
+   gimp_channel_clear (gimp_image_get_mask (image), NULL, TRUE);
+   gimp_image_flush (image);
+ }
+diff --git a/app/core/gimpimage.c b/app/core/gimpimage.c
+index 21fd0b7..184d2ca 100644
+--- a/app/core/gimpimage.c
++++ b/app/core/gimpimage.c
+@@ -5523,6 +5523,13 @@ gimp_image_add_layer (GimpImage *image,
+   gimp_item_tree_add_item (private->layers, GIMP_ITEM (layer),
+                            GIMP_ITEM (parent), position);
+ 
++  /*  ChopGimp 4.1.1: a vector layer added by the user (new shape, import,
++   *  duplicate…): its objects become the selection when it is selected
++   *  just below (app/tools/chopgimp-tools.c)
++   */
++  if (push_undo && gimp_item_is_vector_layer (GIMP_ITEM (layer)))
++    g_object_set_data (G_OBJECT (layer), "chopgimp-new-layer", GINT_TO_POINTER (1));
++
+   selected_layers = g_list_prepend (NULL, layer);
+   gimp_image_set_selected_layers (image, selected_layers);
+   g_list_free (selected_layers);
+diff --git a/app/display/chopgimp-vobjectbar.c b/app/display/chopgimp-vobjectbar.c
+index a72907c..0af11b9 100644
+--- a/app/display/chopgimp-vobjectbar.c
++++ b/app/display/chopgimp-vobjectbar.c
+@@ -119,6 +119,10 @@ typedef struct
+   gdouble          x, y, width, height;
+   gdouble          rotation;
+   gdouble          corner_radius;   /* 3.29.1: « Rayon » of the dynamic corners */
++
++  /*  4.1.1: « mixte » where the selected objects differ  */
++  gboolean         fill_mixed, stroke_mixed, width_mixed, opacity_mixed;
++  GtkWidget       *fill_widget, *stroke_widget, *width_widget, *opacity_widget;
+ } ChopGimpVObjectProps;
+ 
+ typedef GObjectClass ChopGimpVObjectPropsClass;
+@@ -174,6 +178,84 @@ object_rotation (ChopGimpVObject *o)
+   return atan2 (m.coeff[1][0], m.coeff[0][0]) * 180.0 / G_PI;
+ }
+ 
++/*  4.1.1: « mixte » where the edited objects differ  */
++static gboolean
++same_paint (const ChopGimpVEntry *a,
++            const ChopGimpVEntry *b)
++{
++  gboolean ona = a && a->visible && a->paint.type != CHOPGIMP_PAINT_NONE;
++  gboolean onb = b && b->visible && b->paint.type != CHOPGIMP_PAINT_NONE;
++  guint8   ca[4], cb[4];
++
++  if (ona != onb)
++    return FALSE;
++  if (! ona)
++    return TRUE;
++  if (a->paint.type != b->paint.type)
++    return FALSE;
++  if (a->paint.type != CHOPGIMP_PAINT_COLOR)
++    return a->paint.pattern == b->paint.pattern;
++  if (! a->paint.color || ! b->paint.color)
++    return a->paint.color == b->paint.color;
++
++  gegl_color_get_pixel (a->paint.color, babl_format ("R'G'B'A u8"), ca);
++  gegl_color_get_pixel (b->paint.color, babl_format ("R'G'B'A u8"), cb);
++
++  return memcmp (ca, cb, 4) == 0;
++}
++
++static void
++props_compute_mixed (ChopGimpVObjectProps *p,
++                     GList                *targets)
++{
++  ChopGimpVObject *first = targets ? targets->data : NULL;
++
++  p->fill_mixed = p->stroke_mixed = p->width_mixed = p->opacity_mixed = FALSE;
++
++  for (GList *l = targets ? targets->next : NULL; l; l = l->next)
++    {
++      ChopGimpVObject *o  = l->data;
++      ChopGimpVEntry  *f0 = chopgimp_vstyle_get_fill (&first->style);
++      ChopGimpVEntry  *s0 = chopgimp_vstyle_get_stroke (&first->style);
++      ChopGimpVEntry  *f  = chopgimp_vstyle_get_fill (&o->style);
++      ChopGimpVEntry  *s  = chopgimp_vstyle_get_stroke (&o->style);
++
++      if (! same_paint (f0, f))
++        p->fill_mixed = TRUE;
++      if (! same_paint (s0, s))
++        p->stroke_mixed = TRUE;
++      if (fabs ((s0 ? s0->width : 0.0) - (s ? s->width : 0.0)) > 1e-6)
++        p->width_mixed = TRUE;
++      if (fabs (first->opacity - o->opacity) > 1e-6)
++        p->opacity_mixed = TRUE;
++    }
++}
++
++static void
++props_show_mixed (ChopGimpVObjectProps *p)
++{
++  if (p->fill_widget)
++    {
++      gtk_widget_set_opacity (p->fill_widget, p->fill_mixed ? 0.45 : 1.0);
++      gimp_help_set_help_data (p->fill_widget,
++                               p->fill_mixed ? _("Fond des objets : mixte "
++                                                 "(les objets sélectionnés diffèrent)")
++                                             : _("Fond des objets"), NULL);
++    }
++  if (p->stroke_widget)
++    {
++      gtk_widget_set_opacity (p->stroke_widget, p->stroke_mixed ? 0.45 : 1.0);
++      gimp_help_set_help_data (p->stroke_widget,
++                               p->stroke_mixed ? _("Contour des objets : mixte "
++                                                   "(les objets sélectionnés diffèrent)")
++                                               : _("Contour des objets"), NULL);
++    }
++  if (p->width_widget)
++    chopgimp_value_field_set_mixed (CHOPGIMP_VALUE_FIELD (p->width_widget), p->width_mixed);
++  if (p->opacity_widget)
++    chopgimp_value_field_set_mixed (CHOPGIMP_VALUE_FIELD (p->opacity_widget), p->opacity_mixed);
++}
++
+ static void
+ props_load (ChopGimpVObjectProps *p)
+ {
+@@ -195,9 +277,19 @@ props_load (ChopGimpVObjectProps *p)
+     return;
+ 
+   first = objs->data;
+-  leaf  = chopgimp_vobjects_first_leaf (first);
+   g_list_free (objs);
+ 
++  /*  4.1.1: the first of the objects a style change edits, and « mixte »
++   *  where the selected objects differ
++   */
++  {
++    GList *targets = chopgimp_vobjects_style_targets (p->layer);
++
++    leaf = targets ? targets->data : chopgimp_vobjects_first_leaf (first);
++    props_compute_mixed (p, targets);
++    g_list_free (targets);
++  }
++
+   p->loading = TRUE;
+   g_object_freeze_notify (object);
+ 
+@@ -272,6 +364,8 @@ props_load (ChopGimpVObjectProps *p)
+ 
+   g_object_thaw_notify (object);
+   p->loading = FALSE;
++
++  props_show_mixed (p);
+ }
+ 
+ static gboolean
+@@ -397,9 +491,10 @@ props_apply (ChopGimpVObjectProps *p,
+   p->applying = TRUE;
+ 
+   /*  a burst of changes (a slider, a drag in a field) is one undo step  */
+-  if (prop != p->last_prop || now - p->last_push > 700000)
+-    chopgimp_vlayer_push_undo (layer, style ? _("Style des objets")
+-                                            : _("Transformer les objets"));
++  if (style)
++    chopgimp_vobjects_style_undo (layer, _("Style des objets"));
++  else if (prop != p->last_prop || now - p->last_push > 700000)
++    chopgimp_vlayer_push_undo (layer, _("Transformer les objets"));
+   p->last_prop = prop;
+   p->last_push = now;
+ 
+@@ -407,11 +502,11 @@ props_apply (ChopGimpVObjectProps *p,
+ 
+   if (style)
+     {
+-      for (GList *o = objs; o; o = o->next)
+-        {
+-          GList *leaves = chopgimp_vobjects_leaves_of (o->data);
++      /*  4.1.1: the one list of what a style change edits  */
++      GList *targets = chopgimp_vobjects_style_targets (layer);
+ 
+-          for (GList *l = leaves; l; l = l->next)
++        {
++          for (GList *l = targets; l; l = l->next)
+             {
+               ChopGimpVObject *leaf = l->data;
+               ChopGimpVStyle   st;
+@@ -469,9 +564,9 @@ props_apply (ChopGimpVObjectProps *p,
+               chopgimp_vlayer_set_style (layer, leaf->id, &st, FALSE);
+               chopgimp_vstyle_clear (&st);
+             }
+-
+-          g_list_free (leaves);
+         }
++
++      g_list_free (targets);
+     }
+   else if (prop == PROP_OPACITY)
+     {
+@@ -960,16 +1055,20 @@ chopgimp_vobject_bar_new (Gimp                      *gimp,
+ 
+   if (color_dropdown)
+     {
+-      pack (box, color_dropdown (G_OBJECT (p), "fill-foreground",
+-                                 _("Fond des objets"), _("Fond")));
+-      pack (box, color_dropdown (G_OBJECT (p), "stroke-foreground",
+-                                 _("Contour des objets"), _("Contour")));
++      p->fill_widget   = color_dropdown (G_OBJECT (p), "fill-foreground",
++                                         _("Fond des objets"), _("Fond"));
++      p->stroke_widget = color_dropdown (G_OBJECT (p), "stroke-foreground",
++                                         _("Contour des objets"), _("Contour"));
++      pack (box, p->fill_widget);
++      pack (box, p->stroke_widget);
+     }
+ 
+-  pack (box, field (p, "stroke-width", _("Épaisseur"), "px",
+-                    _("Épaisseur du contour des objets"), 1.0, 1));
+-  pack (box, field (p, "opacity", _("Opacité"), "%",
+-                    _("Opacité des objets"), 100.0, 0));
++  p->width_widget   = field (p, "stroke-width", _("Épaisseur"), "px",
++                             _("Épaisseur du contour des objets"), 1.0, 1);
++  p->opacity_widget = field (p, "opacity", _("Opacité"), "%",
++                             _("Opacité des objets"), 100.0, 0);
++  pack (box, p->width_widget);
++  pack (box, p->opacity_widget);
+   pack (box, gtk_separator_new (GTK_ORIENTATION_VERTICAL));
+   pack (box, field (p, "x", "X", "px", _("Position horizontale (bord gauche)"), 1.0, 1));
+   pack (box, field (p, "y", "Y", "px", _("Position verticale (bord haut)"), 1.0, 1));
+diff --git a/app/path/chopgimp-vobject-ops.c b/app/path/chopgimp-vobject-ops.c
+index 58a7981..c246c6f 100644
+--- a/app/path/chopgimp-vobject-ops.c
++++ b/app/path/chopgimp-vobject-ops.c
+@@ -35,6 +35,7 @@
+ #include "core/gimpfilloptions.h"
+ #include "core/gimpimage.h"
+ #include "core/gimpimage-undo.h"
++#include "core/gimpundostack.h"
+ #include "core/gimpitem.h"
+ #include "core/gimprasterizable.h"
+ #include "core/gimpstrokeoptions.h"
+@@ -1530,63 +1531,297 @@ chopgimp_vobjects_merge_same_color (GimpVectorLayer *layer)
+   return MAX (0, before - after);
+ }
+ 
++/*  ─── 4.1.1: the one object selection and what a style change edits ── */
++
++/*  the path objects a style change edits: the visible, unlocked leaves of
++ *  the selected objects (a group gives its leaves), each one once, bottom
++ *  first. Every style edit (bar, panels, colors, commands) goes through
++ *  this list: one source of truth.
++ */
++GList *
++chopgimp_vobjects_style_targets (GimpVectorLayer *layer)
++{
++  GList      *objs;
++  GList      *targets = NULL;
++  GHashTable *seen;
++
++  if (! layer || ! chopgimp_vlayer_get_root (layer))
++    return NULL;
++
++  objs = chopgimp_vlayer_get_selected_objects (layer);
++  seen = g_hash_table_new (NULL, NULL);
++
++  for (GList *o = objs; o; o = o->next)
++    {
++      GList *leaves = chopgimp_vobjects_leaves_of (o->data);
++
++      for (GList *l = leaves; l; l = l->next)
++        {
++          ChopGimpVObject *leaf = l->data;
++
++          if (leaf->kind != CHOPGIMP_VOBJECT_PATH        ||
++              ! chopgimp_vobject_is_visible (leaf)       ||
++              chopgimp_vobject_is_locked (leaf)          ||
++              g_hash_table_contains (seen, GUINT_TO_POINTER (leaf->id)))
++            continue;
++
++          g_hash_table_add (seen, GUINT_TO_POINTER (leaf->id));
++          targets = g_list_prepend (targets, leaf);
++        }
++
++      g_list_free (leaves);
++    }
++
++  g_hash_table_destroy (seen);
++  g_list_free (objs);
++
++  return g_list_reverse (targets);
++}
++
++/*  one undo step per modification: a burst of changes of the same kind
++ *  (a slider, the color dialog) on the same layer, with nothing else
++ *  pushed in between, is one step. TRUE when a step was pushed.
++ */
++gboolean
++chopgimp_vobjects_style_undo (GimpVectorLayer *layer,
++                              const gchar     *desc)
++{
++  static GimpVectorLayer *last_layer = NULL;
++  static GQuark           last_desc  = 0;
++  static gint64           last_time  = 0;
++  static gpointer         last_undo  = NULL;
++  GimpImage              *image      = gimp_item_get_image (GIMP_ITEM (layer));
++  GQuark                  q          = g_quark_from_string (desc ? desc : "");
++  gint64                  now        = g_get_monotonic_time ();
++  gpointer                top;
++
++  top = gimp_undo_stack_peek (gimp_image_get_undo_stack (image));
++
++  if (layer == last_layer && q == last_desc && top && top == last_undo &&
++      now - last_time < 700000)
++    {
++      last_time = now;
++      return FALSE;
++    }
++
++  chopgimp_vlayer_push_undo (layer, desc);
++
++  last_layer = layer;
++  last_desc  = q;
++  last_time  = now;
++  last_undo  = gimp_undo_stack_peek (gimp_image_get_undo_stack (image));
++
++  return TRUE;
++}
++
++static gboolean
++paint_has_color (const ChopGimpVEntry *e,
++                 GeglColor            *color)
++{
++  guint8 a[4], b[4];
++
++  if (! e || ! e->visible || e->paint.type != CHOPGIMP_PAINT_COLOR ||
++      ! e->paint.color || ! color)
++    return FALSE;
++
++  gegl_color_get_pixel (e->paint.color, babl_format ("R'G'B'A u8"), a);
++  gegl_color_get_pixel (color, babl_format ("R'G'B'A u8"), b);
++
++  return memcmp (a, b, 4) == 0;
++}
++
+ gboolean
+ chopgimp_vobjects_apply_color (GimpVectorLayer *layer,
+                                GeglColor       *color,
+                                gboolean         stroke,
+                                gboolean         push_undo)
+ {
+-  GList *objs = chopgimp_vlayer_get_selected_objects (layer);
++  GList    *targets = chopgimp_vobjects_style_targets (layer);
++  gboolean  same    = targets != NULL;
+ 
+-  if (! objs)
++  if (! targets)
+     return FALSE;
+ 
++  /*  already this color everywhere (the foreground set from the
++   *  selection, a color picked twice): nothing to do, no undo step
++   */
++  for (GList *l = targets; l && same; l = l->next)
++    {
++      ChopGimpVObject *leaf = l->data;
++
++      same = paint_has_color (stroke ? chopgimp_vstyle_get_stroke (&leaf->style)
++                                     : chopgimp_vstyle_get_fill (&leaf->style),
++                              color);
++    }
++
++  if (same)
++    {
++      g_list_free (targets);
++      return TRUE;
++    }
++
+   if (push_undo)
+-    chopgimp_vlayer_push_undo (layer, stroke ? _("Couleur du contour")
+-                                             : _("Couleur du fond"));
++    chopgimp_vobjects_style_undo (layer, stroke ? _("Couleur du contour")
++                                                : _("Couleur du fond"));
+ 
+   chopgimp_vlayer_freeze (layer);
+ 
+-  for (GList *o = objs; o; o = o->next)
++  for (GList *l = targets; l; l = l->next)
+     {
+-      GList *leaves = chopgimp_vobjects_leaves_of (o->data);
++      ChopGimpVObject *leaf = l->data;
++      ChopGimpVStyle   st;
++      ChopGimpVEntry  *e;
+ 
+-      for (GList *l = leaves; l; l = l->next)
++      chopgimp_vstyle_init (&st);
++      chopgimp_vstyle_copy (&st, &leaf->style);
++
++      e = stroke ? chopgimp_vstyle_ensure_stroke (&st)
++                 : chopgimp_vstyle_ensure_fill (&st);
++
++      if (color)
+         {
+-          ChopGimpVObject *leaf = l->data;
+-          ChopGimpVStyle   st;
+-          ChopGimpVEntry  *e;
++          chopgimp_vpaint_set_color (&e->paint, color);
++          e->visible = TRUE;
++          if (stroke && e->width <= 0.0)
++            e->width = 1.0;
++        }
++      else
++        {
++          chopgimp_vpaint_clear (&e->paint);
++        }
+ 
+-          if (leaf->kind != CHOPGIMP_VOBJECT_PATH || chopgimp_vobject_is_locked (leaf))
+-            continue;
++      chopgimp_vlayer_set_style (layer, leaf->id, &st, FALSE);
++      chopgimp_vstyle_clear (&st);
++    }
+ 
+-          chopgimp_vstyle_init (&st);
+-          chopgimp_vstyle_copy (&st, &leaf->style);
++  chopgimp_vlayer_thaw (layer);
++  g_list_free (targets);
+ 
+-          e = stroke ? chopgimp_vstyle_ensure_stroke (&st)
+-                     : chopgimp_vstyle_ensure_fill (&st);
++  return TRUE;
++}
+ 
+-          if (color)
+-            {
+-              chopgimp_vpaint_set_color (&e->paint, color);
+-              e->visible = TRUE;
+-              if (stroke && e->width <= 0.0)
+-                e->width = 1.0;
+-            }
+-          else
+-            {
+-              chopgimp_vpaint_clear (&e->paint);
+-            }
++/*  the fill (@fill) or the stroke of a tool's options (shape, pen…) to
++ *  every target; one undo step per burst. FALSE when nothing is selected
++ *  (the options are then only those of the next object).
++ */
++gboolean
++chopgimp_vobjects_apply_tool_style (GimpVectorLayer   *layer,
++                                    gboolean           enable_fill,
++                                    GimpFillOptions   *fill_options,
++                                    gboolean           enable_stroke,
++                                    GimpStrokeOptions *stroke_options,
++                                    gboolean           fill)
++{
++  GList          *targets = chopgimp_vobjects_style_targets (layer);
++  ChopGimpVStyle  bar;
+ 
+-          chopgimp_vlayer_set_style (layer, leaf->id, &st, FALSE);
+-          chopgimp_vstyle_clear (&st);
+-        }
++  if (! targets)
++    return FALSE;
+ 
+-      g_list_free (leaves);
++  chopgimp_vobjects_style_from_tool (&bar, gimp_item_get_image (GIMP_ITEM (layer)),
++                                     enable_fill, fill_options,
++                                     enable_stroke, stroke_options);
++
++  chopgimp_vobjects_style_undo (layer, fill ? _("Fond des objets")
++                                            : _("Contour des objets"));
++
++  chopgimp_vlayer_freeze (layer);
++
++  for (GList *l = targets; l; l = l->next)
++    {
++      ChopGimpVObject *leaf = l->data;
++      ChopGimpVStyle   st, tmp;
++
++      /*  the fill (or the stroke) of the options, the rest of the object
++       *  (swapped: each style keeps owning its paints)
++       */
++      chopgimp_vstyle_init (&st);
++      chopgimp_vstyle_copy (&st, &leaf->style);
++      chopgimp_vstyle_init (&tmp);
++      chopgimp_vstyle_copy (&tmp, &bar);
++
++      if (fill)
++        chopgimp_vstyle_copy_primary_fill (&st, &tmp);
++      else
++        chopgimp_vstyle_copy_primary_stroke (&st, &tmp);
++
++      chopgimp_vstyle_clear (&tmp);
++
++      chopgimp_vlayer_set_style (layer, leaf->id, &st, FALSE);
++      chopgimp_vstyle_clear (&st);
+     }
+ 
+   chopgimp_vlayer_thaw (layer);
+-  g_list_free (objs);
++
++  chopgimp_vstyle_clear (&bar);
++  g_list_free (targets);
++
++  return TRUE;
++}
++
++/*  the style of the first target into a tool's options (the options bar
++ *  shows the selection); FALSE when nothing is selected
++ */
++gboolean
++chopgimp_vobjects_load_tool_style (GimpVectorLayer   *layer,
++                                   gboolean          *enable_fill,
++                                   GimpFillOptions   *fill_options,
++                                   gboolean          *enable_stroke,
++                                   GimpStrokeOptions *stroke_options)
++{
++  GList                  *targets = chopgimp_vobjects_style_targets (layer);
++  ChopGimpVObject        *leaf    = targets ? targets->data : NULL;
++  GimpVectorLayerOptions *tmp;
++
++  g_list_free (targets);
++
++  if (! leaf)
++    return FALSE;
++
++  tmp = g_object_new (GIMP_TYPE_VECTOR_LAYER_OPTIONS,
++                      "gimp", gimp_item_get_image (GIMP_ITEM (layer))->gimp,
++                      NULL);
++  chopgimp_vstyle_to_options (&leaf->style, tmp);
++
++  *enable_fill   = tmp->enable_fill;
++  *enable_stroke = tmp->enable_stroke;
++
++  if (fill_options)
++    gimp_config_sync (G_OBJECT (tmp->fill_options), G_OBJECT (fill_options), 0);
++  if (stroke_options)
++    gimp_config_sync (G_OBJECT (tmp->stroke_options), G_OBJECT (stroke_options), 0);
++
++  g_object_unref (tmp);
++
++  return TRUE;
++}
++
++/*  the colors of the first target: its plain fill and stroke colors
++ *  (owned by the object), NULL when not a plain color
++ */
++gboolean
++chopgimp_vobjects_selection_colors (GimpVectorLayer  *layer,
++                                    GeglColor       **fill,
++                                    GeglColor       **stroke)
++{
++  GList           *targets = chopgimp_vobjects_style_targets (layer);
++  ChopGimpVObject *leaf    = targets ? targets->data : NULL;
++  ChopGimpVEntry  *e;
++
++  g_list_free (targets);
++
++  *fill = *stroke = NULL;
++
++  if (! leaf)
++    return FALSE;
++
++  e = chopgimp_vstyle_get_fill (&leaf->style);
++  if (e && e->visible && e->paint.type == CHOPGIMP_PAINT_COLOR)
++    *fill = e->paint.color;
++
++  e = chopgimp_vstyle_get_stroke (&leaf->style);
++  if (e && e->visible && e->paint.type == CHOPGIMP_PAINT_COLOR && e->width > 0.0)
++    *stroke = e->paint.color;
+ 
+   return TRUE;
+ }
+diff --git a/app/path/chopgimp-vobject-ops.h b/app/path/chopgimp-vobject-ops.h
+index b7c0517..9fbd3d9 100644
+--- a/app/path/chopgimp-vobject-ops.h
++++ b/app/path/chopgimp-vobject-ops.h
+@@ -141,8 +141,35 @@ gint              chopgimp_vobjects_delete_smaller   (GimpVectorLayer *layer,
+  *  undo step; the number of objects removed
+  */
+ gint              chopgimp_vobjects_merge_same_color (GimpVectorLayer *layer);
+-/*  recolor the selected objects: their fill (@stroke FALSE) or stroke;
+- *  @color NULL: none. One undo step unless @push_undo is FALSE.
++/*  4.1.1: the one object selection. What every style change edits: the
++ *  visible, unlocked path leaves of the selected objects (free the list)
++ */
++GList           * chopgimp_vobjects_style_targets    (GimpVectorLayer *layer);
++/*  one undo step per modification (a burst of the same change is one
++ *  step); TRUE when a step was pushed
++ */
++gboolean          chopgimp_vobjects_style_undo       (GimpVectorLayer *layer,
++                                                      const gchar     *desc);
++/*  a tool's fill (@fill) or stroke options → all the targets  */
++gboolean          chopgimp_vobjects_apply_tool_style (GimpVectorLayer   *layer,
++                                                      gboolean           enable_fill,
++                                                      GimpFillOptions   *fill_options,
++                                                      gboolean           enable_stroke,
++                                                      GimpStrokeOptions *stroke_options,
++                                                      gboolean           fill);
++/*  the first target → a tool's options; FALSE when nothing is selected  */
++gboolean          chopgimp_vobjects_load_tool_style  (GimpVectorLayer   *layer,
++                                                      gboolean          *enable_fill,
++                                                      GimpFillOptions   *fill_options,
++                                                      gboolean          *enable_stroke,
++                                                      GimpStrokeOptions *stroke_options);
++/*  the plain fill / stroke colors of the first target (not owned)  */
++gboolean          chopgimp_vobjects_selection_colors (GimpVectorLayer  *layer,
++                                                      GeglColor       **fill,
++                                                      GeglColor       **stroke);
++/*  recolor the selected objects (the targets): their fill (@stroke FALSE)
++ *  or stroke; @color NULL: none. One undo step per burst unless
++ *  @push_undo is FALSE; no step when they already have this color.
+  */
+ gboolean          chopgimp_vobjects_apply_color      (GimpVectorLayer *layer,
+                                                       GeglColor       *color,
+diff --git a/app/tools/chopgimp-shapetool.c b/app/tools/chopgimp-shapetool.c
+index b8d057f..c0149c8 100644
+--- a/app/tools/chopgimp-shapetool.c
++++ b/app/tools/chopgimp-shapetool.c
+@@ -66,6 +66,7 @@
+ #include "display/gimpdisplayshell.h"
+ 
+ #include "chopgimp-shapetool.h"
++#include "chopgimp-tools.h"
+ #include "gimptoolcontrol.h"
+ #include "gimptooloptions-gui.h"
+ 
+@@ -1066,36 +1067,12 @@ shape_load_from_layer (GimpShapeTool *shape)
+   popts = GIMP_PATH_OPTIONS (gimp_tool_get_options (GIMP_TOOL (shape)));
+   gimp_path_options_ensure_fill_stroke (popts);
+ 
+-  /*  ChopGimp lot V2: a layer with several objects: the first selected
+-   *  object (nothing selected: the options stay as they are)
++  /*  ChopGimp 4.1.1: a layer of objects: the options show the selection
++   *  (the one selection watcher, chopgimp-tools.c)
+    */
+   if (chopgimp_vobjects_layer_is_multi (layer))
+     {
+-      GList                  *objs = chopgimp_vlayer_get_selected_objects (layer);
+-      ChopGimpVObject        *leaf = objs ? chopgimp_vobjects_first_leaf (objs->data) : NULL;
+-      GimpVectorLayerOptions *tmp;
+-
+-      g_list_free (objs);
+-
+-      if (! leaf)
+-        return;
+-
+-      tmp = g_object_new (GIMP_TYPE_VECTOR_LAYER_OPTIONS,
+-                          "gimp", shape->image->gimp, NULL);
+-      chopgimp_vstyle_to_options (&leaf->style, tmp);
+-
+-      shape->loading = TRUE;
+-      g_object_set (popts,
+-                    "enable-fill",   tmp->enable_fill,
+-                    "enable-stroke", tmp->enable_stroke,
+-                    NULL);
+-      gimp_config_sync (G_OBJECT (tmp->fill_options),
+-                        G_OBJECT (popts->fill_options), 0);
+-      gimp_config_sync (G_OBJECT (tmp->stroke_options),
+-                        G_OBJECT (popts->stroke_options), 0);
+-      shape->loading = FALSE;
+-
+-      g_object_unref (tmp);
++      chopgimp_vselection_sync ();
+       return;
+     }
+ 
+@@ -1134,71 +1111,12 @@ shape_options_notify (GObject       *object,
+       strcmp (pspec->name, "enable-fill") && strcmp (pspec->name, "enable-stroke"))
+     return;
+ 
+-  /*  ChopGimp lot V2: a layer with several objects: the selected ones get
+-   *  the fill (or the stroke) of the bar; nothing selected: only the next
+-   *  shapes
++  /*  ChopGimp 4.1.1: a layer of objects: the selected ones get the fill
++   *  (or the stroke) of the bar, by the one selection watcher
++   *  (chopgimp-tools.c); nothing selected: only the next shapes
+    */
+   if (chopgimp_vobjects_layer_is_multi (layer))
+-    {
+-      gboolean        fill = (object == G_OBJECT (popts->fill_options) ||
+-                              ! strcmp (pspec->name, "enable-fill"));
+-      GList          *objs = chopgimp_vlayer_get_selected_objects (layer);
+-      ChopGimpVStyle  bar;
+-      static gint64   last_time = 0;
+-      gint64          now       = g_get_monotonic_time ();
+-
+-      if (! objs)
+-        return;
+-
+-      chopgimp_vobjects_style_from_tool (&bar, shape->image,
+-                                         popts->enable_fill, popts->fill_options,
+-                                         popts->enable_stroke, popts->stroke_options);
+-
+-      /*  a burst of changes (a slider) is one undo step  */
+-      if (now - last_time > 700000)
+-        chopgimp_vlayer_push_undo (layer, _("Style de l'objet"));
+-      last_time = now;
+-
+-      chopgimp_vlayer_freeze (layer);
+-
+-      for (GList *o = objs; o; o = o->next)
+-        {
+-          GList *leaves = chopgimp_vobjects_leaves_of (o->data);
+-
+-          for (GList *l = leaves; l; l = l->next)
+-            {
+-              ChopGimpVObject *leaf = l->data;
+-              ChopGimpVStyle   st, tmp;
+-
+-              /*  the fill (or the stroke) of the bar, the rest of the
+-               *  object (swapped: each style keeps owning its paints)
+-               */
+-              chopgimp_vstyle_init (&st);
+-              chopgimp_vstyle_copy (&st, &leaf->style);
+-              chopgimp_vstyle_init (&tmp);
+-              chopgimp_vstyle_copy (&tmp, &bar);
+-
+-              if (fill)
+-                chopgimp_vstyle_copy_primary_fill (&st, &tmp);
+-              else
+-                chopgimp_vstyle_copy_primary_stroke (&st, &tmp);
+-
+-              chopgimp_vstyle_clear (&tmp);
+-
+-              chopgimp_vlayer_set_style (layer, leaf->id, &st, FALSE);
+-              chopgimp_vstyle_clear (&st);
+-            }
+-
+-          g_list_free (leaves);
+-        }
+-
+-      chopgimp_vlayer_thaw (layer);
+-
+-      chopgimp_vstyle_clear (&bar);
+-      g_list_free (objs);
+-      gimp_image_flush (shape->image);
+-      return;
+-    }
++    return;
+ 
+   /*  undoable; a burst of changes (a slider) is one step, separate
+    *  edits a moment apart are not
+diff --git a/app/tools/chopgimp-tools.c b/app/tools/chopgimp-tools.c
+index 3347cb7..ed94f50 100644
+--- a/app/tools/chopgimp-tools.c
++++ b/app/tools/chopgimp-tools.c
+@@ -19,6 +19,8 @@
+ 
+ #include "config.h"
+ 
++#include <string.h>
++
+ #include <gegl.h>
+ #include <gtk/gtk.h>
+ 
+@@ -35,7 +37,12 @@
+ #include "core/chopgimp-alpha-bounds.h"
+ #include "core/gimptoolinfo.h"
+ 
++#include "core/gimpfilloptions.h"
++#include "core/gimpstrokeoptions.h"
++
+ #include "path/gimpvectorlayer.h"
++#include "path/chopgimp-vobject.h"
++#include "path/chopgimp-vobject-ops.h"
+ 
+ #include "text/gimptextlayer.h"
+ 
+@@ -43,6 +50,7 @@
+ 
+ #include "chopgimp-tools.h"
+ #include "gimpdrawtool.h"
++#include "gimppathoptions.h"
+ #include "tool_manager.h"
+ 
+ #include "gimp-intl.h"
+@@ -266,3 +274,331 @@ chopgimp_draw_tool_redraw (GimpDrawTool *draw_tool,
+ 
+   gimp_draw_tool_resume (draw_tool);
+ }
++
++
++/*  ─── 4.1.1: ONE object selection, shared by every tool and panel ──────
++ *
++ *  The selection of objects lives in the active vector layer
++ *  (chopgimp_vlayer_get_selection) and every style change edits
++ *  chopgimp_vobjects_style_targets(). This watcher keeps the rest of the
++ *  application in step with it:
++ *
++ *   - the foreground / background colors follow the selected object when
++ *     it is selected (its fill / stroke), without changing it;
++ *   - with a vector tool, a new foreground / background color (swatch,
++ *     color dialog, picker, X) recolors the fill / stroke of the
++ *     selection (one undo step per burst);
++ *   - the fill / stroke options of the drawing tools (Forme, Plume,
++ *     Courbure, Crayon…) show the selection and edit it;
++ *   - one selection: when another layer becomes active, the objects of
++ *     the previous one are deselected (never edited unseen);
++ *   - a vector layer added by the user (new shape, import, duplicate,
++ *     vectorized text…) has its objects selected when it becomes active.
++ */
++
++static struct
++{
++  Gimp            *gimp;
++  GimpContext     *context;
++  GimpImage       *image;      /* weak */
++  GimpVectorLayer *layer;      /* weak, the watched active layer */
++  gboolean         syncing;
++} vss;
++
++static const gchar *const vss_vector_tools[] =
++{
++  "gimp-move-tool", "gimp-direct-select-tool", "gimp-shape-tool",
++  "gimp-path-tool", "gimp-curvature-tool", "gimp-vpencil-tool",
++  "gimp-vsmooth-tool", "gimp-vblob-tool", "gimp-shape-builder-tool",
++  "gimp-vscissors-tool", "gimp-vknife-tool", "gimp-vjoin-tool",
++  "gimp-width-tool", "gimp-envelope-tool", "gimp-live-paint-select-tool",
++  "gimp-vblend-tool", "gimp-vmesh-tool", "gimp-perspective-select-tool",
++  "gimp-color-picker-tool"
++};
++
++gboolean
++chopgimp_tool_is_vector (GimpToolInfo *info)
++{
++  const gchar *id = info ? gimp_object_get_name (info) : NULL;
++
++  if (! id)
++    return FALSE;
++
++  for (guint i = 0; i < G_N_ELEMENTS (vss_vector_tools); i++)
++    if (! strcmp (id, vss_vector_tools[i]))
++      return TRUE;
++
++  return FALSE;
++}
++
++static GimpPathOptions *
++vss_path_options (void)
++{
++  GimpToolInfo *info = vss.context ? gimp_context_get_tool (vss.context) : NULL;
++
++  if (info && GIMP_IS_PATH_OPTIONS (info->tool_options))
++    {
++      GimpPathOptions *popts = GIMP_PATH_OPTIONS (info->tool_options);
++
++      gimp_path_options_ensure_fill_stroke (popts);
++      return popts;
++    }
++
++  return NULL;
++}
++
++static GimpVectorLayer *
++vss_active_layer (void)
++{
++  return vss.image ? chopgimp_vobjects_get_active_layer (vss.image) : NULL;
++}
++
++/*  selection → foreground / background and the tool's fill / stroke  */
++static void
++vss_load (void)
++{
++  GimpVectorLayer *layer = vss_active_layer ();
++  GimpPathOptions *popts;
++  GeglColor       *fill, *stroke;
++  gboolean         ef, es;
++
++  if (! layer || vss.syncing)
++    return;
++
++  vss.syncing = TRUE;
++
++  if (chopgimp_vobjects_selection_colors (layer, &fill, &stroke))
++    {
++      if (fill)
++        gimp_context_set_foreground (vss.context, fill);
++      if (stroke)
++        gimp_context_set_background (vss.context, stroke);
++    }
++
++  if ((popts = vss_path_options ()) &&
++      chopgimp_vobjects_load_tool_style (layer, &ef, popts->fill_options,
++                                         &es, popts->stroke_options))
++    g_object_set (popts, "enable-fill", ef, "enable-stroke", es, NULL);
++
++  vss.syncing = FALSE;
++}
++
++static void
++vss_color_changed (GeglColor *color,
++                   gboolean   stroke)
++{
++  GimpVectorLayer *layer;
++
++  if (vss.syncing || ! color ||
++      ! chopgimp_tool_is_vector (gimp_context_get_tool (vss.context)) ||
++      ! (layer = vss_active_layer ()))
++    return;
++
++  if (chopgimp_vobjects_apply_color (layer, color, stroke, TRUE))
++    {
++      gimp_image_flush (vss.image);
++      vss_load ();   /* the tool's options show the new color */
++    }
++}
++
++static void
++vss_fg_changed (GimpContext *context,
++                GeglColor   *color,
++                gpointer     data)
++{
++  vss_color_changed (color, FALSE);
++}
++
++static void
++vss_bg_changed (GimpContext *context,
++                GeglColor   *color,
++                gpointer     data)
++{
++  vss_color_changed (color, TRUE);
++}
++
++/*  the fill / stroke options of a drawing tool → the selection  */
++static void
++vss_options_notify (GObject    *object,
++                    GParamSpec *pspec,
++                    gpointer    data)
++{
++  GimpPathOptions *popts = vss_path_options ();
++  GimpVectorLayer *layer;
++  gboolean         fill;
++
++  if (vss.syncing || ! popts || ! (layer = vss_active_layer ()))
++    return;
++
++  if (object == G_OBJECT (popts->fill_options))
++    fill = TRUE;
++  else if (object == G_OBJECT (popts->stroke_options))
++    fill = FALSE;
++  else if (object == G_OBJECT (popts) && ! strcmp (pspec->name, "enable-fill"))
++    fill = TRUE;
++  else if (object == G_OBJECT (popts) && ! strcmp (pspec->name, "enable-stroke"))
++    fill = FALSE;
++  else
++    return;
++
++  /*  the Direct Selection (A) bar edits the objects itself  */
++  if (! strcmp (gimp_object_get_name (gimp_context_get_tool (vss.context)),
++                "gimp-direct-select-tool"))
++    return;
++
++  if (chopgimp_vobjects_apply_tool_style (layer,
++                                          popts->enable_fill, popts->fill_options,
++                                          popts->enable_stroke, popts->stroke_options,
++                                          fill))
++    gimp_image_flush (vss.image);
++}
++
++static void
++vss_tool_changed (GimpContext  *context,
++                  GimpToolInfo *info,
++                  gpointer      data)
++{
++  GimpPathOptions *popts = vss_path_options ();
++
++  if (popts && ! g_object_get_data (G_OBJECT (popts), "chopgimp-vss"))
++    {
++      g_object_set_data (G_OBJECT (popts), "chopgimp-vss", GINT_TO_POINTER (1));
++      g_signal_connect (popts, "notify::enable-fill",
++                        G_CALLBACK (vss_options_notify), NULL);
++      g_signal_connect (popts, "notify::enable-stroke",
++                        G_CALLBACK (vss_options_notify), NULL);
++      g_signal_connect (popts->fill_options, "notify",
++                        G_CALLBACK (vss_options_notify), NULL);
++      g_signal_connect (popts->stroke_options, "notify",
++                        G_CALLBACK (vss_options_notify), NULL);
++    }
++
++  vss_load ();
++}
++
++static void
++vss_selection_changed (GimpVectorLayer *layer,
++                       gpointer         data)
++{
++  vss_load ();
++}
++
++static void
++vss_watch_layer (GimpVectorLayer *layer)
++{
++  if (vss.layer == layer)
++    return;
++
++  if (vss.layer)
++    {
++      GimpVectorLayer *old = vss.layer;
++
++      g_signal_handlers_disconnect_by_func (old, vss_selection_changed, NULL);
++      g_object_remove_weak_pointer (G_OBJECT (old), (gpointer *) &vss.layer);
++      vss.layer = NULL;
++
++      /*  one selection: the objects of a layer that is no longer active
++       *  are deselected (no frame is shown for them, they must never be
++       *  edited unseen)
++       */
++      if (gimp_item_is_attached (GIMP_ITEM (old)) &&
++          chopgimp_vobjects_n_selected (old) > 0)
++        chopgimp_vlayer_set_selection (old, NULL, 0);
++    }
++
++  vss.layer = layer;
++
++  if (layer)
++    {
++      g_object_add_weak_pointer (G_OBJECT (layer), (gpointer *) &vss.layer);
++      g_signal_connect (layer, "object-selection-changed",
++                        G_CALLBACK (vss_selection_changed), NULL);
++    }
++}
++
++static void
++vss_layers_changed (GimpImage *image,
++                    gpointer   data)
++{
++  GimpVectorLayer *layer = chopgimp_vobjects_get_target_layer (image);
++
++  /*  a vector layer the user just added: its objects are the selection  */
++  if (layer && g_object_get_data (G_OBJECT (layer), "chopgimp-new-layer"))
++    {
++      g_object_set_data (G_OBJECT (layer), "chopgimp-new-layer", NULL);
++      vss_watch_layer (layer);
++      chopgimp_vobjects_select_all (layer);
++    }
++  else
++    {
++      vss_watch_layer (layer);
++    }
++
++  vss_load ();
++}
++
++static void
++vss_image_changed (GimpContext *context,
++                   GimpImage   *image,
++                   gpointer     data)
++{
++  if (vss.image == image)
++    return;
++
++  if (vss.image)
++    {
++      g_signal_handlers_disconnect_by_func (vss.image, vss_layers_changed, NULL);
++      g_object_remove_weak_pointer (G_OBJECT (vss.image), (gpointer *) &vss.image);
++    }
++
++  /*  the layer of another image keeps its selection (not shown, but not
++   *  edited either: only the active image's active layer is)
++   */
++  if (vss.layer)
++    {
++      g_signal_handlers_disconnect_by_func (vss.layer, vss_selection_changed, NULL);
++      g_object_remove_weak_pointer (G_OBJECT (vss.layer), (gpointer *) &vss.layer);
++      vss.layer = NULL;
++    }
++
++  vss.image = image;
++
++  if (image)
++    {
++      g_object_add_weak_pointer (G_OBJECT (image), (gpointer *) &vss.image);
++      g_signal_connect (image, "selected-layers-changed",
++                        G_CALLBACK (vss_layers_changed), NULL);
++      vss_layers_changed (image, NULL);
++    }
++}
++
++/*  the colors and the drawing tool's options from the selection again
++ *  (guarded: loading them never edits the objects)
++ */
++void
++chopgimp_vselection_sync (void)
++{
++  vss_load ();
++}
++
++void
++chopgimp_vselection_init (Gimp *gimp)
++{
++  if (vss.gimp || ! chopgimp_vobjects_enabled ())
++    return;
++
++  vss.gimp    = gimp;
++  vss.context = gimp_get_user_context (gimp);
++
++  g_signal_connect (vss.context, "foreground-changed",
++                    G_CALLBACK (vss_fg_changed), NULL);
++  g_signal_connect (vss.context, "background-changed",
++                    G_CALLBACK (vss_bg_changed), NULL);
++  g_signal_connect (vss.context, "tool-changed",
++                    G_CALLBACK (vss_tool_changed), NULL);
++  g_signal_connect (vss.context, "image-changed",
++                    G_CALLBACK (vss_image_changed), NULL);
++
++  vss_tool_changed (vss.context, gimp_context_get_tool (vss.context), NULL);
++  vss_image_changed (vss.context, gimp_context_get_image (vss.context), NULL);
++}
+diff --git a/app/tools/chopgimp-tools.h b/app/tools/chopgimp-tools.h
+index 6d98fc9..7c894de 100644
+--- a/app/tools/chopgimp-tools.h
++++ b/app/tools/chopgimp-tools.h
+@@ -32,3 +32,10 @@ void     chopgimp_switch_tool_later      (Gimp             *gimp,
+                                           GdkModifierType   state);
+ void     chopgimp_draw_tool_redraw       (GimpDrawTool     *draw_tool,
+                                           GimpDisplay      *display);
++
++/*  4.1.1: the one object selection kept in step with the colors, the
++ *  drawing tools' options and the active layer (see chopgimp-tools.c)
++ */
++void     chopgimp_vselection_init        (Gimp             *gimp);
++void     chopgimp_vselection_sync        (void);
++gboolean chopgimp_tool_is_vector         (GimpToolInfo     *info);
+diff --git a/app/tools/chopgimp-vobjecttool.c b/app/tools/chopgimp-vobjecttool.c
+index 28b6204..db69536 100644
+--- a/app/tools/chopgimp-vobjecttool.c
++++ b/app/tools/chopgimp-vobjecttool.c
+@@ -107,8 +107,6 @@ struct _ChopGimpVSel
+ {
+   GimpDrawTool    *tool;
+   GimpContext     *context;     /* 3.29.3: user context (fill / stroke) */
+-  gulong           fg_id, bg_id;
+-  gint64           color_push;  /* last undo push of a color burst     */
+   gdouble          hx, hy;      /* 3.29.3: last pointer position (Tab)  */
+   GimpVectorLayer *layer;       /* watched (weak)                       */
+   guint            hover_id;
+@@ -402,75 +400,6 @@ vsel_take_ids (ChopGimpVSel *vsel)
+ 
+ static gboolean vsel_click_group = FALSE;   /* 3.29.3 */
+ 
+-static void
+-vsel_color_changed (ChopGimpVSel *vsel,
+-                    GeglColor    *color,
+-                    gboolean      stroke)
+-{
+-  GimpTool        *tool = GIMP_TOOL (vsel->tool);
+-  GimpImage       *image;
+-  GimpVectorLayer *layer;
+-  GList           *objs;
+-  gboolean         same = FALSE;
+-  gint64           now;
+-
+-  if (vsel->drag || gimp_context_get_tool (vsel->context) != tool->tool_info)
+-    return;
+-
+-  image = gimp_context_get_image (vsel->context);
+-  layer = image ? chopgimp_vobjects_get_active_layer (image) : NULL;
+-
+-  if (! layer || chopgimp_vobjects_n_selected (layer) == 0 || ! color)
+-    return;
+-
+-  /*  nothing to do when the selection already has this color (e.g. the
+-   *  foreground set from the picked object)
+-   */
+-  objs = chopgimp_vlayer_get_selected_objects (layer);
+-  if (objs && ! objs->next && ((ChopGimpVObject *) objs->data)->kind == CHOPGIMP_VOBJECT_PATH)
+-    {
+-      ChopGimpVObject *o = objs->data;
+-      ChopGimpVEntry  *e = stroke ? chopgimp_vstyle_get_stroke (&o->style)
+-                                  : chopgimp_vstyle_get_fill (&o->style);
+-
+-      if (e && e->visible && e->paint.type == CHOPGIMP_PAINT_COLOR && e->paint.color)
+-        {
+-          guint8 a[4], b[4];
+-
+-          gegl_color_get_pixel (e->paint.color, babl_format ("R'G'B'A u8"), a);
+-          gegl_color_get_pixel (color, babl_format ("R'G'B'A u8"), b);
+-          same = memcmp (a, b, 4) == 0;
+-        }
+-    }
+-  g_list_free (objs);
+-
+-  if (same)
+-    return;
+-
+-  now = g_get_monotonic_time ();
+-
+-  chopgimp_vobjects_apply_color (layer, color, stroke, now - vsel->color_push > 700000);
+-  vsel->color_push = now;
+-
+-  gimp_image_flush (image);
+-}
+-
+-static void
+-vsel_fg_changed (GimpContext  *context,
+-                 GeglColor    *color,
+-                 ChopGimpVSel *vsel)
+-{
+-  vsel_color_changed (vsel, color, FALSE);
+-}
+-
+-static void
+-vsel_bg_changed (GimpContext  *context,
+-                 GeglColor    *color,
+-                 ChopGimpVSel *vsel)
+-{
+-  vsel_color_changed (vsel, color, TRUE);
+-}
+-
+ void
+ chopgimp_vsel_set_click_group (gboolean click_group)
+ {
+@@ -641,12 +570,10 @@ vsel_corner_at (ChopGimpVSel     *vsel,
+ 
+ /*  ─── API ───────────────────────────────────────────────────────────── */
+ 
+-/*  3.29.3 (Illustrator « Fond / Contour »): with V on selected objects,
+- *  the foreground color is their fill and the background color their
+- *  stroke: a swatch, the color dialog, the picker or X recolor them
+- *  (one undo step per burst). CHOPGIMP_NO_FG_RECOLOR=1: off. Connected
+- *  at the first event: the tool's tool_info is not set yet when the
+- *  tool is created.
++/*  3.29.3 (Illustrator « Fond / Contour »): the foreground color is the
++ *  fill of the selected objects and the background color their stroke.
++ *  4.1.1: done for every vector tool by the one selection watcher
++ *  (chopgimp-tools.c); the tool only keeps the user context.
+  */
+ static void
+ vsel_ensure_context (ChopGimpVSel *vsel,
+@@ -658,14 +585,8 @@ vsel_ensure_context (ChopGimpVSel *vsel,
+     return;
+ 
+   image = gimp_display_get_image (display);
+-  if (! image)
+-    return;
+-
+-  vsel->context = gimp_get_user_context (image->gimp);
+-  vsel->fg_id = g_signal_connect (vsel->context, "foreground-changed",
+-                                  G_CALLBACK (vsel_fg_changed), vsel);
+-  vsel->bg_id = g_signal_connect (vsel->context, "background-changed",
+-                                  G_CALLBACK (vsel_bg_changed), vsel);
++  if (image)
++    vsel->context = gimp_get_user_context (image->gimp);
+ }
+ 
+ ChopGimpVSel *
+@@ -689,11 +610,6 @@ chopgimp_vsel_free (ChopGimpVSel *vsel)
+   vsel_watch (vsel, NULL);
+   vsel_set_tip (vsel, NULL, 0, NULL);
+ 
+-  if (vsel->context)
+-    {
+-      g_signal_handler_disconnect (vsel->context, vsel->fg_id);
+-      g_signal_handler_disconnect (vsel->context, vsel->bg_id);
+-    }
+ 
+   g_free (vsel);
+ }
+diff --git a/app/tools/gimp-tools.c b/app/tools/gimp-tools.c
+index 0879496..77b5c87 100644
+--- a/app/tools/gimp-tools.c
++++ b/app/tools/gimp-tools.c
+@@ -70,6 +70,7 @@
+ #include "gimpoperationtool.h"
+ #include "gimppathtool.h"
+ #include "gimpmagnifytool.h"
++#include "chopgimp-tools.h"
+ #include "chopgimp-viewtools.h"
+ #include "chopgimp-shapetool.h"
+ #include "chopgimp-spothealtool.h"
+@@ -253,6 +254,7 @@ gimp_tools_init (Gimp *gimp)
+   gimp_tool_options_manager_init (gimp);
+ 
+   tool_manager_init (gimp);
++  chopgimp_vselection_init (gimp);   /* ChopGimp 4.1.1 */
+ 
+   toolbox_groups_binding = g_object_bind_property (
+     gimp->config,            "toolbox-groups",
+diff --git a/app/tools/gimppathtool.c b/app/tools/gimppathtool.c
+index 1784d4a..1c32d07 100644
+--- a/app/tools/gimppathtool.c
++++ b/app/tools/gimppathtool.c
+@@ -21,6 +21,7 @@
+ #include "config.h"
+ 
+ #include <math.h>
++#include <string.h>
+ 
+ #include <gegl.h>
+ #include <gtk/gtk.h>
+@@ -45,6 +46,7 @@
+ #include "paint/gimppaintoptions.h" /* GIMP_PAINT_OPTIONS_CONTEXT_MASK */
+ 
+ #include "path/gimppath.h"
++#include "path/gimpanchor.h"
+ #include "path/gimpstroke.h"
+ #include "path/gimpvectorlayer.h"
+ #include "path/gimpvectorlayeroptions.h"
+@@ -66,6 +68,7 @@
+ 
+ #include "gimppathoptions.h"
+ #include "gimppathtool.h"
++#include "chopgimp-tools.h"
+ #include "gimptoolcontrol.h"
+ 
+ #include "dialogs/fill-dialog.h"
+@@ -276,6 +279,12 @@ gimp_path_tool_dispose (GObject *object)
+ 
+   gimp_path_tool_image_changed (path_tool, NULL, NULL);
+ 
++  if (path_tool->vobj_prev_sel)   /* 4.1.1 */
++    {
++      g_array_free (path_tool->vobj_prev_sel, TRUE);
++      path_tool->vobj_prev_sel = NULL;
++    }
++
+   G_OBJECT_CLASS (parent_class)->dispose (object);
+ }
+ 
+@@ -543,6 +552,18 @@ gimp_path_tool_vobj_changed (GimpVectorLayer *layer,
+   /*  ChopGimp 3.28.3: several objects: rebuild the edited strokes  */
+   if (path_tool->vobj_multi)
+     {
++      /*  4.1.1: the selected nodes stay selected (a style change rebuilds
++       *  the same strokes)
++       */
++      GArray *picked = g_array_new (FALSE, FALSE, sizeof (gint));
++      gint    k      = 0;
++
++      s = NULL;
++      while ((s = gimp_path_stroke_get_next (path_tool->vobj_path, s)))
++        for (GList *l = s->anchors->head; l; l = l->next, k++)
++          if (((GimpAnchor *) l->data)->selected)
++            g_array_append_val (picked, k);
++
+       path_tool->vobj_writing = TRUE;
+       gimp_path_freeze (path_tool->vobj_path);
+ 
+@@ -550,6 +571,24 @@ gimp_path_tool_vobj_changed (GimpVectorLayer *layer,
+         gimp_path_stroke_remove (path_tool->vobj_path, s);
+ 
+       gimp_path_tool_vobj_fill_multi (path_tool, path_tool->vobj_path);
++
++      if (picked->len > 0)
++        {
++          guint j = 0;
++
++          k = 0;
++          s = NULL;
++          while ((s = gimp_path_stroke_get_next (path_tool->vobj_path, s)))
++            for (GList *l = s->anchors->head; l; l = l->next, k++)
++              if (j < picked->len && g_array_index (picked, gint, j) == k)
++                {
++                  ((GimpAnchor *) l->data)->selected = TRUE;
++                  j++;
++                }
++        }
++
++      g_array_free (picked, TRUE);
++
+       gimp_path_thaw (path_tool->vobj_path);
+       path_tool->vobj_writing = FALSE;
+       return;
+@@ -635,15 +674,28 @@ gimp_path_tool_vobj_edit (GimpPathTool    *path_tool,
+  */
+ static gboolean
+ gimp_path_tool_vobj_edit_multi (GimpPathTool    *path_tool,
+-                                GimpVectorLayer *layer)
++                                GimpVectorLayer *layer,
++                                GArray          *only)
+ {
+   GimpImage *image = gimp_item_get_image (GIMP_ITEM (layer));
+   GArray    *ids   = g_array_new (FALSE, FALSE, sizeof (guint));
+-  GList     *leaves;
++  GList     *leaves = NULL;
+   GList     *list;
+   GimpPath  *combined;
+ 
+-  leaves = chopgimp_vlayer_get_leaves (layer);
++  /*  4.1.1: @only: the leaves of these objects (Maj+clic), else all  */
++  if (only)
++    {
++      for (guint i = 0; i < only->len; i++)
++        leaves = g_list_concat (leaves,
++                                chopgimp_vobjects_leaves_of (
++                                  chopgimp_vlayer_get_object (layer,
++                                                              g_array_index (only, guint, i))));
++    }
++  else
++    {
++      leaves = chopgimp_vlayer_get_leaves (layer);
++    }
+ 
+   for (list = leaves; list; list = list->next)
+     {
+@@ -715,6 +767,25 @@ gimp_path_tool_vobj_press (GimpPathTool     *path_tool,
+   if (! layer)
+     return FALSE;
+ 
++  /*  4.1.1: the selection is computed again at the release  */
++  {
++    const guint *sel;
++    gint         n = 0;
++
++    sel = chopgimp_vlayer_get_selection (layer, &n);
++
++    if (! path_tool->vobj_prev_sel)
++      path_tool->vobj_prev_sel = g_array_new (FALSE, FALSE, sizeof (guint));
++
++    g_array_set_size (path_tool->vobj_prev_sel, 0);
++    if (n > 0)
++      g_array_append_vals (path_tool->vobj_prev_sel, sel, n);
++
++    path_tool->vobj_track       = TRUE;
++    path_tool->vobj_press_leaf  = 0;
++    path_tool->vobj_press_shift = (state & gimp_get_extend_selection_mask ()) != 0;
++  }
++
+   /*  on the nodes of the edited object: the path widget  */
+   if (path_tool->vobj_layer == layer && path_tool->widget &&
+       tool->display == display &&
+@@ -725,6 +796,33 @@ gimp_path_tool_vobj_press (GimpPathTool     *path_tool,
+                                    3.0 / MAX (shell->scale_x, 1e-6),
+                                    CHOPGIMP_HIT_LEAF);
+ 
++  if (leaf)
++    path_tool->vobj_press_leaf = leaf->id;
++
++  /*  4.1.1 (Illustrator): Maj+clic on another object adds it: the nodes of
++   *  the selection and of this object are edited together
++   */
++  if (leaf && path_tool->vobj_press_shift && path_tool->vobj_prev_sel->len > 0 &&
++      ! chopgimp_vlayer_is_selected (layer, leaf->id))
++    {
++      GArray *only = g_array_copy (path_tool->vobj_prev_sel);
++
++      g_array_append_val (only, leaf->id);
++
++      if (gimp_path_tool_vobj_edit_multi (path_tool, layer, only))
++        {
++          chopgimp_vlayer_set_selection (layer, (const guint *) only->data, only->len);
++          gimp_image_flush (image);
++
++          if (path_tool->widget)
++            gimp_tool_widget_hover (path_tool->widget, coords, state, TRUE);
++        }
++
++      g_array_free (only, TRUE);
++
++      return FALSE;
++    }
++
+   if (leaf && (leaf->id != path_tool->vobj_id || path_tool->vobj_layer != layer ||
+                path_tool->vobj_multi))
+     {
+@@ -743,7 +841,7 @@ gimp_path_tool_vobj_press (GimpPathTool     *path_tool,
+   if (path_tool->vobj_layer != layer || ! path_tool->widget ||
+       ! path_tool->vobj_multi)
+     {
+-      if (! gimp_path_tool_vobj_edit_multi (path_tool, layer))
++      if (! gimp_path_tool_vobj_edit_multi (path_tool, layer, NULL))
+         return TRUE;
+ 
+       gimp_image_flush (image);
+@@ -880,6 +978,75 @@ gimp_path_tool_button_press (GimpTool            *tool,
+   gimp_tool_control_activate (tool->control);
+ }
+ 
++/*  4.1.1: the objects owning the selected nodes of the edited path, plus
++ *  the object clicked, plus the previous selection with Maj, become the
++ *  one object selection (a click in the void: nothing)
++ */
++static void
++gimp_path_tool_vobj_select_owners (GimpPathTool *path_tool)
++{
++  GimpVectorLayer *layer = path_tool->vobj_layer;
++  GArray          *ids;
++  GimpStroke      *s = NULL;
++
++  path_tool->vobj_track = FALSE;
++
++  if (! layer || ! path_tool->vobj_path || ! gimp_item_is_attached (GIMP_ITEM (layer)))
++    return;
++
++  ids = g_array_new (FALSE, FALSE, sizeof (guint));
++
++#define ADD_ID(id) G_STMT_START {                                   \
++    guint _id = (id);                                               \
++    gboolean _has = FALSE;                                          \
++    for (guint _i = 0; _i < ids->len && ! _has; _i++)               \
++      _has = g_array_index (ids, guint, _i) == _id;                 \
++    if (_id && ! _has && chopgimp_vlayer_get_object (layer, _id))   \
++      g_array_append_val (ids, _id);                                \
++  } G_STMT_END
++
++  if (path_tool->vobj_press_shift && path_tool->vobj_prev_sel)
++    for (guint i = 0; i < path_tool->vobj_prev_sel->len; i++)
++      ADD_ID (g_array_index (path_tool->vobj_prev_sel, guint, i));
++
++  while ((s = gimp_path_stroke_get_next (path_tool->vobj_path, s)))
++    {
++      guint id = path_tool->vobj_multi
++                 ? GPOINTER_TO_UINT (g_object_get_data (G_OBJECT (s), CHOPGIMP_VOBJ_ID_KEY))
++                 : path_tool->vobj_id;
++
++      for (GList *l = s->anchors->head; l; l = l->next)
++        if (((GimpAnchor *) l->data)->selected)
++          {
++            ADD_ID (id);
++            break;
++          }
++    }
++
++  ADD_ID (path_tool->vobj_press_leaf);
++
++#undef ADD_ID
++
++  {
++    const guint *cur;
++    gint         n    = 0;
++    gboolean     same;
++
++    cur  = chopgimp_vlayer_get_selection (layer, &n);
++    same = (guint) n == ids->len;
++
++    for (guint i = 0; i < ids->len && same; i++)
++      same = chopgimp_vlayer_is_selected (layer, g_array_index (ids, guint, i));
++
++    if (! same)
++      chopgimp_vlayer_set_selection (layer, (const guint *) ids->data, ids->len);
++
++    (void) cur;
++  }
++
++  g_array_free (ids, TRUE);
++}
++
+ static void
+ gimp_path_tool_button_release (GimpTool              *tool,
+                                const GimpCoords      *coords,
+@@ -913,6 +1080,13 @@ gimp_path_tool_button_release (GimpTool              *tool,
+       gimp_image_undo_group_end (gimp_display_get_image (display));
+       gimp_image_flush (gimp_display_get_image (display));
+     }
++
++  /*  4.1.1  */
++  if (path_tool->vobj_track && gimp_path_tool_is_direct (path_tool))
++    {
++      gimp_path_tool_vobj_select_owners (path_tool);
++      gimp_image_flush (gimp_display_get_image (display));
++    }
+ }
+ 
+ static void
+@@ -1664,6 +1838,14 @@ gimp_path_tool_vector_change_notify (GObject          *options,
+ 
+   image = gimp_item_get_image (GIMP_ITEM (layer));
+ 
++  /*  ChopGimp 4.1.1: a layer of objects: the fill / stroke of the options
++   *  go to the selected objects, by the one selection watcher
++   *  (chopgimp-tools.c), never to the legacy view (= object #1, the bottom
++   *  one)
++   */
++  if (chopgimp_vobjects_layer_is_multi (layer))
++    return;
++
+   g_signal_handlers_block_by_func (options,
+                                    gimp_path_tool_vector_change_notify,
+                                    layer);
+@@ -1779,14 +1961,22 @@ gimp_path_tool_set_layer (GimpPathTool    *path_tool,
+                                G_CALLBACK (gimp_path_tool_vector_layer_path_changed),
+                                path_tool, 0);
+ 
+-      g_object_set (options,
+-                    "enable-fill",   vector_layer->options->enable_fill,
+-                    "enable_stroke", vector_layer->options->enable_stroke,
+-                    NULL);
+-      gimp_config_sync (G_OBJECT (vector_layer->options->stroke_options),
+-                        G_OBJECT (options->stroke_options), 0);
+-      gimp_config_sync (G_OBJECT (vector_layer->options->fill_options),
+-                        G_OBJECT (options->fill_options), 0);
++      /*  ChopGimp 4.1.1: a layer of objects: the bar shows the selection,
++       *  not the legacy view (whose sync would edit the selection)
++       */
++      if (chopgimp_vobjects_layer_is_multi (vector_layer))
++        chopgimp_vselection_sync ();
++      else
++        {
++          g_object_set (options,
++                        "enable-fill",   vector_layer->options->enable_fill,
++                        "enable_stroke", vector_layer->options->enable_stroke,
++                        NULL);
++          gimp_config_sync (G_OBJECT (vector_layer->options->stroke_options),
++                            G_OBJECT (options->stroke_options), 0);
++          gimp_config_sync (G_OBJECT (vector_layer->options->fill_options),
++                            G_OBJECT (options->fill_options), 0);
++        }
+ 
+       g_signal_connect_object (options, "notify::enable-fill",
+                                G_CALLBACK (gimp_path_tool_vector_change_notify),
+diff --git a/app/tools/gimppathtool.h b/app/tools/gimppathtool.h
+index c147db2..e828dd9 100644
+--- a/app/tools/gimppathtool.h
++++ b/app/tools/gimppathtool.h
+@@ -70,6 +70,16 @@ struct _GimpPathTool
+   gdouble          corner_bx, corner_by;
+   gdouble          corner_px, corner_py;
+   gboolean         corner_pushed;
++
++  /*  4.1.1: Direct Selection (A) and the one object selection: the
++   *  objects owning the selected nodes become the selection at the
++   *  release (plus the object clicked, plus the previous selection with
++   *  Maj)
++   */
++  gboolean         vobj_track;
++  gboolean         vobj_press_shift;
++  guint            vobj_press_leaf;
++  GArray          *vobj_prev_sel;
+ };
+ 
+ struct _GimpPathToolClass
+diff --git a/app/widgets/chopgimp-appearance-editor.c b/app/widgets/chopgimp-appearance-editor.c
+index ee01f88..da63734 100644
+--- a/app/widgets/chopgimp-appearance-editor.c
++++ b/app/widgets/chopgimp-appearance-editor.c
+@@ -376,18 +376,13 @@ panel_find_layer (Panel *p)
+ static GList *
+ panel_targets (Panel *p)
+ {
+-  GList *objs;
+   GList *leaves = NULL;
+ 
+   if (! p->layer)
+     return NULL;
+ 
+-  objs = chopgimp_vlayer_get_selected_objects (p->layer);
+-
+-  for (GList *o = objs; o; o = o->next)
+-    leaves = g_list_concat (leaves, chopgimp_vobjects_leaves_of (o->data));
+-
+-  g_list_free (objs);
++  /*  4.1.1: the one list of what a style change edits  */
++  leaves = chopgimp_vobjects_style_targets (p->layer);
+ 
+   if (! leaves && chopgimp_vlayer_count_leaves (p->layer) == 1)
+     leaves = chopgimp_vlayer_get_leaves (p->layer);
+diff --git a/app/widgets/chopgimp-value-field.c b/app/widgets/chopgimp-value-field.c
+index b63f8a8..40352e1 100644
+--- a/app/widgets/chopgimp-value-field.c
++++ b/app/widgets/chopgimp-value-field.c
+@@ -86,6 +86,7 @@ struct _ChopGimpValueField
+   GtkWidget  *pop_value;
+ 
+   gboolean    updating;
++  gboolean    mixed;        /* 4.1.1: shows « mixte » */
+ 
+   gboolean    scrubbing;
+   gdouble     anchor_x;
+@@ -305,7 +306,8 @@ static void
+ value_field_sync (ChopGimpValueField *field,
+                   gboolean            sync_scale)
+ {
+-  gchar *text = value_field_format (field, field->value);
++  gchar *text = field->mixed ? g_strdup ("mixte")
++                             : value_field_format (field, field->value);
+ 
+   if (field->entry)
+     {
+@@ -955,3 +957,19 @@ chopgimp_value_field_set_title (ChopGimpValueField *field,
+ 
+   gimp_help_set_help_data (field->arrow, field->title, NULL);
+ }
++
++/*  4.1.1: the objects edited have different values: « mixte » until the
++ *  next value
++ */
++void
++chopgimp_value_field_set_mixed (ChopGimpValueField *field,
++                                gboolean            mixed)
++{
++  g_return_if_fail (CHOPGIMP_IS_VALUE_FIELD (field));
++
++  if (field->mixed == mixed)
++    return;
++
++  field->mixed = mixed;
++  value_field_sync (field, FALSE);
++}
+diff --git a/app/widgets/chopgimp-value-field.h b/app/widgets/chopgimp-value-field.h
+index 2dd9949..e30ff6e 100644
+--- a/app/widgets/chopgimp-value-field.h
++++ b/app/widgets/chopgimp-value-field.h
+@@ -35,3 +35,5 @@ void        chopgimp_value_field_set_unit         (ChopGimpValueField *field,
+                                                    const gchar        *unit);
+ void        chopgimp_value_field_set_title        (ChopGimpValueField *field,
+                                                    const gchar        *title);
++void        chopgimp_value_field_set_mixed        (ChopGimpValueField *field,
++                                                   gboolean            mixed);
+-- 
+2.53.0
+
