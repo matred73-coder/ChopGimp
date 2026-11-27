@@ -1540,3 +1540,14 @@ Patchs 0170 à 0173 (nouveaux commits, aucun patch réécrit).
   autonome, or le thème s'appelle « ChopGimp » depuis la 3.25 (PS-Dark
   n'est plus qu'un alias). Le test accepte les deux noms. Le code de
   ChopGimp est celui de la 4.0.0.
+
+## 4.0.2 — Panneau Calques : la ligne du calque n'est plus cachée
+
+- Dans un panneau Calques peu haut, les bandes « fx » et « Objets »
+  (placées sous la liste à leur hauteur naturelle) prenaient toute la
+  place : la liste se réduisait à son en-tête (œil, verrou, fx) et la ligne
+  du calque vectoriel actif passait dessous. La liste garde désormais au
+  moins son en-tête et une ligne (hauteur recalculée avec la taille des
+  vignettes et le thème) ; le panneau ne descend plus en dessous.
+  Reproduit et vérifié au banc graphique (SVG importé en calque vectoriel,
+  panneau réduit). Patch 0174.
