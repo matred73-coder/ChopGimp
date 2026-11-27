@@ -1380,9 +1380,13 @@ menu,
   padding: 4px 0;
 }
 
-menu menuitem {
+/* ChopGimp 4.2.2 : même boîte au survol qu'au repos (aucun décalage),
+ * pas de transition : seul le surlignage change. */
+menu menuitem,
+menu menuitem:hover {
   min-height: 22px;
   padding: 2px 8px;
+  transition: none;
 }
 
 menu separator {

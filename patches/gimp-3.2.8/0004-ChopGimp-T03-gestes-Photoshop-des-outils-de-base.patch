@@ -16,8 +16,8 @@ Anciens patchs : 0002, 0003, 0004, 0005, 0006, 0008, 0014, 0091, 0092, 0098, 009
  app/tools/gimpsourcetool.c                 |  14 +-
  app/widgets/gimpcontainertreeview.c        |  17 ++
  app/widgets/gimpmenu.c                     |  28 +++
- app/widgets/gimptoolbutton.c               |  10 +
- 12 files changed, 448 insertions(+), 53 deletions(-)
+ app/widgets/gimptoolbutton.c               |  79 ++++++-
+ 12 files changed, 515 insertions(+), 55 deletions(-)
 
 diff --git a/app/actions/tools-actions.c b/app/actions/tools-actions.c
 index 9efa957..81e9db7 100644
@@ -938,10 +938,113 @@ index 4540288..eb7403e 100644
  
  static void
 diff --git a/app/widgets/gimptoolbutton.c b/app/widgets/gimptoolbutton.c
-index 6e2912f..2be1579 100644
+index 6e2912f..1d8576a 100644
 --- a/app/widgets/gimptoolbutton.c
 +++ b/app/widgets/gimptoolbutton.c
-@@ -629,6 +629,16 @@ gimp_tool_button_button_press (GtkWidget      *widget,
+@@ -56,7 +56,9 @@
+ #define ARROW_SIZE   0.125 /* * 100%       */
+ #define ARROW_BORDER 3     /* px           */
+ 
+-#define MENU_TIMEOUT 250   /* milliseconds */
++/*  ChopGimp 4.2.2: shorter hold before a tool group opens (was 250 ms)  */
++#define MENU_TIMEOUT 120   /* milliseconds */
++#define MENU_DRAG    4     /* px moved while held: open the group at once */
+ 
+ 
+ enum
+@@ -149,6 +151,9 @@ static gboolean     gimp_tool_button_menu_leave_notify   (GtkMenu             *m
+                                                           GimpToolButton      *tool_button);
+ 
+ static gboolean     gimp_tool_button_menu_timeout        (GimpToolButton      *tool_button);
++static gboolean     gimp_tool_button_motion              (GtkWidget           *widget,
++                                                          GdkEventMotion      *event,
++                                                          GimpToolButton      *tool_button);
+ 
+ static void         gimp_tool_button_update              (GimpToolButton      *tool_button);
+ static void         gimp_tool_button_update_toggled      (GimpToolButton      *tool_button);
+@@ -232,7 +237,7 @@ gimp_tool_button_constructed (GObject *object)
+   gtk_widget_set_can_focus (gtk_bin_get_child (GTK_BIN (tool_button)), FALSE);
+ 
+   gtk_widget_add_events (gtk_bin_get_child (GTK_BIN (tool_button)),
+-                         GDK_SCROLL_MASK);
++                         GDK_SCROLL_MASK | GDK_BUTTON1_MOTION_MASK);
+ 
+   g_signal_connect (gtk_bin_get_child (GTK_BIN (tool_button)),
+                     "button-press-event",
+@@ -242,6 +247,10 @@ gimp_tool_button_constructed (GObject *object)
+                     "button-release-event",
+                     G_CALLBACK (gimp_tool_button_button_release),
+                     tool_button);
++  g_signal_connect (gtk_bin_get_child (GTK_BIN (tool_button)),
++                    "motion-notify-event",
++                    G_CALLBACK (gimp_tool_button_motion),
++                    tool_button);
+   g_signal_connect (gtk_bin_get_child (GTK_BIN (tool_button)),
+                     "scroll-event",
+                     G_CALLBACK (gimp_tool_button_scroll),
+@@ -617,6 +626,61 @@ gimp_tool_button_toggled (GtkToggleToolButton *toggle_tool_button)
+     }
+ }
+ 
++/*  ChopGimp 4.2.2: a press on the group's corner triangle (bottom-right
++ *  third of the button) opens the tool list at once, like Photoshop.
++ */
++static gboolean
++gimp_tool_button_in_arrow (GtkWidget      *widget,
++                           GdkEventButton *event)
++{
++  GtkAllocation alloc;
++  gdouble       x, y;
++
++  gtk_widget_get_allocation (widget, &alloc);
++
++  if (! gdk_event_get_coords ((GdkEvent *) event, &x, &y) ||
++      alloc.width <= 0 || alloc.height <= 0)
++    return FALSE;
++
++  /* GtkButton reports coordinates in its own event window, which covers
++   * exactly its allocation; only correct them if they come from the
++   * parent's window.
++   */
++  if (event->window == gtk_widget_get_window (widget) &&
++      ! gtk_widget_get_has_window (widget))
++    {
++      x -= alloc.x;
++      y -= alloc.y;
++    }
++
++  return x >= alloc.width  * 2.0 / 3.0 &&
++         y >= alloc.height * 2.0 / 3.0;
++}
++
++static gboolean
++gimp_tool_button_motion (GtkWidget      *widget,
++                         GdkEventMotion *event,
++                         GimpToolButton *tool_button)
++{
++  GdkEventButton *press = (GdkEventButton *) tool_button->priv->menu_timeout_event;
++
++  /*  ChopGimp 4.2.2: dragging while the button is held opens the group
++   *  at once instead of waiting for the timeout.
++   */
++  if (tool_button->priv->menu_timeout_id && press &&
++      (ABS (event->x_root - press->x_root) > MENU_DRAG ||
++       ABS (event->y_root - press->y_root) > MENU_DRAG))
++    {
++      g_source_remove (tool_button->priv->menu_timeout_id);
++
++      gimp_tool_button_menu_timeout (tool_button);
++
++      return TRUE;
++    }
++
++  return FALSE;
++}
++
+ static gboolean
+ gimp_tool_button_button_press (GtkWidget      *widget,
+                                GdkEventButton *event,
+@@ -629,6 +693,17 @@ gimp_tool_button_button_press (GtkWidget      *widget,
          {
            return TRUE;
          }
@@ -950,7 +1053,8 @@ index 6e2912f..2be1579 100644
 +       */
 +      else if (gdk_event_get_event_type ((GdkEvent *) event) == GDK_BUTTON_PRESS &&
 +               event->button == 1 &&
-+               gtk_toggle_tool_button_get_active (GTK_TOGGLE_TOOL_BUTTON (tool_button)) &&
++               (gtk_toggle_tool_button_get_active (GTK_TOGGLE_TOOL_BUTTON (tool_button)) ||
++                gimp_tool_button_in_arrow (widget, event)) &&
 +               gimp_tool_button_show_menu (tool_button, (GdkEvent *) event))
 +        {
 +          return TRUE;

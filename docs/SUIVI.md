@@ -1705,3 +1705,13 @@ Patchs 0170 à 0173 (nouveaux commits, aucun patch réécrit).
   anciens gardent leurs couleurs ; barre d'état du Lasso direct ; plantage provoqué
   (`CHOPGIMP_CRASH_TEST`) : fenêtre avec « Copier le rapport », « Ouvrir le dossier » et le
   chemin du rapport (89 lignes, pile comprise) ; au redémarrage, message dans la barre d'état.
+
+## 4.2.2 — Menus et boîte à outils plus nets
+
+- **Menus** : l'élément survolé gardait une autre marge (12/22 px au lieu de 8) et une autre hauteur (18 au lieu de 22 px) que les autres, d'où un léger saut. Même boîte au repos et au survol, sans transition : seul le surlignage change (`themes/src/ps-overrides.css`).
+- **Groupes d'outils** (`gimptoolbutton.c`, thème T03) :
+  - maintien avant ouverture : 120 ms au lieu de 250 ;
+  - clic sur le triangle du coin (tiers en bas à droite du bouton) : la liste s'ouvre aussitôt ;
+  - glisser de plus de 4 px en gardant le bouton enfoncé : la liste s'ouvre aussitôt ;
+  - inchangé : clic sur un groupe déjà actif ou clic droit = ouverture immédiate.
+
