@@ -149,6 +149,8 @@ done
 install -m 644 "$SRC/branding/chopgimp.svg" "$DEST/share/icons/hicolor/scalable/apps/gimp.svg"
 install -m 644 "$SRC/branding/splash.png" "$DATA/images/gimp-splash.png"
 install -m 644 "$SRC/branding/logo-128.png" "$DATA/images/gimp-logo.png"
+# 4.2.8 : logo de la fenêtre d'image vide (gimpdisplayshell-callbacks.c)
+install -m 644 "$SRC/branding/png/chopgimp-512.png" "$DATA/images/chopgimp-logo.png"
 for T in PS-Line Default; do
     L="$DATA/icons/$T/scalable/logo/unisize"
     [ -d "$L" ] || continue

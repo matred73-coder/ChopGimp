@@ -1752,3 +1752,9 @@ Patchs 0170 à 0173 (nouveaux commits, aucun patch réécrit).
 - **Correctif** : à 100 % (niveau d'affichage 0), un graphe avec effets ou flous (`chopgimp:layer-style-fused`, `stroke`, `satin`, `pattern-overlay`, `gegl:gblur-1d`, `median-blur`) n'est plus dessiné en brouillon mais directement au niveau 0. Le brouillon n'y faisait rien gagner : sans cache de plans au niveau 1, il coûtait presque autant que le niveau 0 (2,9 contre 3,4 ms / 100 kpx) et l'affinage doublait le travail. Brouillons inchangés en vue dézoomée et pour les graphes sans effets. `gimp_gegl_graph_is_draftable (graph, &exact)` (`gimp-gegl-graph-lock.c`), `gimp_projection_job_new` (`gimpprojection.c`), thème T11. Retour à l'ancien comportement : `CHOPGIMP_DRAFT_EFFECTS_100=1`.
 - Vérifié : banc (0 ligne transitoire sur 6 traits, temps de rendu total −27 %), 305 tests.
 - **Icône et écran de démarrage** : nouvelle image de l'utilisateur, le loup devant la pleine lune (`branding/source/loup.png`). `make_branding.py` cadre le dessin sans le halo presque transparent (alpha < 20) et place la lueur des yeux selon la nouvelle image.
+
+## 4.2.8 — Logo de la fenêtre vide
+
+- La fenêtre d'image vide (au démarrage, sans image) dessinait encore l'ancien badge « Cg » en dur dans le code. Elle affiche maintenant l'icône de l'application, le loup et la lune (`images/chopgimp-logo.png`, copie de `branding/png/chopgimp-512.png` installée par `install_data.sh`), chargée une fois ; clignotement au glisser-déposer conservé (`gimpdisplayshell-callbacks.c`, T01).
+- Vérifié : plus aucune trace de l'ancien logo (« À propos », icônes de l'application et du thème, écran de démarrage, installateur Windows : tous tirés de `branding/`). Le thème d'icônes « Legacy » de GIMP garde son Wilber d'origine, volontairement.
+

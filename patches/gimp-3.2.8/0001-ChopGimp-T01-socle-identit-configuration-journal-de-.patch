@@ -15,7 +15,7 @@ Anciens patchs : 0001, 0010, 0011, 0013, 0020, 0030, 0047, 0074, 0076.
  app/chopgimp-crash.h                     |  35 ++
  app/core/gimp-user-install.c             |  10 +-
  app/core/gimptooloptions.c               |  18 +
- app/display/gimpdisplayshell-callbacks.c |  58 +-
+ app/display/gimpdisplayshell-callbacks.c |  85 ++-
  app/errors.c                             |   9 +
  app/gimpcoreapp.h                        |   2 +-
  app/gui/gimpdbusservice.h                |   2 +-
@@ -24,7 +24,7 @@ Anciens patchs : 0001, 0010, 0011, 0013, 0020, 0030, 0047, 0074, 0076.
  app/widgets/gimpcriticaldialog.c         |  68 ++-
  app/widgets/gimpcriticaldialog.h         |   2 +
  libgimpbase/gimpenv.c                    |  18 +-
- 14 files changed, 947 insertions(+), 18 deletions(-)
+ 14 files changed, 974 insertions(+), 18 deletions(-)
  create mode 100644 app/chopgimp-crash.c
  create mode 100644 app/chopgimp-crash.h
 
@@ -873,16 +873,48 @@ index db2dafb..91a80cd 100644
      g_print ("Parsing '%s'\n", gimp_file_get_utf8_name (file));
  
 diff --git a/app/display/gimpdisplayshell-callbacks.c b/app/display/gimpdisplayshell-callbacks.c
-index 6cbd719..868fe8d 100644
+index 6cbd719..2a0cb39 100644
 --- a/app/display/gimpdisplayshell-callbacks.c
 +++ b/app/display/gimpdisplayshell-callbacks.c
-@@ -634,6 +634,62 @@ gimp_display_shell_canvas_draw_image (GimpDisplayShell *shell,
+@@ -20,6 +20,7 @@
+ #include <gegl.h>
+ #include <gtk/gtk.h>
+ 
++#include "libgimpbase/gimpbase.h"
+ #include "libgimpmath/gimpmath.h"
+ #include "libgimpwidgets/gimpwidgets.h"
+ 
+@@ -634,6 +635,88 @@ gimp_display_shell_canvas_draw_image (GimpDisplayShell *shell,
    gimp_display_shell_selection_restart (shell);
  }
  
 +/*  ChopGimp: instead of GIMP's Wilber, the empty image window shows the
-+ *  ChopGimp badge and how to get started.
++ *  ChopGimp logo (4.2.8: the application icon, images/chopgimp-logo.png,
++ *  installed by tools/install_data.sh from branding/) and how to get
++ *  started.
 + */
++static GdkPixbuf *
++chopgimp_drop_zone_logo (void)
++{
++  static GdkPixbuf *logo   = NULL;
++  static gboolean   loaded = FALSE;
++
++  if (! loaded)
++    {
++      GFile *file = gimp_data_directory_file ("images", "chopgimp-logo.png",
++                                              NULL);
++      gchar *path = g_file_get_path (file);
++
++      loaded = TRUE;
++      logo   = gdk_pixbuf_new_from_file (path, NULL);
++
++      g_free (path);
++      g_object_unref (file);
++    }
++
++  return logo;
++}
++
 +static void
 +chopgimp_draw_drop_zone (GimpDisplayShell *shell,
 +                         cairo_t          *cr)
@@ -890,40 +922,42 @@ index 6cbd719..868fe8d 100644
 +  GtkAllocation         a;
 +  PangoLayout          *layout;
 +  PangoFontDescription *font;
-+  cairo_pattern_t      *grad;
++  GdkPixbuf            *logo;
 +  gdouble               cx, cy, r;
 +  gint                  w, h;
 +
 +  gtk_widget_get_allocation (shell->canvas, &a);
 +
-+  r  = CLAMP (MIN (a.width, a.height) * 0.12, 36.0, 110.0);
++  r  = CLAMP (MIN (a.width, a.height) * 0.16, 48.0, 150.0);
 +  cx = a.width  / 2.0;
 +  cy = a.height / 2.0 - r * 0.5;
 +
-+  /* badge */
-+  grad = cairo_pattern_create_linear (cx - r, cy + r, cx + r, cy - r);
-+  cairo_pattern_add_color_stop_rgba (grad, 0.0,  0.08, 0.15, 0.38, shell->blink ? 0.9 : 0.55);
-+  cairo_pattern_add_color_stop_rgba (grad, 0.55, 0.15, 0.38, 0.86, shell->blink ? 0.9 : 0.55);
-+  cairo_pattern_add_color_stop_rgba (grad, 1.0,  0.13, 0.83, 0.93, shell->blink ? 0.9 : 0.55);
-+  cairo_arc (cr, cx, cy, r, 0, 2 * G_PI);
-+  cairo_set_source (cr, grad);
-+  cairo_fill (cr);
-+  cairo_pattern_destroy (grad);
++  /* logo */
++  logo = chopgimp_drop_zone_logo ();
 +
-+  layout = gtk_widget_create_pango_layout (shell->canvas, "Cg");
-+  font   = pango_font_description_from_string ("Sans Bold");
-+  pango_font_description_set_absolute_size (font, r * 1.05 * PANGO_SCALE);
-+  pango_layout_set_font_description (layout, font);
-+  pango_layout_get_pixel_size (layout, &w, &h);
-+  cairo_set_source_rgba (cr, 1.0, 1.0, 1.0, shell->blink ? 1.0 : 0.85);
-+  cairo_move_to (cr, cx - w / 2.0, cy - h / 2.0);
-+  pango_cairo_show_layout (cr, layout);
++  if (logo)
++    {
++      gdouble scale = 2.0 * r / MAX (gdk_pixbuf_get_width (logo),
++                                     gdk_pixbuf_get_height (logo));
++
++      cairo_save (cr);
++      cairo_translate (cr,
++                       cx - gdk_pixbuf_get_width  (logo) * scale / 2.0,
++                       cy - gdk_pixbuf_get_height (logo) * scale / 2.0);
++      cairo_scale (cr, scale, scale);
++      gdk_cairo_set_source_pixbuf (cr, logo, 0, 0);
++      cairo_pattern_set_filter (cairo_get_source (cr), CAIRO_FILTER_GOOD);
++      cairo_paint_with_alpha (cr, shell->blink ? 1.0 : 0.85);
++      cairo_restore (cr);
++    }
++
++  layout = gtk_widget_create_pango_layout (shell->canvas, NULL);
++  font   = pango_font_description_from_string ("Sans");
 +
 +  /* hints */
 +  pango_layout_set_text (layout,
 +                         _("Ctrl+O : ouvrir une image      Ctrl+N : nouveau document\n"
 +                           "ou glissez-déposez des images ici"), -1);
-+  pango_font_description_set_weight (font, PANGO_WEIGHT_NORMAL);
 +  pango_font_description_set_absolute_size (font, 13 * PANGO_SCALE);
 +  pango_layout_set_font_description (layout, font);
 +  pango_layout_set_alignment (layout, PANGO_ALIGN_CENTER);
@@ -939,7 +973,7 @@ index 6cbd719..868fe8d 100644
  static void
  gimp_display_shell_canvas_draw_drop_zone (GimpDisplayShell *shell,
                                            cairo_t          *cr)
-@@ -642,7 +698,7 @@ gimp_display_shell_canvas_draw_drop_zone (GimpDisplayShell *shell,
+@@ -642,7 +725,7 @@ gimp_display_shell_canvas_draw_drop_zone (GimpDisplayShell *shell,
  
    gimp_display_shell_draw_background (shell, cr);
  
