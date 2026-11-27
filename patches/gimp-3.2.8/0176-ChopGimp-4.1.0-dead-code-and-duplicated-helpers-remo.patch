@@ -1,0 +1,1954 @@
+From a1c326b1523542f0600cd646063a2469dd90929f Mon Sep 17 00:00:00 2001
+From: ChopGimp <mathieu.redon@proton.me>
+Date: Fri, 27 Nov 2026 06:25:34 +0100
+Subject: [PATCH 176/177] ChopGimp 4.1.0: dead code and duplicated helpers
+ removed
+
+- 8 exported functions never called (artboards copy / set, crash log
+  path, recolor image, timelapse state, interactive state, click group
+  getter, vsel halt)
+- new app/path/chopgimp-vutil.c: spec parsing and writing (word, number,
+  body, signature), number writing, path of an object in a group, coords
+  and anchors box, formerly copied in vbrush, vrepeat, vmaterial,
+  vcolors, vobject, vlivepaint and the shape and pen tools
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ app/chopgimp-crash.c             |   6 -
+ app/chopgimp-crash.h             |   1 -
+ app/core/chopgimp-artboards.c    |  30 ----
+ app/core/chopgimp-artboards.h    |   9 --
+ app/gui/chopgimp-timelapse.c     |   6 -
+ app/gui/chopgimp-timelapse.h     |   1 -
+ app/path/chopgimp-vbrush.c       | 248 +++++++------------------------
+ app/path/chopgimp-vcolors.c      |  15 +-
+ app/path/chopgimp-vlivepaint.c   |  43 +-----
+ app/path/chopgimp-vmaterial.c    |  71 +++------
+ app/path/chopgimp-vobject.c      |  79 ++++------
+ app/path/chopgimp-vobject.h      |   1 -
+ app/path/chopgimp-vrecolor.c     |   6 -
+ app/path/chopgimp-vrecolor.h     |   1 -
+ app/path/chopgimp-vrepeat.c      | 139 +++--------------
+ app/path/chopgimp-vutil.c        | 188 +++++++++++++++++++++++
+ app/path/chopgimp-vutil.h        |  53 +++++++
+ app/path/meson.build             |   1 +
+ app/tools/chopgimp-shapetool.c   |  83 +++++------
+ app/tools/chopgimp-vobjecttool.c |  17 ---
+ app/tools/chopgimp-vobjecttool.h |   2 -
+ app/tools/chopgimp-vpentools.c   |  20 +--
+ 22 files changed, 405 insertions(+), 615 deletions(-)
+ create mode 100644 app/path/chopgimp-vutil.c
+ create mode 100644 app/path/chopgimp-vutil.h
+
+diff --git a/app/chopgimp-crash.c b/app/chopgimp-crash.c
+index 93e9c7b..9d034c7 100644
+--- a/app/chopgimp-crash.c
++++ b/app/chopgimp-crash.c
+@@ -663,12 +663,6 @@ chopgimp_crash_note_images (const gchar *summary)
+ #endif
+ }
+ 
+-const gchar *
+-chopgimp_crash_log_path (void)
+-{
+-  return log_path;
+-}
+-
+ const gchar *
+ chopgimp_crash_dir (void)
+ {
+diff --git a/app/chopgimp-crash.h b/app/chopgimp-crash.h
+index 60285ba..bc2d2de 100644
+--- a/app/chopgimp-crash.h
++++ b/app/chopgimp-crash.h
+@@ -25,7 +25,6 @@ void   chopgimp_crash_log_line      (const gchar *format,
+                                      ...) G_GNUC_PRINTF (1, 2);
+ 
+ /*  chemin du journal de la session (NULL si désactivé)  */
+-const gchar * chopgimp_crash_log_path      (void);
+ const gchar * chopgimp_crash_dir           (void);
+ 
+ /*  rapport de la session précédente non encore vu (à libérer) ou NULL ;
+diff --git a/app/core/chopgimp-artboards.c b/app/core/chopgimp-artboards.c
+index cdec492..ea58e9c 100644
+--- a/app/core/chopgimp-artboards.c
++++ b/app/core/chopgimp-artboards.c
+@@ -58,22 +58,6 @@ chopgimp_artboards_new_array (void)
+   return a;
+ }
+ 
+-GArray *
+-chopgimp_artboards_copy (GArray *boards)
+-{
+-  GArray *a = chopgimp_artboards_new_array ();
+-
+-  for (guint i = 0; boards && i < boards->len; i++)
+-    {
+-      ChopGimpArtboard b = g_array_index (boards, ChopGimpArtboard, i);
+-
+-      b.name = g_strdup (b.name);
+-      g_array_append_val (a, b);
+-    }
+-
+-  return a;
+-}
+-
+ void
+ chopgimp_artboards_free (GArray *boards)
+ {
+@@ -357,20 +341,6 @@ artboards_write (GimpImage   *image,
+     }
+ }
+ 
+-void
+-chopgimp_artboards_set (GimpImage   *image,
+-                        GArray      *boards,
+-                        gint         active,
+-                        const gchar *undo_desc)
+-{
+-  g_return_if_fail (GIMP_IS_IMAGE (image));
+-
+-  if (boards && boards->len)
+-    active = CLAMP (active, -1, (gint) boards->len - 1);
+-
+-  artboards_write (image, boards, active, undo_desc, FALSE);
+-}
+-
+ gint
+ chopgimp_artboards_get_active (GimpImage *image)
+ {
+diff --git a/app/core/chopgimp-artboards.h b/app/core/chopgimp-artboards.h
+index 688a9ec..452dd7a 100644
+--- a/app/core/chopgimp-artboards.h
++++ b/app/core/chopgimp-artboards.h
+@@ -54,7 +54,6 @@ GArray   * chopgimp_artboards_parse          (const gchar      *data,
+ gchar    * chopgimp_artboards_serialize      (GArray           *boards,
+                                               gint              active);
+ GArray   * chopgimp_artboards_new_array      (void);
+-GArray   * chopgimp_artboards_copy           (GArray           *boards);
+ void       chopgimp_artboards_free           (GArray           *boards);
+ /*  « 1-3, 5 » (1-based) → @selected[n]; empty or NULL: all; FALSE on a
+  *  syntax error
+@@ -76,14 +75,6 @@ gint       chopgimp_artboards_count          (GimpImage        *image);
+ gboolean   chopgimp_artboards_get_nth        (GimpImage        *image,
+                                               gint              index,
+                                               ChopGimpArtboard *board);
+-/*  replaces them all; @undo_desc NULL: no undo step (empty array: the
+- *  parasite is removed)
+- */
+-void       chopgimp_artboards_set            (GimpImage        *image,
+-                                              GArray           *boards,
+-                                              gint              active,
+-                                              const gchar      *undo_desc);
+-
+ gint       chopgimp_artboards_get_active     (GimpImage        *image);
+ /*  not undoable (the panel / tool selection)  */
+ void       chopgimp_artboards_set_active     (GimpImage        *image,
+diff --git a/app/gui/chopgimp-timelapse.c b/app/gui/chopgimp-timelapse.c
+index d0fb825..bd84cff 100644
+--- a/app/gui/chopgimp-timelapse.c
++++ b/app/gui/chopgimp-timelapse.c
+@@ -112,12 +112,6 @@ tick (gpointer data)
+   return G_SOURCE_CONTINUE;
+ }
+ 
+-gboolean
+-chopgimp_timelapse_is_recording (void)
+-{
+-  return timer != 0;
+-}
+-
+ void
+ chopgimp_timelapse_set_recording (Gimp     *gimp,
+                                   gboolean  recording)
+diff --git a/app/gui/chopgimp-timelapse.h b/app/gui/chopgimp-timelapse.h
+index 23c75a3..8d7da42 100644
+--- a/app/gui/chopgimp-timelapse.h
++++ b/app/gui/chopgimp-timelapse.h
+@@ -2,6 +2,5 @@
+ 
+ #pragma once
+ 
+-gboolean   chopgimp_timelapse_is_recording  (void);
+ void       chopgimp_timelapse_set_recording (Gimp     *gimp,
+                                              gboolean  recording);
+diff --git a/app/path/chopgimp-vbrush.c b/app/path/chopgimp-vbrush.c
+index 9fdff6c..5067db5 100644
+--- a/app/path/chopgimp-vbrush.c
++++ b/app/path/chopgimp-vbrush.c
+@@ -36,6 +36,7 @@
+ #include "gimpvectorlayer.h"
+ #include "chopgimp-geom.h"
+ #include "chopgimp-vobject.h"
++#include "chopgimp-vutil.h"
+ #include "chopgimp-vobject-ops.h"
+ #include "chopgimp-vbrush.h"
+ 
+@@ -62,66 +63,6 @@ static gchar *defined_art = NULL;
+ 
+ /*  ─── helpers ───────────────────────────────────────────────────────── */
+ 
+-static void
+-put_dbl (GString     *s,
+-         const gchar *key,
+-         gdouble      v)
+-{
+-  gchar buf[G_ASCII_DTOSTR_BUF_SIZE];
+-
+-  g_string_append_printf (s, " %s=%s", key,
+-                          g_ascii_formatd (buf, sizeof (buf), "%.6g", v));
+-}
+-
+-static gchar *
+-spec_word (const gchar *spec,
+-           const gchar *key)
+-{
+-  gchar **words = g_strsplit (spec ? spec : "", " ", -1);
+-  gchar  *value = NULL;
+-  gsize   len   = strlen (key);
+-
+-  for (gint i = 0; words[i] && ! value; i++)
+-    if (! strncmp (words[i], key, len) && words[i][len] == '=')
+-      value = g_strdup (words[i] + len + 1);
+-
+-  g_strfreev (words);
+-
+-  return value;
+-}
+-
+-static gdouble
+-spec_dbl (const gchar *spec,
+-          const gchar *key,
+-          gdouble      def)
+-{
+-  gchar   *v = spec_word (spec, key);
+-  gdouble  d = v ? g_ascii_strtod (v, NULL) : def;
+-
+-  g_free (v);
+-
+-  return isfinite (d) ? d : def;
+-}
+-
+-static gchar *
+-spec_body (const gchar *spec)
+-{
+-  gchar  **words = g_strsplit (spec ? spec : "", " ", -1);
+-  GString *s     = g_string_new (NULL);
+-
+-  for (gint i = 0; words[i]; i++)
+-    if (strncmp (words[i], "sig=", 4))
+-      {
+-        if (s->len)
+-          g_string_append_c (s, ' ');
+-        g_string_append (s, words[i]);
+-      }
+-
+-  g_strfreev (words);
+-
+-  return g_string_free (s, FALSE);
+-}
+-
+ static gboolean
+ is_brush_group (ChopGimpVObject *o)
+ {
+@@ -171,36 +112,6 @@ group_of_selection (GimpVectorLayer *layer)
+   return g;
+ }
+ 
+-static GimpPath *
+-path_in (GimpVectorLayer *layer,
+-         ChopGimpVObject *o,
+-         ChopGimpVObject *g)
+-{
+-  GimpPath    *wp = chopgimp_vobject_get_world_path (layer, o, TRUE);
+-  GimpMatrix3  inv;
+-
+-  if (! wp)
+-    return NULL;
+-
+-  chopgimp_vobject_get_world_matrix (g, &inv);
+-  gimp_matrix3_invert (&inv);
+-  chopgimp_vpath_transform (wp, &inv);
+-
+-  return wp;
+-}
+-
+-static GimpCoords
+-xy_coords (gdouble x,
+-           gdouble y)
+-{
+-  GimpCoords c = GIMP_COORDS_DEFAULT_VALUES;
+-
+-  c.x = x;
+-  c.y = y;
+-
+-  return c;
+-}
+-
+ 
+ /*  ─── spines: the sub-paths as polylines with arc length ───────────── */
+ 
+@@ -518,7 +429,7 @@ static void
+ spec_get (const gchar           *spec,
+           ChopGimpVBrushOptions *o)
+ {
+-  gchar *type = spec_word (spec, "type");
++  gchar *type = chopgimp_spec_word (spec, "type");
+   gint   t    = CHOPGIMP_VBRUSH_CALLIGRAPHIC;
+ 
+   for (gint i = 0; i < (gint) G_N_ELEMENTS (type_names); i++)
+@@ -529,23 +440,23 @@ spec_get (const gchar           *spec,
+ 
+   chopgimp_vbrush_default_options (t, o);
+ 
+-  o->angle      = spec_dbl (spec, "angle", o->angle);
+-  o->roundness  = spec_dbl (spec, "round", o->roundness);
+-  o->size       = spec_dbl (spec, "size", o->size);
+-  o->spacing    = spec_dbl (spec, "spacing", o->spacing);
+-  o->scatter    = spec_dbl (spec, "scatter", o->scatter);
+-  o->rotation   = spec_dbl (spec, "rotation", o->rotation);
+-  o->size_var   = spec_dbl (spec, "sizevar", o->size_var);
+-  o->follow     = spec_dbl (spec, "follow", o->follow) != 0.0;
+-  o->flip       = spec_dbl (spec, "flip", o->flip) != 0.0;
+-  o->colorize   = spec_dbl (spec, "tint", o->colorize) != 0.0;
+-  o->seed       = (gint) spec_dbl (spec, "seed", o->seed);
+-  o->angle_mode = (gint) spec_dbl (spec, "am", 0);
+-  o->round_mode = (gint) spec_dbl (spec, "rm", 0);
+-  o->diam_mode  = (gint) spec_dbl (spec, "dm", 0);
+-  o->angle_var  = spec_dbl (spec, "av", 0);
+-  o->round_var  = spec_dbl (spec, "rv", 0);
+-  o->diam_var   = spec_dbl (spec, "dv", 0);
++  o->angle      = chopgimp_spec_dbl (spec, "angle", o->angle);
++  o->roundness  = chopgimp_spec_dbl (spec, "round", o->roundness);
++  o->size       = chopgimp_spec_dbl (spec, "size", o->size);
++  o->spacing    = chopgimp_spec_dbl (spec, "spacing", o->spacing);
++  o->scatter    = chopgimp_spec_dbl (spec, "scatter", o->scatter);
++  o->rotation   = chopgimp_spec_dbl (spec, "rotation", o->rotation);
++  o->size_var   = chopgimp_spec_dbl (spec, "sizevar", o->size_var);
++  o->follow     = chopgimp_spec_dbl (spec, "follow", o->follow) != 0.0;
++  o->flip       = chopgimp_spec_dbl (spec, "flip", o->flip) != 0.0;
++  o->colorize   = chopgimp_spec_dbl (spec, "tint", o->colorize) != 0.0;
++  o->seed       = (gint) chopgimp_spec_dbl (spec, "seed", o->seed);
++  o->angle_mode = (gint) chopgimp_spec_dbl (spec, "am", 0);
++  o->round_mode = (gint) chopgimp_spec_dbl (spec, "rm", 0);
++  o->diam_mode  = (gint) chopgimp_spec_dbl (spec, "dm", 0);
++  o->angle_var  = chopgimp_spec_dbl (spec, "av", 0);
++  o->round_var  = chopgimp_spec_dbl (spec, "rv", 0);
++  o->diam_var   = chopgimp_spec_dbl (spec, "dv", 0);
+ 
+   options_sanitize (o);
+ }
+@@ -618,20 +529,20 @@ spec_compose (const ChopGimpVBrushOptions *opts,
+   options_sanitize (&o);
+ 
+   g_string_append_printf (s, " type=%s", type_names[o.type]);
+-  put_dbl (s, "size", o.size);
++  chopgimp_spec_put_dbl (s, "size", o.size);
+ 
+   switch (o.type)
+     {
+     case CHOPGIMP_VBRUSH_CALLIGRAPHIC:
+-      put_dbl (s, "angle", o.angle);
+-      put_dbl (s, "round", o.roundness);
++      chopgimp_spec_put_dbl (s, "angle", o.angle);
++      chopgimp_spec_put_dbl (s, "round", o.roundness);
+       if (o.angle_mode || o.round_mode || o.diam_mode)
+         {
+           g_string_append_printf (s, " am=%d rm=%d dm=%d seed=%d",
+                                   o.angle_mode, o.round_mode, o.diam_mode, o.seed);
+-          put_dbl (s, "av", o.angle_var);
+-          put_dbl (s, "rv", o.round_var);
+-          put_dbl (s, "dv", o.diam_var);
++          chopgimp_spec_put_dbl (s, "av", o.angle_var);
++          chopgimp_spec_put_dbl (s, "rv", o.round_var);
++          chopgimp_spec_put_dbl (s, "dv", o.diam_var);
+         }
+       break;
+ 
+@@ -640,15 +551,15 @@ spec_compose (const ChopGimpVBrushOptions *opts,
+       break;
+ 
+     case CHOPGIMP_VBRUSH_PATTERN:
+-      put_dbl (s, "spacing", o.spacing);
++      chopgimp_spec_put_dbl (s, "spacing", o.spacing);
+       g_string_append_printf (s, " flip=%d tint=%d", o.flip ? 1 : 0, o.colorize ? 1 : 0);
+       break;
+ 
+     case CHOPGIMP_VBRUSH_SCATTER:
+-      put_dbl (s, "spacing", o.spacing);
+-      put_dbl (s, "scatter", o.scatter);
+-      put_dbl (s, "rotation", o.rotation);
+-      put_dbl (s, "sizevar", o.size_var);
++      chopgimp_spec_put_dbl (s, "spacing", o.spacing);
++      chopgimp_spec_put_dbl (s, "scatter", o.scatter);
++      chopgimp_spec_put_dbl (s, "rotation", o.rotation);
++      chopgimp_spec_put_dbl (s, "sizevar", o.size_var);
+       g_string_append_printf (s, " follow=%d tint=%d seed=%d",
+                               o.follow ? 1 : 0, o.colorize ? 1 : 0, o.seed);
+       break;
+@@ -694,37 +605,37 @@ builtin_art (GimpImage          *image,
+ 
+   if (type == CHOPGIMP_VBRUSH_PATTERN)
+     {
+-      a  = xy_coords (0, 0);
++      a  = chopgimp_coords (0, 0);
+       st = gimp_bezier_stroke_new_moveto (&a);
+-      a  = xy_coords (5, -4);
++      a  = chopgimp_coords (5, -4);
+       gimp_bezier_stroke_lineto (st, &a);
+-      a  = xy_coords (10, 0);
++      a  = chopgimp_coords (10, 0);
+       gimp_bezier_stroke_lineto (st, &a);
+-      a  = xy_coords (5, 4);
++      a  = chopgimp_coords (5, 4);
+       gimp_bezier_stroke_lineto (st, &a);
+     }
+   else if (type == CHOPGIMP_VBRUSH_SCATTER)
+     {
+       const gdouble r = 5.0, k = 0.5523 * 5.0;
+ 
+-      a  = xy_coords (r, 0);
++      a  = chopgimp_coords (r, 0);
+       st = gimp_bezier_stroke_new_moveto (&a);
+-      a = xy_coords (r, k);  b = xy_coords (k, r);  c = xy_coords (0, r);
++      a = chopgimp_coords (r, k);  b = chopgimp_coords (k, r);  c = chopgimp_coords (0, r);
+       gimp_bezier_stroke_cubicto (st, &a, &b, &c);
+-      a = xy_coords (-k, r); b = xy_coords (-r, k); c = xy_coords (-r, 0);
++      a = chopgimp_coords (-k, r); b = chopgimp_coords (-r, k); c = chopgimp_coords (-r, 0);
+       gimp_bezier_stroke_cubicto (st, &a, &b, &c);
+-      a = xy_coords (-r, -k); b = xy_coords (-k, -r); c = xy_coords (0, -r);
++      a = chopgimp_coords (-r, -k); b = chopgimp_coords (-k, -r); c = chopgimp_coords (0, -r);
+       gimp_bezier_stroke_cubicto (st, &a, &b, &c);
+-      a = xy_coords (k, -r); b = xy_coords (r, -k); c = xy_coords (r, 0);
++      a = chopgimp_coords (k, -r); b = chopgimp_coords (r, -k); c = chopgimp_coords (r, 0);
+       gimp_bezier_stroke_cubicto (st, &a, &b, &c);
+     }
+   else
+     {
+-      a  = xy_coords (0, 0);
++      a  = chopgimp_coords (0, 0);
+       st = gimp_bezier_stroke_new_moveto (&a);
+-      a = xy_coords (30, -3); b = xy_coords (70, -3); c = xy_coords (100, 0);
++      a = chopgimp_coords (30, -3); b = chopgimp_coords (70, -3); c = chopgimp_coords (100, 0);
+       gimp_bezier_stroke_cubicto (st, &a, &b, &c);
+-      a = xy_coords (70, 3); b = xy_coords (30, 3); c = xy_coords (0, 0);
++      a = chopgimp_coords (70, 3); b = chopgimp_coords (30, 3); c = chopgimp_coords (0, 0);
+       gimp_bezier_stroke_cubicto (st, &a, &b, &c);
+     }
+ 
+@@ -752,7 +663,7 @@ art_of (GimpImage          *image,
+         const gchar        *key,
+         ChopGimpVBrushType  type)
+ {
+-  gchar           *b64  = spec_word (spec, key);
++  gchar           *b64  = chopgimp_spec_word (spec, key);
+   ChopGimpVObject *root = NULL;
+   gdouble          b[4];
+ 
+@@ -861,7 +772,7 @@ ellipse_stroke (gdouble cx,
+     {
+       gdouble x = u[i][0] * a, y = u[i][1] * b;
+ 
+-      p[i] = xy_coords (cx + x * co - y * si, cy + x * si + y * co);
++      p[i] = chopgimp_coords (cx + x * co - y * si, cy + x * si + y * co);
+     }
+ 
+   st = gimp_bezier_stroke_new_moveto (&p[0]);
+@@ -1504,24 +1415,6 @@ scatter_part (GimpImage                   *image,
+   return group;
+ }
+ 
+-static gchar *
+-signature (ChopGimpVObject *g,
+-           ChopGimpVObject *key)
+-{
+-  GList *one  = g_list_prepend (NULL, key);
+-  gchar *xml  = chopgimp_vobjects_to_xml (one);
+-  gchar *body = spec_body (g->blend);
+-  gchar *all  = g_strconcat (body, "\n", xml, NULL);
+-  gchar *sig  = g_compute_checksum_for_string (G_CHECKSUM_MD5, all, -1);
+-
+-  g_free (all);
+-  g_free (body);
+-  g_free (xml);
+-  g_list_free (one);
+-
+-  return sig;
+-}
+-
+ static gboolean
+ brush_regen (GimpVectorLayer *layer,
+              ChopGimpVObject *g,
+@@ -1569,8 +1462,8 @@ brush_regen (GimpVectorLayer *layer,
+       force = TRUE;
+     }
+ 
+-  sig = signature (g, key);
+-  old = spec_word (g->blend, "sig");
++  sig = chopgimp_spec_signature (g, key);
++  old = chopgimp_spec_word (g->blend, "sig");
+ 
+   if (! force && ! g_strcmp0 (sig, old))
+     {
+@@ -1583,7 +1476,7 @@ brush_regen (GimpVectorLayer *layer,
+ 
+   spec_get (g->blend, &opts);
+   arts  = spec_arts (g->blend);
+-  def   = spec_word (g->blend, "def");
++  def   = chopgimp_spec_word (g->blend, "def");
+   width = (e && e->width > 0.0) ? e->width : 1.0;
+ 
+   if (e && e->paint.type != CHOPGIMP_PAINT_NONE)
+@@ -1598,7 +1491,7 @@ brush_regen (GimpVectorLayer *layer,
+       g_object_unref (black);
+     }
+ 
+-  spine = path_in (layer, key, g);
++  spine = chopgimp_vobject_path_in (layer, key, g);
+ 
+   if (spine)
+     {
+@@ -2332,7 +2225,7 @@ collect_def_users (ChopGimpVObject  *o,
+ 
+   if (is_brush_group (o))
+     {
+-      gchar *def = spec_word (o->blend, "def");
++      gchar *def = chopgimp_spec_word (o->blend, "def");
+ 
+       if (! g_strcmp0 (def, id))
+         *list = g_list_prepend (*list, o);
+@@ -2678,8 +2571,8 @@ chopgimp_vblob_shape (GimpImage     *image,
+   else
+     {
+       /*  a click: a dot (a zero-length segment, round caps)  */
+-      GimpCoords  a = xy_coords (xy[0], xy[1]);
+-      GimpCoords  b = xy_coords (xy[0] + 0.01, xy[1]);
++      GimpCoords  a = chopgimp_coords (xy[0], xy[1]);
++      GimpCoords  b = chopgimp_coords (xy[0] + 0.01, xy[1]);
+       GimpStroke *st = gimp_bezier_stroke_new_moveto (&a);
+ 
+       gimp_bezier_stroke_lineto (st, &b);
+@@ -2722,43 +2615,6 @@ selected_or_ancestor (GimpVectorLayer *layer,
+   return FALSE;
+ }
+ 
+-static gboolean
+-path_bbox (GimpPath *path,
+-           gdouble   b[4])
+-{
+-  GimpStroke *stroke = NULL;
+-  gboolean    any    = FALSE;
+-
+-  while ((stroke = gimp_path_stroke_get_next (path, stroke)))
+-    {
+-      GArray *anchors = gimp_stroke_control_points_get (stroke, NULL);
+-
+-      for (guint k = 0; anchors && k < anchors->len; k++)
+-        {
+-          GimpAnchor *a = &g_array_index (anchors, GimpAnchor, k);
+-
+-          if (! any)
+-            {
+-              b[0] = b[2] = a->position.x;
+-              b[1] = b[3] = a->position.y;
+-              any = TRUE;
+-            }
+-          else
+-            {
+-              b[0] = MIN (b[0], a->position.x);
+-              b[1] = MIN (b[1], a->position.y);
+-              b[2] = MAX (b[2], a->position.x);
+-              b[3] = MAX (b[3], a->position.y);
+-            }
+-        }
+-
+-      if (anchors)
+-        g_array_unref (anchors);
+-    }
+-
+-  return any;
+-}
+-
+ ChopGimpVObject *
+ chopgimp_vblob_paint (GimpVectorLayer      *layer,
+                       const gdouble        *xy,
+@@ -2793,7 +2649,7 @@ chopgimp_vblob_paint (GimpVectorLayer      *layer,
+   g_ptr_array_add (paths, g_object_ref (shape));
+ 
+   /*  the free shapes of the same plain fill, no stroke, that it touches  */
+-  if (fill_key (style, key) && path_bbox (shape, sb) && ! g_getenv ("CHOPGIMP_NO_BLOB_MERGE"))
++  if (fill_key (style, key) && chopgimp_path_anchor_bbox (shape, sb) && ! g_getenv ("CHOPGIMP_NO_BLOB_MERGE"))
+     {
+       leaves = chopgimp_vlayer_get_leaves (layer);
+ 
+diff --git a/app/path/chopgimp-vcolors.c b/app/path/chopgimp-vcolors.c
+index c0e327b..bedb751 100644
+--- a/app/path/chopgimp-vcolors.c
++++ b/app/path/chopgimp-vcolors.c
+@@ -27,6 +27,7 @@
+ 
+ #include "gimpvectorlayer.h"
+ #include "chopgimp-vobject.h"
++#include "chopgimp-vutil.h"
+ #include "chopgimp-vcolors.h"
+ 
+ #include "gimp-intl.h"
+@@ -115,18 +116,6 @@ chopgimp_vcolors_init (ChopGimpVColors *reg)
+ 
+ /*  ─── text ──────────────────────────────────────────────────────────── */
+ 
+-static void
+-put_num (GString *s,
+-         gdouble  v)
+-{
+-  gchar buf[G_ASCII_DTOSTR_BUF_SIZE];
+-
+-  if (fabs (v) < 1e-12)
+-    v = 0.0;
+-
+-  g_string_append (s, g_ascii_formatd (buf, sizeof (buf), "%.12g", v));
+-}
+-
+ static gchar *
+ registry_serialize (GPtrArray *colors)
+ {
+@@ -146,7 +135,7 @@ registry_serialize (GPtrArray *colors)
+         {
+           if (k)
+             g_string_append_c (s, ' ');
+-          put_num (s, rgba[k]);
++          chopgimp_put_num (s, rgba[k]);
+         }
+       g_string_append (s, "\"/>\n");
+ 
+diff --git a/app/path/chopgimp-vlivepaint.c b/app/path/chopgimp-vlivepaint.c
+index ed151c9..3785a2c 100644
+--- a/app/path/chopgimp-vlivepaint.c
++++ b/app/path/chopgimp-vlivepaint.c
+@@ -32,6 +32,7 @@
+ #include "gimpvectorlayer.h"
+ #include "chopgimp-geom.h"
+ #include "chopgimp-vobject.h"
++#include "chopgimp-vutil.h"
+ #include "chopgimp-vlivepaint.h"
+ 
+ #include "gimp-intl.h"
+@@ -206,44 +207,6 @@ path_in_group (GimpVectorLayer *layer,
+ 
+ /*  ─── computing the regions again ───────────────────────────────────── */
+ 
+-/*  the box of the anchors of @path (FALSE: empty)  */
+-static gboolean
+-path_box (GimpPath *path,
+-          gdouble   b[4])
+-{
+-  GimpStroke *stroke = NULL;
+-  gboolean    any    = FALSE;
+-
+-  while ((stroke = gimp_path_stroke_get_next (path, stroke)))
+-    {
+-      GArray *anchors = gimp_stroke_control_points_get (stroke, NULL);
+-
+-      for (guint k = 0; anchors && k < anchors->len; k++)
+-        {
+-          GimpAnchor *a = &g_array_index (anchors, GimpAnchor, k);
+-
+-          if (! any)
+-            {
+-              b[0] = b[2] = a->position.x;
+-              b[1] = b[3] = a->position.y;
+-              any  = TRUE;
+-            }
+-          else
+-            {
+-              b[0] = MIN (b[0], a->position.x);
+-              b[1] = MIN (b[1], a->position.y);
+-              b[2] = MAX (b[2], a->position.x);
+-              b[3] = MAX (b[3], a->position.y);
+-            }
+-        }
+-
+-      if (anchors)
+-        g_array_unref (anchors);
+-    }
+-
+-  return any;
+-}
+-
+ typedef struct
+ {
+   ChopGimpVObject *o;
+@@ -432,7 +395,7 @@ lp_regen (GimpVectorLayer *layer,
+       if (! op.path)
+         continue;
+       g_object_ref_sink (op.path);
+-      op.has_box = path_box (op.path, op.box);
++      op.has_box = chopgimp_path_anchor_bbox (op.path, op.box);
+ 
+       if (role == CHOPGIMP_LIVEPAINT_FACE)
+         {
+@@ -506,7 +469,7 @@ lp_regen (GimpVectorLayer *layer,
+         gdouble  nb[4];
+         gint     best_n = 0;
+ 
+-        if (old_faces->len > 0 && path_box (faces[i], nb))
++        if (old_faces->len > 0 && chopgimp_path_anchor_bbox (faces[i], nb))
+           {
+             const gint  G    = 12;
+             gint       *hits = g_new0 (gint, old_faces->len);
+diff --git a/app/path/chopgimp-vmaterial.c b/app/path/chopgimp-vmaterial.c
+index dbf8961..6c4a015 100644
+--- a/app/path/chopgimp-vmaterial.c
++++ b/app/path/chopgimp-vmaterial.c
+@@ -37,6 +37,7 @@
+ 
+ #include "chopgimp-geom.h"
+ #include "chopgimp-vobject.h"
++#include "chopgimp-vutil.h"
+ #include "chopgimp-vmaterial.h"
+ 
+ #include "gimp-intl.h"
+@@ -2136,23 +2137,6 @@ chopgimp_vmaterial_pattern_edit (GimpVectorLayer *layer)
+   return TRUE;
+ }
+ 
+-static gchar *
+-spec_word (const gchar *spec,
+-           const gchar *key)
+-{
+-  gchar **words = g_strsplit (spec ? spec : "", " ", -1);
+-  gchar  *value = NULL;
+-  gsize   len   = strlen (key);
+-
+-  for (gint i = 0; words[i] && ! value; i++)
+-    if (! strncmp (words[i], key, len) && words[i][len] == '=')
+-      value = g_strdup (words[i] + len + 1);
+-
+-  g_strfreev (words);
+-
+-  return value;
+-}
+-
+ /*  replaces the material of every paint of @o's leaves named @name  */
+ static void
+ replace_pattern_paints (ChopGimpVObject *o,
+@@ -2203,13 +2187,13 @@ chopgimp_vmaterial_pattern_finish (GimpVectorLayer *layer)
+     return FALSE;
+ 
+   {
+-    gchar *ename = spec_word (g->blend, "name");
++    gchar *ename = chopgimp_spec_word (g->blend, "name");
+ 
+     name = ename ? g_uri_unescape_string (ename, NULL) : g_strdup ("");
+     g_free (ename);
+   }
+-  sx = spec_word (g->blend, "x");
+-  sy = spec_word (g->blend, "y");
++  sx = chopgimp_spec_word (g->blend, "x");
++  sy = chopgimp_spec_word (g->blend, "y");
+ 
+   /*  the pattern as it was (its tile settings)  */
+   specs = chopgimp_vpatterns_list (image);
+@@ -2344,20 +2328,20 @@ blend_spec_get (ChopGimpVObject      *g,
+   *value       = 0.0;
+   *orient_path = FALSE;
+ 
+-  if ((v = spec_word (g->blend, "steps")))
++  if ((v = chopgimp_spec_word (g->blend, "steps")))
+     {
+       *spacing = CHOPGIMP_BLEND_STEPS;
+       *value   = g_ascii_strtod (v, NULL);
+       g_free (v);
+     }
+-  else if ((v = spec_word (g->blend, "distance")))
++  else if ((v = chopgimp_spec_word (g->blend, "distance")))
+     {
+       *spacing = CHOPGIMP_BLEND_DISTANCE;
+       *value   = g_ascii_strtod (v, NULL);
+       g_free (v);
+     }
+ 
+-  if ((v = spec_word (g->blend, "orient")))
++  if ((v = chopgimp_spec_word (g->blend, "orient")))
+     {
+       *orient_path = ! strcmp (v, "path");
+       g_free (v);
+@@ -2391,7 +2375,7 @@ blend_spec_set (ChopGimpVObject      *g,
+ 
+   /*  3.29.1: the replaced spine (« Remplacer le tracé de base ») stays  */
+   {
+-    gchar *spine = spec_word (g->blend, "spine");
++    gchar *spine = chopgimp_spec_word (g->blend, "spine");
+ 
+     if (spine)
+       g_string_append_printf (s, " spine=%s", spine);
+@@ -2402,25 +2386,6 @@ blend_spec_set (ChopGimpVObject      *g,
+   g->blend = g_string_free (s, FALSE);
+ }
+ 
+-/*  the path of @o in the local space of the group @g (floating)  */
+-static GimpPath *
+-path_in (GimpVectorLayer *layer,
+-         ChopGimpVObject *o,
+-         ChopGimpVObject *g)
+-{
+-  GimpPath    *wp = chopgimp_vobject_get_world_path (layer, o, TRUE);
+-  GimpMatrix3  inv;
+-
+-  if (! wp)
+-    return NULL;
+-
+-  chopgimp_vobject_get_world_matrix (g, &inv);
+-  gimp_matrix3_invert (&inv);
+-  chopgimp_vpath_transform (wp, &inv);
+-
+-  return wp;
+-}
+-
+ /*  @n points evenly spaced along @stroke (GimpCoords)  */
+ static GArray *
+ resample (GimpStroke *stroke,
+@@ -2930,9 +2895,9 @@ blend_signature (GimpVectorLayer *layer,
+   gchar   *sig;
+ 
+   {
+-    gchar *steps = spec_word (g->blend, "steps");
+-    gchar *dist  = spec_word (g->blend, "distance");
+-    gchar *or    = spec_word (g->blend, "orient");
++    gchar *steps = chopgimp_spec_word (g->blend, "steps");
++    gchar *dist  = chopgimp_spec_word (g->blend, "distance");
++    gchar *or    = chopgimp_spec_word (g->blend, "orient");
+ 
+     g_string_append_printf (s, "%s|%s|%s;", steps ? steps : "", dist ? dist : "",
+                             or ? or : "");
+@@ -2945,7 +2910,7 @@ blend_signature (GimpVectorLayer *layer,
+     {
+       GList *one = g_list_prepend (NULL, g_ptr_array_index (keys, i));
+       gchar *xml = chopgimp_vobjects_to_xml (one);
+-      GimpPath *p = path_in (layer, g_ptr_array_index (keys, i), g);
++      GimpPath *p = chopgimp_vobject_path_in (layer, g_ptr_array_index (keys, i), g);
+ 
+       g_string_append (s, xml);
+ 
+@@ -2977,7 +2942,7 @@ static GArray *
+ spine_parse (const gchar *spec,
+              gdouble     *length)
+ {
+-  gchar  *v = spec_word (spec, "spine");
++  gchar  *v = chopgimp_spec_word (spec, "spine");
+   gchar **pts;
+   GArray *a;
+ 
+@@ -3234,7 +3199,7 @@ blend_regen (GimpVectorLayer *layer,
+   blend_spec_get (g, &spacing, &value, &orient);
+ 
+   sig = blend_signature (layer, g, keys);
+-  old = spec_word (g->blend, "sig");
++  old = chopgimp_spec_word (g->blend, "sig");
+ 
+   if (! force && ! g_strcmp0 (sig, old))
+     {
+@@ -3278,8 +3243,8 @@ blend_regen (GimpVectorLayer *layer,
+             {
+               ChopGimpVObject *oa = la->pdata[(guint) ((guint64) j * la->len / m)];
+               ChopGimpVObject *ob = lb->pdata[(guint) ((guint64) j * lb->len / m)];
+-              GimpPath        *qa = path_in (layer, oa, g);
+-              GimpPath        *qb = path_in (layer, ob, g);
++              GimpPath        *qa = chopgimp_vobject_path_in (layer, oa, g);
++              GimpPath        *qb = chopgimp_vobject_path_in (layer, ob, g);
+ 
+               if (qa)
+                 g_object_ref_sink (qa);
+@@ -3665,7 +3630,7 @@ chopgimp_vblend_replace_spine (GimpVectorLayer *layer)
+ 
+   g_list_free (sel);
+ 
+-  if (! spine || ! (local = path_in (layer, spine, g)))
++  if (! spine || ! (local = chopgimp_vobject_path_in (layer, spine, g)))
+     return FALSE;
+ 
+   g_object_ref_sink (local);
+@@ -3745,7 +3710,7 @@ chopgimp_vblend_replace_spine (GimpVectorLayer *layer)
+ 
+           for (guint j = 0; j < lv->len; j++)
+             {
+-              GimpPath *q = path_in (layer, lv->pdata[j], g);
++              GimpPath *q = chopgimp_vobject_path_in (layer, lv->pdata[j], g);
+ 
+               if (q)
+                 g_ptr_array_add (paths, g_object_ref_sink (q));
+diff --git a/app/path/chopgimp-vobject.c b/app/path/chopgimp-vobject.c
+index d40cfc0..b44e4ff 100644
+--- a/app/path/chopgimp-vobject.c
++++ b/app/path/chopgimp-vobject.c
+@@ -72,6 +72,7 @@
+ #include "gimpvectorlayeroptions.h"
+ #include "chopgimp-geom.h"
+ #include "chopgimp-vobject.h"
++#include "chopgimp-vutil.h"
+ #include "chopgimp-vlivepaint.h"
+ #include "chopgimp-vsymbols.h"
+ #include "chopgimp-vmaterial.h"
+@@ -171,18 +172,6 @@ chopgimp_vobjects_enabled (void)
+ 
+ /*  ─── small helpers ─────────────────────────────────────────────────── */
+ 
+-static void
+-put_num (GString *s,
+-         gdouble  v)
+-{
+-  gchar buf[G_ASCII_DTOSTR_BUF_SIZE];
+-
+-  if (fabs (v) < 1e-12)
+-    v = 0.0;
+-
+-  g_string_append (s, g_ascii_formatd (buf, sizeof (buf), "%.12g", v));
+-}
+-
+ static const gchar *
+ attr (const gchar **names,
+       const gchar **values,
+@@ -288,7 +277,7 @@ put_color (GString   *s,
+     {
+       if (i)
+         g_string_append_c (s, ' ');
+-      put_num (s, rgba[i]);
++      chopgimp_put_num (s, rgba[i]);
+     }
+ }
+ 
+@@ -498,9 +487,9 @@ put_pt (GString           *s,
+         const GimpCoords  *c)
+ {
+   g_string_append_c (s, ' ');
+-  put_num (s, c->x);
++  chopgimp_put_num (s, c->x);
+   g_string_append_c (s, ' ');
+-  put_num (s, c->y);
++  chopgimp_put_num (s, c->y);
+ }
+ 
+ static gchar *
+@@ -556,18 +545,6 @@ typedef struct
+   gboolean  open;
+ } DStroke;
+ 
+-static GimpCoords
+-mkc (gdouble x,
+-     gdouble y)
+-{
+-  GimpCoords c = GIMP_COORDS_DEFAULT_VALUES;
+-
+-  c.x = x;
+-  c.y = y;
+-
+-  return c;
+-}
+-
+ static void
+ d_flush (GimpPath *path,
+          DStroke  *ds,
+@@ -679,7 +656,7 @@ path_from_d (GimpPath    *path,
+           cy = rel ? cy + v[1] : v[1];
+           sx = cx; sy = cy;
+           {
+-            GimpCoords c = mkc (cx, cy);
++            GimpCoords c = chopgimp_coords (cx, cy);
+ 
+             g_array_append_val (ds.coords, c);
+             g_array_append_val (ds.coords, c);
+@@ -716,14 +693,14 @@ path_from_d (GimpPath    *path,
+ 
+             if (! ds.open)
+               {
+-                c = mkc (cx, cy);
++                c = chopgimp_coords (cx, cy);
+                 g_array_append_val (ds.coords, c);
+                 g_array_append_val (ds.coords, c);
+                 g_array_append_val (ds.coords, c);
+                 ds.open = TRUE;
+               }
+ 
+-            c = mkc (x, y);
++            c = chopgimp_coords (x, y);
+             g_array_append_val (ds.coords, c);
+             g_array_append_val (ds.coords, c);
+             g_array_append_val (ds.coords, c);
+@@ -749,7 +726,7 @@ path_from_d (GimpPath    *path,
+ 
+             if (! ds.open)
+               {
+-                c = mkc (cx, cy);
++                c = chopgimp_coords (cx, cy);
+                 g_array_append_val (ds.coords, c);
+                 g_array_append_val (ds.coords, c);
+                 g_array_append_val (ds.coords, c);
+@@ -757,11 +734,11 @@ path_from_d (GimpPath    *path,
+               }
+ 
+             n = ds.coords->len;
+-            g_array_index (ds.coords, GimpCoords, n - 1) = mkc (v[0], v[1]);
++            g_array_index (ds.coords, GimpCoords, n - 1) = chopgimp_coords (v[0], v[1]);
+ 
+-            c = mkc (v[2], v[3]);
++            c = chopgimp_coords (v[2], v[3]);
+             g_array_append_val (ds.coords, c);
+-            c = mkc (v[4], v[5]);
++            c = chopgimp_coords (v[4], v[5]);
+             g_array_append_val (ds.coords, c);
+             g_array_append_val (ds.coords, c);
+             cx = v[4]; cy = v[5];
+@@ -2398,7 +2375,7 @@ write_entry (GString              *s,
+       for (gint i = 0; i < 5; i++)
+         {
+           g_string_append_printf (s, " %s=\"", keys[i]);
+-          put_num (s, values[i]);
++          chopgimp_put_num (s, values[i]);
+           g_string_append_c (s, '"');
+         }
+     }
+@@ -2425,14 +2402,14 @@ write_entry (GString              *s,
+   if (e->kind == CHOPGIMP_VENTRY_STROKE)
+     {
+       g_string_append (s, " width=\"");
+-      put_num (s, e->width);
++      chopgimp_put_num (s, e->width);
+       g_string_append_printf (s, "\" align=\"%s\" cap=\"%s\" join=\"%s\" miter=\"",
+                               e->align == CHOPGIMP_STROKE_ALIGN_INSIDE  ? "inside"  :
+                               e->align == CHOPGIMP_STROKE_ALIGN_OUTSIDE ? "outside" :
+                                                                           "center",
+                               enum_to_nick (GIMP_TYPE_CAP_STYLE,  e->cap),
+                               enum_to_nick (GIMP_TYPE_JOIN_STYLE, e->join));
+-      put_num (s, e->miter_limit);
++      chopgimp_put_num (s, e->miter_limit);
+       g_string_append_c (s, '"');
+ 
+       if (e->dashes && e->dashes->len > 0)
+@@ -2442,10 +2419,10 @@ write_entry (GString              *s,
+             {
+               if (i)
+                 g_string_append_c (s, ' ');
+-              put_num (s, g_array_index (e->dashes, gdouble, i));
++              chopgimp_put_num (s, g_array_index (e->dashes, gdouble, i));
+             }
+           g_string_append (s, "\" dash-offset=\"");
+-          put_num (s, e->dash_offset);
++          chopgimp_put_num (s, e->dash_offset);
+           g_string_append_c (s, '"');
+         }
+     }
+@@ -2454,7 +2431,7 @@ write_entry (GString              *s,
+   if (e->opacity < 1.0)
+     {
+       g_string_append (s, " opacity=\"");
+-      put_num (s, e->opacity);
++      chopgimp_put_num (s, e->opacity);
+       g_string_append_c (s, '"');
+     }
+ 
+@@ -2488,7 +2465,7 @@ write_entry (GString              *s,
+       if ((e->arrow_start || e->arrow_end) && e->arrow_scale != 1.0)
+         {
+           g_string_append (s, " arrow-scale=\"");
+-          put_num (s, e->arrow_scale);
++          chopgimp_put_num (s, e->arrow_scale);
+           g_string_append_c (s, '"');
+         }
+     }
+@@ -2506,7 +2483,7 @@ write_entry (GString              *s,
+       ChopGimpGradientStop *st = &g_array_index (p->stops, ChopGimpGradientStop, i);
+ 
+       g_string_append (s, "<stop offset=\"");
+-      put_num (s, st->offset);
++      chopgimp_put_num (s, st->offset);
+       g_string_append (s, "\" color=\"");
+       put_color (s, st->color);
+       g_string_append (s, "\"/>\n");
+@@ -2545,13 +2522,13 @@ write_object (GString         *s,
+         {
+           if (i)
+             g_string_append_c (s, ' ');
+-          put_num (s, m[i]);
++          chopgimp_put_num (s, m[i]);
+         }
+       g_string_append_c (s, '"');
+     }
+ 
+   g_string_append (s, " opacity=\"");
+-  put_num (s, o->opacity);
++  chopgimp_put_num (s, o->opacity);
+   g_string_append_printf (s, "\" mode=\"%s\" visible=\"%d\" locked=\"%d\"",
+                           enum_to_nick (GIMP_TYPE_LAYER_MODE, o->mode),
+                           o->visible ? 1 : 0, o->locked ? 1 : 0);
+@@ -3695,7 +3672,7 @@ profile_outline (GimpPath             *path,
+   GimpPath    *outline;
+   gboolean     first  = TRUE;
+ 
+-  put_num (spec, e->width);
++  chopgimp_put_num (spec, e->width);
+   g_string_append (spec, "\nwidths=");
+ 
+   for (gchar **pt = points; *pt; pt++)
+@@ -3713,15 +3690,15 @@ profile_outline (GimpPath             *path,
+         g_string_append_c (spec, ',');
+       first = FALSE;
+ 
+-      put_num (spec, CLAMP (t, 0.0, 1.0));
++      chopgimp_put_num (spec, CLAMP (t, 0.0, 1.0));
+       g_string_append_c (spec, ':');
+-      put_num (spec, MAX (0.0, w) * e->width);
++      chopgimp_put_num (spec, MAX (0.0, w) * e->width);
+ 
+       /*  3.27.6: « t:left/right »  */
+       if (strchr (colon + 1, '/'))
+         {
+           g_string_append_c (spec, '/');
+-          put_num (spec, MAX (0.0, g_ascii_strtod (strchr (colon + 1, '/') + 1, NULL)) *
++          chopgimp_put_num (spec, MAX (0.0, g_ascii_strtod (strchr (colon + 1, '/') + 1, NULL)) *
+                          e->width);
+         }
+     }
+@@ -5729,12 +5706,6 @@ chopgimp_vlayer_end_interactive (GimpVectorLayer *layer)
+     }
+ }
+ 
+-gboolean
+-chopgimp_vlayer_is_interactive (GimpVectorLayer *layer)
+-{
+-  return layer && layer->vobjects && layer->vobjects->interactive > 0;
+-}
+-
+ void
+ chopgimp_vlayer_object_changed (GimpVectorLayer *layer,
+                                 ChopGimpVObject *object)
+diff --git a/app/path/chopgimp-vobject.h b/app/path/chopgimp-vobject.h
+index 8461692..d035488 100644
+--- a/app/path/chopgimp-vobject.h
++++ b/app/path/chopgimp-vobject.h
+@@ -598,7 +598,6 @@ void              chopgimp_vlayer_thaw             (GimpVectorLayer  *layer);
+  */
+ void              chopgimp_vlayer_begin_interactive (GimpVectorLayer *layer);
+ void              chopgimp_vlayer_end_interactive   (GimpVectorLayer *layer);
+-gboolean          chopgimp_vlayer_is_interactive    (GimpVectorLayer *layer);
+ /*  @object (NULL: all) was changed in place (path, style fields…)  */
+ void              chopgimp_vlayer_object_changed   (GimpVectorLayer  *layer,
+                                                     ChopGimpVObject  *object);
+diff --git a/app/path/chopgimp-vrecolor.c b/app/path/chopgimp-vrecolor.c
+index 7efde29..61e9eb3 100644
+--- a/app/path/chopgimp-vrecolor.c
++++ b/app/path/chopgimp-vrecolor.c
+@@ -490,12 +490,6 @@ chopgimp_recolor_free (ChopGimpRecolor *rc)
+   g_free (rc);
+ }
+ 
+-GimpImage *
+-chopgimp_recolor_get_image (ChopGimpRecolor *rc)
+-{
+-  return rc->image;
+-}
+-
+ ChopGimpRecolorScope
+ chopgimp_recolor_get_scope (ChopGimpRecolor *rc)
+ {
+diff --git a/app/path/chopgimp-vrecolor.h b/app/path/chopgimp-vrecolor.h
+index 14891f2..539d435 100644
+--- a/app/path/chopgimp-vrecolor.h
++++ b/app/path/chopgimp-vrecolor.h
+@@ -60,7 +60,6 @@ ChopGimpRecolor      * chopgimp_recolor_new          (GimpImage       *image);
+ /*  reverts a preview first  */
+ void                   chopgimp_recolor_free         (ChopGimpRecolor *rc);
+ 
+-GimpImage            * chopgimp_recolor_get_image    (ChopGimpRecolor *rc);
+ ChopGimpRecolorScope   chopgimp_recolor_get_scope    (ChopGimpRecolor *rc);
+ gint                   chopgimp_recolor_get_n_objects (ChopGimpRecolor *rc);
+ gint                   chopgimp_recolor_get_n_colors (ChopGimpRecolor *rc);
+diff --git a/app/path/chopgimp-vrepeat.c b/app/path/chopgimp-vrepeat.c
+index 256a8fa..043d4af 100644
+--- a/app/path/chopgimp-vrepeat.c
++++ b/app/path/chopgimp-vrepeat.c
+@@ -32,6 +32,7 @@
+ #include "gimpstroke.h"
+ #include "gimpvectorlayer.h"
+ #include "chopgimp-vobject.h"
++#include "chopgimp-vutil.h"
+ #include "chopgimp-vrepeat.h"
+ 
+ #include "gimp-intl.h"
+@@ -54,67 +55,6 @@ chopgimp_vrepeat_enabled (void)
+ 
+ /*  ─── helpers ───────────────────────────────────────────────────────── */
+ 
+-static void
+-put_dbl (GString     *s,
+-         const gchar *key,
+-         gdouble      v)
+-{
+-  gchar buf[G_ASCII_DTOSTR_BUF_SIZE];
+-
+-  g_string_append_printf (s, " %s=%s", key,
+-                          g_ascii_formatd (buf, sizeof (buf), "%.6g", v));
+-}
+-
+-static gchar *
+-spec_word (const gchar *spec,
+-           const gchar *key)
+-{
+-  gchar **words = g_strsplit (spec ? spec : "", " ", -1);
+-  gchar  *value = NULL;
+-  gsize   len   = strlen (key);
+-
+-  for (gint i = 0; words[i] && ! value; i++)
+-    if (! strncmp (words[i], key, len) && words[i][len] == '=')
+-      value = g_strdup (words[i] + len + 1);
+-
+-  g_strfreev (words);
+-
+-  return value;
+-}
+-
+-static gdouble
+-spec_dbl (const gchar *spec,
+-          const gchar *key,
+-          gdouble      def)
+-{
+-  gchar   *v = spec_word (spec, key);
+-  gdouble  d = v ? g_ascii_strtod (v, NULL) : def;
+-
+-  g_free (v);
+-
+-  return isfinite (d) ? d : def;
+-}
+-
+-/*  the spec without its signature (what the signature covers)  */
+-static gchar *
+-spec_body (const gchar *spec)
+-{
+-  gchar  **words = g_strsplit (spec ? spec : "", " ", -1);
+-  GString *s     = g_string_new (NULL);
+-
+-  for (gint i = 0; words[i]; i++)
+-    if (strncmp (words[i], "sig=", 4))
+-      {
+-        if (s->len)
+-          g_string_append_c (s, ' ');
+-        g_string_append (s, words[i]);
+-      }
+-
+-  g_strfreev (words);
+-
+-  return g_string_free (s, FALSE);
+-}
+-
+ static gboolean
+ is_repeat_group (ChopGimpVObject *o)
+ {
+@@ -193,25 +133,6 @@ selected_siblings (GimpVectorLayer *layer)
+   return list;
+ }
+ 
+-/*  the path of @o in the local space of the group @g (floating)  */
+-static GimpPath *
+-path_in (GimpVectorLayer *layer,
+-         ChopGimpVObject *o,
+-         ChopGimpVObject *g)
+-{
+-  GimpPath    *wp = chopgimp_vobject_get_world_path (layer, o, TRUE);
+-  GimpMatrix3  inv;
+-
+-  if (! wp)
+-    return NULL;
+-
+-  chopgimp_vobject_get_world_matrix (g, &inv);
+-  gimp_matrix3_invert (&inv);
+-  chopgimp_vpath_transform (wp, &inv);
+-
+-  return wp;
+-}
+-
+ /*  the box of the curves of @path (interpolated); FALSE when empty  */
+ static gboolean
+ path_box (GimpPath *path,
+@@ -257,7 +178,7 @@ source_box (GimpVectorLayer *layer,
+             ChopGimpVObject *g,
+             gdouble          b[4])
+ {
+-  GimpPath *p = path_in (layer, src, g);
++  GimpPath *p = chopgimp_vobject_path_in (layer, src, g);
+   gboolean  ok;
+ 
+   if (! p)
+@@ -330,7 +251,7 @@ static void
+ spec_get (const gchar           *spec,
+           ChopGimpRepeatOptions *o)
+ {
+-  gchar *type = spec_word (spec, "type");
++  gchar *type = chopgimp_spec_word (spec, "type");
+ 
+   chopgimp_vrepeat_default_options (CHOPGIMP_REPEAT_RADIAL, 100, 100, o);
+ 
+@@ -341,16 +262,16 @@ spec_get (const gchar           *spec,
+ 
+   g_free (type);
+ 
+-  o->count    = (gint) spec_dbl (spec, "n", o->count);
+-  o->radius   = spec_dbl (spec, "r", o->radius);
+-  o->angle    = spec_dbl (spec, "a", o->type == CHOPGIMP_REPEAT_MIRROR ? 90.0 : -90.0);
+-  o->cols     = (gint) spec_dbl (spec, "cols", o->cols);
+-  o->rows     = (gint) spec_dbl (spec, "rows", o->rows);
+-  o->hgap     = spec_dbl (spec, "hgap", o->hgap);
+-  o->vgap     = spec_dbl (spec, "vgap", o->vgap);
+-  o->flip_row = (gint) spec_dbl (spec, "frow", 0);
+-  o->flip_col = (gint) spec_dbl (spec, "fcol", 0);
+-  o->offset   = spec_dbl (spec, "off", o->offset);
++  o->count    = (gint) chopgimp_spec_dbl (spec, "n", o->count);
++  o->radius   = chopgimp_spec_dbl (spec, "r", o->radius);
++  o->angle    = chopgimp_spec_dbl (spec, "a", o->type == CHOPGIMP_REPEAT_MIRROR ? 90.0 : -90.0);
++  o->cols     = (gint) chopgimp_spec_dbl (spec, "cols", o->cols);
++  o->rows     = (gint) chopgimp_spec_dbl (spec, "rows", o->rows);
++  o->hgap     = chopgimp_spec_dbl (spec, "hgap", o->hgap);
++  o->vgap     = chopgimp_spec_dbl (spec, "vgap", o->vgap);
++  o->flip_row = (gint) chopgimp_spec_dbl (spec, "frow", 0);
++  o->flip_col = (gint) chopgimp_spec_dbl (spec, "fcol", 0);
++  o->offset   = chopgimp_spec_dbl (spec, "off", o->offset);
+ 
+   options_sanitize (o);
+ }
+@@ -370,22 +291,22 @@ spec_set (ChopGimpVObject             *g,
+     case CHOPGIMP_REPEAT_RADIAL:
+       g_string_append (s, " type=radial");
+       g_string_append_printf (s, " n=%d", o.count);
+-      put_dbl (s, "r", o.radius);
+-      put_dbl (s, "a", o.angle);
++      chopgimp_spec_put_dbl (s, "r", o.radius);
++      chopgimp_spec_put_dbl (s, "a", o.angle);
+       break;
+ 
+     case CHOPGIMP_REPEAT_GRID:
+       g_string_append (s, " type=grid");
+       g_string_append_printf (s, " cols=%d rows=%d", o.cols, o.rows);
+-      put_dbl (s, "hgap", o.hgap);
+-      put_dbl (s, "vgap", o.vgap);
++      chopgimp_spec_put_dbl (s, "hgap", o.hgap);
++      chopgimp_spec_put_dbl (s, "vgap", o.vgap);
+       g_string_append_printf (s, " frow=%d fcol=%d", o.flip_row, o.flip_col);
+       break;
+ 
+     case CHOPGIMP_REPEAT_MIRROR:
+       g_string_append (s, " type=mirror");
+-      put_dbl (s, "a", o.angle);
+-      put_dbl (s, "off", o.offset);
++      chopgimp_spec_put_dbl (s, "a", o.angle);
++      chopgimp_spec_put_dbl (s, "off", o.offset);
+       break;
+     }
+ 
+@@ -486,24 +407,6 @@ instance_matrices (const ChopGimpRepeatOptions *o,
+   return a;
+ }
+ 
+-static gchar *
+-signature (ChopGimpVObject *g,
+-           ChopGimpVObject *src)
+-{
+-  GList   *one  = g_list_prepend (NULL, src);
+-  gchar   *xml  = chopgimp_vobjects_to_xml (one);
+-  gchar   *body = spec_body (g->blend);
+-  gchar   *all  = g_strconcat (body, "\n", xml, NULL);
+-  gchar   *sig  = g_compute_checksum_for_string (G_CHECKSUM_MD5, all, -1);
+-
+-  g_free (all);
+-  g_free (body);
+-  g_free (xml);
+-  g_list_free (one);
+-
+-  return sig;
+-}
+-
+ static gboolean
+ repeat_regen (GimpVectorLayer *layer,
+               ChopGimpVObject *g,
+@@ -525,8 +428,8 @@ repeat_regen (GimpVectorLayer *layer,
+ 
+   spec_get (g->blend, &opts);
+ 
+-  sig = signature (g, src);
+-  old = spec_word (g->blend, "sig");
++  sig = chopgimp_spec_signature (g, src);
++  old = chopgimp_spec_word (g->blend, "sig");
+ 
+   if (! force && ! g_strcmp0 (sig, old))
+     {
+diff --git a/app/path/chopgimp-vutil.c b/app/path/chopgimp-vutil.c
+new file mode 100644
+index 0000000..01d26bc
+--- /dev/null
++++ b/app/path/chopgimp-vutil.c
+@@ -0,0 +1,188 @@
++/* GIMP - The GNU Image Manipulation Program
++ * chopgimp-vutil.c — ChopGimp 4.1.0: helpers shared by the vector object
++ * modules, see chopgimp-vutil.h.
++ *
++ * This program is free software: you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation; either version 3 of the License, or
++ * (at your option) any later version.
++ */
++
++#include "config.h"
++
++#include <math.h>
++#include <string.h>
++
++#include <cairo.h>
++#include <gdk-pixbuf/gdk-pixbuf.h>
++#include <gegl.h>
++
++#include "libgimpbase/gimpbase.h"
++#include "libgimpmath/gimpmath.h"
++
++#include "path-types.h"
++
++#include "gimpanchor.h"
++#include "gimppath.h"
++#include "gimpstroke.h"
++#include "gimpvectorlayer.h"
++#include "chopgimp-vobject.h"
++#include "chopgimp-vutil.h"
++
++
++gchar *
++chopgimp_spec_word (const gchar *spec,
++                    const gchar *key)
++{
++  gchar **words = g_strsplit (spec ? spec : "", " ", -1);
++  gchar  *value = NULL;
++  gsize   len   = strlen (key);
++
++  for (gint i = 0; words[i] && ! value; i++)
++    if (! strncmp (words[i], key, len) && words[i][len] == '=')
++      value = g_strdup (words[i] + len + 1);
++
++  g_strfreev (words);
++
++  return value;
++}
++
++gdouble
++chopgimp_spec_dbl (const gchar *spec,
++                   const gchar *key,
++                   gdouble      def)
++{
++  gchar   *v = chopgimp_spec_word (spec, key);
++  gdouble  d = v ? g_ascii_strtod (v, NULL) : def;
++
++  g_free (v);
++
++  return isfinite (d) ? d : def;
++}
++
++gchar *
++chopgimp_spec_body (const gchar *spec)
++{
++  gchar  **words = g_strsplit (spec ? spec : "", " ", -1);
++  GString *s     = g_string_new (NULL);
++
++  for (gint i = 0; words[i]; i++)
++    if (strncmp (words[i], "sig=", 4))
++      {
++        if (s->len)
++          g_string_append_c (s, ' ');
++        g_string_append (s, words[i]);
++      }
++
++  g_strfreev (words);
++
++  return g_string_free (s, FALSE);
++}
++
++void
++chopgimp_spec_put_dbl (GString     *s,
++                       const gchar *key,
++                       gdouble      v)
++{
++  gchar buf[G_ASCII_DTOSTR_BUF_SIZE];
++
++  g_string_append_printf (s, " %s=%s", key,
++                          g_ascii_formatd (buf, sizeof (buf), "%.6g", v));
++}
++
++gchar *
++chopgimp_spec_signature (ChopGimpVObject *g,
++                         ChopGimpVObject *src)
++{
++  GList *one  = g_list_prepend (NULL, src);
++  gchar *xml  = chopgimp_vobjects_to_xml (one);
++  gchar *body = chopgimp_spec_body (g->blend);
++  gchar *all  = g_strconcat (body, "\n", xml, NULL);
++  gchar *sig  = g_compute_checksum_for_string (G_CHECKSUM_MD5, all, -1);
++
++  g_free (all);
++  g_free (body);
++  g_free (xml);
++  g_list_free (one);
++
++  return sig;
++}
++
++void
++chopgimp_put_num (GString *s,
++                  gdouble  v)
++{
++  gchar buf[G_ASCII_DTOSTR_BUF_SIZE];
++
++  if (fabs (v) < 1e-12)
++    v = 0.0;
++
++  g_string_append (s, g_ascii_formatd (buf, sizeof (buf), "%.12g", v));
++}
++
++GimpPath *
++chopgimp_vobject_path_in (GimpVectorLayer *layer,
++                          ChopGimpVObject *o,
++                          ChopGimpVObject *g)
++{
++  GimpPath    *wp = chopgimp_vobject_get_world_path (layer, o, TRUE);
++  GimpMatrix3  inv;
++
++  if (! wp)
++    return NULL;
++
++  chopgimp_vobject_get_world_matrix (g, &inv);
++  gimp_matrix3_invert (&inv);
++  chopgimp_vpath_transform (wp, &inv);
++
++  return wp;
++}
++
++GimpCoords
++chopgimp_coords (gdouble x,
++                 gdouble y)
++{
++  GimpCoords c = GIMP_COORDS_DEFAULT_VALUES;
++
++  c.x = x;
++  c.y = y;
++
++  return c;
++}
++
++gboolean
++chopgimp_path_anchor_bbox (GimpPath *path,
++                           gdouble   b[4])
++{
++  GimpStroke *stroke = NULL;
++  gboolean    any    = FALSE;
++
++  while ((stroke = gimp_path_stroke_get_next (path, stroke)))
++    {
++      GArray *anchors = gimp_stroke_control_points_get (stroke, NULL);
++
++      for (guint k = 0; anchors && k < anchors->len; k++)
++        {
++          GimpAnchor *a = &g_array_index (anchors, GimpAnchor, k);
++
++          if (! any)
++            {
++              b[0] = b[2] = a->position.x;
++              b[1] = b[3] = a->position.y;
++              any  = TRUE;
++            }
++          else
++            {
++              b[0] = MIN (b[0], a->position.x);
++              b[1] = MIN (b[1], a->position.y);
++              b[2] = MAX (b[2], a->position.x);
++              b[3] = MAX (b[3], a->position.y);
++            }
++        }
++
++      if (anchors)
++        g_array_unref (anchors);
++    }
++
++  return any;
++}
+diff --git a/app/path/chopgimp-vutil.h b/app/path/chopgimp-vutil.h
+new file mode 100644
+index 0000000..dca5b7c
+--- /dev/null
++++ b/app/path/chopgimp-vutil.h
+@@ -0,0 +1,53 @@
++/* GIMP - The GNU Image Manipulation Program
++ * chopgimp-vutil.h — ChopGimp 4.1.0: helpers shared by the vector object
++ * modules (formerly copied in chopgimp-vbrush.c, chopgimp-vrepeat.c,
++ * chopgimp-vmaterial.c, chopgimp-vcolors.c and chopgimp-vobject.c).
++ *
++ * A « spec » is the « blend » field of a dynamic group (Transition,
++ * brush, repeat): words « key=value » separated by spaces, the last one
++ * « sig=S » being the signature of what the generated children were made
++ * from.
++ *
++ * This program is free software: you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation; either version 3 of the License, or
++ * (at your option) any later version.
++ */
++
++#pragma once
++
++
++/*  value of « @key=… » in @spec (newly allocated), NULL when absent  */
++gchar    * chopgimp_spec_word      (const gchar     *spec,
++                                    const gchar     *key);
++/*  same, as a number; @def when absent or not finite  */
++gdouble    chopgimp_spec_dbl       (const gchar     *spec,
++                                    const gchar     *key,
++                                    gdouble          def);
++/*  @spec without its « sig=… » word  */
++gchar    * chopgimp_spec_body      (const gchar     *spec);
++/*  appends « @key=@v » (%.6g, C locale) after a space  */
++void       chopgimp_spec_put_dbl   (GString         *s,
++                                    const gchar     *key,
++                                    gdouble          v);
++/*  MD5 of the spec body of @g and of the XML of @src  */
++gchar    * chopgimp_spec_signature (ChopGimpVObject *g,
++                                    ChopGimpVObject *src);
++
++/*  appends @v (%.12g, C locale, -0 and tiny values written 0)  */
++void       chopgimp_put_num        (GString         *s,
++                                    gdouble          v);
++
++/*  the world path of @o in the coordinates of the group @g  */
++GimpPath * chopgimp_vobject_path_in (GimpVectorLayer *layer,
++                                     ChopGimpVObject *o,
++                                     ChopGimpVObject *g);
++
++/*  a point with the default pressure, tilt, etc.  */
++GimpCoords chopgimp_coords          (gdouble          x,
++                                     gdouble          y);
++/*  box of the anchors and handles of @path: @b = x1, y1, x2, y2; FALSE
++ *  when it has none
++ */
++gboolean   chopgimp_path_anchor_bbox (GimpPath       *path,
++                                      gdouble         b[4]);
+diff --git a/app/path/meson.build b/app/path/meson.build
+index 1262c77..e89b48d 100644
+--- a/app/path/meson.build
++++ b/app/path/meson.build
+@@ -49,6 +49,7 @@ libapppath_sources = [
+   'chopgimp-vrecolor.c',
+   'chopgimp-vrepeat.c',
+   'chopgimp-vbrush.c',
++  'chopgimp-vutil.c',
+   'chopgimp-trace.cc',
+   'trace/depixelize/kopftracer2011.cpp',
+   'gimpanchor.c',
+diff --git a/app/tools/chopgimp-shapetool.c b/app/tools/chopgimp-shapetool.c
+index 8dc5d07..b8d057f 100644
+--- a/app/tools/chopgimp-shapetool.c
++++ b/app/tools/chopgimp-shapetool.c
+@@ -55,6 +55,7 @@
+ #include "path/gimpvectorlayeroptions.h"
+ #include "path/gimpvectorlayerundo.h"
+ #include "path/chopgimp-vobject.h"
++#include "path/chopgimp-vutil.h"
+ #include "path/chopgimp-vobject-ops.h"
+ 
+ #include "widgets/gimpwidgets-utils.h"
+@@ -356,16 +357,6 @@ shape_vertices (GimpShapeOptions *options,
+   return n;
+ }
+ 
+-static GimpCoords
+-xy (gdouble x, gdouble y)
+-{
+-  GimpCoords c = GIMP_COORDS_DEFAULT_VALUES;
+-
+-  c.x = x;
+-  c.y = y;
+-  return c;
+-}
+-
+ static GimpStroke *
+ shape_build_stroke (GimpShapeTool    *shape,
+                     GimpShapeOptions *options)
+@@ -385,15 +376,15 @@ shape_build_stroke (GimpShapeTool    *shape,
+         gdouble ex, ey;
+ 
+         shape_line_end (shape, &ex, &ey);
+-        c      = xy (shape->start_x, shape->start_y);
++        c      = chopgimp_coords (shape->start_x, shape->start_y);
+         stroke = gimp_bezier_stroke_new_moveto (&c);
+-        c      = xy (ex, ey);
++        c      = chopgimp_coords (ex, ey);
+         gimp_bezier_stroke_lineto (stroke, &c);
+       }
+       return stroke;
+ 
+     case CHOPGIMP_SHAPE_ELLIPSE:
+-      c = xy (x + w / 2, y + h / 2);
++      c = chopgimp_coords (x + w / 2, y + h / 2);
+       return gimp_bezier_stroke_new_ellipse (&c, w / 2, h / 2, 0.0);
+ 
+     case CHOPGIMP_SHAPE_ROUNDED_RECTANGLE:
+@@ -403,18 +394,18 @@ shape_build_stroke (GimpShapeTool    *shape,
+ 
+         if (r > 0.5)
+           {
+-            c = xy (x + r, y);           stroke = gimp_bezier_stroke_new_moveto (&c);
+-            c = xy (x + w - r, y);       gimp_bezier_stroke_lineto (stroke, &c);
+-            c1 = xy (x + w - r + k, y);  c2 = xy (x + w, y + r - k);  c = xy (x + w, y + r);
++            c = chopgimp_coords (x + r, y);           stroke = gimp_bezier_stroke_new_moveto (&c);
++            c = chopgimp_coords (x + w - r, y);       gimp_bezier_stroke_lineto (stroke, &c);
++            c1 = chopgimp_coords (x + w - r + k, y);  c2 = chopgimp_coords (x + w, y + r - k);  c = chopgimp_coords (x + w, y + r);
+             gimp_bezier_stroke_cubicto (stroke, &c1, &c2, &c);
+-            c = xy (x + w, y + h - r);   gimp_bezier_stroke_lineto (stroke, &c);
+-            c1 = xy (x + w, y + h - r + k);  c2 = xy (x + w - r + k, y + h);  c = xy (x + w - r, y + h);
++            c = chopgimp_coords (x + w, y + h - r);   gimp_bezier_stroke_lineto (stroke, &c);
++            c1 = chopgimp_coords (x + w, y + h - r + k);  c2 = chopgimp_coords (x + w - r + k, y + h);  c = chopgimp_coords (x + w - r, y + h);
+             gimp_bezier_stroke_cubicto (stroke, &c1, &c2, &c);
+-            c = xy (x + r, y + h);       gimp_bezier_stroke_lineto (stroke, &c);
+-            c1 = xy (x + r - k, y + h);  c2 = xy (x, y + h - r + k);  c = xy (x, y + h - r);
++            c = chopgimp_coords (x + r, y + h);       gimp_bezier_stroke_lineto (stroke, &c);
++            c1 = chopgimp_coords (x + r - k, y + h);  c2 = chopgimp_coords (x, y + h - r + k);  c = chopgimp_coords (x, y + h - r);
+             gimp_bezier_stroke_cubicto (stroke, &c1, &c2, &c);
+-            c = xy (x, y + r);           gimp_bezier_stroke_lineto (stroke, &c);
+-            c1 = xy (x, y + r - k);      c2 = xy (x + r - k, y);  c = xy (x + r, y);
++            c = chopgimp_coords (x, y + r);           gimp_bezier_stroke_lineto (stroke, &c);
++            c1 = chopgimp_coords (x, y + r - k);      c2 = chopgimp_coords (x + r - k, y);  c = chopgimp_coords (x + r, y);
+             gimp_bezier_stroke_cubicto (stroke, &c1, &c2, &c);
+             gimp_stroke_close (stroke);
+             return stroke;
+@@ -439,12 +430,12 @@ shape_build_stroke (GimpShapeTool    *shape,
+       return NULL;
+     }
+ 
+-  c      = xy (pts[0].x, pts[0].y);
++  c      = chopgimp_coords (pts[0].x, pts[0].y);
+   stroke = gimp_bezier_stroke_new_moveto (&c);
+ 
+   for (i = 1; i < n; i++)
+     {
+-      c = xy (pts[i].x, pts[i].y);
++      c = chopgimp_coords (pts[i].x, pts[i].y);
+       gimp_bezier_stroke_lineto (stroke, &c);
+     }
+ 
+@@ -501,14 +492,14 @@ shape_build_extra (GimpShapeTool    *shape,
+ 
+             if (i == 0)
+               {
+-                c  = xy (px, py);
++                c  = chopgimp_coords (px, py);
+                 st = gimp_bezier_stroke_new_moveto (&c);
+               }
+             else
+               {
+-                c1 = xy (prev_x + prev_tx, prev_y + prev_ty);
+-                c2 = xy (px - tx, py - ty);
+-                c  = xy (px, py);
++                c1 = chopgimp_coords (prev_x + prev_tx, prev_y + prev_ty);
++                c2 = chopgimp_coords (px - tx, py - ty);
++                c  = chopgimp_coords (px, py);
+                 gimp_bezier_stroke_cubicto (st, &c1, &c2, &c);
+               }
+ 
+@@ -528,26 +519,26 @@ shape_build_extra (GimpShapeTool    *shape,
+         gdouble ox = options->arc_concave ? x + w : x;
+         gdouble oy = options->arc_concave ? y + h : y;
+ 
+-        c  = xy (x, y + h);
++        c  = chopgimp_coords (x, y + h);
+         st = gimp_bezier_stroke_new_moveto (&c);
+ 
+         if (options->arc_concave)
+           {
+-            c1 = xy (x, y + h - k * h);
+-            c2 = xy (x + w - k * w, y);
++            c1 = chopgimp_coords (x, y + h - k * h);
++            c2 = chopgimp_coords (x + w - k * w, y);
+           }
+         else
+           {
+-            c1 = xy (x + k * w, y + h);
+-            c2 = xy (x + w, y + k * h);
++            c1 = chopgimp_coords (x + k * w, y + h);
++            c2 = chopgimp_coords (x + w, y + k * h);
+           }
+ 
+-        c = xy (x + w, y);
++        c = chopgimp_coords (x + w, y);
+         gimp_bezier_stroke_cubicto (st, &c1, &c2, &c);
+ 
+         if (options->arc_closed)
+           {
+-            c = xy (ox, oy);
++            c = chopgimp_coords (ox, oy);
+             gimp_bezier_stroke_lineto (st, &c);
+             gimp_stroke_close (st);
+           }
+@@ -563,28 +554,28 @@ shape_build_extra (GimpShapeTool    *shape,
+ 
+         for (gint i = 1; i < rows; i++)
+           {
+-            c  = xy (x, y + h * i / rows);
++            c  = chopgimp_coords (x, y + h * i / rows);
+             st = gimp_bezier_stroke_new_moveto (&c);
+-            c  = xy (x + w, y + h * i / rows);
++            c  = chopgimp_coords (x + w, y + h * i / rows);
+             gimp_bezier_stroke_lineto (st, &c);
+             list = g_list_append (list, st);
+           }
+ 
+         for (gint i = 1; i < cols; i++)
+           {
+-            c  = xy (x + w * i / cols, y);
++            c  = chopgimp_coords (x + w * i / cols, y);
+             st = gimp_bezier_stroke_new_moveto (&c);
+-            c  = xy (x + w * i / cols, y + h);
++            c  = chopgimp_coords (x + w * i / cols, y + h);
+             gimp_bezier_stroke_lineto (st, &c);
+             list = g_list_append (list, st);
+           }
+ 
+         if (options->grid_frame)
+           {
+-            c  = xy (x, y);         st = gimp_bezier_stroke_new_moveto (&c);
+-            c  = xy (x + w, y);     gimp_bezier_stroke_lineto (st, &c);
+-            c  = xy (x + w, y + h); gimp_bezier_stroke_lineto (st, &c);
+-            c  = xy (x, y + h);     gimp_bezier_stroke_lineto (st, &c);
++            c  = chopgimp_coords (x, y);         st = gimp_bezier_stroke_new_moveto (&c);
++            c  = chopgimp_coords (x + w, y);     gimp_bezier_stroke_lineto (st, &c);
++            c  = chopgimp_coords (x + w, y + h); gimp_bezier_stroke_lineto (st, &c);
++            c  = chopgimp_coords (x, y + h);     gimp_bezier_stroke_lineto (st, &c);
+             gimp_stroke_close (st);
+             list = g_list_append (list, st);
+           }
+@@ -602,7 +593,7 @@ shape_build_extra (GimpShapeTool    *shape,
+             if (i == rings && ! options->grid_frame)
+               break;
+ 
+-            c  = xy (cx, cy);
++            c  = chopgimp_coords (cx, cy);
+             st = gimp_bezier_stroke_new_ellipse (&c, w / 2 * i / rings,
+                                                  h / 2 * i / rings, 0.0);
+             list = g_list_append (list, st);
+@@ -612,9 +603,9 @@ shape_build_extra (GimpShapeTool    *shape,
+           {
+             gdouble a = -G_PI / 2 + 2 * G_PI * i / dividers;
+ 
+-            c  = xy (cx, cy);
++            c  = chopgimp_coords (cx, cy);
+             st = gimp_bezier_stroke_new_moveto (&c);
+-            c  = xy (cx + w / 2 * cos (a), cy + h / 2 * sin (a));
++            c  = chopgimp_coords (cx + w / 2 * cos (a), cy + h / 2 * sin (a));
+             gimp_bezier_stroke_lineto (st, &c);
+             list = g_list_append (list, st);
+           }
+diff --git a/app/tools/chopgimp-vobjecttool.c b/app/tools/chopgimp-vobjecttool.c
+index 5802ee8..28b6204 100644
+--- a/app/tools/chopgimp-vobjecttool.c
++++ b/app/tools/chopgimp-vobjecttool.c
+@@ -477,12 +477,6 @@ chopgimp_vsel_set_click_group (gboolean click_group)
+   vsel_click_group = click_group;
+ }
+ 
+-gboolean
+-chopgimp_vsel_get_click_group (void)
+-{
+-  return vsel_click_group;
+-}
+-
+ /*  3.29.3: the group of @leaf to select on a double-click: its ancestor
+  *  that is a child of the entered group (or of the root)
+  */
+@@ -711,17 +705,6 @@ chopgimp_vsel_is_active (ChopGimpVSel *vsel,
+   return vsel && image && chopgimp_vobjects_get_target_layer (image) != NULL;
+ }
+ 
+-void
+-chopgimp_vsel_halt (ChopGimpVSel *vsel)
+-{
+-  if (! vsel)
+-    return;
+-
+-  vsel_end_drag (vsel);
+-  vsel_watch (vsel, NULL);
+-  vsel_set_tip (vsel, NULL, 0, NULL);
+-}
+-
+ void
+ chopgimp_vsel_arm_style_picker (Gimp *gimp)
+ {
+diff --git a/app/tools/chopgimp-vobjecttool.h b/app/tools/chopgimp-vobjecttool.h
+index a64646d..a2239f4 100644
+--- a/app/tools/chopgimp-vobjecttool.h
++++ b/app/tools/chopgimp-vobjecttool.h
+@@ -55,7 +55,6 @@ gboolean       chopgimp_vsel_cursor_update  (ChopGimpVSel      *vsel,
+                                              GimpDisplay       *display);
+ /*  from GimpDrawTool::draw(); TRUE when it drew the objects' box  */
+ gboolean       chopgimp_vsel_draw           (ChopGimpVSel      *vsel);
+-void           chopgimp_vsel_halt           (ChopGimpVSel      *vsel);
+ 
+ /*  « Pipette de style » (Objet menu): the Move tool becomes active, the
+  *  next click on an object copies its fill and stroke to the selected
+@@ -74,4 +73,3 @@ GimpUIManager * chopgimp_vsel_get_popup      (ChopGimpVSel     *vsel,
+                                               const GimpCoords *coords,
+                                               GimpDisplay      *display,
+                                               const gchar     **ui_path);
+-gboolean       chopgimp_vsel_get_click_group  (void);
+diff --git a/app/tools/chopgimp-vpentools.c b/app/tools/chopgimp-vpentools.c
+index df9415a..358b2ef 100644
+--- a/app/tools/chopgimp-vpentools.c
++++ b/app/tools/chopgimp-vpentools.c
+@@ -59,6 +59,7 @@
+ #include "path/gimpvectorlayeroptions.h"
+ #include "path/chopgimp-geom.h"
+ #include "path/chopgimp-vobject.h"
++#include "path/chopgimp-vutil.h"
+ #include "path/chopgimp-vobject-ops.h"
+ #include "path/chopgimp-vtransform.h"
+ 
+@@ -341,17 +342,6 @@ vpen_add_object (GimpVPenTool *vt,
+ 
+ /*  ─── Courbure ──────────────────────────────────────────────────────── */
+ 
+-static GimpCoords
+-xy (gdouble x, gdouble y)
+-{
+-  GimpCoords c = GIMP_COORDS_DEFAULT_VALUES;
+-
+-  c.x = x;
+-  c.y = y;
+-
+-  return c;
+-}
+-
+ /*  the curve through the points: smooth points get Catmull-Rom handles
+  *  (1/6 of the chord between their neighbours), corner points none
+  */
+@@ -366,7 +356,7 @@ curvature_stroke (const CPoint *p,
+   if (n < 2)
+     return NULL;
+ 
+-  c  = xy (p[0].x, p[0].y);
++  c  = chopgimp_coords (p[0].x, p[0].y);
+   st = gimp_bezier_stroke_new_moveto (&c);
+ 
+   for (gint i = 0; i < n - 1 + (closed ? 1 : 0); i++)
+@@ -386,9 +376,9 @@ curvature_stroke (const CPoint *p,
+           iy = (p[b1].y - p[a].y) / 6.0;
+         }
+ 
+-      c1 = xy (p[a].x + ox, p[a].y + oy);
+-      c2 = xy (p[b].x - ix, p[b].y - iy);
+-      c  = xy (p[b].x, p[b].y);
++      c1 = chopgimp_coords (p[a].x + ox, p[a].y + oy);
++      c2 = chopgimp_coords (p[b].x - ix, p[b].y - iy);
++      c  = chopgimp_coords (p[b].x, p[b].y);
+       gimp_bezier_stroke_cubicto (st, &c1, &c2, &c);
+     }
+ 
+-- 
+2.53.0
+

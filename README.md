@@ -13,7 +13,7 @@ fichier ChopGimp s'ouvre dans un GIMP standard, qui y voit les pixels rendus.
 - **Linux** : Flatpak `org.cen_na.ChopGimp`, installé à côté d'un GIMP existant,
   avec une configuration séparée (`~/.var/app/org.cen_na.ChopGimp/`).
 - **Windows** : installateur Inno Setup ou version portable (zip).
-- **Version actuelle** : 4.0.2, la version finale du plan (4.0.0) avec la CI Windows corrigée (4.0.1) et la liste des calques qui ne passe plus sous son en-tête (voir [`VERSION`](VERSION)).
+- **Version actuelle** : 4.1.0, code allégé (interrupteurs des fonctions éprouvées retirés, code mort et doublons supprimés) sur la base de la 4.0.2 (voir [`VERSION`](VERSION)).
   Le journal détaillé est dans [`docs/SUIVI.md`](docs/SUIVI.md).
 - **Prise en main** : le [guide de l'utilisateur](docs/GUIDE.md), rangé par tâche
   (vectoriser, objets, exports, raccourcis).
@@ -341,6 +341,7 @@ Les options de compilation (`make build LTO=… PGO=… GIMP_O=…`) passent par
 | 3.32 | Interface : icônes de la boîte à outils, barre d'état « Doc », onglets de documents façon Photoshop, menus Fichier / Édition / Sélection / Fenêtres sans doublon, styles Satin et Incrustation de motif (aussi en PSD) (3.32.0, compilé en 3.99.0) |
 | 3.99 | Lots 1 à 5 compilés, corrigés et vérifiés (272 tests, banc de performance, banc graphique) ; version intermédiaire avant la 4.0 (3.99.0) |
 | 4.0 | Version finale : caches d'objets 4× plus légers, compilation LTO + PGO, recette complète au banc graphique, avertissements éliminés, thèmes lisibles, traductions des exports, interrupteurs documentés, guide de l'utilisateur (4.0.0) ; CI Windows corrigée (4.0.1) ; liste des calques jamais cachée sous son en-tête (4.0.2) |
+| 4.1 | Allègement : 14 interrupteurs retirés avec l'ancien code, code mort et doublons supprimés (`chopgimp-vutil.c`), smoke_test factorisé ; regroupement des patchs proposé (`docs/dev/PLAN-PATCHS-4.1.md`) (4.1.0) |
 
 Le détail de chaque version (ce qui est fait, vérifié, et ce qui reste) se trouve
 dans [`docs/SUIVI.md`](docs/SUIVI.md). Le plan du chantier vectoriel est dans

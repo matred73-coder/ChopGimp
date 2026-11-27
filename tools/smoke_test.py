@@ -2297,10 +2297,12 @@ try:
     # répétitions modifiables)
     try:
         import re as re18
+        # scènes de ce bloc : sans contour, épaisseur 4 par défaut
+        scene18 = functools.partial(scene, stroke=False, sw=4)
 
         # répétition radiale : 6 exemplaires autour d'un centre, puis grille,
         # miroir (la même répétition, modifiée), décomposer
-        im, vl, c = scene(400, 400, [square(180, 40, 40)])
+        im, vl, c = scene18(400, 400, [square(180, 40, 40)])
         c("select-all")
         ok_r = c("repeat-radial:6")
         x = vxml(vl)
@@ -2333,7 +2335,7 @@ try:
         im.delete()
 
         # libérer : la source seule reprend sa place
-        im, vl, c = scene(400, 400, [square(180, 40, 40)])
+        im, vl, c = scene18(400, 400, [square(180, 40, 40)])
         c("select-all"); c("repeat-radial:4"); c("select-all")
         ok_l = c("repeat-release")
         x = vxml(vl)
@@ -2342,7 +2344,7 @@ try:
         im.delete()
 
         # formes de pinceau : calligraphique (plume ronde de 20 px)
-        im, vl, c = scene(400, 200, [([(50, 100), (350, 100)], False)], fill=False, stroke=True)
+        im, vl, c = scene18(400, 200, [([(50, 100), (350, 100)], False)], fill=False, stroke=True)
         c("select-all")
         ok_c = c("brush-callig:0:100:20")
         x = vxml(vl)
@@ -2378,7 +2380,7 @@ try:
         im.delete()
 
         # illustration définie : un triangle sert de forme Art
-        im, vl, c = scene(400, 300, [([(50, 200), (350, 200)], False),
+        im, vl, c = scene18(400, 300, [([(50, 200), (350, 200)], False),
                                        ([(20, 20), (60, 20), (40, 40)], True)],
                             fill=True, stroke=True)
         c("select-at:40:25")
@@ -2398,7 +2400,7 @@ try:
 
         # Pinceau goutte : fusion avec la forme de même couleur, pas avec
         # une forme éloignée
-        im, vl, c = scene(400, 400, [square(100, 100, 60), square(20, 360, 10)])
+        im, vl, c = scene18(400, 400, [square(100, 100, 60), square(20, 360, 10)])
         x = vxml(vl)
         m = re18.search(r'<fill type="color" color="([^"]+)"', x)
         rgb = [float(v) for v in m.group(1).split()[:3]] if m else [0, 0, 0]
@@ -2415,7 +2417,7 @@ try:
 
         # 4.0.0 : calque d'un seul objet jamais modifié : clic de sélection
         # et Pinceau goutte acceptés par la PDB, comme par les outils
-        im, vl, c = scene(400, 400, [square(100, 100, 60)])
+        im, vl, c = scene18(400, 400, [square(100, 100, 60)])
         x = vxml(vl)
         m = re18.search(r'<fill type="color" color="([^"]+)"', x)
         rgb = [float(v) for v in m.group(1).split()[:3]] if m else [0, 0, 0]
@@ -2429,14 +2431,14 @@ try:
         im.delete()
 
         # répétitions : poignées (espacement de grille, nombre d'instances)
-        im, vl, c = scene(400, 400, [square(20, 20, 40)])
+        im, vl, c = scene18(400, 400, [square(20, 20, 40)])
         c("select-all"); c("repeat-grid:2:1")
         ok_h = c("repeat-handle:3:160:40")
         report(ok_h and alpha_at(vl, 180, 40) > 0 and alpha_at(vl, 90, 40) == 0,
                "3.30.0 Répétition : poignée d'espacement de la grille",
                "alpha (180,40)=%d (90,40)=%d" % (alpha_at(vl, 180, 40), alpha_at(vl, 90, 40)))
         im.delete()
-        im, vl, c = scene(400, 400, [square(180, 40, 40)])
+        im, vl, c = scene18(400, 400, [square(180, 40, 40)])
         c("select-all"); c("repeat-radial")
         ok_n = c("repeat-handle:2:260:120")
         x = vxml(vl)
@@ -2446,7 +2448,7 @@ try:
         im.delete()
 
         # calligraphique : variation aléatoire de l'angle et du diamètre
-        im, vl, c = scene(400, 200, [([(50, 100), (350, 100)], False)], fill=False, stroke=True)
+        im, vl, c = scene18(400, 200, [([(50, 100), (350, 100)], False)], fill=False, stroke=True)
         c("select-all")
         ok_cr = c("brush-callig-random:30:6")
         x = vxml(vl)
@@ -2457,7 +2459,7 @@ try:
         # panneau Formes : motif avec tuiles d'angle, de début et de fin ;
         # bibliothèque persistante (fichier) et gardée dans l'image ;
         # modifier la forme : les tracés suivent
-        im, vl, c = scene(400, 400, [([(50, 300), (300, 300), (300, 80)], False),
+        im, vl, c = scene18(400, 400, [([(50, 300), (300, 300), (300, 80)], False),
                                        square(20, 20, 10),
                                        ([(60, 20), (70, 25), (60, 30)], True)],
                             fill=True, stroke=True)

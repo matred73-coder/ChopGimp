@@ -1218,7 +1218,10 @@
                         "../patches/gimp-3.2.8/0171-ChopGimp-4.0.0-text-on-a-chosen-accent-color-in-blac.patch",
                         "../patches/gimp-3.2.8/0172-ChopGimp-4.0.0-PDF-export-layers-of-a-single-color-l.patch",
                         "../patches/gimp-3.2.8/0173-ChopGimp-4.0.0-object-bar-color-properties-declared-.patch",
-                        "../patches/gimp-3.2.8/0174-ChopGimp-4.0.2-Layers-list-keeps-at-least-its-header.patch"
+                        "../patches/gimp-3.2.8/0174-ChopGimp-4.0.2-Layers-list-keeps-at-least-its-header.patch",
+                        "../patches/gimp-3.2.8/0175-ChopGimp-4.1.0-established-features-without-their-sw.patch",
+                        "../patches/gimp-3.2.8/0176-ChopGimp-4.1.0-dead-code-and-duplicated-helpers-remo.patch",
+                        "../patches/gimp-3.2.8/0177-ChopGimp-4.1.0-sRGB-color-helpers-shared-chopgimp-vu.patch"
                     ]
                 }
             ],

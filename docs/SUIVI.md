@@ -1552,7 +1552,7 @@ Patchs 0170 à 0173 (nouveaux commits, aucun patch réécrit).
   Reproduit et vérifié au banc graphique (SVG importé en calque vectoriel,
   panneau réduit). Patch 0174.
 
-## 4.1.0 — Allègement du code (branche `next-4.1`, non compilée)
+## 4.1.0 — Allègement du code — patchs 0175 à 0177
 
 - **Interrupteurs retirés** avec l'ancien code qu'ils gardaient (fonctions livrées jusqu'à
   la 3.29.4) : `CHOPGIMP_NO_FAST_LOAD`, `NO_FAST_DRAG`, `NO_DRAG_SPRITE`, `NO_FAST_UNDO`,
@@ -1569,4 +1569,10 @@ Patchs 0170 à 0173 (nouveaux commits, aucun patch réécrit).
   et les outils Forme et Plume.
 - **smoke_test.py** : 8 aides communes au lieu de ~30 copies par section (mêmes tests).
 - **Patchs** : proposition de regroupement en 21 thèmes, `docs/dev/PLAN-PATCHS-4.1.md`.
-- Syntaxe vérifiée (`gcc -fsyntax-only`, SDK GNOME 51) ; à rebaser sur la 4.0.2 et compiler.
+- Compilé (LTO + PGO) sur la base de la 4.0.2, aucun nouvel avertissement ; smoke : 273 OK,
+  0 échec (les scènes du bloc 3.30.0 gardent leurs réglages : sans contour, épaisseur 4).
+- **Banc vectoriel** (`bench_vector.sh`, ms, cas A) : meilleure mesure 4.1.0 glisser 8,7,
+  recolorer 109,5, rendu complet 404,8, mémoire 1 345 – 1 377 Mo (4.0 : 8,6 / 104 / 420 /
+  1 371). Machine bruitée (±20 % d'une passe à l'autre) : en passes alternées avec le paquet
+  4.0.2, la 4.1.0 est égale ou plus rapide (glisser 10,4 contre 10,2 – 12,9 ; recolorer 125
+  contre 140 – 155 ; rendu 515 contre 525 – 545). Pas de régression.
