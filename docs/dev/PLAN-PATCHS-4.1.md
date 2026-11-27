@@ -1,4 +1,7 @@
-# Plan de regroupement des patchs GIMP — ChopGimp 4.1 (proposition, non appliquée)
+# Plan de regroupement des patchs GIMP — ChopGimp 4.1
+
+> **Appliqué en 4.2.1**, adapté (patchs 0174 à 0182, CMJN en thème à part, icône Windows
+> en patch séparé : 23 patchs). Organisation en vigueur : [`PATCHS.md`](PATCHS.md).
 
 État de départ : 173 patchs `patches/gimp-3.2.8/0001…0173` (4.0.1), plus le 0174 de la 4.0.2
 (panneau Calques) et les commits 4.1.0 de la branche `next-4.1` (interrupteurs retirés,

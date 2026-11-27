@@ -1,0 +1,2932 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: ChopGimp <mathieu.redon@proton.me>
+Date: Fri, 27 Nov 2026 08:34:14 +0100
+Subject: [PATCH 22/23] ChopGimp T21: fonctions Photoshop diverses
+
+Anciens patchs : 0077, 0078, 0082, 0083, 0084, 0085, 0088, 0089, 0093, 0136.
+---
+ app/actions/edit-actions.c        |  17 +-
+ app/actions/edit-commands.c       | 209 ++++++++++
+ app/actions/edit-commands.h       |   6 +
+ app/app.c                         |   6 +
+ app/config/gimpguiconfig.c        |   2 +-
+ app/core/chopgimp-layer-grow.c    | 140 +++++++
+ app/core/chopgimp-layer-grow.h    |  28 ++
+ app/dialogs/welcome-dialog.c      | 546 +++++++++++++++++---------
+ app/file/file-save.c              |  60 +++
+ app/gui/chopgimp-autosave.c       | 629 ++++++++++++++++++++++++++++++
+ app/gui/chopgimp-autosave.h       |   8 +
+ app/gui/chopgimp-timelapse.c      | 135 +++++++
+ app/gui/chopgimp-timelapse.h      |   6 +
+ app/gui/meson.build               |   2 +
+ app/paint/gimpbrushcore.c         | 133 ++++++-
+ app/plug-in/gimpplugin.c          |   7 +
+ app/tools/gimpbucketfilltool.c    |  56 +++
+ app/tools/gimptransformgridtool.h |   6 +
+ app/tools/tool_manager.c          |   7 +-
+ app/widgets/gimpaction-history.c  |  72 ++++
+ app/widgets/gimpaction-history.h  |   5 +
+ app/widgets/gimpaction.c          |   4 +
+ libgimp/gimpui.c                  |  41 ++
+ 23 files changed, 1920 insertions(+), 205 deletions(-)
+ create mode 100644 app/core/chopgimp-layer-grow.c
+ create mode 100644 app/core/chopgimp-layer-grow.h
+ create mode 100644 app/gui/chopgimp-autosave.c
+ create mode 100644 app/gui/chopgimp-autosave.h
+ create mode 100644 app/gui/chopgimp-timelapse.c
+ create mode 100644 app/gui/chopgimp-timelapse.h
+
+diff --git a/app/actions/edit-actions.c b/app/actions/edit-actions.c
+index 110b3cc..3b074c9 100644
+--- a/app/actions/edit-actions.c
++++ b/app/actions/edit-actions.c
+@@ -42,6 +42,7 @@
+ 
+ #include "actions.h"
+ #include "edit-actions.h"
++#include "vector-objects-commands.h"
+ #include "edit-commands.h"
+ 
+ #include "gimp-intl.h"
+@@ -62,6 +63,19 @@ static void   edit_actions_pattern_changed    (GimpContext     *context,
+ 
+ static const GimpActionEntry edit_actions[] =
+ {
++  /*  ChopGimp: action recorder (Photoshop « Actions »)  */
++  { "edit-macro-record", GIMP_ICON_RECORD,
++    "_Enregistrer une action (démarrer / arrêter)", NULL, { NULL },
++    "Enregistre les commandes lancées (menus, filtres, calques…) jusqu'au prochain arrêt",
++    edit_macro_record_cmd_callback,
++    NULL },
++
++  { "edit-macro-play", "media-playback-start",
++    "_Rejouer l'action", NULL, { NULL },
++    "Relance, dans l'ordre, les commandes de la dernière action enregistrée",
++    edit_macro_play_cmd_callback,
++    NULL },
++
+   { "edit-undo", GIMP_ICON_EDIT_UNDO,
+     NC_("edit-action", "_Undo"), NULL, { "<primary>Z", NULL },
+     NC_("edit-action", "Undo the last operation"),
+@@ -368,7 +382,8 @@ edit_actions_update (GimpActionGroup *group,
+   SET_SENSITIVE ("edit-named-copy-visible", drawables);
+   /*             "edit-named-paste" is always active */
+ 
+-  SET_SENSITIVE ("edit-clear",              all_writable && have_no_groups);
++  SET_SENSITIVE ("edit-clear",              (all_writable && have_no_groups) ||
++                                            (image && vector_objects_has_selection (image)));
+   SET_SENSITIVE ("edit-fill-fg",            all_writable && have_no_groups);
+   SET_SENSITIVE ("edit-fill-bg",            all_writable && have_no_groups);
+   SET_SENSITIVE ("edit-fill-pattern",       all_writable && have_no_groups);
+diff --git a/app/actions/edit-commands.c b/app/actions/edit-commands.c
+index 78a5b9c..23f88c7 100644
+--- a/app/actions/edit-commands.c
++++ b/app/actions/edit-commands.c
+@@ -42,6 +42,7 @@
+ #include "core/gimpimage.h"
+ #include "core/gimpimage-undo.h"
+ #include "core/gimprasterizable.h"
++#include "core/chopgimp-layer-grow.h"
+ 
+ #include "path/gimppath-import.h"
+ #include "path/gimpvectorlayer.h"
+@@ -55,6 +56,12 @@
+ #include "widgets/gimpmessagedialog.h"
+ #include "widgets/gimpwidgets-utils.h"
+ #include "widgets/gimpwindowstrategy.h"
++#include "widgets/gimpaction.h"
++#include "widgets/gimpaction-history.h"
++#include "widgets/gimpuimanager.h"
++#include "widgets/chopgimp-rc.h"
++
++#include "menus/menus.h"
+ 
+ #include "display/gimpdisplay.h"
+ #include "display/gimpdisplayshell.h"
+@@ -62,9 +69,13 @@
+ 
+ #include "tools/gimptools-utils.h"
+ #include "tools/tool_manager.h"
++#include "tools/tools-types.h"
++#include "tools/chopgimp-widthtool.h"
+ 
++#include "path/chopgimp-vobject-ops.h"
+ #include "actions.h"
+ #include "edit-commands.h"
++#include "vector-objects-commands.h"
+ 
+ #include "gimp-intl.h"
+ 
+@@ -90,6 +101,90 @@ static void       copy_named_visible_buffer_callback (GtkWidget     *widget,
+ 
+ /*  public functions  */
+ 
++void
++edit_macro_record_cmd_callback (GimpAction *action,
++                                GVariant   *value,
++                                gpointer    data)
++{
++  Gimp     *gimp;
++  gboolean  now;
++  return_if_no_gimp (gimp, data);
++
++  now = ! chopgimp_macro_is_recording ();
++  chopgimp_macro_set_recording (now);
++  gimp_message_literal (gimp, NULL, GIMP_MESSAGE_INFO,
++                        now ? _("Enregistrement de l'action : lancez les commandes à "
++                                "enregistrer, puis Édition > Actions > Enregistrer une action "
++                                "pour arrêter.")
++                            : _("Action enregistrée : Édition > Actions > Rejouer l'action."));
++}
++
++void
++edit_macro_play_cmd_callback (GimpAction *action,
++                              GVariant   *value,
++                              gpointer    data)
++{
++  Gimp          *gimp;
++  GimpImage     *image;
++  GimpUIManager *manager;
++  gchar        **names;
++  gint           i, played = 0;
++  return_if_no_gimp (gimp, data);
++
++  if (chopgimp_macro_is_recording ())
++    chopgimp_macro_set_recording (FALSE);
++
++  names   = chopgimp_rc_get_strings ("macro", "actions");
++  manager = menus_get_image_manager_singleton (gimp);
++
++  if (! names || ! names[0])
++    {
++      gimp_message_literal (gimp, NULL, GIMP_MESSAGE_INFO,
++                            _("Aucune action enregistrée (Édition > Actions > Enregistrer une action)."));
++      g_strfreev (names);
++      return;
++    }
++
++  /*  the whole replay is one undo step (none when nothing can run)  */
++  for (i = 0; names[i]; i++)
++    {
++      GimpAction *a = gimp_ui_manager_find_action (manager, NULL, names[i]);
++
++      if (a && gimp_action_is_sensitive (a, NULL))
++        break;
++    }
++  image = names[i] ? action_data_get_image (data) : NULL;
++  if (image)
++    {
++      g_object_ref (image);
++      gimp_image_undo_group_start (image, GIMP_UNDO_GROUP_MISC,
++                                   _("Rejouer l'action"));
++    }
++
++  for (i = 0; names[i]; i++)
++    {
++      GimpAction *a = gimp_ui_manager_find_action (manager, NULL, names[i]);
++
++      if (a && gimp_action_is_sensitive (a, NULL))
++        {
++          gimp_action_activate (a);
++          played++;
++        }
++    }
++
++  if (image)
++    {
++      gimp_image_undo_group_end (image);
++      gimp_image_flush (image);
++      g_object_unref (image);
++    }
++
++  if (played == 0)
++    gimp_message_literal (gimp, NULL, GIMP_MESSAGE_INFO,
++                          _("Aucune commande de l'action enregistrée n'est disponible ici."));
++  g_strfreev (names);
++}
++
+ void
+ edit_undo_cmd_callback (GimpAction *action,
+                         GVariant   *value,
+@@ -288,6 +383,14 @@ edit_copy_cmd_callback (GimpAction *action,
+   copy = gimp_edit_copy (image, drawables, action_data_get_context (data),
+                          FALSE, &error);
+ 
++  /*  ChopGimp 4.2.0: the selected objects of a vector layer are copied as
++   *  objects too (pasted as objects into a vector layer)
++   */
++  chopgimp_vobjects_clipboard_copy ((copy && g_list_length (drawables) == 1 &&
++                                     GIMP_IS_VECTOR_LAYER (drawables->data)) ?
++                                    drawables->data : NULL,
++                                    G_OBJECT (copy));
++
+   if (copy)
+     {
+       GimpDisplay *display = action_data_get_display (data);
+@@ -369,6 +472,79 @@ edit_paste_cmd_callback (GimpAction *action,
+   if (! display)
+     return;
+ 
++  /*  ChopGimp 4.2.0: objects copied from a vector layer, pasted into a
++   *  vector layer: new objects of it, selected
++   */
++  {
++    GList      *sel   = gimp_image_get_selected_layers (image);
++    GimpObject *clip  = gimp_clipboard_get_object (image->gimp);
++    gboolean    done  = FALSE;
++
++    if (clip && sel && ! sel->next && GIMP_IS_VECTOR_LAYER (sel->data) &&
++        paste_type != GIMP_PASTE_TYPE_NEW_LAYER                       &&
++        paste_type != GIMP_PASTE_TYPE_NEW_LAYER_IN_PLACE)
++      done = chopgimp_vobjects_clipboard_paste (sel->data, G_OBJECT (clip));
++
++    g_clear_object (&clip);
++
++    /*  ChopGimp 4.2.1: an SVG copied from Inkscape or Illustrator
++     *  (image/svg+xml, or a text holding an <svg>): objects of the active
++     *  vector layer (else of a new one), selected; not GIMP's own copies
++     */
++    if (! done && chopgimp_vobjects_enabled ()                       &&
++        paste_type != GIMP_PASTE_TYPE_NEW_LAYER                       &&
++        paste_type != GIMP_PASTE_TYPE_NEW_LAYER_IN_PLACE)
++      {
++        GtkClipboard *cb = gtk_clipboard_get_for_display (gdk_display_get_default (),
++                                                          GDK_SELECTION_CLIPBOARD);
++        gchar        *svg = NULL;
++        gsize         len = 0;
++
++        if (cb && gtk_clipboard_get_owner (cb) != G_OBJECT (image->gimp))
++          {
++            gchar *data_svg = gimp_clipboard_get_svg (image->gimp, &len);
++
++            /*  the stream is not 0-terminated  */
++            if (data_svg)
++              svg = g_strndup (data_svg, len);
++            g_free (data_svg);
++
++            if (! svg && gtk_clipboard_wait_is_text_available (cb))
++              svg = gtk_clipboard_wait_for_text (cb);
++
++            if (svg && ! chopgimp_vobjects_text_is_svg (svg))
++              g_clear_pointer (&svg, g_free);
++          }
++
++        if (svg)
++          {
++            GimpDisplayShell *shell = gimp_display_get_shell (display);
++            gboolean          in_place;
++            gdouble           center[2];
++
++            in_place = (paste_type == GIMP_PASTE_TYPE_FLOATING_IN_PLACE                 ||
++                        paste_type == GIMP_PASTE_TYPE_FLOATING_INTO_IN_PLACE            ||
++                        paste_type == GIMP_PASTE_TYPE_NEW_LAYER_OR_FLOATING_IN_PLACE    ||
++                        paste_type == GIMP_PASTE_TYPE_NEW_MERGED_LAYER_OR_FLOATING_IN_PLACE);
++
++            gimp_display_shell_untransform_xy_f (shell,
++                                                 shell->disp_width  / 2.0,
++                                                 shell->disp_height / 2.0,
++                                                 &center[0], &center[1]);
++
++            done = chopgimp_vobjects_paste_svg (image, action_data_get_context (data),
++                                                svg, in_place ? NULL : center, NULL);
++            g_free (svg);
++          }
++      }
++
++    if (done)
++      {
++        gimp_image_flush (image);
++        return;
++      }
++  }
++
+   switch (paste_type)
+     {
+     case GIMP_PASTE_TYPE_FLOATING:
+@@ -545,6 +721,23 @@ edit_clear_cmd_callback (GimpAction *action,
+ 
+   return_if_no_drawables (image, drawables, data);
+ 
++  /*  ChopGimp 3.28.2: with the Width tool, Suppr deletes its selected
++   *  width point (the key may reach this action before the tool)
++   */
++  if (chopgimp_width_tool_delete_point (tool_manager_get_active (image->gimp)))
++    {
++      g_list_free (drawables);
++      gimp_image_flush (image);
++      return;
++    }
++
++  /*  ChopGimp lot V2: Suppr deletes the selected vector objects  */
++  if (vector_objects_dispatch (image, VOBJECTS_DISPATCH_DELETE))
++    {
++      g_list_free (drawables);
++      return;
++    }
++
+   for (iter = drawables; iter; iter = iter->next)
+     /* Return if any has a locked alpha. */
+     if (! check_drawable_alpha (iter->data, data))
+@@ -648,7 +841,23 @@ edit_fill_cmd_callback (GimpAction *action,
+             }
+           else
+             {
++              GimpDisplay *display = action_data_get_display (data);
++              gchar       *warning;
++
++              /*  ChopGimp: layers have no edges (Photoshop), and say
++               *  when the result will not show as expected
++               */
++              chopgimp_layer_grow_for_fill (iter->data,
++                                            action_data_get_context (data));
+               gimp_drawable_edit_fill (iter->data, options, NULL);
++
++              if (display &&
++                  (warning = chopgimp_layer_paint_warning (iter->data)))
++                {
++                  gimp_message_literal (image->gimp, G_OBJECT (display),
++                                        GIMP_MESSAGE_WARNING, warning);
++                  g_free (warning);
++                }
+             }
+         }
+ 
+diff --git a/app/actions/edit-commands.h b/app/actions/edit-commands.h
+index 636d10a..9fc0138 100644
+--- a/app/actions/edit-commands.h
++++ b/app/actions/edit-commands.h
+@@ -18,6 +18,12 @@
+ #pragma once
+ 
+ 
++void   edit_macro_record_cmd_callback   (GimpAction *action,
++                                         GVariant   *value,
++                                         gpointer    data);
++void   edit_macro_play_cmd_callback     (GimpAction *action,
++                                         GVariant   *value,
++                                         gpointer    data);
+ void   edit_undo_cmd_callback               (GimpAction *action,
+                                              GVariant   *value,
+                                              gpointer    data);
+diff --git a/app/app.c b/app/app.c
+index bd630a2..8ef13ea 100644
+--- a/app/app.c
++++ b/app/app.c
+@@ -67,6 +67,8 @@
+ 
+ #include "gui/gimpapp.h"
+ #include "gui/gui.h"
++
++#include "widgets/chopgimp-spell.h"
+ #endif
+ 
+ #include "app.h"
+@@ -331,6 +333,10 @@ app_run (const gchar         *full_prog_name,
+ 
+   g_clear_object (&app);
+ 
++#ifndef GIMP_CONSOLE_COMPILATION
++  chopgimp_spell_exit ();
++#endif
++
+   gimp_gegl_exit (gimp);
+ 
+   errors_exit ();
+diff --git a/app/config/gimpguiconfig.c b/app/config/gimpguiconfig.c
+index 5a118f2..2057731 100644
+--- a/app/config/gimpguiconfig.c
++++ b/app/config/gimpguiconfig.c
+@@ -149,7 +149,7 @@ gimp_gui_config_class_init (GimpGuiConfigClass *klass)
+                             "move-tool-changes-active",
+                             "Move tool changes active layer",
+                             MOVE_TOOL_CHANGES_ACTIVE_BLURB,
+-                            FALSE,
++                            TRUE,   /* ChopGimp: like Photoshop's auto-select */
+                             GIMP_PARAM_STATIC_STRINGS);
+ 
+   GIMP_CONFIG_PROP_INT (object_class, PROP_FILTER_TOOL_MAX_RECENT,
+diff --git a/app/core/chopgimp-layer-grow.c b/app/core/chopgimp-layer-grow.c
+new file mode 100644
+index 0000000..24edbb6
+--- /dev/null
++++ b/app/core/chopgimp-layer-grow.c
+@@ -0,0 +1,140 @@
++/* GIMP - The GNU Image Manipulation Program
++ * chopgimp-layer-grow.c — ChopGimp: layers without edges for filling
++ *
++ * This program is free software: you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation; either version 3 of the License, or
++ * (at your option) any later version.
++ */
++
++#include "config.h"
++
++#include <gdk-pixbuf/gdk-pixbuf.h>
++#include <gegl.h>
++
++#include "libgimpbase/gimpbase.h"
++#include "libgimpmath/gimpmath.h"
++
++#include "core-types.h"
++
++#include "gimpchannel.h"
++#include "gimpcontainer.h"
++#include "gimpdrawable.h"
++#include "gimpdrawable-filters.h"
++#include "gimpimage.h"
++#include "gimpitem.h"
++#include "gimplayer.h"
++#include "gimplayer-floating-selection.h"
++#include "gimplinklayer.h"
++
++#include "path/gimpvectorlayer.h"
++#include "text/gimptextlayer.h"
++
++#include "chopgimp-layer-grow.h"
++
++
++gboolean
++chopgimp_layer_grow_for_fill (GimpDrawable *drawable,
++                              GimpContext  *context)
++{
++  GimpItem  *item;
++  GimpImage *image;
++  gint       x, y, w, h;          /*  area to fill, image coordinates  */
++  gint       lx, ly, lw, lh;      /*  layer  */
++  gint       nx1, ny1, nx2, ny2;  /*  new layer  */
++
++  if (! GIMP_IS_LAYER (drawable)                         ||
++      gimp_viewable_get_children (GIMP_VIEWABLE (drawable)) ||
++      gimp_layer_is_floating_sel (GIMP_LAYER (drawable)) ||
++      gimp_item_is_text_layer (GIMP_ITEM (drawable))     ||
++      gimp_item_is_vector_layer (GIMP_ITEM (drawable))   ||
++      gimp_item_is_link_layer (GIMP_ITEM (drawable))     ||
++      gimp_item_is_content_locked (GIMP_ITEM (drawable), NULL))
++    return FALSE;
++
++  item  = GIMP_ITEM (drawable);
++  image = gimp_item_get_image (item);
++
++  if (! gimp_item_bounds (GIMP_ITEM (gimp_image_get_mask (image)), &x, &y, &w, &h) ||
++      gimp_channel_is_empty (gimp_image_get_mask (image)))
++    {
++      x = 0;
++      y = 0;
++      w = gimp_image_get_width (image);
++      h = gimp_image_get_height (image);
++    }
++
++  /*  only what can be seen: clip to the image  */
++  if (! gimp_rectangle_intersect (x, y, w, h,
++                                  0, 0,
++                                  gimp_image_get_width (image),
++                                  gimp_image_get_height (image),
++                                  &x, &y, &w, &h))
++    return FALSE;
++
++  gimp_item_get_offset (item, &lx, &ly);
++  lw = gimp_item_get_width  (item);
++  lh = gimp_item_get_height (item);
++
++  nx1 = MIN (lx, x);
++  ny1 = MIN (ly, y);
++  nx2 = MAX (lx + lw, x + w);
++  ny2 = MAX (ly + lh, y + h);
++
++  if (nx1 == lx && ny1 == ly && nx2 == lx + lw && ny2 == ly + lh)
++    return FALSE;
++
++  gimp_item_resize (item, context, GIMP_FILL_TRANSPARENT,
++                    nx2 - nx1, ny2 - ny1, lx - nx1, ly - ny1);
++
++  return TRUE;
++}
++
++#define WARN_HIDDEN  (1 << 0)
++#define WARN_OPACITY (1 << 1)
++#define WARN_FILTERS (1 << 2)
++
++gchar *
++chopgimp_layer_paint_warning (GimpDrawable *drawable)
++{
++  guint   warned;
++  guint   reason = 0;
++  gchar  *msg    = NULL;
++
++  if (! GIMP_IS_LAYER (drawable))
++    return NULL;
++
++  warned = GPOINTER_TO_UINT (g_object_get_data (G_OBJECT (drawable),
++                                                "chopgimp-paint-warned"));
++
++  if (! gimp_item_is_visible (GIMP_ITEM (drawable)))
++    {
++      reason = WARN_HIDDEN;
++      msg = g_strdup_printf ("Le calque « %s » est masqué : ce que vous peignez ne se voit pas.",
++                             gimp_object_get_name (drawable));
++    }
++  else if (gimp_layer_get_opacity (GIMP_LAYER (drawable)) < 0.5)
++    {
++      reason = WARN_OPACITY;
++      msg = g_strdup_printf ("Le calque « %s » est à %d %% d'opacité : les couleurs paraissent pâles.",
++                             gimp_object_get_name (drawable),
++                             (gint) (gimp_layer_get_opacity (GIMP_LAYER (drawable)) * 100.0 + 0.5));
++    }
++  else if (gimp_drawable_has_visible_filters (drawable))
++    {
++      reason = WARN_FILTERS;
++      msg = g_strdup_printf ("Le calque « %s » a des filtres actifs (icône fx) : la couleur "
++                             "affichée est filtrée. Fusionnez-les pour peindre en vraies couleurs.",
++                             gimp_object_get_name (drawable));
++    }
++
++  if (! reason || (warned & reason))
++    {
++      g_free (msg);
++      return NULL;
++    }
++
++  g_object_set_data (G_OBJECT (drawable), "chopgimp-paint-warned",
++                     GUINT_TO_POINTER (warned | reason));
++  return msg;
++}
+diff --git a/app/core/chopgimp-layer-grow.h b/app/core/chopgimp-layer-grow.h
+new file mode 100644
+index 0000000..5ee0e7c
+--- /dev/null
++++ b/app/core/chopgimp-layer-grow.h
+@@ -0,0 +1,28 @@
++/* GIMP - The GNU Image Manipulation Program
++ * chopgimp-layer-grow.h — ChopGimp: layers without edges for filling
++ *
++ * This program is free software: you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation; either version 3 of the License, or
++ * (at your option) any later version.
++ */
++
++#pragma once
++
++/*  Grow (never shrink) a pixel layer so that it covers the area about to
++ *  be filled: the selection's bounds, or the whole image without a
++ *  selection, clipped to the image. Photoshop layers have no edges; in
++ *  GIMP a selection outside the layer would silently not be filled.
++ *  Does nothing for groups, text, vector, link and floating layers, and
++ *  for channels and masks. Pushes its own undo step (call it inside the
++ *  fill's undo group). Returns TRUE if the layer was resized.
++ */
++gboolean   chopgimp_layer_grow_for_fill   (GimpDrawable *drawable,
++                                           GimpContext  *context);
++
++/*  Status-bar hint when painting or filling would not show as expected:
++ *  hidden layer, low opacity, or live filters on the layer. Returns a
++ *  newly allocated message, or NULL; each reason is reported once per
++ *  layer and session.
++ */
++gchar    * chopgimp_layer_paint_warning   (GimpDrawable *drawable);
+diff --git a/app/dialogs/welcome-dialog.c b/app/dialogs/welcome-dialog.c
+index 98ad1ef..8d7a6d5 100644
+--- a/app/dialogs/welcome-dialog.c
++++ b/app/dialogs/welcome-dialog.c
+@@ -41,6 +41,11 @@
+ #include "core/gimp-utils.h"
+ #include "core/gimpcontainer.h"
+ #include "core/gimpimagefile.h"
++#include "core/gimp-gui.h"
++#include "core/gimpimage.h"
++#include "core/gimpimage-new.h"
++#include "core/gimptemplate.h"
++#include "core/gimpcontext.h"
+ 
+ #include "file/file-open.h"
+ 
+@@ -48,6 +53,7 @@
+ #include "widgets/gimphelp-ids.h"
+ #include "widgets/gimpprefsbox.h"
+ #include "widgets/gimprow.h"
++#include "widgets/gimpview.h"
+ #include "widgets/gimpuimanager.h"
+ #include "widgets/gimpwidgets-utils.h"
+ 
+@@ -109,11 +115,10 @@ static void   welcome_dialog_new_dialog_response     (GtkWidget      *dialog,
+                                                       GtkWidget      *welcome_dialog);
+ static void   welcome_dialog_open_dialog_close       (GtkWidget      *dialog,
+                                                       GtkWidget      *welcome_dialog);
+-static void   welcome_open_activated_callback        (GtkListBox     *listbox,
+-                                                      GtkListBoxRow  *row,
+-                                                      GtkWidget      *welcome_dialog);
+-static void   welcome_open_images_callback           (GtkWidget      *button,
+-                                                      GtkListBox     *listbox);
++static GtkWidget * chopgimp_welcome_heading          (const gchar     *text);
++static void   chopgimp_welcome_recent_activated      (GtkFlowBox      *flow,
++                                                      GtkFlowBoxChild *child,
++                                                      GtkWidget       *welcome_dialog);
+ static void   welcome_dialog_new_image_accelerator   (GtkAccelGroup  *accel_group,
+                                                       GObject        *accelerator_widget,
+                                                       guint           keyval,
+@@ -203,14 +208,14 @@ welcome_dialog_new (Gimp       *gimp,
+   gchar         **accels;
+ 
+   /* Translators: the %s string will be the version, e.g. "3.0". */
+-  title = g_strdup_printf (_("Welcome to GIMP %s"), GIMP_VERSION);
++  title = g_strdup (_("Bienvenue dans ChopGimp"));
+   windows = gimp_get_image_windows (gimp);
+   dialog = gimp_dialog_new (title,
+                             "gimp-welcome-dialog",
+                             windows ?  windows->data : NULL,
+                             0, gimp_standard_help_func,
+                             GIMP_HELP_WELCOME_DIALOG,
+-                            _("_Close"), GTK_RESPONSE_CLOSE,
++                            _("_Fermer"), GTK_RESPONSE_CLOSE,
+                             NULL);
+   g_list_free (windows);
+   gtk_window_set_position (GTK_WINDOW (dialog), GTK_WIN_POS_CENTER_ON_PARENT);
+@@ -231,6 +236,11 @@ welcome_dialog_new (Gimp       *gimp,
+   stack     = gimp_prefs_box_get_stack (GIMP_PREFS_BOX (prefs_box));
+ 
+   gimp_prefs_box_set_header_visible (GIMP_PREFS_BOX (prefs_box), FALSE);
++  /*  ChopGimp: the window takes the height of the visible page (the
++   *  « Créer » page is short; « Personnaliser » and « Accueil » are tall)
++   */
++  gtk_stack_set_vhomogeneous (GTK_STACK (stack), FALSE);
++  gtk_stack_set_interpolate_size (GTK_STACK (stack), TRUE);
+   gtk_stack_switcher_set_stack (GTK_STACK_SWITCHER (switcher),
+                                 GTK_STACK (stack));
+   gtk_container_set_border_width (GTK_CONTAINER (switcher), 2);
+@@ -252,8 +262,8 @@ welcome_dialog_new (Gimp       *gimp,
+ 
+   main_vbox = gimp_prefs_box_add_page (GIMP_PREFS_BOX (prefs_box),
+                                        "gimp-wilber",
+-                                       _("Welcome"),
+-                                       _("Welcome"),
++                                       _("Accueil"),
++                                       _("Accueil"),
+                                        "gimp-welcome",
+                                        NULL,
+                                        &top_iter);
+@@ -267,8 +277,8 @@ welcome_dialog_new (Gimp       *gimp,
+ 
+   main_vbox = gimp_prefs_box_add_page (GIMP_PREFS_BOX (prefs_box),
+                                        "gimp-wilber",
+-                                       _("Personalize"),
+-                                       _("Personalize"),
++                                       _("Personnaliser"),
++                                       _("Personnaliser"),
+                                        "gimp-welcome-personalize",
+                                        NULL,
+                                        &top_iter);
+@@ -279,8 +289,8 @@ welcome_dialog_new (Gimp       *gimp,
+ 
+   main_vbox = gimp_prefs_box_add_page (GIMP_PREFS_BOX (prefs_box),
+                                        "gimp-wilber",
+-                                       _("Contribute"),
+-                                       _("Contribute"),
++                                       _("Contribuer"),
++                                       _("Contribuer"),
+                                        "gimp-welcome-contribute",
+                                        NULL,
+                                        &top_iter);
+@@ -291,8 +301,8 @@ welcome_dialog_new (Gimp       *gimp,
+ 
+   main_vbox = gimp_prefs_box_add_page (GIMP_PREFS_BOX (prefs_box),
+                                        "gimp-wilber",
+-                                       _("Create"),
+-                                       _("Create"),
++                                       _("Créer"),
++                                       _("Créer"),
+                                        "gimp-welcome-create",
+                                        NULL,
+                                        &top_iter);
+@@ -309,8 +319,8 @@ welcome_dialog_new (Gimp       *gimp,
+     {
+       main_vbox = gimp_prefs_box_add_page (GIMP_PREFS_BOX (prefs_box),
+                                            "gimp-wilber",
+-                                           _("Release Notes"),
+-                                           _("Release Notes"),
++                                           _("Nouveautés"),
++                                           _("Nouveautés"),
+                                            "gimp-welcome-release_notes",
+                                            NULL,
+                                            &top_iter);
+@@ -431,8 +441,8 @@ welcome_dialog_response (GtkWidget *widget,
+     {
+       GString *string;
+ 
+-      string = g_string_new (_("You will have to restart GIMP for "
+-                               "the following changes to take effect:"));
++      string = g_string_new (_("Redémarrez ChopGimp pour que ces "
++                               "changements prennent effet :"));
+       g_string_append (string, "\n\n");
+ 
+       for (list = restart_diff; list; list = g_list_next (list))
+@@ -495,7 +505,7 @@ welcome_dialog_create_welcome_page (Gimp      *gimp,
+   gtk_widget_set_visible (grid, TRUE);
+ 
+   /* Translators: the %s string will be the version, e.g. "3.0". */
+-  tmp = g_strdup_printf (_("You installed GIMP %s!"), GIMP_VERSION);
++  tmp = g_strdup_printf (_("Bienvenue dans ChopGimp, basé sur GIMP %s !"), GIMP_VERSION);
+   widget = gtk_label_new (NULL);
+   /* XXX For GTK4, we may just replace with gtk_widget_add_css_class() AFAICS. */
+   gtk_style_context_add_class (gtk_widget_get_style_context (widget), "title-3");
+@@ -509,8 +519,8 @@ welcome_dialog_create_welcome_page (Gimp      *gimp,
+ 
+   /* Welcome message: left */
+ 
+-  markup = _("GIMP is Free Software for image authoring and manipulation.\n"
+-             "Want to know more?");
++  markup = _("ChopGimp est un logiciel libre de création et de retouche d'images, basé sur GIMP.\n"
++             "Pour en savoir plus :");
+ 
+   widget = gtk_label_new (NULL);
+   gtk_label_set_max_width_chars (GTK_LABEL (widget), 30);
+@@ -538,7 +548,7 @@ welcome_dialog_create_welcome_page (Gimp      *gimp,
+   welcome_add_link (GTK_GRID (grid), 0, &row,
+                     /* "globe with meridians" emoticone in UTF-8. */
+                     "\xf0\x9f\x8c\x90",
+-                    _("GIMP website"), "https://www.gimp.org/");
++                    _("Site de GIMP"), "https://www.gimp.org/");
+   welcome_add_link (GTK_GRID (grid), 0, &row,
+                     /* "open book" emoticone in UTF-8. */
+                     "\xf0\x9f\x93\x96",
+@@ -547,7 +557,7 @@ welcome_dialog_create_welcome_page (Gimp      *gimp,
+   welcome_add_link (GTK_GRID (grid), 0, &row,
+                     /* "graduation cap" emoticone in UTF-8. */
+                     "\xf0\x9f\x8e\x93",
+-                    _("Community Tutorials"),
++                    _("Tutoriels de la communauté"),
+                     "https://www.gimp.org/tutorials/");
+ 
+   /* XXX: should we add API docs for plug-in developers once it's
+@@ -555,8 +565,8 @@ welcome_dialog_create_welcome_page (Gimp      *gimp,
+ 
+   /* Welcome message: right */
+ 
+-  markup = _("GIMP is Community Software under the GNU general public license v3.\n"
+-             "Want to contribute?");
++  markup = _("ChopGimp et GIMP sont des logiciels communautaires sous licence GNU GPL v3.\n"
++             "Envie de contribuer ?");
+ 
+   widget = gtk_label_new (NULL);
+   gtk_label_set_line_wrap (GTK_LABEL (widget), TRUE);
+@@ -580,12 +590,12 @@ welcome_dialog_create_welcome_page (Gimp      *gimp,
+   welcome_add_link (GTK_GRID (grid), 1, &row,
+                     /* "keyboard" emoticone in UTF-8. */
+                     "\xe2\x8c\xa8",
+-                    _("Contributing"),
++                    _("Contribuer"),
+                     "https://www.gimp.org/develop/");
+   welcome_add_link (GTK_GRID (grid), 1, &row,
+                     /* "love letter" emoticone in UTF-8. */
+                     "\xf0\x9f\x92\x8c",
+-                    _("Donating"),
++                    _("Faire un don"),
+                     "https://www.gimp.org/donating/");
+ }
+ 
+@@ -615,7 +625,7 @@ welcome_dialog_create_personalize_page (Gimp       *gimp,
+   size_group = gtk_size_group_new (GTK_SIZE_GROUP_HORIZONTAL);
+ 
+   /* Themes */
+-  vbox = prefs_frame_new (_("Theme"), GTK_CONTAINER (main_vbox), FALSE);
++  vbox = prefs_frame_new (_("Thème"), GTK_CONTAINER (main_vbox), FALSE);
+ 
+   hbox = gtk_box_new (GTK_ORIENTATION_HORIZONTAL, 12);
+   gtk_container_set_border_width (GTK_CONTAINER (hbox), 0);
+@@ -626,7 +636,7 @@ welcome_dialog_create_personalize_page (Gimp       *gimp,
+   grid = prefs_grid_new (GTK_CONTAINER (hbox));
+   button = prefs_enum_combo_box_add (object, "theme-color-scheme",
+                                      0, 0,
+-                                     _("Color scheme"), GTK_GRID (grid),
++                                     _("Jeu de couleurs"), GTK_GRID (grid),
+                                      0, size_group);
+ 
+   hbox = gtk_box_new (GTK_ORIENTATION_HORIZONTAL, 12);
+@@ -652,7 +662,7 @@ welcome_dialog_create_personalize_page (Gimp       *gimp,
+   gtk_widget_set_visible (widget, TRUE);
+ 
+   grid = prefs_grid_new (GTK_CONTAINER (hbox));
+-  prefs_widget_add_aligned (widget, _("Icon theme"), GTK_GRID (grid), 0, FALSE,
++  prefs_widget_add_aligned (widget, _("Thème d'icônes"), GTK_GRID (grid), 0, FALSE,
+                             size_group);
+   g_object_unref (store);
+ 
+@@ -661,14 +671,14 @@ welcome_dialog_create_personalize_page (Gimp       *gimp,
+   size_group = gtk_size_group_new (GTK_SIZE_GROUP_HORIZONTAL);
+ 
+   prefs_switch_add (object, "prefer-symbolic-icons",
+-                    _("Use symbolic icons if available"),
++                    _("Utiliser les icônes symboliques si possible"),
+                     GTK_BOX (hbox), NULL, &button);
+   gtk_widget_set_valign (button, GTK_ALIGN_CENTER);
+ 
+-  vbox = prefs_frame_new (_("Icon Scaling"), GTK_CONTAINER (main_vbox), FALSE);
++  vbox = prefs_frame_new (_("Taille des icônes"), GTK_CONTAINER (main_vbox), FALSE);
+ 
+   prefs_switch_add (object, "override-theme-icon-size",
+-                    _("_Override icon sizes set by the theme"),
++                    _("_Remplacer la taille des icônes du thème"),
+                     GTK_BOX (vbox), NULL, &button);
+ 
+   scale = gtk_scale_new_with_range (GTK_ORIENTATION_HORIZONTAL,
+@@ -677,13 +687,13 @@ welcome_dialog_create_personalize_page (Gimp       *gimp,
+   gtk_scale_set_draw_value (GTK_SCALE (scale), FALSE);
+   gtk_range_set_round_digits (GTK_RANGE (scale), 0.0);
+   gtk_scale_add_mark (GTK_SCALE (scale), 0.0, GTK_POS_BOTTOM,
+-                      _("Small"));
++                      _("Petite"));
+   gtk_scale_add_mark (GTK_SCALE (scale), 1.0, GTK_POS_BOTTOM,
+-                      _("Medium"));
++                      _("Moyenne"));
+   gtk_scale_add_mark (GTK_SCALE (scale), 2.0, GTK_POS_BOTTOM,
+-                      _("Large"));
++                      _("Grande"));
+   gtk_scale_add_mark (GTK_SCALE (scale), 3.0, GTK_POS_BOTTOM,
+-                      _("Huge"));
++                      _("Immense"));
+   g_signal_connect (scale, "draw",
+                     G_CALLBACK (prefs_scale_marks_draw),
+                     NULL);
+@@ -702,9 +712,9 @@ welcome_dialog_create_personalize_page (Gimp       *gimp,
+                           scale,  "sensitive",
+                           G_BINDING_SYNC_CREATE);
+ 
+-  vbox = prefs_frame_new (_("Font Scaling"), GTK_CONTAINER (main_vbox), FALSE);
++  vbox = prefs_frame_new (_("Taille du texte"), GTK_CONTAINER (main_vbox), FALSE);
+   gimp_help_set_help_data (vbox,
+-                           _("Font scaling will not work with themes using absolute sizes."),
++                           _("La taille du texte reste fixe avec les thèmes en tailles absolues."),
+                            NULL);
+   scale = gtk_scale_new_with_range (GTK_ORIENTATION_HORIZONTAL,
+                                     50, 200, 10);
+@@ -732,16 +742,16 @@ welcome_dialog_create_personalize_page (Gimp       *gimp,
+   gtk_widget_set_visible (scale, TRUE);
+ 
+ #ifdef HAVE_ISO_CODES
+-  vbox = prefs_frame_new (_("GUI Language (requires restart)"),
++  vbox = prefs_frame_new (_("Langue de l'interface (au redémarrage)"),
+                           GTK_CONTAINER (main_vbox), FALSE);
+   prefs_language_combo_box_add (object, "language", GTK_BOX (vbox));
+ #endif
+ 
+-  vbox = prefs_frame_new (_("Additional Customizations"), GTK_CONTAINER (main_vbox), FALSE);
++  vbox = prefs_frame_new (_("Autres réglages"), GTK_CONTAINER (main_vbox), FALSE);
+ 
+ #ifndef GDK_WINDOWING_QUARTZ
+   prefs_switch_add (object, "custom-title-bar",
+-                    _("Merge menu and title bar (requires restart)"),
++                    _("Fusionner le menu et la barre de titre (au redémarrage)"),
+                     GTK_BOX (vbox), size_group, NULL);
+ #endif
+ 
+@@ -749,141 +759,320 @@ welcome_dialog_create_personalize_page (Gimp       *gimp,
+   if (gimp_version_check_update ())
+     {
+       prefs_switch_add (object, "check-updates",
+-                        _("Enable check for updates (requires internet)"),
++                        _("Rechercher les mises à jour (connexion Internet)"),
+                         GTK_BOX (vbox), size_group, NULL);
+     }
+ #endif
+ 
+   prefs_switch_add (object, "toolbox-groups",
+-                    _("Use tool _groups"),
++                    _("Utiliser des _groupes d'outils"),
+                     GTK_BOX (vbox), size_group, NULL);
+ 
+   g_clear_object (&size_group);
+ }
+ 
++/*  ChopGimp: tiles creating a document from a template in one click  */
++static const struct { const gchar *template; const gchar *label; const gchar *size; } chopgimp_presets[] =
++{
++  { "Défaut — Document par défaut 1920×1080",              N_("Par défaut"),  "1920 × 1080" },
++  { "Impression — A4 portrait",                              N_("A4"),          "300 ppp" },
++  { "Réseaux sociaux — Instagram publication 1080×1080",     N_("Instagram"),   "1080 × 1080" },
++  { "Réseaux sociaux — Instagram / TikTok story 1080×1920",  N_("Story"),       "1080 × 1920" },
++  { "Web — Bannière 1200×628",                               N_("Bannière"),    "1200 × 628" },
++  { "Vidéo — UHD 4K 3840×2160",                              N_("4K"),          "3840 × 2160" },
++  { "Illustration — Toile 4000×4000",                        N_("Toile"),       "4000 × 4000" },
++};
++
++static void
++chopgimp_welcome_preset_clicked (GtkButton *button,
++                                 GtkWidget *welcome_dialog)
++{
++  Gimp         *gimp     = g_object_get_data (G_OBJECT (button), "gimp");
++  GimpTemplate *template = g_object_get_data (G_OBJECT (button), "template");
++  GimpContext  *context  = gimp_get_user_context (gimp);
++  GimpImage    *image;
++
++  image = gimp_image_new_from_template (gimp, template, context);
++  gimp_create_display (gimp, image, gimp_template_get_unit (template), 1.0,
++                       G_OBJECT (gimp_widget_get_monitor (GTK_WIDGET (button))));
++  g_object_unref (image);
++
++  gtk_widget_destroy (welcome_dialog);
++}
++
++static void
++chopgimp_welcome_presets (Gimp      *gimp,
++                          GtkWidget *welcome_dialog,
++                          GtkWidget *main_vbox)
++{
++  GtkWidget *vbox = main_vbox;
++  GtkWidget *flow = gtk_flow_box_new ();
++  guint      i;
++
++  gtk_box_pack_start (GTK_BOX (main_vbox),
++                      chopgimp_welcome_heading (_("Nouveau document")),
++                      FALSE, FALSE, 0);
++
++  gtk_flow_box_set_selection_mode (GTK_FLOW_BOX (flow), GTK_SELECTION_NONE);
++  /*  min = max: the height asked for at the minimum width is one row
++   *  (else the scrolled page asks for 7 rows and the window is too tall)
++   */
++  gtk_flow_box_set_min_children_per_line (GTK_FLOW_BOX (flow), 7);
++  gtk_flow_box_set_max_children_per_line (GTK_FLOW_BOX (flow), 7);
++  gtk_flow_box_set_homogeneous (GTK_FLOW_BOX (flow), TRUE);
++  gtk_box_pack_start (GTK_BOX (vbox), flow, FALSE, FALSE, 0);
++
++  for (i = 0; i < G_N_ELEMENTS (chopgimp_presets); i++)
++    {
++      GimpTemplate *template;
++      GtkWidget    *button, *box, *label;
++      gchar        *markup;
++
++      template = (GimpTemplate *)
++        gimp_container_get_child_by_name (gimp->templates, chopgimp_presets[i].template);
++      if (! template)
++        continue;
++
++      button = gtk_button_new ();
++      box    = gtk_box_new (GTK_ORIENTATION_VERTICAL, 2);
++      gtk_box_pack_start (GTK_BOX (box),
++                          gtk_image_new_from_icon_name ("document-new", GTK_ICON_SIZE_DND),
++                          FALSE, FALSE, 0);
++      label  = gtk_label_new (NULL);
++      markup = g_markup_printf_escaped ("<b>%s</b>\n<small>%s</small>",
++                                        _(chopgimp_presets[i].label),
++                                        chopgimp_presets[i].size);
++      gtk_label_set_markup (GTK_LABEL (label), markup);
++      gtk_label_set_justify (GTK_LABEL (label), GTK_JUSTIFY_CENTER);
++      g_free (markup);
++      gtk_box_pack_start (GTK_BOX (box), label, FALSE, FALSE, 0);
++      gtk_container_add (GTK_CONTAINER (button), box);
++      gtk_widget_set_tooltip_text (button, chopgimp_presets[i].template);
++
++      g_object_set_data (G_OBJECT (button), "gimp", gimp);
++      g_object_set_data (G_OBJECT (button), "template", template);
++      g_signal_connect (button, "clicked",
++                        G_CALLBACK (chopgimp_welcome_preset_clicked), welcome_dialog);
++
++      gtk_container_add (GTK_CONTAINER (flow), button);
++    }
++
++  gtk_widget_show_all (flow);
++}
++
++static GtkWidget *
++chopgimp_welcome_heading (const gchar *text)
++{
++  GtkWidget *label = gtk_label_new (NULL);
++  gchar     *markup = g_markup_printf_escaped ("<b>%s</b>", text);
++
++  gtk_label_set_markup (GTK_LABEL (label), markup);
++  gtk_label_set_xalign (GTK_LABEL (label), 0.0);
++  gtk_widget_set_margin_top (label, 4);
++  g_free (markup);
++
++  return label;
++}
++
++static GtkWidget *
++chopgimp_welcome_recent_tile (Gimp          *gimp,
++                              GimpImagefile *imagefile,
++                              const gchar   *path,
++                              gint           index)
++{
++  GtkWidget     *box   = gtk_box_new (GTK_ORIENTATION_VERTICAL, 3);
++  GtkWidget     *frame = gtk_frame_new (NULL);
++  GtkWidget     *view;
++  GtkWidget     *label;
++  GimpThumbnail *thumb = gimp_imagefile_get_thumbnail (imagefile);
++  GFile         *file  = g_file_new_for_path (path);
++  GFileInfo     *info;
++  GString       *sub   = g_string_new (NULL);
++  gchar         *basename = g_path_get_basename (path);
++  gchar         *markup;
++  gchar         *dirname;
++  gchar         *tooltip;
++
++  /*  a fixed square cell: the thumbnail centred in it  */
++  gtk_widget_set_size_request (frame, 120, 120);
++  gtk_frame_set_shadow_type (GTK_FRAME (frame), GTK_SHADOW_NONE);
++  gtk_style_context_add_class (gtk_widget_get_style_context (frame), "view");
++  view = gimp_view_new (gimp_get_user_context (gimp), GIMP_VIEWABLE (imagefile),
++                        112, 0, FALSE);
++  gtk_widget_set_halign (view, GTK_ALIGN_CENTER);
++  gtk_widget_set_valign (view, GTK_ALIGN_CENTER);
++  gtk_container_add (GTK_CONTAINER (frame), view);
++  gtk_box_pack_start (GTK_BOX (box), frame, FALSE, FALSE, 0);
++
++  label = gtk_label_new (basename);
++  gtk_label_set_ellipsize (GTK_LABEL (label), PANGO_ELLIPSIZE_MIDDLE);
++  gtk_label_set_max_width_chars (GTK_LABEL (label), 16);
++  gtk_label_set_width_chars (GTK_LABEL (label), 16);
++  gtk_box_pack_start (GTK_BOX (box), label, FALSE, FALSE, 0);
++
++  if (thumb)
++    {
++      gint w = 0, h = 0;
++
++      g_object_get (thumb, "image-width", &w, "image-height", &h, NULL);
++      if (w > 0 && h > 0)
++        g_string_append_printf (sub, "%d × %d", w, h);
++    }
++
++  info = g_file_query_info (file, G_FILE_ATTRIBUTE_TIME_MODIFIED,
++                            G_FILE_QUERY_INFO_NONE, NULL, NULL);
++  if (info)
++    {
++      GDateTime *dt = g_file_info_get_modification_date_time (info);
++
++      if (dt)
++        {
++          GDateTime *local = g_date_time_to_local (dt);
++          gchar     *date  = g_date_time_format (local, "%d/%m/%Y");
++
++          g_string_append_printf (sub, "%s%s", sub->len ? " · " : "", date);
++          g_free (date);
++          g_date_time_unref (local);
++          g_date_time_unref (dt);
++        }
++      g_object_unref (info);
++    }
++
++  label  = gtk_label_new (NULL);
++  markup = g_markup_printf_escaped ("<small>%s</small>", sub->str);
++  gtk_label_set_markup (GTK_LABEL (label), markup);
++  gtk_style_context_add_class (gtk_widget_get_style_context (label), "dim-label");
++  gtk_box_pack_start (GTK_BOX (box), label, FALSE, FALSE, 0);
++  g_free (markup);
++
++  dirname = g_path_get_dirname (path);
++  tooltip = g_strdup_printf ("%s\n%s", basename, dirname);
++  gtk_widget_set_tooltip_text (box, tooltip);
++  g_free (tooltip);
++  g_free (dirname);
++
++  g_object_set_data_full (G_OBJECT (box), "action_name",
++                          g_strdup_printf ("file-open-recent-%02u", index + 1),
++                          g_free);
++
++  g_string_free (sub, TRUE);
++  g_free (basename);
++  g_object_unref (file);
++
++  gtk_widget_show_all (box);
++
++  return box;
++}
++
++/*  ChopGimp: Photoshop-like home: a column of actions on the left, the
++ *  one-click documents and a grid of recent files on the right; wider
++ *  than tall
++ */
+ static void
+ welcome_dialog_create_creation_page (Gimp       *gimp,
+                                      GimpConfig *config,
+                                      GtkWidget  *welcome_dialog,
+                                      GtkWidget  *main_vbox)
+ {
+-  GtkWidget *vbox;
+   GtkWidget *hbox;
++  GtkWidget *left;
++  GtkWidget *right;
+   GtkWidget *button;
+-  GtkWidget *listbox;
++  GtkWidget *flow;
+   GtkWidget *toggle;
++  GtkWidget *label;
+   gint       num_images;
+-  gint       list_count;
++  gint       shown = 0;
+ 
+-  hbox = gtk_box_new (GTK_ORIENTATION_HORIZONTAL, 6);
+-  gtk_box_set_homogeneous (GTK_BOX (hbox), TRUE);
+-  gtk_box_pack_start (GTK_BOX (main_vbox), hbox, FALSE, FALSE, 0);
+-  gtk_widget_set_visible (hbox, TRUE);
++  hbox = gtk_box_new (GTK_ORIENTATION_HORIZONTAL, 18);
++  gtk_box_pack_start (GTK_BOX (main_vbox), hbox, TRUE, TRUE, 0);
+ 
+-  vbox = prefs_frame_new (_("Create a New Image"), GTK_CONTAINER (hbox),
+-                          FALSE);
++  /*  left column  */
++  left = gtk_box_new (GTK_ORIENTATION_VERTICAL, 8);
++  gtk_widget_set_size_request (left, 170, -1);
++  gtk_box_pack_start (GTK_BOX (hbox), left, FALSE, FALSE, 0);
+ 
+-  button = gtk_button_new_with_mnemonic (_("C_reate"));
+-  /* Balancing the indent from the frame */
+-  gtk_widget_set_margin_end (button, 12);
+-  gtk_box_pack_start (GTK_BOX (vbox), button, FALSE, FALSE, 0);
+-  gtk_widget_set_visible (button, TRUE);
++  button = gtk_button_new_with_mnemonic (_("_Nouveau…"));
++  gtk_style_context_add_class (gtk_widget_get_style_context (button),
++                               "suggested-action");
++  gimp_help_set_help_data (button, _("Créer une nouvelle image (Ctrl+N)"), NULL);
++  gtk_box_pack_start (GTK_BOX (left), button, FALSE, FALSE, 0);
+   g_signal_connect (button, "clicked",
+                     G_CALLBACK (welcome_dialog_new_image_dialog),
+                     welcome_dialog);
+ 
+-  vbox = prefs_frame_new (_("Open an Existing Image"), GTK_CONTAINER (hbox),
+-                          FALSE);
+-
+-  button = gtk_button_new_with_mnemonic (_("_Open"));
+-  gtk_widget_set_margin_end (button, 12);
+-  gtk_box_pack_start (GTK_BOX (vbox), button, FALSE, FALSE, 0);
+-  gtk_widget_set_visible (button, TRUE);
++  button = gtk_button_new_with_mnemonic (_("_Ouvrir…"));
++  gimp_help_set_help_data (button, _("Ouvrir une image existante (Ctrl+O)"), NULL);
++  gtk_box_pack_start (GTK_BOX (left), button, FALSE, FALSE, 0);
+   g_signal_connect (button, "clicked",
+                     G_CALLBACK (welcome_dialog_open_image_dialog),
+                     welcome_dialog);
+ 
+-  /* Recent Files */
+-  vbox = prefs_frame_new (_("Recent Images"), GTK_CONTAINER (main_vbox),
+-                          FALSE);
++  toggle = gimp_prop_check_button_new (G_OBJECT (config), "show-welcome-dialog",
++                                       _("Afficher au démarrage"));
++  gimp_help_set_help_data (toggle,
++                           _("La fenêtre d'accueil reste disponible dans le menu Aide"),
++                           NULL);
++  gtk_box_pack_end (GTK_BOX (left), toggle, FALSE, FALSE, 0);
++
++  gtk_box_pack_start (GTK_BOX (hbox),
++                      gtk_separator_new (GTK_ORIENTATION_VERTICAL),
++                      FALSE, FALSE, 0);
++
++  /*  right: documents, then recent files  */
++  right = gtk_box_new (GTK_ORIENTATION_VERTICAL, 8);
++  gtk_box_pack_start (GTK_BOX (hbox), right, TRUE, TRUE, 0);
++
++  chopgimp_welcome_presets (gimp, welcome_dialog, right);
++
++  gtk_box_pack_start (GTK_BOX (right),
++                      chopgimp_welcome_heading (_("Fichiers récents")),
++                      FALSE, FALSE, 0);
+ 
+-  listbox = gtk_list_box_new ();
+-  gtk_list_box_set_selection_mode (GTK_LIST_BOX (listbox),
+-                                   GTK_SELECTION_MULTIPLE);
+-  gtk_list_box_set_activate_on_single_click (GTK_LIST_BOX (listbox),
+-                                             FALSE);
+-  gtk_container_add (GTK_CONTAINER (vbox), listbox);
+-  gtk_widget_set_visible (listbox, TRUE);
++  flow = gtk_flow_box_new ();
++  gtk_flow_box_set_selection_mode (GTK_FLOW_BOX (flow), GTK_SELECTION_NONE);
++  gtk_flow_box_set_activate_on_single_click (GTK_FLOW_BOX (flow), TRUE);
++  gtk_flow_box_set_homogeneous (GTK_FLOW_BOX (flow), TRUE);
++  gtk_flow_box_set_min_children_per_line (GTK_FLOW_BOX (flow), 5);
++  gtk_flow_box_set_max_children_per_line (GTK_FLOW_BOX (flow), 5);
++  gtk_flow_box_set_column_spacing (GTK_FLOW_BOX (flow), 8);
++  gtk_flow_box_set_row_spacing (GTK_FLOW_BOX (flow), 8);
++  gtk_widget_set_halign (flow, GTK_ALIGN_START);
++  gtk_box_pack_start (GTK_BOX (right), flow, FALSE, FALSE, 0);
+ 
+   num_images = gimp_container_get_n_children (gimp->documents);
+-  list_count = (num_images <= 8) ? num_images : 8;
+ 
+-  for (gint i = 0; i < list_count; i++)
++  /*  at most two rows; skip the files that are gone  */
++  for (gint i = 0; i < num_images && i < 20 && shown < 10; i++)
+     {
+-      GimpImagefile *imagefile = NULL;
+-      GtkWidget     *row;
+-      GtkWidget     *label;
+-      GFile         *file;
++      GimpImagefile *imagefile;
+       const gchar   *name;
+-      gchar         *basename;
+-      gchar         *action_name;
+ 
+       imagefile = (GimpImagefile *)
+         gimp_container_get_child_by_index (gimp->documents, i);
++      name = gimp_file_get_utf8_name (gimp_imagefile_get_file (imagefile));
+ 
+-      file = gimp_imagefile_get_file (imagefile);
+-
+-      name     = gimp_file_get_utf8_name (file);
+-      basename = g_path_get_basename (name);
+-
+-      /* If the file is not found, remove it and try to
+-       * load another one if possible */
+       if (! g_file_test (name, G_FILE_TEST_IS_REGULAR))
+-        {
+-          g_free (basename);
+-
+-          if (list_count < num_images)
+-            list_count++;
+-
+-          continue;
+-        }
+-
+-      row = gimp_row_new (gimp_get_user_context (gimp),
+-                          GIMP_VIEWABLE (imagefile),
+-                          32, 0);
+-
+-      label = gimp_row_get_label (GIMP_ROW (row));
+-      if (label)
+-        gtk_label_set_ellipsize (GTK_LABEL (label), PANGO_ELLIPSIZE_MIDDLE);
+-
+-      action_name = g_strdup_printf ("file-open-recent-%02u", i + 1);
+-      g_object_set_data_full (G_OBJECT (row), "action_name", action_name,
+-                              g_free);
++        continue;
+ 
+-      gtk_widget_set_visible (row, TRUE);
+-      gtk_list_box_insert (GTK_LIST_BOX (listbox), row, -1);
++      gtk_container_add (GTK_CONTAINER (flow),
++                         chopgimp_welcome_recent_tile (gimp, imagefile, name, i));
++      shown++;
+     }
+ 
+-  g_signal_connect (listbox, "row-activated",
+-                    G_CALLBACK (welcome_open_activated_callback),
++  g_signal_connect (flow, "child-activated",
++                    G_CALLBACK (chopgimp_welcome_recent_activated),
+                     welcome_dialog);
+ 
+-  button = gtk_button_new_with_mnemonic (_("O_pen Selected Images"));
+-  gtk_box_pack_start (GTK_BOX (vbox), button, FALSE, FALSE, 0);
+-  gtk_widget_set_visible (button, TRUE);
+-  g_signal_connect (button, "clicked",
+-                    G_CALLBACK (welcome_open_images_callback),
+-                    listbox);
+-
+-  /* "Always show welcome dialog" checkbox */
+-  toggle = prefs_check_button_add (G_OBJECT (config), "show-welcome-dialog",
+-                                   _("Show on Start "
+-                                     "(You can show the Welcome dialog again from the \"Help\" menu)"),
+-                                   GTK_BOX (main_vbox));
+-  gtk_container_child_set (GTK_CONTAINER (main_vbox), toggle,
+-                           "fill",      TRUE,
+-                           "pack-type", GTK_PACK_END,
+-                           NULL);
++  if (! shown)
++    {
++      label = gtk_label_new (_("Aucun fichier récent."));
++      gtk_label_set_xalign (GTK_LABEL (label), 0.0);
++      gtk_style_context_add_class (gtk_widget_get_style_context (label), "dim-label");
++      gtk_box_pack_start (GTK_BOX (right), label, FALSE, FALSE, 0);
++    }
++
++  gtk_widget_show_all (hbox);
+ }
+ 
+ static void
+@@ -905,7 +1094,7 @@ welcome_dialog_create_contribute_page (Gimp       *gimp,
+   gtk_box_pack_start (GTK_BOX (main_vbox), hbox, FALSE, FALSE, 0);
+   gtk_widget_set_visible (hbox, TRUE);
+ 
+-  tmp = g_strdup_printf (_("Ways to contribute"));
++  tmp = g_strdup_printf (_("Comment contribuer"));
+   markup = g_strdup_printf ("<big>%s</big>", tmp);
+   g_free (tmp);
+   label = gtk_label_new (NULL);
+@@ -914,63 +1103,63 @@ welcome_dialog_create_contribute_page (Gimp       *gimp,
+   gtk_box_set_center_widget (GTK_BOX (hbox), label);
+   gtk_widget_set_visible (label, TRUE);
+ 
+-  vbox = prefs_frame_new (_("Report Bugs"), GTK_CONTAINER (main_vbox), FALSE);
++  vbox = prefs_frame_new (_("Signaler des bogues"), GTK_CONTAINER (main_vbox), FALSE);
+ 
+-  tmp = g_strdup_printf (_("As any application, GIMP is not bug-free, so "
+-                           "reporting bugs that you encounter is very "
+-                           "important to the development."));
++  tmp = g_strdup_printf (_("Comme tout logiciel, GIMP a des bogues : signaler "
++                           "ceux que vous rencontrez aide beaucoup "
++                           "son développement."));
+   label = gtk_label_new (tmp);
+   g_free (tmp);
+   gtk_label_set_max_width_chars (GTK_LABEL (label), 30);
+   gtk_label_set_line_wrap (GTK_LABEL (label), TRUE);
+   gtk_box_pack_start (GTK_BOX (vbox), label, FALSE, FALSE, 0);
+   gtk_widget_set_visible (label, TRUE);
+-  button = gtk_link_button_new_with_label ("https://www.gimp.org/bugs/", _("Report Bugs"));
++  button = gtk_link_button_new_with_label ("https://www.gimp.org/bugs/", _("Signaler un bogue"));
+   gtk_box_pack_start (GTK_BOX (main_vbox), button, FALSE, FALSE, 0);
+   gtk_widget_set_visible (button, TRUE);
+ 
+-  vbox = prefs_frame_new (_("Write Code"), GTK_CONTAINER (main_vbox), FALSE);
++  vbox = prefs_frame_new (_("Écrire du code"), GTK_CONTAINER (main_vbox), FALSE);
+ 
+-  tmp = g_strdup_printf (_("Our Developer Website is where you want to start "
+-                           "learning about being a code contributor."));
++  tmp = g_strdup_printf (_("Le site des développeurs de GIMP est le point de "
++                           "départ pour contribuer au code."));
+   label = gtk_label_new (tmp);
+   g_free (tmp);
+   gtk_label_set_max_width_chars (GTK_LABEL (label), 30);
+   gtk_label_set_line_wrap (GTK_LABEL (label), TRUE);
+   gtk_box_pack_start (GTK_BOX (vbox), label, FALSE, FALSE, 0);
+   gtk_widget_set_visible (label, TRUE);
+-  button = gtk_link_button_new_with_label ("https://developer.gimp.org/", _("Write Code"));
++  button = gtk_link_button_new_with_label ("https://developer.gimp.org/", _("Site des développeurs"));
+   gtk_box_pack_start (GTK_BOX (main_vbox), button, FALSE, FALSE, 0);
+   gtk_widget_set_visible (button, TRUE);
+ 
+-  vbox = prefs_frame_new (_("Translate"), GTK_CONTAINER (main_vbox), FALSE);
++  vbox = prefs_frame_new (_("Traduire"), GTK_CONTAINER (main_vbox), FALSE);
+ 
+-  tmp = g_strdup_printf (_("Contact the respective translation team for your "
+-                           "language"));
++  tmp = g_strdup_printf (_("Contactez l'équipe de traduction de votre "
++                           "langue"));
+   label = gtk_label_new (tmp);
+   g_free (tmp);
+   gtk_label_set_max_width_chars (GTK_LABEL (label), 30);
+   gtk_label_set_line_wrap (GTK_LABEL (label), TRUE);
+   gtk_box_pack_start (GTK_BOX (vbox), label, FALSE, FALSE, 0);
+   gtk_widget_set_visible (label, TRUE);
+-  button = gtk_link_button_new_with_label ("https://l10n.gnome.org/teams/", _("Translate"));
++  button = gtk_link_button_new_with_label ("https://l10n.gnome.org/teams/", _("Équipes de traduction"));
+   gtk_box_pack_start (GTK_BOX (main_vbox), button, FALSE, FALSE, 0);
+   gtk_widget_set_visible (button, TRUE);
+ 
+-  vbox = prefs_frame_new (_("Donate"), GTK_CONTAINER (main_vbox), FALSE);
++  vbox = prefs_frame_new (_("Faire un don"), GTK_CONTAINER (main_vbox), FALSE);
+ 
+-  tmp = g_strdup_printf (_("Donating money is important: it makes GIMP "
+-                           "sustainable."));
++  tmp = g_strdup_printf (_("Les dons sont importants : ils font vivre "
++                           "GIMP dans la durée."));
+   label = gtk_label_new (tmp);
+   g_free (tmp);
+   gtk_label_set_max_width_chars (GTK_LABEL (label), 30);
+   gtk_label_set_line_wrap (GTK_LABEL (label), TRUE);
+   gtk_box_pack_start (GTK_BOX (vbox), label, FALSE, FALSE, 0);
+   gtk_widget_set_visible (label, TRUE);
+-  button = gtk_link_button_new_with_label ("https://liberapay.com/GIMP/donate", _("Donate via Liberapay"));
++  button = gtk_link_button_new_with_label ("https://liberapay.com/GIMP/donate", _("Don par Liberapay"));
+   gtk_box_pack_start (GTK_BOX (main_vbox), button, FALSE, FALSE, 0);
+   gtk_widget_set_visible (button, TRUE);
+-  button = gtk_link_button_new_with_label ("https://www.gimp.org/donating/", _("Other donation options"));
++  button = gtk_link_button_new_with_label ("https://www.gimp.org/donating/", _("Autres façons de donner"));
+   gtk_box_pack_start (GTK_BOX (main_vbox), button, FALSE, FALSE, 0);
+   gtk_widget_set_visible (button, TRUE);
+ }
+@@ -1004,7 +1193,7 @@ welcome_dialog_create_release_page (Gimp      *gimp,
+       gtk_widget_set_visible (hbox, TRUE);
+ 
+       /* Translators: the %s string will be the version, e.g. "3.0". */
+-      tmp = g_strdup_printf (_("GIMP %s Release Notes"), GIMP_VERSION);
++      tmp = g_strdup_printf (_("Nouveautés de GIMP %s"), GIMP_VERSION);
+       markup = g_strdup_printf ("<b><big>%s</big></b>", tmp);
+       g_free (tmp);
+       widget = gtk_label_new (NULL);
+@@ -1117,7 +1306,7 @@ welcome_dialog_create_release_page (Gimp      *gimp,
+           gtk_widget_set_visible (image, TRUE);
+ 
+           widget = gtk_label_new (NULL);
+-          tmp = g_strdup_printf (_("Click on release items with a %s bullet point to get a tour."),
++          tmp = g_strdup_printf (_("Cliquez sur un élément marqué %s pour une visite guidée."),
+                                  "<span weight='ultrabold'>\xe2\x96\xb6</span>");
+           markup = g_strdup_printf ("<i>%s</i>", tmp);
+           g_free (tmp);
+@@ -1157,7 +1346,7 @@ welcome_dialog_create_release_page (Gimp      *gimp,
+           release_link = g_strdup ("https://www.gimp.org/");
+         }
+ 
+-      widget = gtk_link_button_new_with_label (release_link, _("Learn more"));
++      widget = gtk_link_button_new_with_label (release_link, _("En savoir plus"));
+       gtk_widget_set_visible (widget, TRUE);
+       gtk_box_pack_start (GTK_BOX (hbox), widget, FALSE, FALSE, 0);
+       g_free (release_link);
+@@ -1265,50 +1454,17 @@ welcome_dialog_open_dialog_close (GtkWidget *dialog,
+ }
+ 
+ static void
+-welcome_open_activated_callback (GtkListBox    *listbox,
+-                                 GtkListBoxRow *row,
+-                                 GtkWidget     *welcome_dialog)
++chopgimp_welcome_recent_activated (GtkFlowBox      *flow,
++                                   GtkFlowBoxChild *child,
++                                   GtkWidget       *dialog)
+ {
+-  welcome_open_images_callback (NULL, listbox);
+-}
+-
+-static void
+-welcome_open_images_callback (GtkWidget  *button,
+-                              GtkListBox *listbox)
+-{
+-  GList         *rows   = NULL;
+-  Gimp          *gimp   = NULL;
+-  gboolean       opened = FALSE;
+-  gchar         *action_name;
+-  GimpUIManager *manager;
+-
+-  if (! welcome_dialog)
+-    return;
+-
+-  gimp = g_object_get_data (G_OBJECT (welcome_dialog), "gimp");
+-  manager = menus_get_image_manager_singleton (gimp);
+-
+-  rows = gtk_list_box_get_selected_rows (listbox);
+-  if (rows)
+-    {
+-      gtk_widget_set_sensitive (welcome_dialog, FALSE);
+-
+-      for (GList *iter = rows; iter; iter = iter->next)
+-        {
+-          action_name = (gchar *) g_object_get_data (G_OBJECT (iter->data),
+-                                                     "action_name");
+-
+-          if (gimp_ui_manager_activate_action (manager, "file", action_name))
+-            opened = TRUE;
+-        }
+-
+-      g_list_free (rows);
+-    }
++  Gimp          *gimp    = g_object_get_data (G_OBJECT (dialog), "gimp");
++  GimpUIManager *manager = menus_get_image_manager_singleton (gimp);
++  GtkWidget     *tile    = gtk_bin_get_child (GTK_BIN (child));
++  const gchar   *action  = g_object_get_data (G_OBJECT (tile), "action_name");
+ 
+-  /* If no images were successfully opened, leave the dialogue up */
+-  gtk_widget_set_sensitive (welcome_dialog, TRUE);
+-  if (opened)
+-    gtk_widget_destroy (welcome_dialog);
++  if (action && gimp_ui_manager_activate_action (manager, "file", action))
++    gtk_widget_destroy (dialog);
+ }
+ 
+ static void
+diff --git a/app/file/file-save.c b/app/file/file-save.c
+index 239fc91..647b507 100644
+--- a/app/file/file-save.c
++++ b/app/file/file-save.c
+@@ -20,6 +20,8 @@
+ 
+ #include "config.h"
+ 
++#include <string.h>
++
+ #include <gdk-pixbuf/gdk-pixbuf.h>
+ #include <gegl.h>
+ 
+@@ -35,6 +37,8 @@
+ #include "core/gimpdrawable.h"
+ #include "core/gimpimage.h"
+ #include "core/gimpimagefile.h"
++#include "core/gimpitem.h"
++#include "core/gimpprojectable.h"
+ #include "core/gimpparamspecs.h"
+ #include "core/gimpprogress.h"
+ 
+@@ -68,6 +72,7 @@ file_save (Gimp                *gimp,
+   GimpPDBStatusType  status     = GIMP_PDB_EXECUTION_ERROR;
+   GFile             *local_file = NULL;
+   gboolean           mounted    = TRUE;
++  GList             *hidden_sketches = NULL;   /*  ChopGimp  */
+   GError            *my_error   = NULL;
+   GimpExportOptions *options    = NULL;
+ 
+@@ -181,6 +186,24 @@ file_save (Gimp                *gimp,
+       g_free (my_path);
+     }
+ 
++  /*  ChopGimp: sketch layers (and perspective guides) are not exported  */
++  if (export_backward || export_forward)
++    {
++      GList *all = gimp_image_get_layer_list (image);
++      GList *iter;
++
++      for (iter = all; iter; iter = iter->next)
++        if (gimp_item_get_visible (iter->data) &&
++            gimp_item_parasite_find (iter->data, "chopgimp-sketch"))
++          {
++            gimp_item_set_visible (iter->data, FALSE, FALSE);
++            hidden_sketches = g_list_prepend (hidden_sketches, iter->data);
++          }
++      g_list_free (all);
++      if (hidden_sketches)
++        gimp_projectable_invalidate_preview (GIMP_PROJECTABLE (image));
++    }
++
+   return_vals =
+     gimp_pdb_execute_procedure_by_name (image->gimp->pdb,
+                                         gimp_get_user_context (gimp),
+@@ -193,6 +216,16 @@ file_save (Gimp                *gimp,
+                                         G_TYPE_NONE);
+   status = g_value_get_enum (gimp_value_array_index (return_vals, 0));
+ 
++  /*  ChopGimp: sketch layers back  */
++  if (hidden_sketches)
++    {
++      GList *iter;
++
++      for (iter = hidden_sketches; iter; iter = iter->next)
++        gimp_item_set_visible (iter->data, TRUE, FALSE);
++      g_clear_pointer (&hidden_sketches, g_list_free);
++    }
++
+   gimp_value_array_unref (return_vals);
+ 
+   if (local_file)
+@@ -278,6 +311,33 @@ file_save (Gimp                *gimp,
+                                        g_slist_nth_data (file_proc->mime_types_list, 0),
+                                        image,
+                                        NULL);
++
++      /*  ChopGimp: « Générer les ressources à chaque enregistrement »
++       *  (Photoshop Generator): layers named like files are exported
++       */
++      if (change_saved_state)
++        {
++          const GimpParasite *gen = gimp_image_parasite_find (image, "chopgimp-generator-on");
++          guint32             len = 0;
++          const gchar        *val = gen ? gimp_parasite_get_data (gen, &len) : NULL;
++
++          if (val && len >= 4 && ! strncmp (val, "true", 4))
++            {
++              GimpValueArray *rv;
++              GObject       **none = g_new0 (GObject *, 1);   /*  no drawable  */
++
++              rv = gimp_pdb_execute_procedure_by_name (gimp->pdb, gimp_get_user_context (gimp),
++                                                       progress, NULL,
++                                                       "chopgimp-generate-assets",
++                                                       GIMP_TYPE_RUN_MODE, GIMP_RUN_NONINTERACTIVE,
++                                                       GIMP_TYPE_IMAGE,    image,
++                                                       GIMP_TYPE_CORE_OBJECT_ARRAY, none,
++                                                       G_TYPE_NONE);
++              if (rv)
++                gimp_value_array_unref (rv);
++              g_free (none);
++            }
++        }
+     }
+   else if (status != GIMP_PDB_CANCEL)
+     {
+diff --git a/app/gui/chopgimp-autosave.c b/app/gui/chopgimp-autosave.c
+new file mode 100644
+index 0000000..4b600a9
+--- /dev/null
++++ b/app/gui/chopgimp-autosave.c
+@@ -0,0 +1,629 @@
++/* ChopGimp — enregistrement automatique et récupération
++ *
++ * This program is free software: you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation; either version 3 of the License, or
++ * (at your option) any later version.
++ *
++ * Toutes les N minutes (chopgimprc [autosave] minutes, 5 par défaut,
++ * 0 = désactivé), chaque image modifiée depuis sa dernière copie est
++ * enregistrée en XCF dans <gimpdir>/autosave/<id>.xcf, avec une fiche
++ * <id>.txt (nom affiché, fichier d'origine). L'écriture passe par
++ * xcf_save_stream : l'image ne change pas d'état (ni « enregistrée », ni
++ * dans les documents récents). Jamais pendant un trait ou une
++ * transformation (outil actif) ni dans les 2 s qui suivent une action de
++ * l'utilisateur (souris, stylet, clavier) : l'écriture, synchrone, bloque
++ * l'interface le temps d'enregistrer l'image (≈ 0,5 à 2 s pour une affiche
++ * A4 à 300 ppp), elle est donc repoussée de 5 s en 5 s jusqu'à une pause.
++ *
++ * Une copie disparaît quand l'image est enregistrée (plus modifiée) ou
++ * fermée ; toutes disparaissent quand ChopGimp se ferme normalement.
++ * Au démarrage, des copies restantes viennent d'une session interrompue :
++ * elles sont mises de côté (autosave/recuperation/) et une fenêtre
++ * propose de les rouvrir, sous leur nom d'origine et marquées modifiées.
++ */
++
++#include "config.h"
++
++#include <stdlib.h>
++#include <string.h>
++
++#include <glib/gstdio.h>
++#include <gegl.h>
++#include <gtk/gtk.h>
++
++#include "libgimpbase/gimpbase.h"
++#include "libgimpwidgets/gimpwidgets.h"
++
++#include "gui-types.h"
++
++#include "core/gimp.h"
++#include "core/gimpcontainer.h"
++#include "core/gimpcontext.h"
++#include "core/gimpimage.h"
++#include "core/gimptoolinfo.h"
++
++#include "file/file-open.h"
++
++#include "tools/gimptool.h"
++#include "tools/gimptoolcontrol.h"
++#include "tools/tool_manager.h"
++
++#include "widgets/chopgimp-rc.h"
++
++#include "xcf/xcf.h"
++
++#include "chopgimp-autosave.h"
++
++
++typedef struct
++{
++  guint  serial;     /*  change serial of the image when it was saved  */
++  gint64 saved_at;   /*  monotonic time of that save  */
++} SavedCopy;
++
++#define AUTOSAVE_QUIET_TIME  (2 * G_TIME_SPAN_SECOND) /*  no input for 2 s  */
++#define AUTOSAVE_RETRY_DELAY 5                        /*  seconds  */
++
++static gchar      *autosave_dir      = NULL;
++static GHashTable *saved_times       = NULL;   /*  image id → SavedCopy  */
++static guint       timer_id          = 0;
++static guint       period            = 0;      /*  seconds between autosaves  */
++static gulong      input_hook_id     = 0;
++static gint64      last_input        = 0;      /*  monotonic time of the last user input  */
++static guint       recovery_timer_id = 0;
++static gpointer    recovery_pending  = NULL;   /*  Recovery not shown yet  */
++
++
++/*  per-image change counter: gimp_image_get_dirty_time() is only set on
++ *  the first dirtying, so it cannot tell whether an image changed since
++ *  the last autosave / timelapse frame.  Count "dirty" and "clean"
++ *  emissions instead (undo/redo emit them as well).
++ */
++static void
++chopgimp_image_changed (GimpImage     *image,
++                        GimpDirtyMask  dirty_mask,
++                        gpointer       data)
++{
++  guint serial;
++
++  serial = GPOINTER_TO_UINT (g_object_get_data (G_OBJECT (image),
++                                                "chopgimp-serial"));
++  g_object_set_data (G_OBJECT (image), "chopgimp-serial",
++                     GUINT_TO_POINTER (serial + 1));
++}
++
++guint
++chopgimp_image_change_serial (GimpImage *image)
++{
++  g_return_val_if_fail (GIMP_IS_IMAGE (image), 0);
++
++  if (! g_object_get_data (G_OBJECT (image), "chopgimp-serial-hooked"))
++    {
++      g_signal_connect (image, "dirty",
++                        G_CALLBACK (chopgimp_image_changed), NULL);
++      g_signal_connect (image, "clean",
++                        G_CALLBACK (chopgimp_image_changed), NULL);
++      g_object_set_data (G_OBJECT (image), "chopgimp-serial-hooked",
++                         GINT_TO_POINTER (TRUE));
++    }
++
++  return GPOINTER_TO_UINT (g_object_get_data (G_OBJECT (image),
++                                              "chopgimp-serial"));
++}
++
++
++static gchar *
++autosave_path (gint id, const gchar *ext)
++{
++  gchar *name = g_strdup_printf ("%d.%s", id, ext);
++  gchar *path = g_build_filename (autosave_dir, name, NULL);
++
++  g_free (name);
++  return path;
++}
++
++/*  « …/12.xcf » → « …/12.txt »  */
++static gchar *
++sidecar (const gchar *xcf)
++{
++  gsize n = strlen (xcf);
++
++  return g_strdup_printf ("%.*stxt", (gint) (n > 3 ? n - 3 : n), xcf);
++}
++
++static void
++autosave_forget (gint id)
++{
++  gchar *xcf = autosave_path (id, "xcf");
++  gchar *txt = autosave_path (id, "txt");
++
++  g_unlink (xcf);
++  g_unlink (txt);
++  g_free (xcf);
++  g_free (txt);
++  g_hash_table_remove (saved_times, GINT_TO_POINTER (id));
++}
++
++static gboolean
++autosave_image (Gimp      *gimp,
++                GimpImage *image)
++{
++  gint           id   = gimp_image_get_id (image);
++  gchar         *xcf  = autosave_path (id, "xcf");
++  gchar         *tmp  = g_strconcat (xcf, ".part", NULL);
++  GFile         *file = g_file_new_for_path (tmp);
++  GError        *error = NULL;
++  GOutputStream *out;
++  gboolean       ok   = FALSE;
++
++  out = G_OUTPUT_STREAM (g_file_replace (file, NULL, FALSE, G_FILE_CREATE_PRIVATE, NULL, &error));
++  if (out)
++    {
++      ok = xcf_save_stream (gimp, image, out, file, NULL, &error);
++      g_output_stream_close (out, NULL, NULL);
++      g_object_unref (out);
++    }
++
++  if (ok && g_rename (tmp, xcf) == 0)
++    {
++      GFile *orig = gimp_image_get_file (image);
++      gchar *txt  = autosave_path (id, "txt");
++      gchar *uri;
++      gchar *info;
++
++      if (! orig)
++        orig = gimp_image_get_imported_file (image);
++      uri  = orig ? g_file_get_uri (orig) : NULL;
++      info = g_strdup_printf ("%s\n%s\n", gimp_image_get_display_name (image),
++                              uri ? uri : "");
++      g_file_set_contents (txt, info, -1, NULL);
++      g_free (info);
++      g_free (uri);
++      g_free (txt);
++    }
++  else
++    {
++      g_unlink (tmp);
++      if (error)
++        g_printerr ("ChopGimp : enregistrement automatique impossible (%s)\n", error->message);
++      ok = FALSE;
++    }
++
++  g_clear_error (&error);
++  g_object_unref (file);
++  g_free (tmp);
++  g_free (xcf);
++  return ok;
++}
++
++/*  every input event (any widget): only stores the time, cheap enough for
++ *  motion events
++ */
++static gboolean
++autosave_input_hook (GSignalInvocationHint *ihint,
++                     guint                  n_param_values,
++                     const GValue          *param_values,
++                     gpointer               data)
++{
++  GdkEvent *event;
++
++  if (n_param_values < 2)
++    return TRUE;
++
++  event = g_value_get_boxed (&param_values[1]);
++  if (! event)
++    return TRUE;
++
++  switch (event->type)
++    {
++    case GDK_MOTION_NOTIFY:
++    case GDK_BUTTON_PRESS:
++    case GDK_2BUTTON_PRESS:
++    case GDK_3BUTTON_PRESS:
++    case GDK_BUTTON_RELEASE:
++    case GDK_KEY_PRESS:
++    case GDK_KEY_RELEASE:
++    case GDK_SCROLL:
++    case GDK_TOUCH_BEGIN:
++    case GDK_TOUCH_UPDATE:
++    case GDK_TOUCH_END:
++    case GDK_TOUCHPAD_SWIPE:
++    case GDK_TOUCHPAD_PINCH:
++      last_input = g_get_monotonic_time ();
++      break;
++
++    default:
++      break;
++    }
++
++  return TRUE;
++}
++
++static gboolean autosave_tick (gpointer data);
++
++static void
++autosave_schedule (Gimp  *gimp,
++                   guint  seconds)
++{
++  if (timer_id)
++    g_source_remove (timer_id);
++  timer_id = g_timeout_add_seconds (seconds, autosave_tick, gimp);
++}
++
++/*  the user is drawing, dragging or typing: saving now would freeze the
++ *  canvas under the pointer
++ */
++static gboolean
++autosave_user_busy (Gimp *gimp)
++{
++  GimpTool *tool = tool_manager_get_active (gimp);
++
++  /*  never in the middle of a stroke or a transform  */
++  if (tool && tool->control && gimp_tool_control_is_active (tool->control))
++    return TRUE;
++
++  if (g_get_monotonic_time () - last_input < AUTOSAVE_QUIET_TIME)
++    return TRUE;
++
++  return FALSE;
++}
++
++static gboolean
++autosave_tick (gpointer data)
++{
++  Gimp       *gimp = data;
++  GList      *list;
++  GHashTable *alive;
++  GList      *ids, *iter;
++  GimpImage  *oldest        = NULL;
++  gint64      oldest_time   = G_MAXINT64;
++  guint       oldest_serial = 0;
++
++  timer_id = 0;
++
++  /*  postponed, checked again in a few seconds  */
++  if (autosave_user_busy (gimp))
++    {
++      autosave_schedule (gimp, AUTOSAVE_RETRY_DELAY);
++      return G_SOURCE_REMOVE;
++    }
++
++  alive = g_hash_table_new (NULL, NULL);
++
++  for (list = gimp_get_image_iter (gimp); list; list = g_list_next (list))
++    {
++      GimpImage *image  = list->data;
++      gint       id     = gimp_image_get_id (image);
++      guint      serial = chopgimp_image_change_serial (image);
++      SavedCopy *prev;
++
++      g_hash_table_add (alive, GINT_TO_POINTER (id));
++
++      if (! gimp_image_is_dirty (image))
++        {
++          if (g_hash_table_contains (saved_times, GINT_TO_POINTER (id)))
++            autosave_forget (id);
++          continue;
++        }
++
++      prev = g_hash_table_lookup (saved_times, GINT_TO_POINTER (id));
++      if (prev && prev->serial == serial)
++        continue;
++
++      /*  round-robin: the save is synchronous, so only one image per
++       *  tick, the one whose copy is the oldest (never saved first)
++       */
++      if (! oldest || (prev ? prev->saved_at : 0) < oldest_time)
++        {
++          oldest        = image;
++          oldest_time   = prev ? prev->saved_at : 0;
++          oldest_serial = serial;
++        }
++    }
++
++  if (oldest)
++    {
++      gint       id    = gimp_image_get_id (oldest);
++      gint64     start = g_get_monotonic_time ();
++      gboolean   ok    = autosave_image (gimp, oldest);
++      SavedCopy *copy  = g_hash_table_lookup (saved_times, GINT_TO_POINTER (id));
++
++      if (gimp->be_verbose)
++        g_printerr ("ChopGimp : enregistrement automatique de l'image %d en %.2f s\n",
++                    id, (g_get_monotonic_time () - start) / 1e6);
++
++      if (! copy)
++        {
++          copy = g_new0 (SavedCopy, 1);
++          copy->serial = G_MAXUINT;     /*  no copy yet  */
++          g_hash_table_insert (saved_times, GINT_TO_POINTER (id), copy);
++        }
++
++      if (ok)
++        copy->serial = oldest_serial;
++
++      /*  a failed save is retried, after the other images  */
++      copy->saved_at = g_get_monotonic_time ();
++    }
++
++  /*  closed images  */
++  ids = g_hash_table_get_keys (saved_times);
++  for (iter = ids; iter; iter = iter->next)
++    if (! g_hash_table_contains (alive, iter->data))
++      autosave_forget (GPOINTER_TO_INT (iter->data));
++  g_list_free (ids);
++  g_hash_table_destroy (alive);
++
++  /*  other modified images wait for the next period (one save per tick)  */
++  autosave_schedule (gimp, period);
++
++  return G_SOURCE_REMOVE;
++}
++
++
++/*  recovery  */
++
++typedef struct
++{
++  Gimp   *gimp;
++  GSList *files;      /*  xcf paths in recuperation/  */
++} Recovery;
++
++static void
++recovery_free (Recovery *r)
++{
++  g_slist_free_full (r->files, g_free);
++  g_free (r);
++}
++
++static void
++recovery_open (Recovery *r)
++{
++  GimpContext *context = gimp_get_user_context (r->gimp);
++  GSList      *iter;
++
++  for (iter = r->files; iter; iter = iter->next)
++    {
++      const gchar       *xcf  = iter->data;
++      gchar             *txt  = sidecar (xcf);
++      gchar             *info = NULL;
++      GFile             *file = g_file_new_for_path (xcf);
++      GimpPDBStatusType  status;
++      GimpImage         *image;
++
++      image = file_open_with_display (r->gimp, context, NULL, file, TRUE, NULL, &status, NULL);
++
++      if (image && g_file_get_contents (txt, &info, NULL, NULL))
++        {
++          gchar **lines = g_strsplit (info, "\n", 3);
++
++          if (lines[0] && lines[1] && *lines[1])
++            {
++              GFile *orig = g_file_new_for_uri (lines[1]);
++              gchar *base = g_file_get_basename (orig);
++
++              if (g_str_has_suffix (base, ".xcf") || g_str_has_suffix (base, ".xcf.gz") ||
++                  g_str_has_suffix (base, ".xcf.bz2") || g_str_has_suffix (base, ".xcf.xz"))
++                gimp_image_set_file (image, orig);
++              else
++                gimp_image_set_imported_file (image, orig);
++              g_free (base);
++              g_object_unref (orig);
++            }
++          g_strfreev (lines);
++        }
++      if (image)
++        gimp_image_dirty (image, GIMP_DIRTY_IMAGE);
++
++      g_free (info);
++      g_free (txt);
++      g_object_unref (file);
++    }
++}
++
++static void
++recovery_delete (Recovery *r)
++{
++  GSList *iter;
++
++  for (iter = r->files; iter; iter = iter->next)
++    {
++      const gchar *xcf = iter->data;
++      gchar       *txt = sidecar (xcf);
++
++      g_unlink (xcf);
++      g_unlink (txt);
++      g_free (txt);
++    }
++}
++
++static void
++recovery_response (GtkDialog *dialog,
++                   gint       response,
++                   Recovery  *r)
++{
++  if (response == GTK_RESPONSE_ACCEPT)
++    {
++      recovery_open (r);
++      recovery_delete (r);
++    }
++  else if (response == GTK_RESPONSE_REJECT)
++    {
++      recovery_delete (r);
++    }
++  /*  « Plus tard » : les copies restent dans autosave/recuperation/  */
++
++  gtk_widget_destroy (GTK_WIDGET (dialog));
++}
++
++static gboolean
++recovery_dialog (gpointer data)
++{
++  Recovery  *r = data;
++  GtkWidget *dialog;
++  GString   *names = g_string_new (NULL);
++  GSList    *iter;
++
++  recovery_timer_id = 0;
++  recovery_pending  = NULL;
++
++  for (iter = r->files; iter; iter = iter->next)
++    {
++      const gchar *xcf  = iter->data;
++      gchar       *txt  = sidecar (xcf);
++      gchar       *info = NULL;
++
++      if (g_file_get_contents (txt, &info, NULL, NULL))
++        {
++          gchar *nl = strchr (info, '\n');
++
++          if (nl)
++            *nl = '\0';
++          g_string_append_printf (names, "  • %s\n", info);
++        }
++      else
++        {
++          g_string_append_printf (names, "  • %s\n", xcf);
++        }
++      g_free (info);
++      g_free (txt);
++    }
++
++  dialog = gtk_message_dialog_new (NULL, 0, GTK_MESSAGE_QUESTION, GTK_BUTTONS_NONE,
++                                   "Documents non enregistrés de la session précédente");
++  gtk_message_dialog_format_secondary_text (GTK_MESSAGE_DIALOG (dialog),
++                                            "ChopGimp ne s'est pas fermé normalement. "
++                                            "Copies enregistrées automatiquement :\n\n%s\n"
++                                            "Les rouvrir ? (marquées modifiées, à enregistrer)",
++                                            names->str);
++  gtk_window_set_title (GTK_WINDOW (dialog), "Récupération");
++  gtk_dialog_add_buttons (GTK_DIALOG (dialog),
++                          "_Supprimer",  GTK_RESPONSE_REJECT,
++                          "_Plus tard",  GTK_RESPONSE_CANCEL,
++                          "_Rouvrir",    GTK_RESPONSE_ACCEPT,
++                          NULL);
++  gtk_dialog_set_default_response (GTK_DIALOG (dialog), GTK_RESPONSE_ACCEPT);
++  g_signal_connect_data (dialog, "response", G_CALLBACK (recovery_response),
++                         r, (GClosureNotify) recovery_free, 0);
++  gtk_widget_show (dialog);
++  g_string_free (names, TRUE);
++
++  return G_SOURCE_REMOVE;
++}
++
++
++void
++chopgimp_autosave_init (Gimp *gimp)
++{
++  gchar       *recup;
++  GDir        *dir;
++  const gchar *name;
++  Recovery    *r;
++  gchar       *minutes;
++  gint         m;
++
++  autosave_dir = g_build_filename (gimp_directory (), "autosave", NULL);
++  recup        = g_build_filename (autosave_dir, "recuperation", NULL);
++  g_mkdir_with_parents (recup, 0700);
++  saved_times  = g_hash_table_new_full (NULL, NULL, NULL, g_free);
++
++  /*  leftovers of an interrupted session: aside, for the recovery dialog
++   *  (image ids start again at 1 in this session)
++   */
++  if ((dir = g_dir_open (autosave_dir, 0, NULL)))
++    {
++      while ((name = g_dir_read_name (dir)))
++        {
++          if (g_str_has_suffix (name, ".xcf") || g_str_has_suffix (name, ".txt"))
++            {
++              gchar *src   = g_build_filename (autosave_dir, name, NULL);
++              gchar *stamp = g_strdup_printf ("%" G_GINT64_FORMAT "-%s",
++                                              g_get_real_time () / 1000000, name);
++              gchar *dst   = g_build_filename (recup, stamp, NULL);
++
++              g_rename (src, dst);
++              g_free (src);
++              g_free (stamp);
++              g_free (dst);
++            }
++          else if (g_str_has_suffix (name, ".part"))
++            {
++              gchar *src = g_build_filename (autosave_dir, name, NULL);
++
++              g_unlink (src);
++              g_free (src);
++            }
++        }
++      g_dir_close (dir);
++    }
++
++  r = g_new0 (Recovery, 1);
++  r->gimp = gimp;
++  if ((dir = g_dir_open (recup, 0, NULL)))
++    {
++      while ((name = g_dir_read_name (dir)))
++        if (g_str_has_suffix (name, ".xcf"))
++          r->files = g_slist_prepend (r->files, g_build_filename (recup, name, NULL));
++      g_dir_close (dir);
++    }
++  if (r->files)
++    {
++      recovery_pending  = r;
++      recovery_timer_id = g_timeout_add_seconds (4, recovery_dialog, r);
++    }
++  else
++    recovery_free (r);
++  g_free (recup);
++
++  minutes = chopgimp_rc_get_string ("autosave", "minutes", "5");
++  m = atoi (minutes);
++  g_free (minutes);
++  if (m > 0)
++    {
++      period = m * 60;
++      input_hook_id = g_signal_add_emission_hook (g_signal_lookup ("event", GTK_TYPE_WIDGET),
++                                                  0, autosave_input_hook, NULL, NULL);
++      autosave_schedule (gimp, period);
++    }
++}
++
++void
++chopgimp_autosave_exit (void)
++{
++  GDir        *dir;
++  const gchar *name;
++
++  if (timer_id)
++    g_source_remove (timer_id);
++  timer_id = 0;
++
++  if (input_hook_id)
++    g_signal_remove_emission_hook (g_signal_lookup ("event", GTK_TYPE_WIDGET),
++                                   input_hook_id);
++  input_hook_id = 0;
++
++  /*  recovery dialog never shown: its copies stay in recuperation/  */
++  if (recovery_timer_id)
++    {
++      g_source_remove (recovery_timer_id);
++      recovery_free (recovery_pending);
++    }
++  recovery_timer_id = 0;
++  recovery_pending  = NULL;
++
++  if (! autosave_dir || ! (dir = g_dir_open (autosave_dir, 0, NULL)))
++    return;
++
++  /*  normal exit: this session's copies are no longer needed  */
++  while ((name = g_dir_read_name (dir)))
++    if (g_str_has_suffix (name, ".xcf") || g_str_has_suffix (name, ".txt") ||
++        g_str_has_suffix (name, ".part"))
++      {
++        gchar *path = g_build_filename (autosave_dir, name, NULL);
++
++        g_unlink (path);
++        g_free (path);
++      }
++  g_dir_close (dir);
++}
+diff --git a/app/gui/chopgimp-autosave.h b/app/gui/chopgimp-autosave.h
+new file mode 100644
+index 0000000..407bc90
+--- /dev/null
++++ b/app/gui/chopgimp-autosave.h
+@@ -0,0 +1,8 @@
++/* ChopGimp — enregistrement automatique et récupération (voir le .c) */
++
++#pragma once
++
++void    chopgimp_autosave_init       (Gimp      *gimp);
++void    chopgimp_autosave_exit       (void);
++
++guint   chopgimp_image_change_serial (GimpImage *image);
+diff --git a/app/gui/chopgimp-timelapse.c b/app/gui/chopgimp-timelapse.c
+new file mode 100644
+index 0000000..bd84cff
+--- /dev/null
++++ b/app/gui/chopgimp-timelapse.c
+@@ -0,0 +1,135 @@
++/* ChopGimp — enregistrement en accéléré (timelapse)
++ *
++ * This program is free software: you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation; either version 3 of the License, or
++ * (at your option) any later version.
++ *
++ * Affichage > Enregistrer en accéléré : toutes les 2 s, si une image a
++ * changé depuis la dernière capture, sa vue (réduite à 1280 px au plus)
++ * est écrite en PNG dans <gimpdir>/timelapse/image-<id>/000001.png…
++ * Fichier > Exporter > Exporter le timelapse… (plug-in chopgimp_atelier)
++ * en fait une vidéo WebM.
++ */
++
++#include "config.h"
++
++#include <gegl.h>
++#include <gtk/gtk.h>
++
++#include "libgimpbase/gimpbase.h"
++
++#include "gui-types.h"
++
++#include "core/gimp.h"
++#include "core/gimpimage.h"
++#include "core/gimppickable.h"
++#include "core/gimpprojection.h"
++
++#include "chopgimp-autosave.h"
++#include "chopgimp-timelapse.h"
++
++
++static guint       timer   = 0;
++static GHashTable *last_dt = NULL;   /*  image id → change serial of the last frame  */
++static GHashTable *n_frame = NULL;   /*  image id → next frame number  */
++
++static void
++capture (GimpImage *image)
++{
++  GeglBuffer *buffer = gimp_pickable_get_buffer (GIMP_PICKABLE (gimp_image_get_projection (image)));
++  gint        w      = gimp_image_get_width (image);
++  gint        h      = gimp_image_get_height (image);
++  gdouble     scale  = MIN (1.0, 1280.0 / MAX (w, h));
++  gint        sw     = MAX (1, (gint) (w * scale));
++  gint        sh     = MAX (1, (gint) (h * scale));
++  guchar     *data   = g_malloc ((gsize) sw * sh * 4);
++  gint        id     = gimp_image_get_id (image);
++  gint        n      = GPOINTER_TO_INT (g_hash_table_lookup (n_frame, GINT_TO_POINTER (id)));
++  gchar      *dir, *name, *path;
++  GdkPixbuf  *pixbuf;
++
++  gimp_pickable_flush (GIMP_PICKABLE (gimp_image_get_projection (image)));
++  gegl_buffer_get (buffer, GEGL_RECTANGLE (0, 0, sw, sh), scale,
++                   babl_format ("R'G'B'A u8"), data, sw * 4, GEGL_ABYSS_NONE);
++
++  dir  = g_strdup_printf ("%s/timelapse/image-%d", gimp_directory (), id);
++  g_mkdir_with_parents (dir, 0700);
++  name = g_strdup_printf ("%06d.png", n);
++  path = g_build_filename (dir, name, NULL);
++
++  pixbuf = gdk_pixbuf_new_from_data (data, GDK_COLORSPACE_RGB, TRUE, 8, sw, sh, sw * 4, NULL, NULL);
++  gdk_pixbuf_save (pixbuf, path, "png", NULL, "compression", "3", NULL);
++  g_object_unref (pixbuf);
++
++  g_hash_table_insert (n_frame, GINT_TO_POINTER (id), GINT_TO_POINTER (n + 1));
++  g_free (data);
++  g_free (path);
++  g_free (name);
++  g_free (dir);
++}
++
++static gboolean
++tick (gpointer data)
++{
++  Gimp       *gimp = data;
++  GList      *list;
++  GHashTable *alive;
++  GList      *ids, *iter;
++
++  alive = g_hash_table_new (NULL, NULL);
++
++  for (list = gimp_get_image_iter (gimp); list; list = g_list_next (list))
++    {
++      GimpImage *image  = list->data;
++      gint       id     = gimp_image_get_id (image);
++      guint      serial = chopgimp_image_change_serial (image);
++      gpointer   prev;
++
++      g_hash_table_add (alive, GINT_TO_POINTER (id));
++
++      if (g_hash_table_lookup_extended (last_dt, GINT_TO_POINTER (id),
++                                        NULL, &prev) &&
++          GPOINTER_TO_UINT (prev) == serial)
++        continue;
++
++      capture (image);
++      g_hash_table_insert (last_dt, GINT_TO_POINTER (id),
++                           GUINT_TO_POINTER (serial));
++    }
++
++  /*  closed images  */
++  ids = g_hash_table_get_keys (last_dt);
++  for (iter = ids; iter; iter = iter->next)
++    if (! g_hash_table_contains (alive, iter->data))
++      {
++        g_hash_table_remove (last_dt, iter->data);
++        g_hash_table_remove (n_frame, iter->data);
++      }
++  g_list_free (ids);
++  g_hash_table_destroy (alive);
++
++  return G_SOURCE_CONTINUE;
++}
++
++void
++chopgimp_timelapse_set_recording (Gimp     *gimp,
++                                  gboolean  recording)
++{
++  if (! last_dt)
++    {
++      last_dt = g_hash_table_new (NULL, NULL);
++      n_frame = g_hash_table_new (NULL, NULL);
++    }
++
++  if (recording && ! timer)
++    {
++      timer = g_timeout_add_seconds (2, tick, gimp);
++      tick (gimp);
++    }
++  else if (! recording && timer)
++    {
++      g_source_remove (timer);
++      timer = 0;
++    }
++}
+diff --git a/app/gui/chopgimp-timelapse.h b/app/gui/chopgimp-timelapse.h
+new file mode 100644
+index 0000000..8d7da42
+--- /dev/null
++++ b/app/gui/chopgimp-timelapse.h
+@@ -0,0 +1,6 @@
++/* ChopGimp — enregistrement en accéléré (voir le .c) */
++
++#pragma once
++
++void       chopgimp_timelapse_set_recording (Gimp     *gimp,
++                                             gboolean  recording);
+diff --git a/app/gui/meson.build b/app/gui/meson.build
+index dc87159..ca270f6 100644
+--- a/app/gui/meson.build
++++ b/app/gui/meson.build
+@@ -7,6 +7,8 @@ gimpdbusservice_gen = gnome.gdbus_codegen(
+ )
+ 
+ libappgui_sources = [
++  'chopgimp-autosave.c',
++  'chopgimp-timelapse.c',
+   'gimpapp.c',
+   'gimpdbusservice.c',
+   'gimpuiconfigurer.c',
+diff --git a/app/paint/gimpbrushcore.c b/app/paint/gimpbrushcore.c
+index c0baf62..a262f99 100644
+--- a/app/paint/gimpbrushcore.c
++++ b/app/paint/gimpbrushcore.c
+@@ -38,8 +38,10 @@
+ #include "core/gimpdynamicsoutput.h"
+ #include "core/gimperror.h"
+ #include "core/gimpimage.h"
++#include "core/gimpitem.h"
+ #include "core/gimpsymmetry.h"
+ #include "core/gimptempbuf.h"
++#include "core/gimppattern.h"
+ 
+ #include "gimpbrushcore.h"
+ #include "gimpbrushcore-loops.h"
+@@ -228,6 +230,10 @@ gimp_brush_core_finalize (GObject *object)
+       g_clear_pointer (&core->solid_brushes[i][j], gimp_temp_buf_unref);
+ 
+   g_clear_pointer (&core->rand, g_rand_free);
++  g_clear_pointer (&core->paper, g_free);
++  g_clear_pointer (&core->paper_scratch, gimp_temp_buf_unref);
++  g_clear_pointer (&core->paper_cols, g_free);
++  core->paper_cols_len = 0;
+ 
+   for (i = 0; i < KERNEL_SUBSAMPLE + 1; i++)
+     for (j = 0; j < KERNEL_SUBSAMPLE + 1; j++)
+@@ -365,6 +371,26 @@ gimp_brush_core_start (GimpPaintCore     *paint_core,
+ 
+   gimp_brush_core_set_brush (core, gimp_context_get_brush (context));
+ 
++  /*  ChopGimp: paper texture, luminance of the active pattern  */
++  g_clear_pointer (&core->paper, g_free);
++  if (paint_options->paper_texture && gimp_context_get_pattern (context))
++    {
++      GimpTempBuf *mask = gimp_pattern_get_mask (gimp_context_get_pattern (context));
++      gint         w    = gimp_temp_buf_get_width (mask);
++      gint         h    = gimp_temp_buf_get_height (mask);
++      gfloat      *lum  = g_new (gfloat, w * h);
++      gpointer     data = gimp_temp_buf_lock (mask, babl_format ("Y float"), GEGL_ACCESS_READ);
++
++      memcpy (lum, data, sizeof (gfloat) * w * h);
++      gimp_temp_buf_unlock (mask, data);
++
++      core->paper          = lum;
++      core->paper_w        = w;
++      core->paper_h        = h;
++      core->paper_scale    = paint_options->paper_scale;
++      core->paper_strength = paint_options->paper_strength;
++    }
++
+   if (gimp_paint_options_are_dynamics_enabled (paint_options))
+     {
+       gimp_brush_core_set_dynamics (core, gimp_context_get_dynamics (context));
+@@ -963,6 +989,88 @@ gimp_brush_core_set_dynamics (GimpBrushCore *core,
+     g_signal_emit (core, core_signals[SET_DYNAMICS], 0, dynamics);
+ }
+ 
++/*  ChopGimp: the brush mask modulated by the paper grain, in canvas
++ *  coordinates (the grain stays still on the sheet; x0, y0 are canvas
++ *  coordinates of the mask's top-left pixel). Returns a scratch mask owned
++ *  by @core (valid until the next dab), or NULL when there is no texture.
++ */
++static const GimpTempBuf *
++chopgimp_paper_mask (GimpBrushCore     *core,
++                     const GimpTempBuf *mask,
++                     gint               x0,
++                     gint               y0)
++{
++  static const Babl *y_float = NULL;
++  const gfloat      *src;
++  gfloat            *dest;
++  gint              *cols;
++  gint               w, h, i, j;
++  gdouble            k, s;
++
++  if (! y_float)
++    y_float = babl_format ("Y float");
++
++  if (! core->paper || gimp_temp_buf_get_format (mask) != y_float)
++    return NULL;
++
++  w = gimp_temp_buf_get_width  (mask);
++  h = gimp_temp_buf_get_height (mask);
++  k = 1.0 / MAX (core->paper_scale, 0.01);
++  s = core->paper_strength;
++
++  /*  the pasted mask is used synchronously by gimp_paint_core_paste(),
++   *  so one output buffer per core is enough
++   */
++  if (! core->paper_scratch                                ||
++      gimp_temp_buf_get_width  (core->paper_scratch) != w ||
++      gimp_temp_buf_get_height (core->paper_scratch) != h)
++    {
++      g_clear_pointer (&core->paper_scratch, gimp_temp_buf_unref);
++      core->paper_scratch = gimp_temp_buf_new (w, h, y_float);
++    }
++
++  if (core->paper_cols_len < w)
++    {
++      g_free (core->paper_cols);
++      core->paper_cols     = g_new (gint, w);
++      core->paper_cols_len = w;
++    }
++
++  src  = (const gfloat *) gimp_temp_buf_get_data (mask);
++  dest = (gfloat *) gimp_temp_buf_get_data (core->paper_scratch);
++  cols = core->paper_cols;
++
++  for (i = 0; i < w; i++)
++    {
++      gint px = ((gint) floor ((x0 + i) * k)) % core->paper_w;
++
++      if (px < 0)
++        px += core->paper_w;
++
++      cols[i] = px;
++    }
++
++  for (j = 0; j < h; j++)
++    {
++      gint          py  = ((gint) floor ((y0 + j) * k)) % core->paper_h;
++      const gfloat *row;
++      const gfloat *in;
++      gfloat       *out;
++
++      if (py < 0)
++        py += core->paper_h;
++
++      row = core->paper + py * core->paper_w;
++      in  = src  + j * w;
++      out = dest + j * w;
++
++      for (i = 0; i < w; i++)
++        out[i] = in[i] * (gfloat) (1.0 - s + s * row[cols[i]]);
++    }
++
++  return core->paper_scratch;
++}
++
+ void
+ gimp_brush_core_paste_canvas (GimpBrushCore            *core,
+                               GimpDrawable             *drawable,
+@@ -994,13 +1102,24 @@ gimp_brush_core_paste_canvas (GimpBrushCore            *core,
+       off_x = (x < 0) ? -x : 0;
+       off_y = (y < 0) ? -y : 0;
+ 
+-      gimp_paint_core_paste (paint_core, brush_mask,
+-                             off_x, off_y,
+-                             drawable,
+-                             brush_opacity,
+-                             image_opacity,
+-                             paint_mode,
+-                             mode);
++      {
++        const GimpTempBuf *paper;
++        gint               item_x;
++        gint               item_y;
++
++        /*  grain anchored to the canvas, not to the layer  */
++        gimp_item_get_offset (GIMP_ITEM (drawable), &item_x, &item_y);
++        paper = chopgimp_paper_mask (core, brush_mask,
++                                     x + item_x, y + item_y);
++
++        gimp_paint_core_paste (paint_core, paper ? paper : brush_mask,
++                               off_x, off_y,
++                               drawable,
++                               brush_opacity,
++                               image_opacity,
++                               paint_mode,
++                               mode);
++      }
+     }
+ }
+ 
+diff --git a/app/plug-in/gimpplugin.c b/app/plug-in/gimpplugin.c
+index 771d739..fb30182 100644
+--- a/app/plug-in/gimpplugin.c
++++ b/app/plug-in/gimpplugin.c
+@@ -98,6 +98,8 @@
+ 
+ #include "gimp-intl.h"
+ 
++#include "chopgimp-crash.h"
++
+ 
+ static void       gimp_plug_in_finalize               (GObject      *object);
+ 
+@@ -645,6 +647,11 @@ gimp_plug_in_close (GimpPlugIn *plug_in,
+ 
+   plug_in->open = FALSE;
+ 
++  /*  ChopGimp: the plug-in is over (crash report context)  */
++  if (plug_in->main_proc_frame.procedure)
++    chopgimp_crash_note_plugin (gimp_object_get_name (plug_in->main_proc_frame.procedure),
++                                FALSE);
++
+   if (plug_in->pid)
+     {
+ #ifndef G_OS_WIN32
+diff --git a/app/tools/gimpbucketfilltool.c b/app/tools/gimpbucketfilltool.c
+index 4fcdb68..d06e2cb 100644
+--- a/app/tools/gimpbucketfilltool.c
++++ b/app/tools/gimpbucketfilltool.c
+@@ -46,6 +46,8 @@
+ #include "core/gimpprojection.h"
+ #include "core/gimptoolinfo.h"
+ #include "core/gimpwaitable.h"
++#include "core/chopgimp-layer-grow.h"
++#include "core/gimpimage-undo.h"
+ 
+ #include "gegl/gimp-gegl-nodes.h"
+ 
+@@ -87,6 +89,10 @@ struct _GimpBucketFillToolPrivate
+   /* Temp property save */
+   GimpBucketFillMode  fill_mode;
+   GimpBucketFillArea  fill_area;
++
++  /* ChopGimp: layer grow + fill as one undo step (group open on it) */
++  GimpImage          *undo_image;
++  gboolean            committed;
+ };
+ 
+ 
+@@ -317,6 +323,12 @@ gimp_bucket_fill_tool_finalize (GObject *object)
+   g_signal_handlers_disconnect_by_data (options, tool);
+   g_signal_handlers_disconnect_by_data (context, tool);
+ 
++  if (tool->priv->undo_image)
++    {
++      gimp_image_undo_group_end (tool->priv->undo_image);
++      tool->priv->undo_image = NULL;
++    }
++
+   G_OBJECT_CLASS (parent_class)->finalize (object);
+ }
+ 
+@@ -503,6 +515,7 @@ gimp_bucket_fill_tool_commit (GimpBucketFillTool *tool)
+     {
+       gimp_drawable_filter_commit (tool->priv->filter, FALSE,
+                                    GIMP_PROGRESS (tool), FALSE);
++      tool->priv->committed = TRUE;
+       gimp_image_flush (gimp_display_get_image (GIMP_TOOL (tool)->display));
+     }
+ }
+@@ -525,6 +538,21 @@ gimp_bucket_fill_tool_halt (GimpBucketFillTool *tool)
+ 
+   g_clear_object (&tool->priv->fill_mask);
+ 
++  /*  ChopGimp: close the grow + fill undo group; a cancelled fill also
++   *  takes back the layer grow (and drops the group)
++   */
++  if (tool->priv->undo_image)
++    {
++      GimpImage *image = tool->priv->undo_image;
++
++      tool->priv->undo_image = NULL;
++      gimp_image_undo_group_end (image);
++      if (! tool->priv->committed)
++        gimp_image_undo (image);
++      gimp_image_flush (image);
++    }
++  tool->priv->committed = FALSE;
++
+   if (gimp_line_art_is_frozen (tool->priv->line_art))
+     gimp_line_art_thaw (tool->priv->line_art);
+ 
+@@ -638,6 +666,7 @@ gimp_bucket_fill_tool_button_press (GimpTool            *tool,
+       GimpContext     *context  = GIMP_CONTEXT (options);
+       GimpFillOptions *fill_options;
+       GError          *error = NULL;
++      gchar           *warning;
+ 
+       fill_options = gimp_fill_options_new (image->gimp, NULL, FALSE);
+ 
+@@ -654,13 +683,40 @@ gimp_bucket_fill_tool_button_press (GimpTool            *tool,
+           gimp_context_set_paint_mode (GIMP_CONTEXT (fill_options),
+                                        gimp_context_get_paint_mode (context));
+ 
++          warning = chopgimp_layer_paint_warning (drawable);
++
++          if (warning)
++            {
++              gimp_tool_message_literal (tool, display, warning);
++              g_free (warning);
++            }
++
+           if (options->fill_area == GIMP_BUCKET_FILL_SELECTION)
+             {
++              /*  ChopGimp: the layer grows to the selection (no edges)  */
++              gimp_image_undo_group_start (image, GIMP_UNDO_GROUP_PAINT,
++                                           gimp_fill_options_get_undo_desc (fill_options));
++              chopgimp_layer_grow_for_fill (drawable, context);
+               gimp_drawable_edit_fill (drawable, fill_options, NULL);
++              gimp_image_undo_group_end (image);
+               gimp_image_flush (image);
+             }
+           else /* GIMP_BUCKET_FILL_SIMILAR_COLORS || GIMP_BUCKET_FILL_LINE_ART */
+             {
++              /*  ChopGimp: a click outside the layer fills there too;
++               *  grow + fill are one undo step, the group is closed in
++               *  gimp_bucket_fill_tool_halt() (button release)
++               */
++              if (! bucket_tool->priv->undo_image)
++                {
++                  gimp_image_undo_group_start (image, GIMP_UNDO_GROUP_PAINT,
++                                               gimp_fill_options_get_undo_desc (fill_options));
++                  bucket_tool->priv->undo_image = image;
++                  bucket_tool->priv->committed  = FALSE;
++                }
++              if (chopgimp_layer_grow_for_fill (drawable, context))
++                gimp_image_flush (image);
++
+               gimp_bucket_fill_tool_start (bucket_tool, coords, display);
+               gimp_bucket_fill_tool_preview (bucket_tool, coords, display,
+                                              fill_options);
+diff --git a/app/tools/gimptransformgridtool.h b/app/tools/gimptransformgridtool.h
+index 7682225..847705a 100644
+--- a/app/tools/gimptransformgridtool.h
++++ b/app/tools/gimptransformgridtool.h
+@@ -68,6 +68,12 @@ struct _GimpTransformGridTool
+   GList              *preview_drawables;
+ 
+   GimpToolGui        *gui;
++
++  /*  ChopGimp: crop-to-content step pushed by initialize, taken back
++   *  when the transform is cancelled (weak pointers)
++   */
++  GimpImage          *chopgimp_crop_image;
++  GimpUndo           *chopgimp_crop_undo;
+ };
+ 
+ struct _GimpTransformGridToolClass
+diff --git a/app/tools/tool_manager.c b/app/tools/tool_manager.c
+index 1628e72..9157fa5 100644
+--- a/app/tools/tool_manager.c
++++ b/app/tools/tool_manager.c
+@@ -513,7 +513,12 @@ tool_manager_active_modifier_state_active (Gimp            *gimp,
+ 
+   tool_manager = tool_manager_get (gimp);
+ 
+-  if (tool_manager->active_tool)
++  /*  ChopGimp: a modifier key pressed while the active tool works on
++   *  another display (e.g. during a paste or a fill that moved the focus)
++   *  is not for this tool: ignore it instead of failing an assertion.
++   */
++  if (tool_manager->active_tool &&
++      tool_manager->active_tool->focus_display == display)
+     {
+       gimp_tool_set_active_modifier_state (tool_manager->active_tool,
+                                            state,
+diff --git a/app/widgets/gimpaction-history.c b/app/widgets/gimpaction-history.c
+index 7d9d247..09d3eac 100644
+--- a/app/widgets/gimpaction-history.c
++++ b/app/widgets/gimpaction-history.c
+@@ -37,6 +37,9 @@
+ #include "gimpaction.h"
+ #include "gimpaction-history.h"
+ 
++#include "chopgimp-crash.h"
++#include "chopgimp-rc.h"
++
+ 
+ #define GIMP_ACTION_HISTORY_FILENAME "action-history"
+ 
+@@ -355,6 +358,69 @@ gimp_action_history_is_excluded_action (const gchar *action_name)
+ /* Called whenever a GimpAction is activated.
+  * It allows us to log all used actions.
+  */
++/*  ChopGimp: action recorder (Édition > Actions). Image-changing commands
++ *  only: views, windows, dialogs, tools, files and the recorder itself are
++ *  not recorded. Saved in chopgimprc [macro] actions.
++ */
++static gboolean   macro_recording = FALSE;
++static GPtrArray *macro_actions   = NULL;
++static gint       macro_depth     = 0;    /*  nested action activations  */
++
++/*  around every action activation (gimp_action_emit_activate()): an action
++ *  activating another one (layers-adjustment-* → filters-*) records only
++ *  the outer action, so replaying it does not run the inner one twice
++ */
++void
++chopgimp_macro_activation_enter (void)
++{
++  macro_depth++;
++}
++
++void
++chopgimp_macro_activation_leave (void)
++{
++  if (macro_depth > 0)
++    macro_depth--;
++}
++
++gboolean
++chopgimp_macro_is_recording (void)
++{
++  return macro_recording;
++}
++
++void
++chopgimp_macro_set_recording (gboolean recording)
++{
++  if (recording)
++    {
++      g_clear_pointer (&macro_actions, g_ptr_array_unref);
++      macro_actions = g_ptr_array_new_with_free_func (g_free);
++    }
++  else if (macro_recording && macro_actions)
++    {
++      g_ptr_array_add (macro_actions, NULL);
++      chopgimp_rc_set_strings ("macro", "actions", (const gchar * const *) macro_actions->pdata);
++      g_ptr_array_set_size (macro_actions, macro_actions->len - 1);
++    }
++  macro_recording = recording;
++}
++
++static gboolean
++chopgimp_macro_records (const gchar *name)
++{
++  static const gchar *skip[] = { "view-", "windows-", "dialogs-", "tools-", "file-", "context-",
++                                 "dock-", "dockable-", "edit-macro-", "help-", "plug-in-reset",
++                                 "edit-undo", "edit-redo", "image-new", "layers-select-",
++                                 "cursor-info-", "debug-", NULL };
++  gint i;
++
++  for (i = 0; skip[i]; i++)
++    if (g_str_has_prefix (name, skip[i]))
++      return FALSE;
++  return TRUE;
++}
++
+ void
+ gimp_action_history_action_activated (GimpAction *action)
+ {
+@@ -365,6 +431,12 @@ gimp_action_history_action_activated (GimpAction *action)
+ 
+   g_return_if_fail (GIMP_IS_ACTION (action));
+ 
++  chopgimp_crash_note_action (gimp_action_get_name (action));
++
++  if (macro_recording && macro_actions && macro_depth == 0 &&
++      chopgimp_macro_records (gimp_action_get_name (action)))
++    g_ptr_array_add (macro_actions, g_strdup (gimp_action_get_name (action)));
++
+   /* Silently return when called at the wrong time, like when the
+    * activated action was "quit" and the history is already gone.
+    */
+diff --git a/app/widgets/gimpaction-history.h b/app/widgets/gimpaction-history.h
+index 340dbdf..85020db 100644
+--- a/app/widgets/gimpaction-history.h
++++ b/app/widgets/gimpaction-history.h
+@@ -39,4 +39,9 @@ GList    * gimp_action_history_search                (Gimp                *gimp,
+ gboolean   gimp_action_history_is_blacklisted_action (const gchar         *action_name);
+ gboolean   gimp_action_history_is_excluded_action    (const gchar         *action_name);
+ 
++gboolean   chopgimp_macro_is_recording     (void);
++void       chopgimp_macro_set_recording    (gboolean    recording);
++void       chopgimp_macro_activation_enter (void);
++void       chopgimp_macro_activation_leave (void);
++
+ void       gimp_action_history_action_activated      (GimpAction          *action);
+diff --git a/app/widgets/gimpaction.c b/app/widgets/gimpaction.c
+index 1effd39..0f165bd 100644
+--- a/app/widgets/gimpaction.c
++++ b/app/widgets/gimpaction.c
+@@ -36,6 +36,7 @@
+ #include "core/gimpimagefile.h"  /* eek */
+ 
+ #include "gimpaction.h"
++#include "gimpaction-history.h"
+ #include "gimpprocedureaction.h"
+ #include "gimpview.h"
+ #include "gimpviewrenderer.h"
+@@ -249,7 +250,10 @@ gimp_action_emit_activate (GimpAction *action,
+   if (value)
+     g_variant_ref_sink (value);
+ 
++  /*  ChopGimp: action recorder, nesting depth  */
++  chopgimp_macro_activation_enter ();
+   g_signal_emit (action, action_signals[ACTIVATE], 0, value);
++  chopgimp_macro_activation_leave ();
+ 
+   if (value)
+     g_variant_unref (value);
+diff --git a/libgimp/gimpui.c b/libgimp/gimpui.c
+index 58062b7..8665db6 100644
+--- a/libgimp/gimpui.c
++++ b/libgimp/gimpui.c
+@@ -259,6 +259,39 @@ static gboolean gimp_ui_initialized = FALSE;
+ 
+ /*  public functions  */
+ 
++/*  ChopGimp: see gimp_ui_init()  */
++static gboolean
++chopgimp_dialog_realize_hook (GSignalInvocationHint *ihint,
++                              guint                  n_values,
++                              const GValue          *values,
++                              gpointer               data)
++{
++  GObject *object = g_value_get_object (&values[0]);
++
++  if (GTK_IS_DIALOG (object)                                &&
++      ! gtk_window_get_transient_for (GTK_WINDOW (object))  &&
++      ! g_object_get_data (object, "chopgimp-transient"))
++    {
++      GBytes *handle = gimp_progress_get_window_handle ();
++
++      g_object_set_data (object, "chopgimp-transient", GINT_TO_POINTER (1));
++      /*  « modale » n'a pas de sens entre deux processus (le greffon ne
++       *  bloque pas ChopGimp), et GNOME avec « attach-modal-dialogs »
++       *  (réglage par défaut d'Ubuntu) referme aussitôt une fenêtre modale
++       *  rattachée à la fenêtre d'un autre programme.
++       */
++      gtk_window_set_modal (GTK_WINDOW (object), FALSE);
++      if (handle)
++        gimp_window_set_transient (GTK_WINDOW (object));
++      else
++        /*  no window to attach to (e.g. a file opened at start-up)  */
++        gtk_window_set_keep_above (GTK_WINDOW (object), TRUE);
++      g_clear_pointer (&handle, g_bytes_unref);
++    }
++
++  return TRUE;   /*  stay connected  */
++}
++
+ /**
+  * gimp_ui_init:
+  * @prog_name: The name of the plug-in which will be passed as argv[0] to
+@@ -367,6 +400,14 @@ gimp_ui_init (const gchar *prog_name)
+   gegl_init (NULL, NULL);
+ 
+   gimp_ui_initialized = TRUE;
++
++  /*  ChopGimp: every dialog of a plug-in stays above the image window.
++   *  Python plug-ins rarely call gimp_window_set_transient(): their
++   *  dialogs (missing fonts, layer style…) could open behind ChopGimp,
++   *  which then looked frozen.
++   */
++  g_signal_add_emission_hook (g_signal_lookup ("realize", GTK_TYPE_WIDGET), 0,
++                              chopgimp_dialog_realize_hook, NULL, NULL);
+ }
+ 
+ #ifdef GDK_WINDOWING_QUARTZ

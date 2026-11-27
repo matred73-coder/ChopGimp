@@ -13,7 +13,7 @@ fichier ChopGimp s'ouvre dans un GIMP standard, qui y voit les pixels rendus.
 - **Linux** : Flatpak `org.cen_na.ChopGimp`, installé à côté d'un GIMP existant,
   avec une configuration séparée (`~/.var/app/org.cen_na.ChopGimp/`).
 - **Windows** : installateur Inno Setup ou version portable (zip).
-- **Version actuelle** : 4.2.0, CMJN façon Photoshop (Image > Mode > CMJN, profils ECI, conversion de profil, Exporter pour l'imprimeur en PDF/X ou TIFF CMJN) et finitions vectorielles (« mixte » dans Aspect / Contour, copier-coller d'objets, Lasso direct) (voir [`VERSION`](VERSION)).
+- **Version actuelle** : 4.2.1 (coller un SVG d'Inkscape ou d'Illustrator en objets, rapport de plantage enregistré, patchs regroupés en 23 thèmes), sur la 4.2.0 : CMJN façon Photoshop (Image > Mode > CMJN, profils ECI, conversion de profil, Exporter pour l'imprimeur en PDF/X ou TIFF CMJN) et finitions vectorielles (« mixte » dans Aspect / Contour, copier-coller d'objets, Lasso direct) (voir [`VERSION`](VERSION)).
   Le journal détaillé est dans [`docs/SUIVI.md`](docs/SUIVI.md).
 - **Prise en main** : le [guide de l'utilisateur](docs/GUIDE.md), rangé par tâche
   (vectoriser, objets, exports, raccourcis).
@@ -42,8 +42,9 @@ Ils sont produits automatiquement par GitHub Actions à chaque tag `v*`
 
 **En chiffres** :
 
-- 173 patchs sur GIMP 3.2.8 (`patches/gimp-3.2.8/`), soit environ 144 000 lignes
-  ajoutées dans 475 fichiers, dont 141 fichiers `chopgimp-*` nouveaux ;
+- 23 patchs thématiques sur GIMP 3.2.8 (`patches/gimp-3.2.8/`, organisation dans
+  [`docs/dev/PATCHS.md`](docs/dev/PATCHS.md)), soit environ 147 000 lignes ajoutées dans
+  491 fichiers, dont 142 fichiers `chopgimp-*` nouveaux ;
 - 7 patchs sur GEGL 0.4.72 et 2 sur babl 0.1.128 (performances, styles de calque,
   traductions) ;
 - 12 greffons Python ChopGimp ;
@@ -342,7 +343,7 @@ Les options de compilation (`make build LTO=… PGO=… GIMP_O=…`) passent par
 | 3.99 | Lots 1 à 5 compilés, corrigés et vérifiés (272 tests, banc de performance, banc graphique) ; version intermédiaire avant la 4.0 (3.99.0) |
 | 4.0 | Version finale : caches d'objets 4× plus légers, compilation LTO + PGO, recette complète au banc graphique, avertissements éliminés, thèmes lisibles, traductions des exports, interrupteurs documentés, guide de l'utilisateur (4.0.0) ; CI Windows corrigée (4.0.1) ; liste des calques jamais cachée sous son en-tête (4.0.2) |
 | 4.1 | Allègement : 14 interrupteurs retirés avec l'ancien code, code mort et doublons supprimés (`chopgimp-vutil.c`), smoke_test factorisé ; regroupement des patchs proposé (`docs/dev/PLAN-PATCHS-4.1.md`) (4.1.0); une seule sélection d'objets (V, A, Plume, Forme, panneaux, couleurs PP/AP, Ctrl+A / Ctrl+Maj+A, « mixte »), PSD CMJN à profil d'entrée sans plantage (4.1.1) |
-| 4.2 | CMJN façon Photoshop : profils ECI (ISO Coated v2 fourni, PSO v3 téléchargés en un clic), Image > Mode > CMJN, Convertir en profil CMJN, fenêtre « profil incorporé différent » (Garder / Convertir / Ignorer, toujours), Exporter pour l'imprimeur (PDF/X-4 vectoriel, PDF/X-1a, TIFF CMJN, fond perdu, traits de coupe, plans de travail), profils invalides refusés sans plantage ; « mixte » dans Aspect / Contour, copier-coller d'objets vectoriels, calque vectorisé sélectionné, outil Lasso direct (4.2.0) |
+| 4.2 | CMJN façon Photoshop : profils ECI (ISO Coated v2 fourni, PSO v3 téléchargés en un clic), Image > Mode > CMJN, Convertir en profil CMJN, fenêtre « profil incorporé différent » (Garder / Convertir / Ignorer, toujours), Exporter pour l'imprimeur (PDF/X-4 vectoriel, PDF/X-1a, TIFF CMJN, fond perdu, traits de coupe, plans de travail), profils invalides refusés sans plantage ; « mixte » dans Aspect / Contour, copier-coller d'objets vectoriels, calque vectorisé sélectionné, outil Lasso direct (4.2.0) ; SVG d'Inkscape / Illustrator collé en objets, barre d'état du Lasso direct, rapport de plantage dans `crash-reports/`, patchs regroupés en 23 thèmes (4.2.1) |
 
 Le détail de chaque version (ce qui est fait, vérifié, et ce qui reste) se trouve
 dans [`docs/SUIVI.md`](docs/SUIVI.md). Le plan du chantier vectoriel est dans
@@ -354,7 +355,7 @@ dans [`docs/SUIVI.md`](docs/SUIVI.md). Le plan du chantier vectoriel est dans
 
 | Dossier | Contenu |
 |---|---|
-| `patches/gimp-3.2.8/` | Les modifications de GIMP, un patch par commit, appliquées dans l'ordre |
+| `patches/gimp-3.2.8/` | Les modifications de GIMP : 22 thèmes et l'icône Windows, appliqués dans l'ordre (`docs/dev/PATCHS.md`) |
 | `patches/gegl-0.4.72/`, `patches/babl-0.1.128/` | Patchs de GEGL et de babl |
 | `plug-ins/` | Greffons ChopGimp (PSD, PDF, vectoriel, effets, IA, web, atelier…) |
 | `themes/`, `icons/`, `cursors/`, `branding/` | Thèmes (générés depuis `themes/src/`), icônes, curseurs, marque |
@@ -370,7 +371,7 @@ Sous Linux, il faut `flatpak` et `flatpak-builder`, ainsi que Flathub.
 
 ```bash
 git clone https://gitlab.gnome.org/GNOME/gimp.git build/gimp-src   # puis : git checkout GIMP_3_2_8
-# appliquer patches/gimp-3.2.8/*.patch sur une branche « photogimp » (git am)
+# appliquer patches/gimp-3.2.8/*.patch sur une branche « photogimp-v2 » (git am)
 make manifest      # génère flatpak/org.cen_na.ChopGimp.json
 make build         # flatpak-builder (LTO=0 pour une compilation plus courte,
                    # LTO=all PGO=1 pour le paquet optimisé de la 4.0)
@@ -379,9 +380,11 @@ make install       # installe le bundle pour l'utilisateur
 tools/dev/smoke.sh # tests automatiques
 ```
 
-Pour modifier GIMP, on commite dans `build/gimp-src` (branche `photogimp`), puis
-`make patches` exporte les nouveaux commits en patchs numérotés. Un patch existant
-n'est jamais réécrit.
+Pour modifier GIMP, on corrige le thème concerné dans `build/gimp-src` (branche
+`photogimp-v2`, un commit par thème : `git commit --fixup`, puis `rebase --autosquash`),
+puis `make patches` réexporte la série. Le patch de l'icône Windows est gardé tel quel.
+L'ancienne série, un patch par commit, reste dans la branche `photogimp-legacy` et dans
+les étiquettes `v4.2.0` et antérieures. Détails : [`docs/dev/PATCHS.md`](docs/dev/PATCHS.md).
 
 Pour Windows, voir [`docs/COMPILATION-WINDOWS.md`](docs/COMPILATION-WINDOWS.md)
 (MSYS2 CLANG64) ou laisser GitHub Actions s'en charger.

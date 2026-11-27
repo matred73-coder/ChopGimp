@@ -1,0 +1,1613 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: ChopGimp <mathieu.redon@proton.me>
+Date: Fri, 27 Nov 2026 08:34:14 +0100
+Subject: [PATCH 06/23] =?UTF-8?q?ChopGimp=20T05:=20contr=C3=B4les=20de=20t?=
+ =?UTF-8?q?ransformation?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Anciens patchs : 0016, 0017, 0035, 0036, 0040, 0075.
+---
+ app/tools/chopgimp-tools.c        | 609 ++++++++++++++++++++++++++++++
+ app/tools/chopgimp-tools.h        |  41 ++
+ app/tools/gimpmovetool.c          | 520 +++++++++++++++++++++++--
+ app/tools/gimpmovetool.h          |  11 +
+ app/tools/gimptransformgridtool.c | 124 +++++-
+ 5 files changed, 1270 insertions(+), 35 deletions(-)
+ create mode 100644 app/tools/chopgimp-tools.c
+ create mode 100644 app/tools/chopgimp-tools.h
+
+diff --git a/app/tools/chopgimp-tools.c b/app/tools/chopgimp-tools.c
+new file mode 100644
+index 0000000..b476d4e
+--- /dev/null
++++ b/app/tools/chopgimp-tools.c
+@@ -0,0 +1,609 @@
++/* GIMP - The GNU Image Manipulation Program
++ * Copyright (C) 1995 Spencer Kimball and Peter Mattis
++ *
++ * chopgimp-tools.c — ChopGimp: Photoshop-like transform controls helpers
++ *
++ * This program is free software: you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation; either version 3 of the License, or
++ * (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License
++ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
++ */
++
++#include "config.h"
++
++#include <string.h>
++
++#include <gegl.h>
++#include <gtk/gtk.h>
++
++#include "tools-types.h"
++
++#include "core/gimp.h"
++#include "core/gimpcontext.h"
++#include "core/gimpimage.h"
++#include "core/gimpimage-undo.h"
++#include "core/gimplayer.h"
++#include "core/gimplayer-floating-selection.h"
++#include "core/gimppickable.h"
++#include "core/gimppickable-auto-shrink.h"
++#include "core/chopgimp-alpha-bounds.h"
++#include "core/gimptoolinfo.h"
++
++#include "core/gimpfilloptions.h"
++#include "core/gimpstrokeoptions.h"
++
++#include "path/gimpvectorlayer.h"
++#include "path/chopgimp-vobject.h"
++#include "path/chopgimp-vobject-ops.h"
++
++#include "text/gimptextlayer.h"
++
++#include "display/gimpdisplay.h"
++
++#include "chopgimp-tools.h"
++#include "gimpdrawtool.h"
++#include "gimppathoptions.h"
++#include "tool_manager.h"
++
++#include "gimp-intl.h"
++
++
++gboolean chopgimp_transform_from_move = FALSE;
++
++
++static gboolean
++chopgimp_layer_is_croppable (GimpLayer *layer)
++{
++  GimpItem *item = GIMP_ITEM (layer);
++
++  return ! gimp_viewable_get_children (GIMP_VIEWABLE (layer)) &&
++         ! gimp_item_is_text_layer (item)                     &&
++         ! gimp_item_is_vector_layer (item)                   &&
++         ! gimp_layer_is_floating_sel (layer);
++}
++
++/*  Bounds (image coordinates) of the visible content of @layer, like the
++ *  box Photoshop draws with « Show Transform Controls ».
++ */
++gboolean
++chopgimp_layer_content_bounds (GimpLayer *layer,
++                               gint      *x,
++                               gint      *y,
++                               gint      *width,
++                               gint      *height)
++{
++  GimpItem *item = GIMP_ITEM (layer);
++  gint      ox, oy, w, h;
++  gint      sx = 0, sy = 0, sw, sh;
++
++  gimp_item_get_offset (item, &ox, &oy);
++  w = sw = gimp_item_get_width  (item);
++  h = sh = gimp_item_get_height (item);
++
++  if (chopgimp_layer_is_croppable (layer))
++    {
++      /*  cached: called on every undo step while the Move tool is active
++       *  (only draws the controls; the crops recompute the bounds)
++       */
++      switch (chopgimp_alpha_bounds_cached (GIMP_DRAWABLE (layer), &sx, &sy, &sw, &sh))
++        {
++        case GIMP_AUTO_SHRINK_EMPTY:
++          return FALSE;
++
++        case GIMP_AUTO_SHRINK_UNSHRINKABLE:
++          sx = 0; sy = 0; sw = w; sh = h;
++          break;
++
++        case GIMP_AUTO_SHRINK_SHRINK:
++          break;
++        }
++    }
++
++  *x      = ox + sx;
++  *y      = oy + sy;
++  *width  = sw;
++  *height = sh;
++
++  return TRUE;
++}
++
++/*  Photoshop has no layer bounds: before transforming, fit the layer to its
++ *  content (no pixel is lost) so the handles surround the object.
++ */
++gboolean
++chopgimp_crop_layer_to_content (GimpImage   *image,
++                                GimpLayer   *layer,
++                                GimpContext *context)
++{
++  gint x, y, w, h;
++
++  if (! chopgimp_layer_is_croppable (layer)                    ||
++      gimp_item_is_content_locked  (GIMP_ITEM (layer), NULL)   ||
++      gimp_item_is_position_locked (GIMP_ITEM (layer), NULL))
++    return FALSE;
++
++  if (chopgimp_alpha_bounds (GIMP_DRAWABLE (layer), &x, &y, &w, &h) != GIMP_AUTO_SHRINK_SHRINK)
++    return FALSE;
++
++  gimp_image_undo_group_start (image, GIMP_UNDO_GROUP_ITEM_RESIZE,
++                               _("Crop Layer to Content"));
++  gimp_item_resize (GIMP_ITEM (layer), context, GIMP_FILL_TRANSPARENT,
++                    w, h, -x, -y);
++  gimp_image_undo_group_end (image);
++
++  return TRUE;
++}
++
++gboolean
++chopgimp_crop_selected_layers (GimpImage   *image,
++                               GimpContext *context)
++{
++  GList    *iter;
++  gboolean  cropped = FALSE;
++  gboolean  needed  = FALSE;
++
++  /*  no undo step (which would also clear the redo history) when there
++   *  is nothing to crop
++   */
++  for (iter = gimp_image_get_selected_layers (image); iter && ! needed; iter = iter->next)
++    {
++      GimpLayer *layer = iter->data;
++      gint       x, y, w, h;
++
++      if (chopgimp_layer_is_croppable (layer)                    &&
++          ! gimp_item_is_content_locked  (GIMP_ITEM (layer), NULL) &&
++          ! gimp_item_is_position_locked (GIMP_ITEM (layer), NULL) &&
++          chopgimp_alpha_bounds (GIMP_DRAWABLE (layer), &x, &y, &w, &h) == GIMP_AUTO_SHRINK_SHRINK)
++        needed = TRUE;
++    }
++
++  if (! needed)
++    return FALSE;
++
++  gimp_image_undo_group_start (image, GIMP_UNDO_GROUP_ITEM_RESIZE,
++                               _("Crop Layer to Content"));
++  for (iter = gimp_image_get_selected_layers (image); iter; iter = iter->next)
++    cropped |= chopgimp_crop_layer_to_content (image, iter->data, context);
++  gimp_image_undo_group_end (image);
++
++  return cropped;
++}
++
++
++typedef struct
++{
++  Gimp            *gimp;
++  GimpDisplay     *display;
++  gchar           *tool_name;
++  gboolean         press;
++  GimpCoords       coords;
++  guint32          time;
++  GdkModifierType  state;
++} SwitchData;
++
++static gboolean
++chopgimp_switch_tool_idle (SwitchData *s)
++{
++  GimpToolInfo *info = gimp_get_tool_info (s->gimp, s->tool_name);
++
++  if (info)
++    gimp_context_set_tool (gimp_get_user_context (s->gimp), info);
++
++  if (s->press && s->display && gimp_display_get_image (s->display))
++    {
++      if (tool_manager_initialize_active (s->gimp, s->display))
++        {
++          GdkSeat         *seat = gdk_display_get_default_seat (gdk_display_get_default ());
++          GdkModifierType  mask = 0;
++
++          tool_manager_button_press_active (s->gimp, &s->coords, s->time,
++                                            s->state, GIMP_BUTTON_PRESS_NORMAL,
++                                            s->display);
++
++          /*  the button was already released (quick click, double-click):
++           *  the new tool gets the release too, it must not stay active
++           */
++          gdk_window_get_device_position (gdk_get_default_root_window (),
++                                          gdk_seat_get_pointer (seat),
++                                          NULL, NULL, &mask);
++          if (! (mask & GDK_BUTTON1_MASK))
++            tool_manager_button_release_active (s->gimp, &s->coords, s->time,
++                                                s->state, s->display);
++        }
++    }
++
++  g_clear_object (&s->display);
++  g_free (s->tool_name);
++  g_free (s);
++
++  return G_SOURCE_REMOVE;
++}
++
++/*  Switch to @tool_name once the current event is handled; if @press_coords
++ *  is given, the new tool receives the button press (so the user's drag on
++ *  a handle continues in the new tool).
++ */
++void
++chopgimp_switch_tool_later (Gimp             *gimp,
++                            GimpDisplay      *display,
++                            const gchar      *tool_name,
++                            const GimpCoords *press_coords,
++                            guint32           time,
++                            GdkModifierType   state)
++{
++  SwitchData *s = g_new0 (SwitchData, 1);
++
++  s->gimp      = gimp;
++  s->display   = display ? g_object_ref (display) : NULL;
++  s->tool_name = g_strdup (tool_name);
++  s->time      = time;
++  s->state     = state;
++
++  if (press_coords)
++    {
++      s->press  = TRUE;
++      s->coords = *press_coords;
++    }
++
++  g_idle_add ((GSourceFunc) chopgimp_switch_tool_idle, s);
++}
++
++
++/*  (re)start a draw tool on @display and redraw it  */
++void
++chopgimp_draw_tool_redraw (GimpDrawTool *draw_tool,
++                           GimpDisplay  *display)
++{
++  g_return_if_fail (GIMP_IS_DRAW_TOOL (draw_tool));
++
++  gimp_draw_tool_pause (draw_tool);
++
++  if (gimp_draw_tool_is_active (draw_tool) && draw_tool->display != display)
++    gimp_draw_tool_stop (draw_tool);
++
++  if (! gimp_draw_tool_is_active (draw_tool))
++    gimp_draw_tool_start (draw_tool, display);
++
++  gimp_draw_tool_resume (draw_tool);
++}
++
++
++/*  ─── 4.1.1: ONE object selection, shared by every tool and panel ──────
++ *
++ *  The selection of objects lives in the active vector layer
++ *  (chopgimp_vlayer_get_selection) and every style change edits
++ *  chopgimp_vobjects_style_targets(). This watcher keeps the rest of the
++ *  application in step with it:
++ *
++ *   - the foreground / background colors follow the selected object when
++ *     it is selected (its fill / stroke), without changing it;
++ *   - with a vector tool, a new foreground / background color (swatch,
++ *     color dialog, picker, X) recolors the fill / stroke of the
++ *     selection (one undo step per burst);
++ *   - the fill / stroke options of the drawing tools (Forme, Plume,
++ *     Courbure, Crayon…) show the selection and edit it;
++ *   - one selection: when another layer becomes active, the objects of
++ *     the previous one are deselected (never edited unseen);
++ *   - a vector layer added by the user (new shape, import, duplicate,
++ *     vectorized text…) has its objects selected when it becomes active.
++ */
++
++static struct
++{
++  Gimp            *gimp;
++  GimpContext     *context;
++  GimpImage       *image;      /* weak */
++  GimpVectorLayer *layer;      /* weak, the watched active layer */
++  gboolean         syncing;
++} vss;
++
++static const gchar *const vss_vector_tools[] =
++{
++  "gimp-move-tool", "gimp-direct-select-tool", "gimp-direct-lasso-tool",
++  "gimp-shape-tool",
++  "gimp-path-tool", "gimp-curvature-tool", "gimp-vpencil-tool",
++  "gimp-vsmooth-tool", "gimp-vblob-tool", "gimp-shape-builder-tool",
++  "gimp-vscissors-tool", "gimp-vknife-tool", "gimp-vjoin-tool",
++  "gimp-width-tool", "gimp-envelope-tool", "gimp-live-paint-select-tool",
++  "gimp-vblend-tool", "gimp-vmesh-tool", "gimp-perspective-select-tool",
++  "gimp-color-picker-tool"
++};
++
++gboolean
++chopgimp_tool_is_vector (GimpToolInfo *info)
++{
++  const gchar *id = info ? gimp_object_get_name (info) : NULL;
++
++  if (! id)
++    return FALSE;
++
++  for (guint i = 0; i < G_N_ELEMENTS (vss_vector_tools); i++)
++    if (! strcmp (id, vss_vector_tools[i]))
++      return TRUE;
++
++  return FALSE;
++}
++
++static GimpPathOptions *
++vss_path_options (void)
++{
++  GimpToolInfo *info = vss.context ? gimp_context_get_tool (vss.context) : NULL;
++
++  if (info && GIMP_IS_PATH_OPTIONS (info->tool_options))
++    {
++      GimpPathOptions *popts = GIMP_PATH_OPTIONS (info->tool_options);
++
++      gimp_path_options_ensure_fill_stroke (popts);
++      return popts;
++    }
++
++  return NULL;
++}
++
++static GimpVectorLayer *
++vss_active_layer (void)
++{
++  return vss.image ? chopgimp_vobjects_get_active_layer (vss.image) : NULL;
++}
++
++/*  selection → foreground / background and the tool's fill / stroke  */
++static void
++vss_load (void)
++{
++  GimpVectorLayer *layer = vss_active_layer ();
++  GimpPathOptions *popts;
++  GeglColor       *fill, *stroke;
++  gboolean         ef, es;
++
++  if (! layer || vss.syncing)
++    return;
++
++  vss.syncing = TRUE;
++
++  if (chopgimp_vobjects_selection_colors (layer, &fill, &stroke))
++    {
++      if (fill)
++        gimp_context_set_foreground (vss.context, fill);
++      if (stroke)
++        gimp_context_set_background (vss.context, stroke);
++    }
++
++  if ((popts = vss_path_options ()) &&
++      chopgimp_vobjects_load_tool_style (layer, &ef, popts->fill_options,
++                                         &es, popts->stroke_options))
++    g_object_set (popts, "enable-fill", ef, "enable-stroke", es, NULL);
++
++  vss.syncing = FALSE;
++}
++
++static void
++vss_color_changed (GeglColor *color,
++                   gboolean   stroke)
++{
++  GimpVectorLayer *layer;
++
++  if (vss.syncing || ! color ||
++      ! chopgimp_tool_is_vector (gimp_context_get_tool (vss.context)) ||
++      ! (layer = vss_active_layer ()))
++    return;
++
++  if (chopgimp_vobjects_apply_color (layer, color, stroke, TRUE))
++    {
++      gimp_image_flush (vss.image);
++      vss_load ();   /* the tool's options show the new color */
++    }
++}
++
++static void
++vss_fg_changed (GimpContext *context,
++                GeglColor   *color,
++                gpointer     data)
++{
++  vss_color_changed (color, FALSE);
++}
++
++static void
++vss_bg_changed (GimpContext *context,
++                GeglColor   *color,
++                gpointer     data)
++{
++  vss_color_changed (color, TRUE);
++}
++
++/*  the fill / stroke options of a drawing tool → the selection  */
++static void
++vss_options_notify (GObject    *object,
++                    GParamSpec *pspec,
++                    gpointer    data)
++{
++  GimpPathOptions *popts = vss_path_options ();
++  GimpVectorLayer *layer;
++  gboolean         fill;
++
++  if (vss.syncing || ! popts || ! (layer = vss_active_layer ()))
++    return;
++
++  if (object == G_OBJECT (popts->fill_options))
++    fill = TRUE;
++  else if (object == G_OBJECT (popts->stroke_options))
++    fill = FALSE;
++  else if (object == G_OBJECT (popts) && ! strcmp (pspec->name, "enable-fill"))
++    fill = TRUE;
++  else if (object == G_OBJECT (popts) && ! strcmp (pspec->name, "enable-stroke"))
++    fill = FALSE;
++  else
++    return;
++
++  /*  the Direct Selection (A) bar edits the objects itself  */
++  {
++    GimpToolInfo *info = gimp_context_get_tool (vss.context);
++
++    if (! info || ! strcmp (gimp_object_get_name (info), "gimp-direct-select-tool") ||
++        ! strcmp (gimp_object_get_name (info), "gimp-direct-lasso-tool"))
++      return;
++  }
++
++  if (chopgimp_vobjects_apply_tool_style (layer,
++                                          popts->enable_fill, popts->fill_options,
++                                          popts->enable_stroke, popts->stroke_options,
++                                          fill))
++    gimp_image_flush (vss.image);
++}
++
++static void
++vss_tool_changed (GimpContext  *context,
++                  GimpToolInfo *info,
++                  gpointer      data)
++{
++  GimpPathOptions *popts = vss_path_options ();
++
++  if (popts && ! g_object_get_data (G_OBJECT (popts), "chopgimp-vss"))
++    {
++      g_object_set_data (G_OBJECT (popts), "chopgimp-vss", GINT_TO_POINTER (1));
++      g_signal_connect (popts, "notify::enable-fill",
++                        G_CALLBACK (vss_options_notify), NULL);
++      g_signal_connect (popts, "notify::enable-stroke",
++                        G_CALLBACK (vss_options_notify), NULL);
++      g_signal_connect (popts->fill_options, "notify",
++                        G_CALLBACK (vss_options_notify), NULL);
++      g_signal_connect (popts->stroke_options, "notify",
++                        G_CALLBACK (vss_options_notify), NULL);
++    }
++
++  vss_load ();
++}
++
++static void
++vss_selection_changed (GimpVectorLayer *layer,
++                       gpointer         data)
++{
++  vss_load ();
++}
++
++static void
++vss_watch_layer (GimpVectorLayer *layer)
++{
++  if (vss.layer == layer)
++    return;
++
++  if (vss.layer)
++    {
++      GimpVectorLayer *old = vss.layer;
++
++      g_signal_handlers_disconnect_by_func (old, vss_selection_changed, NULL);
++      g_object_remove_weak_pointer (G_OBJECT (old), (gpointer *) &vss.layer);
++      vss.layer = NULL;
++
++      /*  one selection: the objects of a layer that is no longer active
++       *  are deselected (no frame is shown for them, they must never be
++       *  edited unseen)
++       */
++      if (gimp_item_is_attached (GIMP_ITEM (old)) &&
++          chopgimp_vobjects_n_selected (old) > 0)
++        chopgimp_vlayer_set_selection (old, NULL, 0);
++    }
++
++  vss.layer = layer;
++
++  if (layer)
++    {
++      g_object_add_weak_pointer (G_OBJECT (layer), (gpointer *) &vss.layer);
++      g_signal_connect (layer, "object-selection-changed",
++                        G_CALLBACK (vss_selection_changed), NULL);
++    }
++}
++
++static void
++vss_layers_changed (GimpImage *image,
++                    gpointer   data)
++{
++  GimpVectorLayer *layer = chopgimp_vobjects_get_target_layer (image);
++
++  /*  a vector layer the user just added: its objects are the selection  */
++  if (layer && g_object_get_data (G_OBJECT (layer), "chopgimp-new-layer"))
++    {
++      g_object_set_data (G_OBJECT (layer), "chopgimp-new-layer", NULL);
++      vss_watch_layer (layer);
++      chopgimp_vobjects_select_all (layer);
++    }
++  else
++    {
++      vss_watch_layer (layer);
++    }
++
++  vss_load ();
++}
++
++static void
++vss_image_changed (GimpContext *context,
++                   GimpImage   *image,
++                   gpointer     data)
++{
++  if (vss.image == image)
++    return;
++
++  if (vss.image)
++    {
++      g_signal_handlers_disconnect_by_func (vss.image, vss_layers_changed, NULL);
++      g_object_remove_weak_pointer (G_OBJECT (vss.image), (gpointer *) &vss.image);
++    }
++
++  /*  the layer of another image keeps its selection (not shown, but not
++   *  edited either: only the active image's active layer is)
++   */
++  if (vss.layer)
++    {
++      g_signal_handlers_disconnect_by_func (vss.layer, vss_selection_changed, NULL);
++      g_object_remove_weak_pointer (G_OBJECT (vss.layer), (gpointer *) &vss.layer);
++      vss.layer = NULL;
++    }
++
++  vss.image = image;
++
++  if (image)
++    {
++      g_object_add_weak_pointer (G_OBJECT (image), (gpointer *) &vss.image);
++      g_signal_connect (image, "selected-layers-changed",
++                        G_CALLBACK (vss_layers_changed), NULL);
++      vss_layers_changed (image, NULL);
++    }
++}
++
++/*  the colors and the drawing tool's options from the selection again
++ *  (guarded: loading them never edits the objects)
++ */
++void
++chopgimp_vselection_sync (void)
++{
++  vss_load ();
++}
++
++void
++chopgimp_vselection_init (Gimp *gimp)
++{
++  if (vss.gimp || ! chopgimp_vobjects_enabled ())
++    return;
++
++  vss.gimp    = gimp;
++  vss.context = gimp_get_user_context (gimp);
++
++  g_signal_connect (vss.context, "foreground-changed",
++                    G_CALLBACK (vss_fg_changed), NULL);
++  g_signal_connect (vss.context, "background-changed",
++                    G_CALLBACK (vss_bg_changed), NULL);
++  g_signal_connect (vss.context, "tool-changed",
++                    G_CALLBACK (vss_tool_changed), NULL);
++  g_signal_connect (vss.context, "image-changed",
++                    G_CALLBACK (vss_image_changed), NULL);
++
++  vss_tool_changed (vss.context, gimp_context_get_tool (vss.context), NULL);
++  vss_image_changed (vss.context, gimp_context_get_image (vss.context), NULL);
++}
+diff --git a/app/tools/chopgimp-tools.h b/app/tools/chopgimp-tools.h
+new file mode 100644
+index 0000000..7c894de
+--- /dev/null
++++ b/app/tools/chopgimp-tools.h
+@@ -0,0 +1,41 @@
++/* GIMP - The GNU Image Manipulation Program
++ * chopgimp-tools.h — ChopGimp: Photoshop-like transform controls helpers
++ *
++ * This program is free software: you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation; either version 3 of the License, or
++ * (at your option) any later version.
++ */
++
++#pragma once
++
++/*  TRUE while a transform was started from the move tool's controls:
++ *  committing or cancelling it goes back to the move tool.
++ */
++extern gboolean chopgimp_transform_from_move;
++
++gboolean chopgimp_layer_content_bounds   (GimpLayer        *layer,
++                                          gint             *x,
++                                          gint             *y,
++                                          gint             *width,
++                                          gint             *height);
++gboolean chopgimp_crop_layer_to_content  (GimpImage        *image,
++                                          GimpLayer        *layer,
++                                          GimpContext      *context);
++gboolean chopgimp_crop_selected_layers   (GimpImage        *image,
++                                          GimpContext      *context);
++void     chopgimp_switch_tool_later      (Gimp             *gimp,
++                                          GimpDisplay      *display,
++                                          const gchar      *tool_name,
++                                          const GimpCoords *press_coords,
++                                          guint32           time,
++                                          GdkModifierType   state);
++void     chopgimp_draw_tool_redraw       (GimpDrawTool     *draw_tool,
++                                          GimpDisplay      *display);
++
++/*  4.1.1: the one object selection kept in step with the colors, the
++ *  drawing tools' options and the active layer (see chopgimp-tools.c)
++ */
++void     chopgimp_vselection_init        (Gimp             *gimp);
++void     chopgimp_vselection_sync        (void);
++gboolean chopgimp_tool_is_vector         (GimpToolInfo     *info);
+diff --git a/app/tools/gimpmovetool.c b/app/tools/gimpmovetool.c
+index 9f8407d..9945cb8 100644
+--- a/app/tools/gimpmovetool.c
++++ b/app/tools/gimpmovetool.c
+@@ -36,6 +36,8 @@
+ #include "core/gimpguide.h"
+ #include "core/gimpimage.h"
+ #include "core/gimpimage-pick-item.h"
++
++#include "text/gimptextlayer.h"
+ #include "core/gimplayer.h"
+ #include "core/gimpimage-undo.h"
+ #include "core/gimplayermask.h"
+@@ -52,6 +54,9 @@
+ #include "display/gimpdisplayshell-selection.h"
+ #include "display/gimpdisplayshell-transform.h"
+ 
++#include "chopgimp-tools.h"
++#include "chopgimp-vobjecttool.h"
++#include "tool_manager.h"
+ #include "gimpeditselectiontool.h"
+ #include "gimpguidetool.h"
+ #include "gimpmoveoptions.h"
+@@ -72,6 +77,11 @@ static void   gimp_move_tool_button_press   (GimpTool              *tool,
+                                              GdkModifierType        state,
+                                              GimpButtonPressType    press_type,
+                                              GimpDisplay           *display);
++static void   gimp_move_tool_motion         (GimpTool              *tool,
++                                             const GimpCoords      *coords,
++                                             guint32                time,
++                                             GdkModifierType        state,
++                                             GimpDisplay           *display);
+ static void   gimp_move_tool_button_release (GimpTool              *tool,
+                                              const GimpCoords      *coords,
+                                              guint32                time,
+@@ -91,6 +101,11 @@ static void   gimp_move_tool_oper_update    (GimpTool              *tool,
+                                              GdkModifierType        state,
+                                              gboolean               proximity,
+                                              GimpDisplay           *display);
++static GimpUIManager * gimp_move_tool_get_popup (GimpTool         *tool,
++                                                 const GimpCoords *coords,
++                                                 GdkModifierType   state,
++                                                 GimpDisplay      *display,
++                                                 const gchar     **ui_path);
+ static void   gimp_move_tool_cursor_update  (GimpTool              *tool,
+                                              const GimpCoords      *coords,
+                                              GdkModifierType        state,
+@@ -98,6 +113,17 @@ static void   gimp_move_tool_cursor_update  (GimpTool              *tool,
+ 
+ static void   gimp_move_tool_draw           (GimpDrawTool          *draw_tool);
+ 
++static gboolean chopgimp_move_update_controls (GimpMoveTool          *move,
++                                               GimpImage             *image);
++static void     chopgimp_move_refresh         (GimpMoveTool          *move,
++                                               GimpImage             *image);
++static void     chopgimp_move_watch           (GimpMoveTool          *move,
++                                               GimpImage             *image,
++                                               GimpDisplay           *display);
++static gboolean chopgimp_move_on_handle       (GimpMoveTool          *move,
++                                               GimpDisplay           *display,
++                                               const GimpCoords      *coords);
++
+ 
+ G_DEFINE_TYPE (GimpMoveTool, gimp_move_tool, GIMP_TYPE_DRAW_TOOL)
+ 
+@@ -132,10 +158,12 @@ gimp_move_tool_class_init (GimpMoveToolClass *klass)
+ 
+   tool_class->button_press   = gimp_move_tool_button_press;
+   tool_class->button_release = gimp_move_tool_button_release;
++  tool_class->motion         = gimp_move_tool_motion;
+   tool_class->key_press      = gimp_move_tool_key_press;
+   tool_class->modifier_key   = gimp_move_tool_modifier_key;
+   tool_class->oper_update    = gimp_move_tool_oper_update;
+   tool_class->cursor_update  = gimp_move_tool_cursor_update;
++  tool_class->get_popup      = gimp_move_tool_get_popup;   /* 3.29.3 */
+   tool_class->is_destructive = FALSE;
+ 
+   draw_tool_class->draw      = gimp_move_tool_draw;
+@@ -148,6 +176,8 @@ gimp_move_tool_init (GimpMoveTool *move_tool)
+ 
+   gimp_tool_control_set_snap_to            (tool->control, FALSE);
+   gimp_tool_control_set_handle_empty_image (tool->control, TRUE);
++  /*  ChopGimp: double-click on a text edits it  */
++  gimp_tool_control_set_wants_double_click (tool->control, TRUE);
+   gimp_tool_control_set_tool_cursor        (tool->control,
+                                             GIMP_TOOL_CURSOR_MOVE);
+ 
+@@ -158,6 +188,8 @@ gimp_move_tool_init (GimpMoveTool *move_tool)
+ 
+   move_tool->old_selected_layers = NULL;
+   move_tool->old_selected_paths  = NULL;
++
++  move_tool->vsel = chopgimp_vsel_new (GIMP_DRAW_TOOL (move_tool));
+ }
+ 
+ static void
+@@ -165,6 +197,9 @@ gimp_move_tool_finalize (GObject *object)
+ {
+   GimpMoveTool *move = GIMP_MOVE_TOOL (object);
+ 
++  chopgimp_move_watch (move, NULL, NULL);
++  g_clear_pointer (&move->vsel, chopgimp_vsel_free);
++
+   g_clear_pointer (&move->guides,              g_list_free);
+   g_clear_pointer (&move->old_selected_layers, g_list_free);
+   g_clear_pointer (&move->old_selected_paths,  g_list_free);
+@@ -192,6 +227,114 @@ gimp_move_tool_button_press (GimpTool            *tool,
+   const gchar       *locked_message = NULL;
+   GimpItem          *locked_item    = NULL;
+ 
++  /*  ChopGimp 3.27 lot V2: Illustrator's Selection tool on the objects
++   *  of a vector layer (chopgimp-vobjecttool.c); a guide under the
++   *  pointer keeps its own drag
++   */
++  if (options->move_type == GIMP_TRANSFORM_TYPE_LAYER &&
++      ! gimp_image_get_floating_selection (image))
++    {
++      GList *guides = NULL;
++
++      if (gimp_display_shell_get_show_guides (shell))
++        guides = gimp_image_pick_guides (image, coords->x, coords->y,
++                                         FUNSCALEX (shell, display->config->snap_distance),
++                                         FUNSCALEY (shell, display->config->snap_distance));
++
++      if (! guides &&
++          chopgimp_vsel_button_press (move->vsel, coords, time, state, press_type,
++                                      display, ! options->move_current))
++        {
++          move->ctl_valid = FALSE;
++          move->ctl_stamp = -1;
++          return;
++        }
++
++      g_list_free (guides);
++    }
++
++  /*  ChopGimp (Photoshop): double-click on a text edits it, the cursor
++   *  where the click was
++   */
++  /*  the second click of a double-click goes to the drag started by the
++   *  first one: recognize it here, from the time and place of the clicks
++   */
++  {
++    static guint32      last_time    = 0;
++    static gdouble      last_x       = 0.0;
++    static gdouble      last_y       = 0.0;
++    static GimpDisplay *last_display = NULL;   /* compared only, never used */
++    gint                dbl_time     = 400;
++    gint                dbl_dist     = 5;
++    gdouble             sx, sy;
++    gboolean            dbl;
++
++    g_object_get (gtk_settings_get_default (),
++                  "gtk-double-click-time",     &dbl_time,
++                  "gtk-double-click-distance", &dbl_dist,
++                  NULL);
++
++    /*  the distance is measured on screen, whatever the zoom  */
++    gimp_display_shell_transform_xy_f (gimp_display_get_shell (display),
++                                       coords->x, coords->y, &sx, &sy);
++
++    dbl = (press_type == GIMP_BUTTON_PRESS_DOUBLE ||
++           (display == last_display &&
++            time - last_time < (guint32) dbl_time &&
++            fabs (sx - last_x) <= MAX (dbl_dist, 6) &&
++            fabs (sy - last_y) <= MAX (dbl_dist, 6)));
++
++    last_time    = time;
++    last_x       = sx;
++    last_y       = sy;
++    last_display = display;
++
++    if (! dbl)
++      goto chopgimp_not_double;
++  }
++
++  if (options->move_type == GIMP_TRANSFORM_TYPE_LAYER)
++    {
++      /*  by the frame of the layer: a click between two letters counts  */
++      GimpLayer *picked = GIMP_LAYER (gimp_image_pick_text_layer (image,
++                                                                  coords->x, coords->y));
++
++      if (picked && gimp_item_is_text_layer (GIMP_ITEM (picked)))
++        {
++          GList *sel = g_list_prepend (NULL, picked);
++
++          gimp_image_set_selected_layers (image, sel);
++          g_list_free (sel);
++          gimp_image_flush (image);
++
++          chopgimp_switch_tool_later (display->gimp, display, "gimp-text-tool",
++                                      coords, time, 0);
++          return;
++        }
++    }
++
++ chopgimp_not_double:
++
++  /*  ChopGimp: dragging a handle of the transform controls resizes the
++   *  object directly (Photoshop): fit the layer to its content, then hand
++   *  the press over to the unified transform tool.
++   */
++  if (options->move_type == GIMP_TRANSFORM_TYPE_LAYER &&
++      ! gimp_image_get_floating_selection (image)     &&
++      chopgimp_move_on_handle (move, display, coords))
++    {
++      chopgimp_crop_selected_layers (image,
++                                     gimp_get_user_context (display->gimp));
++      gimp_image_flush (image);
++      move->ctl_stamp = -1;
++
++      chopgimp_transform_from_move = TRUE;
++      chopgimp_switch_tool_later (display->gimp, display,
++                                  "gimp-unified-transform-tool",
++                                  coords, time, state);
++      return;
++    }
++
+   tool->display = display;
+ 
+   move->floating_layer = NULL;
+@@ -365,6 +508,43 @@ gimp_move_tool_button_press (GimpTool            *tool,
+             for (iter = selected_items; iter; iter = iter->next)
+               if (gimp_item_is_position_locked (iter->data, &locked_item))
+               locked_message = _("A selected layer's position is locked.");
++
++            /*  PhotoGIMP Pro (Photoshop): Alt+drag moves a duplicate  */
++            if (! locked_message && (state & GDK_MOD1_MASK) &&
++                ! gimp_image_get_floating_selection (image))
++              {
++                GList *new_layers = NULL;
++
++                gimp_image_undo_group_start (image,
++                                             GIMP_UNDO_GROUP_LAYER_ADD,
++                                             _("Duplicate layers"));
++
++                for (iter = selected_items; iter; iter = iter->next)
++                  {
++                    GimpLayer *new_layer;
++
++                    if (! GIMP_IS_LAYER (iter->data))
++                      continue;
++
++                    new_layer = GIMP_LAYER (gimp_item_duplicate (GIMP_ITEM (iter->data),
++                                                                 G_TYPE_FROM_INSTANCE (iter->data)));
++                    gimp_image_add_layer (image, new_layer,
++                                          gimp_layer_get_parent (iter->data),
++                                          gimp_item_get_index (iter->data),
++                                          TRUE);
++                    gimp_drawable_enable_resize_undo (GIMP_DRAWABLE (new_layer));
++                    new_layers = g_list_prepend (new_layers, new_layer);
++                  }
++
++                gimp_image_undo_group_end (image);
++
++                if (new_layers)
++                  {
++                    gimp_image_set_selected_layers (image, new_layers);
++                    g_list_free (selected_items);
++                    selected_items = new_layers;
++                  }
++              }
+           }
+       }
+       break;
+@@ -396,6 +576,14 @@ gimp_move_tool_button_press (GimpTool            *tool,
+ 
+   gimp_tool_control_activate (tool->control);
+ 
++  /*  ChopGimp: hide the transform controls while dragging; they are
++   *  recomputed at the new position on release (oper_update).
++   */
++  if (gimp_draw_tool_is_active (GIMP_DRAW_TOOL (tool)))
++    gimp_draw_tool_stop (GIMP_DRAW_TOOL (tool));
++  move->ctl_stamp = -1;
++  move->ctl_valid = FALSE;
++
+   gimp_edit_selection_tool_start (tool, display, coords,
+                                   translate_mode,
+                                   TRUE);
+@@ -415,6 +603,10 @@ gimp_move_tool_button_release (GimpTool              *tool,
+   GimpImage     *image  = gimp_display_get_image (display);
+   gboolean       flush  = FALSE;
+ 
++  /*  ChopGimp lot V2: objects  */
++  if (chopgimp_vsel_button_release (move->vsel, coords, state, release_type, display))
++    return;
++
+   gimp_tool_control_halt (tool->control);
+ 
+   if (! config->move_tool_changes_active ||
+@@ -449,6 +641,23 @@ gimp_move_tool_button_release (GimpTool              *tool,
+ 
+   if (flush)
+     gimp_image_flush (image);
++
++  /*  ChopGimp: show the transform controls at the new place at once  */
++  chopgimp_move_watch (move, image, display);
++  chopgimp_move_refresh (move, image);
++}
++
++static void
++gimp_move_tool_motion (GimpTool         *tool,
++                       const GimpCoords *coords,
++                       guint32           time,
++                       GdkModifierType   state,
++                       GimpDisplay      *display)
++{
++  /*  ChopGimp lot V2: objects (the layers are moved by the edit
++   *  selection tool)
++   */
++  chopgimp_vsel_motion (GIMP_MOVE_TOOL (tool)->vsel, coords, state, display);
+ }
+ 
+ static gboolean
+@@ -458,6 +667,10 @@ gimp_move_tool_key_press (GimpTool    *tool,
+ {
+   GimpMoveOptions *options = GIMP_MOVE_TOOL_GET_OPTIONS (tool);
+ 
++  if (options->move_type == GIMP_TRANSFORM_TYPE_LAYER &&
++      chopgimp_vsel_key_press (GIMP_MOVE_TOOL (tool)->vsel, kevent, display))
++    return TRUE;
++
+   return gimp_edit_selection_tool_translate (tool, kevent,
+                                              options->move_type,
+                                              display,
+@@ -474,54 +687,219 @@ gimp_move_tool_modifier_key (GimpTool        *tool,
+   GimpMoveTool    *move    = GIMP_MOVE_TOOL (tool);
+   GimpMoveOptions *options = GIMP_MOVE_TOOL_GET_OPTIONS (tool);
+ 
+-  if (key == gimp_get_extend_selection_mask ())
++  /*  PhotoGIMP Pro (Photoshop): holding Ctrl temporarily toggles
++   *  « Auto-Select » (pick the layer under the cursor). Alt+drag
++   *  duplicates the layer (see button_press). Shift constrains.
++   */
++  if (key == gimp_get_toggle_behavior_mask ())
+     {
+       g_object_set (options, "move-current", ! options->move_current, NULL);
+     }
+-  else if (key == GDK_MOD1_MASK ||
+-           key == gimp_get_toggle_behavior_mask ())
++
++  (void) move;
++}
++
++
++#define CTL_HANDLE 9
++
++/*  ChopGimp: recompute the content box of the selected layer when the
++ *  layer or the image changed.
++ */
++static gboolean
++chopgimp_move_update_controls (GimpMoveTool *move,
++                               GimpImage    *image)
++{
++  GList     *layers = gimp_image_get_selected_layers (image);
++  GList     *iter;
++  GimpUndo  *undo   = gimp_undo_stack_peek (gimp_image_get_undo_stack (image));
++  gint64     stamp  = (gint64) (gintptr) undo;
++  gboolean   valid  = FALSE;
++  gint       x1 = 0, y1 = 0, x2 = 0, y2 = 0;
++
++  /*  the box must follow moves, resizes, painting and undo/redo  */
++  for (iter = layers; iter; iter = iter->next)
++    {
++      gint ox, oy;
++
++      gimp_item_get_offset (GIMP_ITEM (iter->data), &ox, &oy);
++      stamp = stamp * 31 + (gint64) (gintptr) iter->data +
++              (gint64) ox * 100003 + (gint64) oy * 1009 +
++              (gint64) gimp_item_get_width  (GIMP_ITEM (iter->data)) * 13 +
++              (gint64) gimp_item_get_height (GIMP_ITEM (iter->data)) * 17;
++    }
++
++  if (layers && stamp == move->ctl_stamp)
++    return FALSE;
++
++  /*  Photoshop: one box around all the selected layers  */
++  for (iter = layers; iter; iter = iter->next)
+     {
+-      GimpTransformType button_type;
++      gint x, y, w, h;
+ 
+-      button_type = options->move_type;
++      if (! chopgimp_layer_content_bounds (iter->data, &x, &y, &w, &h))
++        continue;
+ 
+-      if (press)
++      if (! valid)
+         {
+-          if (key == (state & (GDK_MOD1_MASK |
+-                               gimp_get_toggle_behavior_mask ())))
+-            {
+-              /*  first modifier pressed  */
+-
+-              move->saved_type = options->move_type;
+-            }
++          x1 = x; y1 = y; x2 = x + w; y2 = y + h;
++          valid = TRUE;
+         }
+       else
+         {
+-          if (! (state & (GDK_MOD1_MASK |
+-                          gimp_get_toggle_behavior_mask ())))
+-            {
+-              /*  last modifier released  */
+-
+-              button_type = move->saved_type;
+-            }
++          x1 = MIN (x1, x);     y1 = MIN (y1, y);
++          x2 = MAX (x2, x + w); y2 = MAX (y2, y + h);
+         }
++    }
++
++  move->ctl_layer = layers ? layers->data : NULL;
++  move->ctl_stamp = layers ? stamp : -1;
+ 
+-      if (state & GDK_MOD1_MASK)
++  if (valid != move->ctl_valid ||
++      x1 != move->ctl_x || y1 != move->ctl_y ||
++      x2 - x1 != move->ctl_w || y2 - y1 != move->ctl_h)
++    {
++      move->ctl_valid = valid;
++      move->ctl_x = x1; move->ctl_y = y1;
++      move->ctl_w = x2 - x1; move->ctl_h = y2 - y1;
++      return TRUE;
++    }
++
++  return FALSE;
++}
++
++/*  ChopGimp: redraw the controls right away when the image changes
++ *  (arrow keys, undo/redo, layer picked in the Layers panel…), not only
++ *  on the next mouse motion.
++ */
++static void
++chopgimp_move_refresh (GimpMoveTool *move,
++                       GimpImage    *image)
++{
++  GimpTool        *tool      = GIMP_TOOL (move);
++  GimpDrawTool    *draw_tool = GIMP_DRAW_TOOL (move);
++  GimpMoveOptions *options   = GIMP_MOVE_TOOL_GET_OPTIONS (move);
++  GimpDisplay     *display;
++
++  if (options->move_type != GIMP_TRANSFORM_TYPE_LAYER ||
++      gimp_tool_control_is_active (tool->control)     ||
++      tool_manager_get_active (image->gimp) != tool)
++    return;
++
++  /*  ChopGimp lot V2: the objects' box instead of the layer's  */
++  if (chopgimp_vsel_is_active (move->vsel, image))
++    {
++      move->ctl_valid = FALSE;
++      move->ctl_stamp = -1;
++
++      if (gimp_draw_tool_is_active (draw_tool))
+         {
+-          button_type = GIMP_TRANSFORM_TYPE_SELECTION;
++          gimp_draw_tool_pause (draw_tool);
++          gimp_draw_tool_resume (draw_tool);
+         }
+-      else if (state & gimp_get_toggle_behavior_mask ())
++      else if (move->ctl_display && gimp_display_get_image (move->ctl_display) == image)
+         {
+-          button_type = GIMP_TRANSFORM_TYPE_PATH;
++          gimp_draw_tool_start (draw_tool, move->ctl_display);
+         }
+ 
+-      if (button_type != options->move_type)
+-        {
+-          g_object_set (options, "move-type", button_type, NULL);
+-        }
++      return;
++    }
++
++  display = gimp_draw_tool_is_active (draw_tool) ? draw_tool->display
++                                                 : move->ctl_display;
++  if (! display || gimp_display_get_image (display) != image)
++    return;
++
++  if (! chopgimp_move_update_controls (move, image) &&
++      gimp_draw_tool_is_active (draw_tool))
++    return;
++
++  gimp_draw_tool_pause (draw_tool);
++  if (! gimp_draw_tool_is_active (draw_tool))
++    gimp_draw_tool_start (draw_tool, display);
++  gimp_draw_tool_resume (draw_tool);
++}
++
++static void
++chopgimp_move_undo_event (GimpImage     *image,
++                          GimpUndoEvent  event,
++                          GimpUndo      *undo,
++                          GimpMoveTool  *move)
++{
++  chopgimp_move_refresh (move, image);
++}
++
++static void
++chopgimp_move_layers_changed (GimpImage    *image,
++                              GimpMoveTool *move)
++{
++  chopgimp_move_refresh (move, image);
++}
++
++static void
++chopgimp_move_watch (GimpMoveTool *move,
++                     GimpImage    *image,
++                     GimpDisplay  *display)
++{
++  if (move->ctl_display != display)
++    {
++      if (move->ctl_display)
++        g_object_remove_weak_pointer (G_OBJECT (move->ctl_display),
++                                      (gpointer *) &move->ctl_display);
++      move->ctl_display = display;
++      if (display)
++        g_object_add_weak_pointer (G_OBJECT (display),
++                                   (gpointer *) &move->ctl_display);
++    }
++
++  if (move->ctl_image == image)
++    return;
++
++  if (move->ctl_image)
++    {
++      g_signal_handlers_disconnect_by_data (move->ctl_image, move);
++      g_object_remove_weak_pointer (G_OBJECT (move->ctl_image),
++                                    (gpointer *) &move->ctl_image);
++    }
++
++  move->ctl_image = image;
++
++  if (image)
++    {
++      g_object_add_weak_pointer (G_OBJECT (image), (gpointer *) &move->ctl_image);
++      g_signal_connect (image, "undo-event",
++                        G_CALLBACK (chopgimp_move_undo_event), move);
++      g_signal_connect (image, "selected-layers-changed",
++                        G_CALLBACK (chopgimp_move_layers_changed), move);
+     }
+ }
+ 
++static gboolean
++chopgimp_move_on_handle (GimpMoveTool     *move,
++                         GimpDisplay      *display,
++                         const GimpCoords *coords)
++{
++  GimpDrawTool *draw_tool = GIMP_DRAW_TOOL (move);
++  gdouble       xs[3], ys[3];
++  gint          i, j;
++
++  if (! move->ctl_valid)
++    return FALSE;
++
++  xs[0] = move->ctl_x; xs[1] = move->ctl_x + move->ctl_w / 2.0; xs[2] = move->ctl_x + move->ctl_w;
++  ys[0] = move->ctl_y; ys[1] = move->ctl_y + move->ctl_h / 2.0; ys[2] = move->ctl_y + move->ctl_h;
++
++  for (i = 0; i < 3; i++)
++    for (j = 0; j < 3; j++)
++      if ((i != 1 || j != 1) &&
++          gimp_draw_tool_on_handle (draw_tool, display, coords->x, coords->y,
++                                    GIMP_HANDLE_SQUARE, xs[i], ys[j],
++                                    CTL_HANDLE + 4, CTL_HANDLE + 4,
++                                    GIMP_HANDLE_ANCHOR_CENTER))
++        return TRUE;
++
++  return FALSE;
++}
++
+ static void
+ gimp_move_tool_oper_update (GimpTool         *tool,
+                             const GimpCoords *coords,
+@@ -535,6 +913,16 @@ gimp_move_tool_oper_update (GimpTool         *tool,
+   GimpImage        *image   = gimp_display_get_image (display);
+   GList            *guides  = NULL;
+ 
++  /*  ChopGimp lot V2: objects  */
++  if (options->move_type == GIMP_TRANSFORM_TYPE_LAYER &&
++      chopgimp_vsel_oper_update (move->vsel, coords, state, proximity, display))
++    {
++      chopgimp_move_watch (move, image, display);
++      move->ctl_valid = FALSE;
++      move->ctl_stamp = -1;
++      return;
++    }
++
+   if (options->move_type == GIMP_TRANSFORM_TYPE_LAYER &&
+       ! options->move_current                         &&
+       gimp_display_shell_get_show_guides (shell)      &&
+@@ -547,6 +935,30 @@ gimp_move_tool_oper_update (GimpTool         *tool,
+                                        FUNSCALEY (shell, snap_distance));
+     }
+ 
++  if (options->move_type == GIMP_TRANSFORM_TYPE_LAYER)
++    {
++      GimpDrawTool *draw_tool = GIMP_DRAW_TOOL (tool);
++      gboolean      changed;
++
++      chopgimp_move_watch (move, image, display);
++      changed = chopgimp_move_update_controls (move, image);
++
++      if (changed || (move->ctl_valid && ! gimp_draw_tool_is_active (draw_tool)) ||
++          (gimp_draw_tool_is_active (draw_tool) && draw_tool->display != display))
++        {
++          gimp_draw_tool_pause (draw_tool);
++
++          if (gimp_draw_tool_is_active (draw_tool) &&
++              draw_tool->display != display)
++            gimp_draw_tool_stop (draw_tool);
++
++          if (! gimp_draw_tool_is_active (draw_tool))
++            gimp_draw_tool_start (draw_tool, display);
++
++          gimp_draw_tool_resume (draw_tool);
++        }
++    }
++
+   if (gimp_g_list_compare (guides, move->guides))
+     {
+       GimpDrawTool *draw_tool = GIMP_DRAW_TOOL (tool);
+@@ -586,6 +998,14 @@ gimp_move_tool_cursor_update (GimpTool         *tool,
+   GimpCursorModifier  modifier      = GIMP_CURSOR_MODIFIER_NONE;
+   gint                snap_distance = display->config->snap_distance;
+ 
++  /*  ChopGimp lot V2: objects  */
++  if (options->move_type == GIMP_TRANSFORM_TYPE_LAYER &&
++      chopgimp_vsel_cursor_update (GIMP_MOVE_TOOL (tool)->vsel, coords, state, display))
++    {
++      GIMP_TOOL_CLASS (parent_class)->cursor_update (tool, coords, state, display);
++      return;
++    }
++
+   if (options->move_type == GIMP_TRANSFORM_TYPE_PATH)
+     {
+       tool_cursor = GIMP_TOOL_CURSOR_PATHS;
+@@ -692,8 +1112,34 @@ gimp_move_tool_cursor_update (GimpTool         *tool,
+ static void
+ gimp_move_tool_draw (GimpDrawTool *draw_tool)
+ {
+-  GimpMoveTool *move = GIMP_MOVE_TOOL (draw_tool);
+-  GList        *iter;
++  GimpMoveTool    *move    = GIMP_MOVE_TOOL (draw_tool);
++  GimpMoveOptions *options = GIMP_MOVE_TOOL_GET_OPTIONS (draw_tool);
++  GList           *iter;
++
++  /*  ChopGimp lot V2: the objects' box  */
++  if (options->move_type == GIMP_TRANSFORM_TYPE_LAYER &&
++      chopgimp_vsel_draw (move->vsel))
++    ;
++  /*  ChopGimp: Photoshop « Show Transform Controls »  */
++  else if (move->ctl_valid && options->move_type == GIMP_TRANSFORM_TYPE_LAYER)
++    {
++      gdouble xs[3], ys[3];
++      gint    i, j;
++
++      gimp_draw_tool_add_rectangle (draw_tool, FALSE,
++                                    move->ctl_x, move->ctl_y,
++                                    move->ctl_w, move->ctl_h);
++
++      xs[0] = move->ctl_x; xs[1] = move->ctl_x + move->ctl_w / 2.0; xs[2] = move->ctl_x + move->ctl_w;
++      ys[0] = move->ctl_y; ys[1] = move->ctl_y + move->ctl_h / 2.0; ys[2] = move->ctl_y + move->ctl_h;
++
++      for (i = 0; i < 3; i++)
++        for (j = 0; j < 3; j++)
++          if (i != 1 || j != 1)
++            gimp_draw_tool_add_handle (draw_tool, GIMP_HANDLE_SQUARE,
++                                       xs[i], ys[j], CTL_HANDLE, CTL_HANDLE,
++                                       GIMP_HANDLE_ANCHOR_CENTER);
++    }
+ 
+   for (iter = move->guides; iter; iter = g_list_next (iter))
+     {
+@@ -710,3 +1156,17 @@ gimp_move_tool_draw (GimpDrawTool *draw_tool)
+       gimp_canvas_item_set_highlight (item, TRUE);
+     }
+ }
++
++
++/*  3.29.3: right-click on an object of a vector layer: the « Vecteur » menu  */
++static GimpUIManager *
++gimp_move_tool_get_popup (GimpTool         *tool,
++                          const GimpCoords *coords,
++                          GdkModifierType   state,
++                          GimpDisplay      *display,
++                          const gchar     **ui_path)
++{
++  GimpMoveTool *move = GIMP_MOVE_TOOL (tool);
++
++  return chopgimp_vsel_get_popup (move->vsel, coords, display, ui_path);
++}
+diff --git a/app/tools/gimpmovetool.h b/app/tools/gimpmovetool.h
+index 0ae51cc..79801cc 100644
+--- a/app/tools/gimpmovetool.h
++++ b/app/tools/gimpmovetool.h
+@@ -44,6 +44,17 @@ struct _GimpMoveTool
+ 
+   GList               *old_selected_layers;
+   GList               *old_selected_paths;
++
++  /*  ChopGimp: Photoshop-like transform controls around the content  */
++  gboolean             ctl_valid;
++  GimpLayer           *ctl_layer;
++  gint64               ctl_stamp;
++  gint                 ctl_x, ctl_y, ctl_w, ctl_h;
++  GimpImage           *ctl_image;    /* watched image (weak)   */
++  GimpDisplay         *ctl_display;  /* last display (weak)    */
++
++  /*  ChopGimp 3.27 lot V2: object mode on vector layers  */
++  struct _ChopGimpVSel *vsel;
+ };
+ 
+ struct _GimpMoveToolClass
+diff --git a/app/tools/gimptransformgridtool.c b/app/tools/gimptransformgridtool.c
+index 303cce4..f52606d 100644
+--- a/app/tools/gimptransformgridtool.c
++++ b/app/tools/gimptransformgridtool.c
+@@ -48,6 +48,7 @@
+ #include "core/gimppickable.h"
+ #include "core/gimpprojection.h"
+ #include "core/gimptoolinfo.h"
++#include "core/gimpundostack.h"
+ #include "core/gimpviewable.h"
+ 
+ #include "path/gimppath.h"
+@@ -63,6 +64,7 @@
+ 
+ #include "gimptoolcontrol.h"
+ #include "gimptransformgridoptions.h"
++#include "chopgimp-tools.h"
+ #include "gimptransformgridtool.h"
+ #include "gimptransformgridtoolundo.h"
+ #include "gimptransformoptions.h"
+@@ -315,11 +317,64 @@ gimp_transform_grid_tool_init (GimpTransformGridTool *tg_tool)
+   tg_tool->strokes = g_ptr_array_new ();
+ }
+ 
++/*  ChopGimp: release the on-canvas grid. Its properties are bound to the
++ *  (shared) tool options: a grid left alive after its tool is gone keeps
++ *  receiving the options' changes (e.g. Ctrl/Shift constraints while
++ *  hovering another grid) and called its "changed" handler on the dead
++ *  tool → crash. Disconnect every handler pointing at the tool first.
++ */
++static void
++chopgimp_transform_grid_release_widget (GimpTransformGridTool *tg_tool)
++{
++  if (! tg_tool->widget)
++    return;
++
++  g_signal_handlers_disconnect_by_data (tg_tool->widget, tg_tool);
++
++  if (GIMP_DRAW_TOOL (tg_tool)->widget == tg_tool->widget)
++    gimp_draw_tool_set_widget (GIMP_DRAW_TOOL (tg_tool), NULL);
++
++  g_clear_object (&tg_tool->widget);
++}
++
++/*  ChopGimp: the crop-to-content done at initialize is kept with the
++ *  transform (commit) ...
++ */
++static void
++chopgimp_transform_grid_forget_crop (GimpTransformGridTool *tg_tool)
++{
++  g_clear_weak_pointer (&tg_tool->chopgimp_crop_image);
++  g_clear_weak_pointer (&tg_tool->chopgimp_crop_undo);
++}
++
++/*  ... and taken back when the transform is cancelled, if it is still
++ *  the last undo step
++ */
++static void
++chopgimp_transform_grid_revert_crop (GimpTransformGridTool *tg_tool)
++{
++  GimpImage *image = tg_tool->chopgimp_crop_image;
++  GimpUndo  *undo  = tg_tool->chopgimp_crop_undo;
++
++  chopgimp_transform_grid_forget_crop (tg_tool);
++
++  if (image && undo                                   &&
++      gimp_image_get_undo_group_count (image) == 0    &&
++      gimp_undo_stack_peek (gimp_image_get_undo_stack (image)) == undo)
++    {
++      gimp_image_undo (image);
++      gimp_image_flush (image);
++    }
++}
++
+ static void
+ gimp_transform_grid_tool_finalize (GObject *object)
+ {
+   GimpTransformGridTool *tg_tool = GIMP_TRANSFORM_GRID_TOOL (object);
+ 
++  chopgimp_transform_grid_forget_crop (tg_tool);
++  chopgimp_transform_grid_release_widget (tg_tool);
++
+   g_clear_object (&tg_tool->gui);
+   g_clear_pointer (&tg_tool->strokes, g_ptr_array_unref);
+ 
+@@ -340,10 +395,28 @@ gimp_transform_grid_tool_initialize (GimpTool     *tool,
+   GList                    *iter;
+   UndoInfo                 *undo_info;
+ 
++  /*  ChopGimp (Photoshop): transform handles surround the content, not
++   *  the whole layer — fit a single selected layer to its content first.
++   */
++  if (GIMP_TRANSFORM_TOOL_GET_OPTIONS (tool)->type == GIMP_TRANSFORM_TYPE_LAYER)
++    {
++      if (chopgimp_crop_selected_layers (image,
++                                         gimp_get_user_context (image->gimp)))
++        {
++          g_set_weak_pointer (&tg_tool->chopgimp_crop_image, image);
++          g_set_weak_pointer (&tg_tool->chopgimp_crop_undo,
++                              gimp_undo_stack_peek (gimp_image_get_undo_stack (image)));
++          gimp_image_flush (image);
++        }
++    }
++
+   objects = gimp_transform_tool_check_selected_objects (tr_tool, display, error);
+ 
+   if (! objects)
+-    return FALSE;
++    {
++      chopgimp_transform_grid_revert_crop (tg_tool);
++      return FALSE;
++    }
+ 
+   drawables = gimp_image_get_selected_drawables (image);
+   if (g_list_length (drawables) < 1)
+@@ -351,6 +424,7 @@ gimp_transform_grid_tool_initialize (GimpTool     *tool,
+       gimp_tool_message_literal (tool, display, _("No selected drawables."));
+       g_list_free (drawables);
+       g_list_free (objects);
++      chopgimp_transform_grid_revert_crop (tg_tool);
+       return FALSE;
+     }
+ 
+@@ -378,7 +452,10 @@ gimp_transform_grid_tool_initialize (GimpTool     *tool,
+   /*  Recalculate the tool's transformation matrix  */
+   gimp_transform_tool_recalc_matrix (tr_tool, display);
+ 
+-  /*  Get the on-canvas gui  */
++  /*  Get the on-canvas gui (ChopGimp: never overwrite a live one)  */
++  if (tg_tool->widget && gimp_draw_tool_is_active (GIMP_DRAW_TOOL (tool)))
++    gimp_draw_tool_stop (GIMP_DRAW_TOOL (tool));
++  chopgimp_transform_grid_release_widget (tg_tool);
+   tg_tool->widget = gimp_transform_grid_tool_get_widget (tg_tool);
+ 
+   gimp_transform_grid_tool_hide_selected_objects (tg_tool, objects);
+@@ -1163,11 +1240,16 @@ gimp_transform_grid_tool_halt (GimpTransformGridTool *tg_tool)
+   GimpTransformGridOptions *tg_options = GIMP_TRANSFORM_GRID_TOOL_GET_OPTIONS (tg_tool);
+   GList                    *iter;
+ 
++  /*  ChopGimp: a transform ended any other way does not send the user
++   *  back to the move tool later
++   */
++  chopgimp_transform_from_move = FALSE;
++
+   if (gimp_draw_tool_is_active (GIMP_DRAW_TOOL (tg_tool)))
+     gimp_draw_tool_stop (GIMP_DRAW_TOOL (tg_tool));
+ 
+   gimp_draw_tool_set_widget (GIMP_DRAW_TOOL (tg_tool), NULL);
+-  g_clear_object (&tg_tool->widget);
++  chopgimp_transform_grid_release_widget (tg_tool);
+ 
+   g_clear_pointer (&tg_tool->filters, g_hash_table_unref);
+   g_clear_pointer (&tg_tool->preview_drawables, g_list_free);
+@@ -1220,6 +1302,11 @@ gimp_transform_grid_tool_halt (GimpTransformGridTool *tg_tool)
+       g_list_free (tr_tool->objects);
+       tr_tool->objects = NULL;
+     }
++
++  /*  ChopGimp: cancelled transform, no leftover crop step (after a
++   *  commit, the crop was forgotten)
++   */
++  chopgimp_transform_grid_revert_crop (tg_tool);
+ }
+ 
+ static void
+@@ -1229,6 +1316,9 @@ gimp_transform_grid_tool_commit (GimpTransformGridTool *tg_tool)
+   GimpTransformTool *tr_tool = GIMP_TRANSFORM_TOOL (tg_tool);
+   GimpDisplay       *display = tool->display;
+ 
++  /*  ChopGimp: the crop-to-content goes with the transform  */
++  chopgimp_transform_grid_forget_crop (tg_tool);
++
+   /* undraw the tool before we muck around with the transform matrix */
+   gimp_draw_tool_stop (GIMP_DRAW_TOOL (tg_tool));
+ 
+@@ -1520,15 +1610,39 @@ gimp_transform_grid_tool_response (GimpToolGui           *gui,
+ 
+     case GTK_RESPONSE_OK:
+       g_return_if_fail (display != NULL);
+-      gimp_tool_control (tool, GIMP_TOOL_ACTION_COMMIT, display);
++      {
++        gboolean back = chopgimp_transform_from_move;
++
++        gimp_tool_control (tool, GIMP_TOOL_ACTION_COMMIT, display);
++        chopgimp_transform_from_move = back;
++      }
++      if (chopgimp_transform_from_move)
++        {
++          /*  ChopGimp: back to the move tool, like Photoshop  */
++          chopgimp_transform_from_move = FALSE;
++          chopgimp_switch_tool_later (display->gimp, NULL, "gimp-move-tool",
++                                      NULL, 0, 0);
++        }
+       break;
+ 
+     default:
+-      gimp_tool_control (tool, GIMP_TOOL_ACTION_HALT, display);
++      {
++        gboolean back = chopgimp_transform_from_move;
++
++        gimp_tool_control (tool, GIMP_TOOL_ACTION_HALT, display);
++        chopgimp_transform_from_move = back;
++      }
+ 
+       /*  update the undo actions / menu items  */
+       if (display)
+         gimp_image_flush (gimp_display_get_image (display));
++
++      if (chopgimp_transform_from_move && display)
++        {
++          chopgimp_transform_from_move = FALSE;
++          chopgimp_switch_tool_later (display->gimp, NULL, "gimp-move-tool",
++                                      NULL, 0, 0);
++        }
+       break;
+     }
+ }

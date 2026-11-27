@@ -3171,6 +3171,54 @@ try:
     except Exception:
         report(False, "4.2.0 CMJN", traceback.format_exc().replace("\n", " | ")[:400])
 
+    # 4.2.1 : coller un SVG copié depuis Inkscape / Illustrator
+    try:
+        svg = ('<?xml version="1.0" encoding="UTF-8"?>\n'
+               '<svg xmlns="http://www.w3.org/2000/svg" xmlns:inkscape='
+               '"http://www.inkscape.org/namespaces/inkscape" width="100" height="60" '
+               'viewBox="0 0 100 60"><g inkscape:groupmode="layer" inkscape:label="Calque 1">'
+               '<rect x="5" y="5" width="30" height="20" fill="#cc2020"/>'
+               '<circle cx="60" cy="20" r="12" fill="#2040cc" stroke="#000" stroke-width="2"/>'
+               '<path d="M 10 40 L 90 40 L 50 58 Z" fill="#20a040"/></g></svg>')
+        ims = Gimp.Image.new(300, 200, Gimp.ImageBaseType.RGB)
+        bg = Gimp.Layer.new(ims, "Fond", 300, 200, Gimp.ImageType.RGB_IMAGE, 100, Gimp.LayerMode.NORMAL)
+        ims.insert_layer(bg, None, 0)
+        ims.set_selected_layers([bg])
+        n_layers = len(ims.get_layers())
+        r1 = run("chopgimp-vobjects-command", image=ims, command="paste-svg:" + svg)
+        sel = ims.get_selected_layers()
+        vl_ = sel[0] if len(sel) == 1 and isinstance(sel[0], Gimp.VectorLayer) else None
+        x1 = vxml(vl_) if vl_ else ""
+        report(r1 is not None and bool(r1.index(1)) and r1.index(2) == 3 and vl_ is not None and
+               len(ims.get_layers()) == n_layers + 1 and x1.count("<path") == 3,
+               "4.2.1 SVG collé sans calque vectoriel actif : nouveau calque, un objet par forme, "
+               "sélectionnés", "%s sélectionné(s), %d objets" % (r1.index(2) if r1 else "?",
+                                                               x1.count("<path")))
+        # centré sur l'image (Ctrl+V) : boîte des formes 5..90 × 5..58 → centre
+        # (47,5 ; 31,5) amené en (150 ; 100) : décalage (102,5 ; 68,5)
+        tfs = [tuple(map(float, m_.split())) for m_ in
+               re.findall(r'<path[^>]*?transform="([^"]+)"', x1)]
+        moved = (len(tfs) == 3 and all(abs(t_[4] - 102.5) < 1 and abs(t_[5] - 68.5) < 1 for t_ in tfs)) \
+            or re.search(r'd="M ?107\.5[ ,]73\.5', x1) is not None
+        report(moved, "4.2.1 SVG collé centré sur l'image (Ctrl+V)", x1[x1.find("<path"):][:200])
+        # texte contenant du SVG, collé dans le calque vectoriel actif, sur place
+        r2 = run("chopgimp-vobjects-command", image=ims,
+                 command="paste-svg-in-place:Copié depuis Illustrator\n" + svg + "\nfin")
+        x2 = vxml(vl_) if vl_ else ""
+        report(r2 is not None and bool(r2.index(1)) and r2.index(2) == 3 and
+               len(ims.get_layers()) == n_layers + 1 and x2.count("<path") == 6,
+               "4.2.1 Texte contenant du SVG collé dans le calque vectoriel actif : objets "
+               "ajoutés et sélectionnés", "%s sélectionné(s), %d objets" %
+               (r2.index(2) if r2 else "?", x2.count("<path")))
+        r3 = run("chopgimp-vobjects-command", image=ims, command="paste-svg:pas de SVG ici")
+        report(r3 is not None and not r3.index(1) and vxml(vl_).count("<path") == 6,
+               "4.2.1 Texte sans SVG : rien collé")
+        ims.delete()
+        report(pdb.lookup_procedure("plug-in-chopgimp-svg-to-vobjects") is not None,
+               "4.2.1 Import SVG du presse-papiers (plug-in-chopgimp-svg-to-vobjects) présent")
+    except Exception:
+        report(False, "4.2.1 Coller un SVG", traceback.format_exc().replace("\n", " | ")[:400])
+
     try:
         menus = os.path.join(Gimp.data_directory(), "menus", "image-menu.ui")
         txt = open(menus, encoding="utf-8").read()

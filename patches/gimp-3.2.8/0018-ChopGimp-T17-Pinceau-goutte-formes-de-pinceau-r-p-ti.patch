@@ -1,0 +1,5405 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: ChopGimp <mathieu.redon@proton.me>
+Date: Fri, 27 Nov 2026 08:34:14 +0100
+Subject: [PATCH 18/23] =?UTF-8?q?ChopGimp=20T17:=20Pinceau=20goutte,=20for?=
+ =?UTF-8?q?mes=20de=20pinceau,=20r=C3=A9p=C3=A9titions?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Anciens patchs : 0160, 0161, 0177.
+---
+ app/dialogs/chopgimp-brushes-panel.c |  616 ++++++
+ app/dialogs/chopgimp-brushes-panel.h |   16 +
+ app/path/chopgimp-vbrush.c           | 2748 ++++++++++++++++++++++++++
+ app/path/chopgimp-vbrush.h           |  228 +++
+ app/path/chopgimp-vrepeat.c          |  966 +++++++++
+ app/path/chopgimp-vrepeat.h          |  137 ++
+ app/tools/chopgimp-blobtool.c        |  603 ++++++
+ app/tools/chopgimp-blobtool.h        |   14 +
+ 8 files changed, 5328 insertions(+)
+ create mode 100644 app/dialogs/chopgimp-brushes-panel.c
+ create mode 100644 app/dialogs/chopgimp-brushes-panel.h
+ create mode 100644 app/path/chopgimp-vbrush.c
+ create mode 100644 app/path/chopgimp-vbrush.h
+ create mode 100644 app/path/chopgimp-vrepeat.c
+ create mode 100644 app/path/chopgimp-vrepeat.h
+ create mode 100644 app/tools/chopgimp-blobtool.c
+ create mode 100644 app/tools/chopgimp-blobtool.h
+
+diff --git a/app/dialogs/chopgimp-brushes-panel.c b/app/dialogs/chopgimp-brushes-panel.c
+new file mode 100644
+index 0000000..be4ec5d
+--- /dev/null
++++ b/app/dialogs/chopgimp-brushes-panel.c
+@@ -0,0 +1,616 @@
++/* GIMP - The GNU Image Manipulation Program
++ * Copyright (C) 1995 Spencer Kimball and Peter Mattis
++ *
++ * chopgimp-brushes-panel.c — ChopGimp 3.30.0 (bloc vectoriel 4): the
++ * « Formes » dockable, Illustrator's Brushes panel
++ *
++ *    ▭ Calligraphique 1        (one row per brush of the library: a
++ *    ▭ Art 2                    preview of its artwork, its name)
++ *    Nouvelle : [Art ▾]   Tuile : [Côté ▾]
++ *    [+] [⇣] [✎] [▦] [⎘] [Aa] [🗑]
++ *
++ *  - Nouvelle forme: a brush of the chosen type (artwork: the selected
++ *    objects, else the built-in one);
++ *  - Appliquer (or a double-click): the selected paths take it;
++ *  - Modifier: its options; the brushed paths of the image follow;
++ *  - Tuile: the selected objects become the chosen tile of a pattern
++ *    brush (side, outer / inner corner, start, end);
++ *  - Dupliquer, Renommer, Supprimer (brushed paths keep their look).
++ *
++ * The library is kept in <gimpdir>/chopgimp-brushes and in the images
++ * (merged into the library when the panel sees the image).
++ *
++ * This program is free software: you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation; either version 3 of the License, or
++ * (at your option) any later version.
++ */
++
++#include "config.h"
++
++#include <math.h>
++#include <string.h>
++
++#include <gegl.h>
++#include <gtk/gtk.h>
++
++#include "libgimpbase/gimpbase.h"
++#include "libgimpmath/gimpmath.h"
++#include "libgimpwidgets/gimpwidgets.h"
++
++#include "dialogs-types.h"
++
++#include "core/gimp.h"
++#include "core/gimpcontext.h"
++#include "core/gimpimage.h"
++
++#include "path/gimpvectorlayer.h"
++#include "path/chopgimp-vobject.h"
++#include "path/chopgimp-vobject-ops.h"
++#include "path/chopgimp-vbrush.h"
++
++#include "widgets/gimpeditor.h"
++#include "widgets/gimphelp-ids.h"
++
++#include "chopgimp-material-dialogs.h"
++#include "chopgimp-brushes-panel.h"
++
++#include "gimp-intl.h"
++
++
++#define PREVIEW_W 72
++#define PREVIEW_H 28
++
++typedef struct
++{
++  Gimp            *gimp;
++  GimpContext     *context;
++  GtkWidget       *editor;
++  GtkWidget       *list;
++  GtkWidget       *empty;
++  GtkWidget       *type_combo;
++  GtkWidget       *tile_combo;
++
++  GtkWidget       *new_button;
++  GtkWidget       *apply_button;
++  GtkWidget       *edit_button;
++  GtkWidget       *tile_button;
++  GtkWidget       *dup_button;
++  GtkWidget       *rename_button;
++  GtkWidget       *delete_button;
++
++  GimpImage       *image;      /* weak */
++  GimpVectorLayer *layer;      /* weak */
++  gchar           *selected;   /* brush id */
++  gboolean         loading;
++  guint            idle_id;
++} Panel;
++
++static void panel_queue_refresh (Panel *p);
++
++
++/*  ─── previews ──────────────────────────────────────────────────────── */
++
++static gboolean
++preview_draw (GtkWidget *widget,
++              cairo_t   *cr,
++              Panel     *p)
++{
++  const gchar       *id  = g_object_get_data (G_OBJECT (widget), "chopgimp-id");
++  gint               w   = gtk_widget_get_allocated_width (widget);
++  gint               h   = gtk_widget_get_allocated_height (widget);
++  GList             *lib = chopgimp_vbrush_library_list ();
++  ChopGimpVBrushDef *def = NULL;
++  GdkRGBA            fg;
++
++  gtk_style_context_get_color (gtk_widget_get_style_context (widget),
++                               gtk_widget_get_state_flags (widget), &fg);
++
++  for (GList *l = lib; l; l = l->next)
++    if (! g_strcmp0 (((ChopGimpVBrushDef *) l->data)->id, id))
++      def = l->data;
++
++  if (def)
++    {
++      ChopGimpVBrushOptions o;
++      ChopGimpVObject      *art = NULL;
++      gdouble               b[4];
++
++      chopgimp_vbrush_def_get_options (def, &o);
++
++      if (p->image)
++        art = chopgimp_vbrush_def_get_art (p->image, def, CHOPGIMP_VBRUSH_TILE_SIDE);
++
++      if (art && chopgimp_vobject_preview_bounds (art, b))
++        {
++          gdouble s = MIN ((w - 4) / MAX (b[2] - b[0], 1.0),
++                           (h - 4) / MAX (b[3] - b[1], 1.0));
++
++          cairo_save (cr);
++          cairo_translate (cr, w / 2.0, h / 2.0);
++          cairo_scale (cr, s, s);
++          cairo_translate (cr, -(b[0] + b[2]) / 2.0, -(b[1] + b[3]) / 2.0);
++          chopgimp_vobject_draw_preview (art, cr);
++          cairo_restore (cr);
++        }
++      else
++        {
++          /*  calligraphic: the nib along a wave  */
++          gdouble a = -o.angle * G_PI / 180.0;
++          gdouble r = MAX (o.roundness / 100.0, 0.05);
++
++          gdk_cairo_set_source_rgba (cr, &fg);
++
++          for (gint i = 0; i <= 40; i++)
++            {
++              gdouble t = i / 40.0;
++
++              cairo_save (cr);
++              cairo_translate (cr, 6 + t * (w - 12), h / 2.0 + sin (t * 2 * G_PI) * (h / 4.0));
++              cairo_rotate (cr, a);
++              cairo_scale (cr, 1.0, r);
++              cairo_arc (cr, 0, 0, 3.0, 0, 2 * G_PI);
++              cairo_restore (cr);
++              cairo_fill (cr);
++            }
++        }
++
++      if (art)
++        chopgimp_vobject_unref (art);
++    }
++
++  chopgimp_vbrush_library_free (lib);
++
++  return FALSE;
++}
++
++
++/*  ─── refresh ───────────────────────────────────────────────────────── */
++
++static void
++panel_update_sensitivity (Panel *p)
++{
++  gboolean sel   = p->selected != NULL;
++  gboolean apply = p->layer && chopgimp_vbrush_can_apply (p->layer);
++  gboolean objs  = p->layer && chopgimp_vobjects_n_selected (p->layer) > 0;
++
++  gtk_widget_set_sensitive (p->new_button,    TRUE);
++  gtk_widget_set_sensitive (p->apply_button,  sel && apply);
++  gtk_widget_set_sensitive (p->edit_button,   sel);
++  gtk_widget_set_sensitive (p->tile_button,   sel && objs);
++  gtk_widget_set_sensitive (p->dup_button,    sel);
++  gtk_widget_set_sensitive (p->rename_button, sel);
++  gtk_widget_set_sensitive (p->delete_button, sel);
++}
++
++static void
++list_selection_changed (GtkListBox    *box,
++                        GtkListBoxRow *row,
++                        Panel         *p)
++{
++  if (p->loading)
++    return;
++
++  g_free (p->selected);
++  p->selected = row ? g_strdup (g_object_get_data (G_OBJECT (row), "chopgimp-id")) : NULL;
++
++  panel_update_sensitivity (p);
++}
++
++static void
++panel_refresh (Panel *p)
++{
++  GList    *lib, *children;
++  gboolean  found = FALSE;
++
++  p->loading = TRUE;
++
++  children = gtk_container_get_children (GTK_CONTAINER (p->list));
++  for (GList *l = children; l; l = l->next)
++    gtk_widget_destroy (l->data);
++  g_list_free (children);
++
++  lib = chopgimp_vbrush_library_list ();
++
++  for (GList *l = lib; l; l = l->next)
++    {
++      ChopGimpVBrushDef *def  = l->data;
++      GtkWidget         *row  = gtk_list_box_row_new ();
++      GtkWidget         *hbox = gtk_box_new (GTK_ORIENTATION_HORIZONTAL, 6);
++      GtkWidget         *area = gtk_drawing_area_new ();
++      GtkWidget         *label = gtk_label_new (def->name);
++
++      gtk_widget_set_size_request (area, PREVIEW_W, PREVIEW_H);
++      g_object_set_data_full (G_OBJECT (area), "chopgimp-id", g_strdup (def->id), g_free);
++      g_signal_connect (area, "draw", G_CALLBACK (preview_draw), p);
++
++      gtk_label_set_xalign (GTK_LABEL (label), 0.0);
++      gtk_label_set_ellipsize (GTK_LABEL (label), PANGO_ELLIPSIZE_END);
++
++      gtk_box_pack_start (GTK_BOX (hbox), area, FALSE, FALSE, 0);
++      gtk_box_pack_start (GTK_BOX (hbox), label, TRUE, TRUE, 0);
++      gtk_container_set_border_width (GTK_CONTAINER (hbox), 2);
++      gtk_container_add (GTK_CONTAINER (row), hbox);
++
++      g_object_set_data_full (G_OBJECT (row), "chopgimp-id", g_strdup (def->id), g_free);
++      gtk_container_add (GTK_CONTAINER (p->list), row);
++      gtk_widget_show_all (row);
++
++      if (! g_strcmp0 (def->id, p->selected))
++        {
++          gtk_list_box_select_row (GTK_LIST_BOX (p->list), GTK_LIST_BOX_ROW (row));
++          found = TRUE;
++        }
++    }
++
++  gtk_widget_set_visible (p->empty, lib == NULL);
++
++  if (! found)
++    g_clear_pointer (&p->selected, g_free);
++
++  chopgimp_vbrush_library_free (lib);
++  p->loading = FALSE;
++
++  panel_update_sensitivity (p);
++}
++
++static gboolean
++panel_refresh_idle (gpointer data)
++{
++  Panel *p = data;
++
++  p->idle_id = 0;
++  panel_refresh (p);
++
++  return G_SOURCE_REMOVE;
++}
++
++static void
++panel_queue_refresh (Panel *p)
++{
++  if (! p->idle_id)
++    p->idle_id = g_idle_add (panel_refresh_idle, p);
++}
++
++static void
++library_changed (gpointer data)
++{
++  panel_queue_refresh (data);
++}
++
++
++/*  ─── following the image ───────────────────────────────────────────── */
++
++static void
++panel_set_layer (Panel           *p,
++                 GimpVectorLayer *layer)
++{
++  if (layer == p->layer)
++    return;
++
++  if (p->layer)
++    {
++      g_signal_handlers_disconnect_by_data (p->layer, p);
++      g_object_remove_weak_pointer (G_OBJECT (p->layer), (gpointer *) &p->layer);
++    }
++
++  p->layer = layer;
++
++  if (layer)
++    {
++      g_object_add_weak_pointer (G_OBJECT (layer), (gpointer *) &p->layer);
++      g_signal_connect_swapped (layer, "object-selection-changed",
++                                G_CALLBACK (panel_update_sensitivity), p);
++    }
++
++  panel_update_sensitivity (p);
++}
++
++static void
++panel_layers_changed (Panel *p)
++{
++  panel_set_layer (p, p->image ? chopgimp_vobjects_get_target_layer (p->image) : NULL);
++}
++
++static void
++panel_set_image (Panel     *p,
++                 GimpImage *image)
++{
++  if (image == p->image)
++    return;
++
++  panel_set_layer (p, NULL);
++
++  if (p->image)
++    {
++      g_signal_handlers_disconnect_by_data (p->image, p);
++      g_object_remove_weak_pointer (G_OBJECT (p->image), (gpointer *) &p->image);
++    }
++
++  p->image = image;
++
++  if (image)
++    {
++      g_object_add_weak_pointer (G_OBJECT (image), (gpointer *) &p->image);
++      g_signal_connect_swapped (image, "selected-layers-changed",
++                                G_CALLBACK (panel_layers_changed), p);
++
++      /*  the brushes kept in the image (XCF) join the library  */
++      chopgimp_vbrush_library_merge_image (image);
++
++      panel_set_layer (p, chopgimp_vobjects_get_target_layer (image));
++    }
++
++  panel_queue_refresh (p);
++}
++
++static void
++panel_image_changed (GimpContext *context,
++                     GimpImage   *image,
++                     Panel       *p)
++{
++  panel_set_image (p, image);
++}
++
++
++/*  ─── actions ───────────────────────────────────────────────────────── */
++
++static void
++new_clicked (GtkWidget *button,
++             Panel     *p)
++{
++  gint   type = gtk_combo_box_get_active (GTK_COMBO_BOX (p->type_combo));
++  gchar *id   = chopgimp_vbrush_library_add (p->layer, CLAMP (type, 0, 3), NULL);
++
++  g_free (p->selected);
++  p->selected = id;
++  panel_queue_refresh (p);
++}
++
++static void
++apply_clicked (GtkWidget *button,
++               Panel     *p)
++{
++  if (p->layer && p->selected && chopgimp_vbrush_apply_def (p->layer, p->selected))
++    gimp_image_flush (p->image);
++}
++
++static void
++row_activated (GtkListBox    *box,
++               GtkListBoxRow *row,
++               Panel         *p)
++{
++  apply_clicked (NULL, p);
++}
++
++static void
++edit_clicked (GtkWidget *button,
++              Panel     *p)
++{
++  GList                *lib = chopgimp_vbrush_library_list ();
++  ChopGimpVBrushOptions o;
++  gboolean              found = FALSE;
++
++  for (GList *l = lib; l; l = l->next)
++    if (! g_strcmp0 (((ChopGimpVBrushDef *) l->data)->id, p->selected))
++      found = chopgimp_vbrush_def_get_options (l->data, &o);
++
++  chopgimp_vbrush_library_free (lib);
++
++  if (found &&
++      chopgimp_brush_options_edit (p->editor, _("Modifier la forme"), &o, FALSE) &&
++      chopgimp_vbrush_library_set_options (p->selected, &o, p->image) && p->image)
++    gimp_image_flush (p->image);
++}
++
++static void
++tile_clicked (GtkWidget *button,
++              Panel     *p)
++{
++  gint tile = gtk_combo_box_get_active (GTK_COMBO_BOX (p->tile_combo));
++
++  if (p->layer && p->selected &&
++      chopgimp_vbrush_library_set_tile (p->selected, p->layer, CLAMP (tile, 0, 4)))
++    gimp_image_flush (p->image);
++}
++
++static void
++dup_clicked (GtkWidget *button,
++             Panel     *p)
++{
++  gchar *id = p->selected ? chopgimp_vbrush_library_duplicate (p->selected) : NULL;
++
++  if (id)
++    {
++      g_free (p->selected);
++      p->selected = id;
++    }
++}
++
++static void
++rename_callback (GtkWidget   *query_box,
++                 const gchar *string,
++                 gpointer     data)
++{
++  const gchar *id = g_object_get_data (G_OBJECT (query_box), "chopgimp-id");
++
++  if (id && string && *string)
++    chopgimp_vbrush_library_rename (id, string);
++}
++
++static void
++rename_clicked (GtkWidget *button,
++                Panel     *p)
++{
++  GList       *lib  = chopgimp_vbrush_library_list ();
++  const gchar *name = NULL;
++  GtkWidget   *box;
++
++  for (GList *l = lib; l; l = l->next)
++    if (! g_strcmp0 (((ChopGimpVBrushDef *) l->data)->id, p->selected))
++      name = ((ChopGimpVBrushDef *) l->data)->name;
++
++  if (name)
++    {
++      box = gimp_query_string_box (_("Renommer la forme"),
++                                   p->editor,
++                                   gimp_standard_help_func, GIMP_HELP_PATH_DIALOG,
++                                   _("Nom de la forme :"),
++                                   name,
++                                   G_OBJECT (p->editor), "destroy",
++                                   rename_callback, NULL, NULL);
++      g_object_set_data_full (G_OBJECT (box), "chopgimp-id", g_strdup (p->selected), g_free);
++      gtk_widget_show (box);
++    }
++
++  chopgimp_vbrush_library_free (lib);
++}
++
++static void
++delete_clicked (GtkWidget *button,
++                Panel     *p)
++{
++  if (p->selected)
++    chopgimp_vbrush_library_remove (p->selected);
++}
++
++
++/*  ─── construction ──────────────────────────────────────────────────── */
++
++static void
++panel_free (Panel *p)
++{
++  chopgimp_vbrush_library_unwatch (library_changed, p);
++  panel_set_image (p, NULL);
++
++  if (p->idle_id)
++    g_source_remove (p->idle_id);
++  p->idle_id = 0;
++
++  g_signal_handlers_disconnect_by_data (p->context, p);
++
++  g_free (p->selected);
++  g_free (p);
++}
++
++static GtkWidget *
++add_button (Panel       *p,
++            const gchar *icon,
++            const gchar *tip,
++            GCallback    callback)
++{
++  GtkWidget *b = gimp_editor_add_button (GIMP_EDITOR (p->editor), icon, tip, NULL,
++                                         NULL, NULL, NULL);
++
++  g_signal_connect (b, "clicked", callback, p);
++
++  return b;
++}
++
++static GtkWidget *
++labelled_combo (GtkWidget    *box,
++                const gchar  *label,
++                const gchar **items,
++                gint          active)
++{
++  GtkWidget *hbox  = gtk_box_new (GTK_ORIENTATION_HORIZONTAL, 6);
++  GtkWidget *combo = gtk_combo_box_text_new ();
++
++  gtk_box_pack_start (GTK_BOX (hbox), gtk_label_new (label), FALSE, FALSE, 0);
++
++  for (gint i = 0; items[i]; i++)
++    gtk_combo_box_text_append_text (GTK_COMBO_BOX_TEXT (combo), _(items[i]));
++
++  gtk_combo_box_set_active (GTK_COMBO_BOX (combo), active);
++  gtk_box_pack_start (GTK_BOX (hbox), combo, TRUE, TRUE, 0);
++  gtk_box_pack_start (GTK_BOX (box), hbox, FALSE, FALSE, 0);
++
++  return combo;
++}
++
++GtkWidget *
++chopgimp_brushes_panel_new (GimpDialogFactory *factory,
++                            GimpContext       *context,
++                            GimpUIManager     *ui_manager,
++                            gint               view_size)
++{
++  static const gchar *types[] = { N_("Calligraphique"), N_("Art"), N_("Motif"),
++                                  N_("Dispersion"), NULL };
++  static const gchar *tiles[] = { N_("Côté"), N_("Angle extérieur"), N_("Angle intérieur"),
++                                  N_("Début"), N_("Fin"), NULL };
++  Panel     *p      = g_new0 (Panel, 1);
++  GtkWidget *editor = g_object_new (GIMP_TYPE_EDITOR, NULL);
++  GtkWidget *box    = gtk_box_new (GTK_ORIENTATION_VERTICAL, 6);
++  GtkWidget *scrolled;
++
++  p->gimp    = context->gimp;
++  p->editor  = editor;
++  p->context = gimp_get_user_context (context->gimp);
++
++  gtk_container_set_border_width (GTK_CONTAINER (box), 6);
++  gtk_box_pack_start (GTK_BOX (editor), box, TRUE, TRUE, 0);
++
++  g_object_set_data_full (G_OBJECT (editor), "chopgimp-panel", p,
++                          (GDestroyNotify) panel_free);
++
++  p->empty = gtk_label_new (_("Aucune forme. « Nouvelle forme » en crée une ; pour Art, "
++                              "Motif et Dispersion, les objets sélectionnés deviennent "
++                              "son illustration."));
++  gtk_label_set_line_wrap (GTK_LABEL (p->empty), TRUE);
++  gtk_label_set_xalign (GTK_LABEL (p->empty), 0.0);
++  gtk_style_context_add_class (gtk_widget_get_style_context (p->empty), "dim-label");
++  gtk_box_pack_start (GTK_BOX (box), p->empty, FALSE, FALSE, 0);
++  gtk_widget_set_no_show_all (p->empty, TRUE);
++
++  scrolled = gtk_scrolled_window_new (NULL, NULL);
++  gtk_scrolled_window_set_policy (GTK_SCROLLED_WINDOW (scrolled),
++                                  GTK_POLICY_NEVER, GTK_POLICY_AUTOMATIC);
++  gtk_box_pack_start (GTK_BOX (box), scrolled, TRUE, TRUE, 0);
++
++  p->list = gtk_list_box_new ();
++  gtk_list_box_set_selection_mode (GTK_LIST_BOX (p->list), GTK_SELECTION_SINGLE);
++  gtk_list_box_set_activate_on_single_click (GTK_LIST_BOX (p->list), FALSE);
++  g_signal_connect (p->list, "row-selected", G_CALLBACK (list_selection_changed), p);
++  g_signal_connect (p->list, "row-activated", G_CALLBACK (row_activated), p);
++  gtk_container_add (GTK_CONTAINER (scrolled), p->list);
++
++  p->type_combo = labelled_combo (box, _("Nouvelle forme :"), types, CHOPGIMP_VBRUSH_ART);
++  p->tile_combo = labelled_combo (box, _("Tuile de motif :"), tiles, CHOPGIMP_VBRUSH_TILE_SIDE);
++
++  gtk_widget_show_all (box);
++
++  p->new_button    = add_button (p, GIMP_ICON_DOCUMENT_NEW,
++                                 _("Nouvelle forme du type choisi (Art, Motif, Dispersion : "
++                                   "les objets sélectionnés deviennent son illustration)"),
++                                 G_CALLBACK (new_clicked));
++  p->apply_button  = add_button (p, GIMP_ICON_GO_DOWN,
++                                 _("Appliquer la forme aux tracés sélectionnés (double-clic)"),
++                                 G_CALLBACK (apply_clicked));
++  p->edit_button   = add_button (p, GIMP_ICON_EDIT,
++                                 _("Modifier la forme : ses options ; les tracés de l'image "
++                                   "qui l'utilisent suivent"),
++                                 G_CALLBACK (edit_clicked));
++  p->tile_button   = add_button (p, GIMP_ICON_PATTERN,
++                                 _("Les objets sélectionnés deviennent la tuile choisie de la "
++                                   "forme (côté, angles, début, fin)"),
++                                 G_CALLBACK (tile_clicked));
++  p->dup_button    = add_button (p, GIMP_ICON_OBJECT_DUPLICATE,
++                                 _("Dupliquer la forme"),
++                                 G_CALLBACK (dup_clicked));
++  p->rename_button = add_button (p, GIMP_ICON_FORMAT_TEXT_BOLD,
++                                 _("Renommer la forme"),
++                                 G_CALLBACK (rename_clicked));
++  p->delete_button = add_button (p, GIMP_ICON_EDIT_DELETE,
++                                 _("Supprimer la forme (les tracés qui l'utilisent gardent "
++                                   "leur aspect)"),
++                                 G_CALLBACK (delete_clicked));
++
++  chopgimp_vbrush_library_watch (library_changed, p);
++  g_signal_connect (p->context, "image-changed",
++                    G_CALLBACK (panel_image_changed), p);
++
++  panel_set_image (p, gimp_context_get_image (p->context));
++  panel_refresh (p);
++
++  return editor;
++}
+diff --git a/app/dialogs/chopgimp-brushes-panel.h b/app/dialogs/chopgimp-brushes-panel.h
+new file mode 100644
+index 0000000..5256bd8
+--- /dev/null
++++ b/app/dialogs/chopgimp-brushes-panel.h
+@@ -0,0 +1,16 @@
++/* GIMP - The GNU Image Manipulation Program
++ * chopgimp-brushes-panel.h — ChopGimp 3.30.0: the « Formes » dockable
++ * (Illustrator's Brushes panel, path/chopgimp-vbrush.h)
++ *
++ * This program is free software: you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation; either version 3 of the License, or
++ * (at your option) any later version.
++ */
++
++#pragma once
++
++GtkWidget * chopgimp_brushes_panel_new (GimpDialogFactory *factory,
++                                        GimpContext       *context,
++                                        GimpUIManager     *ui_manager,
++                                        gint               view_size);
+diff --git a/app/path/chopgimp-vbrush.c b/app/path/chopgimp-vbrush.c
+new file mode 100644
+index 0000000..5067db5
+--- /dev/null
++++ b/app/path/chopgimp-vbrush.c
+@@ -0,0 +1,2748 @@
++/* GIMP - The GNU Image Manipulation Program
++ * chopgimp-vbrush.c — ChopGimp 3.30.0: « Formes de pinceau » and
++ * « Pinceau goutte », see chopgimp-vbrush.h. The brushes are built like
++ * the Transition of chopgimp-vmaterial.c (a group with a spec, a part
++ * made again from the change hook); the geometry comes from
++ * chopgimp-geom.cc (outline, curve fitting, booleans: lib2geom).
++ *
++ * This program is free software: you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation; either version 3 of the License, or
++ * (at your option) any later version.
++ */
++
++#include "config.h"
++
++#include <math.h>
++#include <stdlib.h>
++#include <string.h>
++
++#include <cairo.h>
++#include <gdk-pixbuf/gdk-pixbuf.h>
++#include <gegl.h>
++
++#include "libgimpbase/gimpbase.h"
++#include "libgimpmath/gimpmath.h"
++
++#include "path-types.h"
++
++#include "core/gimpimage.h"
++#include "core/gimpitem.h"
++
++#include "gimpanchor.h"
++#include "gimpbezierstroke.h"
++#include "gimppath.h"
++#include "gimpstroke.h"
++#include "gimpvectorlayer.h"
++#include "chopgimp-geom.h"
++#include "chopgimp-vobject.h"
++#include "chopgimp-vutil.h"
++#include "chopgimp-vobject-ops.h"
++#include "chopgimp-vbrush.h"
++
++#include "gimp-intl.h"
++
++
++#define PART "bpart"
++
++
++gboolean
++chopgimp_vbrush_enabled (void)
++{
++  static gint enabled = -1;
++
++  if (enabled < 0)
++    enabled = (g_getenv ("CHOPGIMP_NO_VBRUSHES") == NULL);
++
++  return enabled;
++}
++
++/*  the artwork defined by « Définir l'illustration » (XML), session-wide  */
++static gchar *defined_art = NULL;
++
++
++/*  ─── helpers ───────────────────────────────────────────────────────── */
++
++static gboolean
++is_brush_group (ChopGimpVObject *o)
++{
++  return o->kind == CHOPGIMP_VOBJECT_GROUP && o->blend &&
++         g_str_has_prefix (o->blend, "brush");
++}
++
++static gboolean
++is_part (ChopGimpVObject *o)
++{
++  return o->blend && ! strcmp (o->blend, PART);
++}
++
++ChopGimpVObject *
++chopgimp_vbrush_group_of (ChopGimpVObject *object)
++{
++  for (ChopGimpVObject *o = object; o; o = o->parent)
++    if (is_brush_group (o))
++      return o;
++
++  return NULL;
++}
++
++/*  inside a generated part or a dynamic group of another kind  */
++static gboolean
++in_dynamic (ChopGimpVObject *object)
++{
++  for (ChopGimpVObject *o = object; o; o = o->parent)
++    if ((o->blend && ! g_str_has_prefix (o->blend, "repeat")) ||
++        o->livepaint || o->symbol)
++      return TRUE;
++
++  return FALSE;
++}
++
++static ChopGimpVObject *
++group_of_selection (GimpVectorLayer *layer)
++{
++  GList           *sel = chopgimp_vlayer_get_selected_objects (layer);
++  ChopGimpVObject *g   = NULL;
++
++  for (GList *l = sel; l && ! g; l = l->next)
++    g = chopgimp_vbrush_group_of (l->data);
++
++  g_list_free (sel);
++
++  return g;
++}
++
++
++/*  ─── spines: the sub-paths as polylines with arc length ───────────── */
++
++typedef struct
++{
++  gdouble x, y;
++  gdouble s;          /* arc length from the start      */
++  gdouble nx, ny;     /* left normal at the vertex      */
++} SPt;
++
++typedef struct
++{
++  GArray   *pts;      /* SPt */
++  gdouble   length;
++  gboolean  closed;
++} Spine;
++
++static void
++spine_free (Spine *sp)
++{
++  g_array_unref (sp->pts);
++  g_free (sp);
++}
++
++/*  GPtrArray of Spine * (owned)  */
++static GPtrArray *
++spines_of (GimpPath *path)
++{
++  GPtrArray  *list   = g_ptr_array_new_with_free_func ((GDestroyNotify) spine_free);
++  GimpStroke *stroke = NULL;
++
++  while ((stroke = gimp_path_stroke_get_next (path, stroke)))
++    {
++      gboolean  closed = FALSE;
++      GArray   *raw    = gimp_stroke_interpolate (stroke, 0.25, &closed);
++      Spine    *sp;
++      guint     n;
++
++      if (! raw)
++        continue;
++
++      sp         = g_new0 (Spine, 1);
++      sp->pts    = g_array_new (FALSE, TRUE, sizeof (SPt));
++      sp->closed = closed;
++
++      for (guint i = 0; i < raw->len; i++)
++        {
++          GimpCoords *c = &g_array_index (raw, GimpCoords, i);
++          SPt         p = { c->x, c->y, 0, 0, 0 };
++
++          if (sp->pts->len)
++            {
++              SPt *q = &g_array_index (sp->pts, SPt, sp->pts->len - 1);
++
++              if (hypot (p.x - q->x, p.y - q->y) < 1e-3)
++                continue;
++            }
++
++          g_array_append_val (sp->pts, p);
++        }
++
++      g_array_unref (raw);
++
++      if (closed && sp->pts->len > 1)
++        {
++          SPt first = g_array_index (sp->pts, SPt, 0);
++          SPt last  = g_array_index (sp->pts, SPt, sp->pts->len - 1);
++
++          if (hypot (first.x - last.x, first.y - last.y) > 1e-3)
++            g_array_append_val (sp->pts, first);
++        }
++
++      n = sp->pts->len;
++
++      if (n < 2)
++        {
++          spine_free (sp);
++          continue;
++        }
++
++      /*  lengths, segment normals averaged at the vertices  */
++      for (guint i = 1; i < n; i++)
++        {
++          SPt *a = &g_array_index (sp->pts, SPt, i - 1);
++          SPt *b = &g_array_index (sp->pts, SPt, i);
++
++          b->s = a->s + hypot (b->x - a->x, b->y - a->y);
++        }
++
++      sp->length = g_array_index (sp->pts, SPt, n - 1).s;
++
++      for (guint i = 0; i < n; i++)
++        {
++          SPt     *p = &g_array_index (sp->pts, SPt, i);
++          gdouble  nx = 0, ny = 0, l;
++          gint     segs[2] = { (gint) i - 1, (gint) i };
++
++          if (closed && i == 0)
++            segs[0] = n - 2;
++          if (closed && i == n - 1)
++            segs[1] = 0;
++
++          for (gint k = 0; k < 2; k++)
++            {
++              gint     j = segs[k];
++              SPt     *a, *b;
++              gdouble  dx, dy, d;
++
++              if (j < 0 || j >= (gint) n - 1)
++                continue;
++
++              a  = &g_array_index (sp->pts, SPt, j);
++              b  = &g_array_index (sp->pts, SPt, j + 1);
++              dx = b->x - a->x;
++              dy = b->y - a->y;
++              d  = hypot (dx, dy);
++
++              if (d > 1e-9)
++                {
++                  /*  left of the direction of travel (y down)  */
++                  nx += dy / d;
++                  ny += -dx / d;
++                }
++            }
++
++          l = hypot (nx, ny);
++          p->nx = (l > 1e-9) ? nx / l : 0.0;
++          p->ny = (l > 1e-9) ? ny / l : -1.0;
++        }
++
++      g_ptr_array_add (list, sp);
++    }
++
++  return list;
++}
++
++/*  the point at arc length @s and its left normal  */
++static void
++spine_eval (const Spine *sp,
++            gdouble      s,
++            gdouble     *x,
++            gdouble     *y,
++            gdouble     *nx,
++            gdouble     *ny)
++{
++  const SPt *p  = (const SPt *) sp->pts->data;
++  guint      n  = sp->pts->len;
++  guint      lo = 0, hi = n - 1;
++  gdouble    u, l, mx, my;
++
++  if (sp->closed && sp->length > 0)
++    {
++      s = fmod (s, sp->length);
++      if (s < 0)
++        s += sp->length;
++    }
++
++  s = CLAMP (s, 0.0, sp->length);
++
++  while (hi - lo > 1)
++    {
++      guint mid = (lo + hi) / 2;
++
++      if (p[mid].s <= s)
++        lo = mid;
++      else
++        hi = mid;
++    }
++
++  u   = (p[hi].s - p[lo].s > 1e-12) ? (s - p[lo].s) / (p[hi].s - p[lo].s) : 0.0;
++  *x  = p[lo].x + (p[hi].x - p[lo].x) * u;
++  *y  = p[lo].y + (p[hi].y - p[lo].y) * u;
++  mx  = p[lo].nx + (p[hi].nx - p[lo].nx) * u;
++  my  = p[lo].ny + (p[hi].ny - p[lo].ny) * u;
++  l   = hypot (mx, my);
++  *nx = (l > 1e-9) ? mx / l : p[lo].nx;
++  *ny = (l > 1e-9) ? my / l : p[lo].ny;
++}
++
++
++/*  ─── mapping artwork along a spine ─────────────────────────────────── */
++
++/*  artwork (x, y) → (s along the spine, offset to its left)  */
++typedef struct
++{
++  const Spine *spine;
++  gdouble      x0, xw;      /* artwork: left, width                   */
++  gdouble      cy;          /* artwork: middle height                 */
++  gdouble      s0, sl;      /* spine: start of the piece, its length  */
++  gdouble      k;           /* artwork → image scale across           */
++  gboolean     flip;
++} ArtMap;
++
++static void
++art_map (const ArtMap *m,
++         gdouble       x,
++         gdouble       y,
++         gdouble      *ox,
++         gdouble      *oy)
++{
++  gdouble s   = m->s0 + (m->xw > 1e-9 ? (x - m->x0) / m->xw : 0.0) * m->sl;
++  gdouble off = (m->cy - y) * m->k * (m->flip ? -1.0 : 1.0);
++  gdouble px, py, nx, ny;
++
++  spine_eval (m->spine, s, &px, &py, &nx, &ny);
++
++  *ox = px + nx * off;
++  *oy = py + ny * off;
++}
++
++/*  appends to @dest the strokes of @src (transformed by @matrix) mapped
++ *  through @m, fitted again as curves
++ */
++static void
++map_path_into (GimpPath          *dest,
++               GimpPath          *src,
++               const GimpMatrix3 *matrix,
++               const ArtMap      *m)
++{
++  GimpStroke *stroke = NULL;
++  gdouble     prec   = CLAMP (0.25 / MAX (m->k, 1e-3), 0.01, 0.5);
++
++  while ((stroke = gimp_path_stroke_get_next (src, stroke)))
++    {
++      gboolean  closed = FALSE;
++      GimpStroke *copy = gimp_stroke_duplicate (stroke);
++      GArray   *pts;
++      gdouble  *xy;
++      GimpPath *fit;
++
++      if (matrix)
++        gimp_stroke_transform (copy, matrix, NULL);
++
++      pts = gimp_stroke_interpolate (copy, prec, &closed);
++      g_object_unref (copy);
++
++      if (! pts || pts->len < 2)
++        {
++          if (pts)
++            g_array_unref (pts);
++          continue;
++        }
++
++      xy = g_new (gdouble, 2 * pts->len);
++
++      for (guint i = 0; i < pts->len; i++)
++        {
++          GimpCoords *c = &g_array_index (pts, GimpCoords, i);
++
++          art_map (m, c->x, c->y, &xy[2 * i], &xy[2 * i + 1]);
++        }
++
++      fit = chopgimp_geom_fit_points (dest, xy, pts->len, 0.15, closed);
++
++      if (fit)
++        {
++          g_object_ref_sink (fit);
++          gimp_path_add_strokes (fit, dest);
++          g_object_unref (fit);
++        }
++
++      g_free (xy);
++      g_array_unref (pts);
++    }
++}
++
++
++/*  ─── options ⇄ spec ────────────────────────────────────────────────── */
++
++static const gchar *type_names[] = { "calligraphic", "art", "pattern", "scatter" };
++static const gchar *tile_keys[]  = { "art", "art-outer", "art-inner", "art-start", "art-end" };
++
++void
++chopgimp_vbrush_default_options (ChopGimpVBrushType     type,
++                                 ChopGimpVBrushOptions *o)
++{
++  memset (o, 0, sizeof (*o));
++
++  o->type      = type;
++  o->angle     = 45.0;
++  o->roundness = 30.0;
++  o->size      = (type == CHOPGIMP_VBRUSH_CALLIGRAPHIC) ? 0.0 : 100.0;
++  o->spacing   = (type == CHOPGIMP_VBRUSH_PATTERN) ? 2.0 : 100.0;
++  o->scatter   = 0.0;
++  o->rotation  = 0.0;
++  o->size_var  = 0.0;
++  o->follow    = FALSE;
++  o->flip      = FALSE;
++  o->colorize  = TRUE;
++  o->seed      = 1;
++  o->angle_mode = o->round_mode = o->diam_mode = CHOPGIMP_VBRUSH_FIXED;
++  o->angle_var  = o->round_var  = o->diam_var  = 0.0;
++}
++
++static void
++options_sanitize (ChopGimpVBrushOptions *o)
++{
++  o->type       = CLAMP (o->type, CHOPGIMP_VBRUSH_CALLIGRAPHIC, CHOPGIMP_VBRUSH_SCATTER);
++  o->roundness  = CLAMP (o->roundness, 1.0, 100.0);
++  o->size       = CLAMP (o->size, 0.0, 10000.0);
++  o->spacing    = (o->type == CHOPGIMP_VBRUSH_PATTERN) ? CLAMP (o->spacing, -1000.0, 10000.0)
++                                                       : CLAMP (o->spacing, 1.0, 10000.0);
++  o->scatter    = CLAMP (o->scatter, 0.0, 1000.0);
++  o->rotation   = CLAMP (o->rotation, 0.0, 180.0);
++  o->size_var   = CLAMP (o->size_var, 0.0, 100.0);
++  o->angle_mode = CLAMP (o->angle_mode, CHOPGIMP_VBRUSH_FIXED, CHOPGIMP_VBRUSH_PRESSURE);
++  o->round_mode = CLAMP (o->round_mode, CHOPGIMP_VBRUSH_FIXED, CHOPGIMP_VBRUSH_PRESSURE);
++  o->diam_mode  = CLAMP (o->diam_mode,  CHOPGIMP_VBRUSH_FIXED, CHOPGIMP_VBRUSH_PRESSURE);
++  o->angle_var  = CLAMP (o->angle_var, 0.0, 180.0);
++  o->round_var  = CLAMP (o->round_var, 0.0, 100.0);
++  o->diam_var   = CLAMP (o->diam_var, 0.0, 10000.0);
++}
++
++static void
++spec_get (const gchar           *spec,
++          ChopGimpVBrushOptions *o)
++{
++  gchar *type = chopgimp_spec_word (spec, "type");
++  gint   t    = CHOPGIMP_VBRUSH_CALLIGRAPHIC;
++
++  for (gint i = 0; i < (gint) G_N_ELEMENTS (type_names); i++)
++    if (! g_strcmp0 (type, type_names[i]))
++      t = i;
++
++  g_free (type);
++
++  chopgimp_vbrush_default_options (t, o);
++
++  o->angle      = chopgimp_spec_dbl (spec, "angle", o->angle);
++  o->roundness  = chopgimp_spec_dbl (spec, "round", o->roundness);
++  o->size       = chopgimp_spec_dbl (spec, "size", o->size);
++  o->spacing    = chopgimp_spec_dbl (spec, "spacing", o->spacing);
++  o->scatter    = chopgimp_spec_dbl (spec, "scatter", o->scatter);
++  o->rotation   = chopgimp_spec_dbl (spec, "rotation", o->rotation);
++  o->size_var   = chopgimp_spec_dbl (spec, "sizevar", o->size_var);
++  o->follow     = chopgimp_spec_dbl (spec, "follow", o->follow) != 0.0;
++  o->flip       = chopgimp_spec_dbl (spec, "flip", o->flip) != 0.0;
++  o->colorize   = chopgimp_spec_dbl (spec, "tint", o->colorize) != 0.0;
++  o->seed       = (gint) chopgimp_spec_dbl (spec, "seed", o->seed);
++  o->angle_mode = (gint) chopgimp_spec_dbl (spec, "am", 0);
++  o->round_mode = (gint) chopgimp_spec_dbl (spec, "rm", 0);
++  o->diam_mode  = (gint) chopgimp_spec_dbl (spec, "dm", 0);
++  o->angle_var  = chopgimp_spec_dbl (spec, "av", 0);
++  o->round_var  = chopgimp_spec_dbl (spec, "rv", 0);
++  o->diam_var   = chopgimp_spec_dbl (spec, "dv", 0);
++
++  options_sanitize (o);
++}
++
++/*  the artwork words of a spec (« art=… art-outer=… »), or NULL  */
++static gchar *
++spec_arts (const gchar *spec)
++{
++  gchar  **words = g_strsplit (spec ? spec : "", " ", -1);
++  GString *s     = g_string_new (NULL);
++
++  for (gint i = 0; words[i]; i++)
++    if (g_str_has_prefix (words[i], "art=") || g_str_has_prefix (words[i], "art-"))
++      {
++        if (s->len)
++          g_string_append_c (s, ' ');
++        g_string_append (s, words[i]);
++      }
++
++  g_strfreev (words);
++
++  if (! s->len)
++    {
++      g_string_free (s, TRUE);
++      return NULL;
++    }
++
++  return g_string_free (s, FALSE);
++}
++
++/*  @spec with the word @key replaced by @value (NULL: removed)  */
++static gchar *
++spec_replace (const gchar *spec,
++              const gchar *key,
++              const gchar *value)
++{
++  gchar  **words = g_strsplit (spec ? spec : "", " ", -1);
++  GString *s     = g_string_new (NULL);
++  gsize    len   = strlen (key);
++
++  for (gint i = 0; words[i]; i++)
++    {
++      if (! *words[i] ||
++          (! strncmp (words[i], key, len) && words[i][len] == '='))
++        continue;
++
++      if (s->len)
++        g_string_append_c (s, ' ');
++      g_string_append (s, words[i]);
++    }
++
++  if (value)
++    g_string_append_printf (s, " %s=%s", key, value);
++
++  g_strfreev (words);
++
++  return g_string_free (s, FALSE);
++}
++
++/*  @arts: artwork words (spec_arts()), @def: the library brush, @sig  */
++static gchar *
++spec_compose (const ChopGimpVBrushOptions *opts,
++              const gchar                 *arts,
++              const gchar                 *def,
++              const gchar                 *sig)
++{
++  ChopGimpVBrushOptions o = *opts;
++  GString              *s = g_string_new ("brush");
++
++  options_sanitize (&o);
++
++  g_string_append_printf (s, " type=%s", type_names[o.type]);
++  chopgimp_spec_put_dbl (s, "size", o.size);
++
++  switch (o.type)
++    {
++    case CHOPGIMP_VBRUSH_CALLIGRAPHIC:
++      chopgimp_spec_put_dbl (s, "angle", o.angle);
++      chopgimp_spec_put_dbl (s, "round", o.roundness);
++      if (o.angle_mode || o.round_mode || o.diam_mode)
++        {
++          g_string_append_printf (s, " am=%d rm=%d dm=%d seed=%d",
++                                  o.angle_mode, o.round_mode, o.diam_mode, o.seed);
++          chopgimp_spec_put_dbl (s, "av", o.angle_var);
++          chopgimp_spec_put_dbl (s, "rv", o.round_var);
++          chopgimp_spec_put_dbl (s, "dv", o.diam_var);
++        }
++      break;
++
++    case CHOPGIMP_VBRUSH_ART:
++      g_string_append_printf (s, " flip=%d tint=%d", o.flip ? 1 : 0, o.colorize ? 1 : 0);
++      break;
++
++    case CHOPGIMP_VBRUSH_PATTERN:
++      chopgimp_spec_put_dbl (s, "spacing", o.spacing);
++      g_string_append_printf (s, " flip=%d tint=%d", o.flip ? 1 : 0, o.colorize ? 1 : 0);
++      break;
++
++    case CHOPGIMP_VBRUSH_SCATTER:
++      chopgimp_spec_put_dbl (s, "spacing", o.spacing);
++      chopgimp_spec_put_dbl (s, "scatter", o.scatter);
++      chopgimp_spec_put_dbl (s, "rotation", o.rotation);
++      chopgimp_spec_put_dbl (s, "sizevar", o.size_var);
++      g_string_append_printf (s, " follow=%d tint=%d seed=%d",
++                              o.follow ? 1 : 0, o.colorize ? 1 : 0, o.seed);
++      break;
++    }
++
++  if (def && *def)
++    g_string_append_printf (s, " def=%s", def);
++
++  if (arts && *arts && o.type != CHOPGIMP_VBRUSH_CALLIGRAPHIC)
++    g_string_append_printf (s, " %s", arts);
++
++  if (sig)
++    g_string_append_printf (s, " sig=%s", sig);
++
++  return g_string_free (s, FALSE);
++}
++
++static void
++spec_set (ChopGimpVObject             *g,
++          const ChopGimpVBrushOptions *opts,
++          const gchar                 *arts,
++          const gchar                 *def,
++          const gchar                 *sig)
++{
++  g_free (g->blend);
++  g->blend = spec_compose (opts, arts, def, sig);
++}
++
++
++/*  ─── artworks ──────────────────────────────────────────────────────── */
++
++/*  the built-in artwork of @type: a tapered stroke, a diamond, a dot  */
++static ChopGimpVObject *
++builtin_art (GimpImage          *image,
++             ChopGimpVBrushType  type)
++{
++  GimpPath        *path = g_object_ref_sink (gimp_path_new (image, "art"));
++  ChopGimpVObject *root = chopgimp_vobject_new_group ("art");
++  ChopGimpVObject *leaf;
++  ChopGimpVStyle   style;
++  GimpStroke      *st;
++  GimpCoords       a, b, c;
++
++  if (type == CHOPGIMP_VBRUSH_PATTERN)
++    {
++      a  = chopgimp_coords (0, 0);
++      st = gimp_bezier_stroke_new_moveto (&a);
++      a  = chopgimp_coords (5, -4);
++      gimp_bezier_stroke_lineto (st, &a);
++      a  = chopgimp_coords (10, 0);
++      gimp_bezier_stroke_lineto (st, &a);
++      a  = chopgimp_coords (5, 4);
++      gimp_bezier_stroke_lineto (st, &a);
++    }
++  else if (type == CHOPGIMP_VBRUSH_SCATTER)
++    {
++      const gdouble r = 5.0, k = 0.5523 * 5.0;
++
++      a  = chopgimp_coords (r, 0);
++      st = gimp_bezier_stroke_new_moveto (&a);
++      a = chopgimp_coords (r, k);  b = chopgimp_coords (k, r);  c = chopgimp_coords (0, r);
++      gimp_bezier_stroke_cubicto (st, &a, &b, &c);
++      a = chopgimp_coords (-k, r); b = chopgimp_coords (-r, k); c = chopgimp_coords (-r, 0);
++      gimp_bezier_stroke_cubicto (st, &a, &b, &c);
++      a = chopgimp_coords (-r, -k); b = chopgimp_coords (-k, -r); c = chopgimp_coords (0, -r);
++      gimp_bezier_stroke_cubicto (st, &a, &b, &c);
++      a = chopgimp_coords (k, -r); b = chopgimp_coords (r, -k); c = chopgimp_coords (r, 0);
++      gimp_bezier_stroke_cubicto (st, &a, &b, &c);
++    }
++  else
++    {
++      a  = chopgimp_coords (0, 0);
++      st = gimp_bezier_stroke_new_moveto (&a);
++      a = chopgimp_coords (30, -3); b = chopgimp_coords (70, -3); c = chopgimp_coords (100, 0);
++      gimp_bezier_stroke_cubicto (st, &a, &b, &c);
++      a = chopgimp_coords (70, 3); b = chopgimp_coords (30, 3); c = chopgimp_coords (0, 0);
++      gimp_bezier_stroke_cubicto (st, &a, &b, &c);
++    }
++
++  gimp_stroke_close (st);
++  gimp_path_stroke_add (path, st);
++  g_object_unref (st);
++
++  chopgimp_vstyle_init (&style);
++  leaf = chopgimp_vobject_new_path (image, path, "art", &style);
++  chopgimp_vstyle_clear (&style);
++  g_object_unref (path);
++
++  leaf->parent = root;
++  g_ptr_array_add (root->children, leaf);
++
++  return root;
++}
++
++/*  the artwork @key (« art », « art-outer »…) of a spec (ref count 1); the
++ *  side tile (« art ») falls back to the built-in one, the others to NULL
++ */
++static ChopGimpVObject *
++art_of (GimpImage          *image,
++        const gchar        *spec,
++        const gchar        *key,
++        ChopGimpVBrushType  type)
++{
++  gchar           *b64  = chopgimp_spec_word (spec, key);
++  ChopGimpVObject *root = NULL;
++  gdouble          b[4];
++
++  if (b64)
++    {
++      gsize   len;
++      guchar *raw = g_base64_decode (b64, &len);
++      gchar  *xml = g_strndup ((const gchar *) raw, len);
++
++      root = chopgimp_vobjects_from_xml (image, xml);
++
++      g_free (xml);
++      g_free (raw);
++      g_free (b64);
++    }
++
++  if (root && ! chopgimp_vobject_preview_bounds (root, b))
++    g_clear_pointer (&root, chopgimp_vobject_unref);
++
++  if (! root && ! strcmp (key, "art"))
++    root = builtin_art (image, type);
++
++  return root;
++}
++
++/*  the paints of the leaves of @o take @paint (Illustrator « Teintes »)  */
++static void
++colorize (ChopGimpVObject     *o,
++          const ChopGimpPaint *paint)
++{
++  if (o->kind == CHOPGIMP_VOBJECT_PATH)
++    {
++      for (gint i = 0; i < chopgimp_vstyle_get_n_entries (&o->style); i++)
++        {
++          ChopGimpVEntry *e = chopgimp_vstyle_get_entry (&o->style, i);
++
++          if (e->paint.type != CHOPGIMP_PAINT_NONE)
++            chopgimp_vpaint_copy (&e->paint, paint);
++        }
++    }
++  else if (o->children)
++    {
++      for (guint i = 0; i < o->children->len; i++)
++        colorize (g_ptr_array_index (o->children, i), paint);
++    }
++}
++
++
++/*  ─── making the part ───────────────────────────────────────────────── */
++
++/*  calligraphic: the spine swept by an ellipse of diameters @size ×
++ *  @size·@roundness % turned by @angle (the round outline of the spine in
++ *  the space where the nib is a unit circle)
++ */
++static GimpPath *
++calligraphic_shape (GimpPath *spine,
++                    gdouble   size,
++                    gdouble   roundness,
++                    gdouble   angle)
++{
++  GimpMatrix3  nib, inv;
++  GimpPath    *sp, *out;
++
++  gimp_matrix3_identity (&nib);
++  gimp_matrix3_scale (&nib, MAX (size / 2.0, 0.05),
++                      MAX (size * roundness / 200.0, 0.05));
++  gimp_matrix3_rotate (&nib, -angle * G_PI / 180.0);
++
++  inv = nib;
++  gimp_matrix3_invert (&inv);
++
++  sp = g_object_ref_sink (gimp_path_new (gimp_item_get_image (GIMP_ITEM (spine)), "nib"));
++  gimp_path_copy_strokes (spine, sp);
++  chopgimp_vpath_transform (sp, &inv);
++
++  out = chopgimp_geom_outline (sp, 2.0, CHOPGIMP_JOIN_ROUND, CHOPGIMP_CAP_ROUND);
++  g_object_unref (sp);
++
++  if (out)
++    chopgimp_vpath_transform (out, &nib);
++
++  return out;
++}
++
++/*  a closed ellipse: centre, diameters @d × @d·@round %, turned by @angle  */
++static GimpStroke *
++ellipse_stroke (gdouble cx,
++                gdouble cy,
++                gdouble d,
++                gdouble roundness,
++                gdouble angle)
++{
++  static const gdouble k = 0.5523;
++  gdouble     a  = MAX (d / 2.0, 0.05);
++  gdouble     b  = MAX (d * roundness / 200.0, 0.05);
++  gdouble     th = -angle * G_PI / 180.0;
++  gdouble     co = cos (th), si = sin (th);
++  /*  the unit circle's 4 arcs: start, control 1, control 2, end  */
++  gdouble     u[13][2] = { { 1, 0 }, { 1, k }, { k, 1 }, { 0, 1 }, { -k, 1 }, { -1, k },
++                           { -1, 0 }, { -1, -k }, { -k, -1 }, { 0, -1 }, { k, -1 },
++                           { 1, -k }, { 1, 0 } };
++  GimpCoords  p[13];
++  GimpStroke *st;
++
++  for (gint i = 0; i < 13; i++)
++    {
++      gdouble x = u[i][0] * a, y = u[i][1] * b;
++
++      p[i] = chopgimp_coords (cx + x * co - y * si, cy + x * si + y * co);
++    }
++
++  st = gimp_bezier_stroke_new_moveto (&p[0]);
++
++  for (gint i = 1; i < 13; i += 3)
++    gimp_bezier_stroke_cubicto (st, &p[i], &p[i + 1], &p[i + 2]);
++
++  gimp_stroke_close (st);
++
++  return st;
++}
++
++static gdouble
++vary (ChopGimpVBrushVary mode,
++      gdouble            base,
++      gdouble            var,
++      gdouble            rnd_value,
++      gdouble            pressure)
++{
++  switch (mode)
++    {
++    case CHOPGIMP_VBRUSH_RANDOM:   return base + var * rnd_value;
++    case CHOPGIMP_VBRUSH_PRESSURE: return base + var * (2.0 * CLAMP (pressure, 0.0, 1.0) - 1.0);
++    default:                       return base;
++    }
++}
++
++/*  calligraphic with variations: random = one nib per sub-path (exact
++ *  sweep), pressure = a nib per point (the envelope of the nibs along
++ *  the sub-path, with the end nibs as caps)
++ */
++static GimpPath *
++calligraphic_part_shape (GimpPath                    *spine,
++                         gdouble                      size,
++                         const ChopGimpVBrushOptions *o)
++{
++  GimpImage  *image    = gimp_item_get_image (GIMP_ITEM (spine));
++  GimpPath   *out      = gimp_path_new (image, "calligraphic");
++  GRand      *rnd      = g_rand_new_with_seed ((guint32) o->seed);
++  gboolean    pressure = (o->angle_mode == CHOPGIMP_VBRUSH_PRESSURE ||
++                          o->round_mode == CHOPGIMP_VBRUSH_PRESSURE ||
++                          o->diam_mode  == CHOPGIMP_VBRUSH_PRESSURE);
++  GimpStroke *stroke   = NULL;
++
++  if (! o->angle_mode && ! o->round_mode && ! o->diam_mode)
++    {
++      GimpPath *shape = calligraphic_shape (spine, size, o->roundness, o->angle);
++
++      g_rand_free (rnd);
++      g_object_unref (g_object_ref_sink (out));
++
++      return shape;
++    }
++
++  g_object_ref_sink (out);
++
++  while ((stroke = gimp_path_stroke_get_next (spine, stroke)))
++    {
++      gdouble ra = g_rand_double_range (rnd, -1, 1);
++      gdouble rr = g_rand_double_range (rnd, -1, 1);
++      gdouble rd = g_rand_double_range (rnd, -1, 1);
++
++      if (! pressure)
++        {
++          GimpPath *one = g_object_ref_sink (gimp_path_new (image, "one"));
++          GimpPath *shape;
++
++          {
++            GimpStroke *dup = gimp_stroke_duplicate (stroke);
++
++            gimp_path_stroke_add (one, dup);
++            g_object_unref (dup);
++          }
++          shape = calligraphic_shape (one,
++                                      MAX (vary (o->diam_mode, size, o->diam_var, rd, 1), 0.1),
++                                      CLAMP (vary (o->round_mode, o->roundness, o->round_var,
++                                                   rr, 1), 1, 100),
++                                      vary (o->angle_mode, o->angle, o->angle_var, ra, 1));
++          if (shape)
++            {
++              g_object_ref_sink (shape);
++              gimp_path_add_strokes (shape, out);
++              g_object_unref (shape);
++            }
++
++          g_object_unref (one);
++        }
++      else
++        {
++          gboolean  closed = FALSE;
++          GArray   *pts    = gimp_stroke_interpolate (stroke, 0.5, &closed);
++          gdouble  *left, *right, *nib;
++          gint      n;
++
++          if (! pts || pts->len < 2)
++            {
++              if (pts)
++                g_array_unref (pts);
++              continue;
++            }
++
++          n     = pts->len;
++          left  = g_new (gdouble, 2 * n);
++          right = g_new (gdouble, 2 * n);
++          nib   = g_new (gdouble, 3 * n);   /* d, round, angle */
++
++          for (gint i = 0; i < n; i++)
++            {
++              GimpCoords *c  = &g_array_index (pts, GimpCoords, i);
++              GimpCoords *c0 = &g_array_index (pts, GimpCoords, MAX (i - 1, 0));
++              GimpCoords *c1 = &g_array_index (pts, GimpCoords, MIN (i + 1, n - 1));
++              gdouble     tx = c1->x - c0->x, ty = c1->y - c0->y;
++              gdouble     tl = hypot (tx, ty);
++              gdouble     d  = MAX (vary (o->diam_mode, size, o->diam_var, rd, c->pressure), 0.1);
++              gdouble     r  = CLAMP (vary (o->round_mode, o->roundness, o->round_var, rr,
++                                            c->pressure), 1, 100);
++              gdouble     an = vary (o->angle_mode, o->angle, o->angle_var, ra, c->pressure);
++              gdouble     th = -an * G_PI / 180.0;
++              gdouble     nx, ny, hu, hv, h;
++
++              if (tl < 1e-9)
++                {
++                  tx = 1;
++                  ty = 0;
++                  tl = 1;
++                }
++
++              nx = ty / tl;
++              ny = -tx / tl;
++              /*  the half extent of the nib across the path  */
++              hu = (d / 2.0) * (nx * cos (th) + ny * sin (th));
++              hv = (d * r / 200.0) * (-nx * sin (th) + ny * cos (th));
++              h  = sqrt (hu * hu + hv * hv);
++
++              left[2 * i]      = c->x + nx * h;
++              left[2 * i + 1]  = c->y + ny * h;
++              right[2 * i]     = c->x - nx * h;
++              right[2 * i + 1] = c->y - ny * h;
++              nib[3 * i]       = d;
++              nib[3 * i + 1]   = r;
++              nib[3 * i + 2]   = an;
++            }
++
++          if (closed)
++            {
++              GimpPath *l = chopgimp_geom_fit_points (out, left, n, 0.25, TRUE);
++              GimpPath *r;
++              gdouble  *rev = g_new (gdouble, 2 * n);
++
++              for (gint i = 0; i < n; i++)
++                {
++                  rev[2 * i]     = right[2 * (n - 1 - i)];
++                  rev[2 * i + 1] = right[2 * (n - 1 - i) + 1];
++                }
++
++              r = chopgimp_geom_fit_points (out, rev, n, 0.25, TRUE);
++
++              if (l)
++                {
++                  g_object_ref_sink (l);
++                  gimp_path_add_strokes (l, out);
++                  g_object_unref (l);
++                }
++              if (r)
++                {
++                  g_object_ref_sink (r);
++                  gimp_path_add_strokes (r, out);
++                  g_object_unref (r);
++                }
++
++              g_free (rev);
++            }
++          else
++            {
++              gdouble  *poly = g_new (gdouble, 4 * n);
++              GimpPath *band, *ends[3], *u;
++
++              for (gint i = 0; i < n; i++)
++                {
++                  poly[2 * i]                 = left[2 * i];
++                  poly[2 * i + 1]             = left[2 * i + 1];
++                  poly[2 * (2 * n - 1 - i)]     = right[2 * i];
++                  poly[2 * (2 * n - 1 - i) + 1] = right[2 * i + 1];
++                }
++
++              band = chopgimp_geom_fit_points (out, poly, 2 * n, 0.25, TRUE);
++
++              if (band)
++                {
++                  GimpCoords *a = &g_array_index (pts, GimpCoords, 0);
++                  GimpCoords *z = &g_array_index (pts, GimpCoords, n - 1);
++                  GimpStroke *e;
++
++                  g_object_ref_sink (band);
++                  ends[0] = band;
++                  ends[1] = g_object_ref_sink (gimp_path_new (image, "cap"));
++                  ends[2] = g_object_ref_sink (gimp_path_new (image, "cap"));
++
++                  e = ellipse_stroke (a->x, a->y, nib[0], nib[1], nib[2]);
++                  gimp_path_stroke_add (ends[1], e);
++                  g_object_unref (e);
++                  e = ellipse_stroke (z->x, z->y, nib[3 * (n - 1)], nib[3 * (n - 1) + 1],
++                                      nib[3 * (n - 1) + 2]);
++                  gimp_path_stroke_add (ends[2], e);
++                  g_object_unref (e);
++
++                  u = chopgimp_geom_boolean (ends, 3, CHOPGIMP_BOOL_UNION);
++
++                  if (u)
++                    {
++                      g_object_ref_sink (u);
++                      gimp_path_add_strokes (u, out);
++                      g_object_unref (u);
++                    }
++
++                  g_object_unref (ends[2]);
++                  g_object_unref (ends[1]);
++                  g_object_unref (band);
++                }
++
++              g_free (poly);
++            }
++
++          g_free (nib);
++          g_free (left);
++          g_free (right);
++          g_array_unref (pts);
++        }
++    }
++
++  g_rand_free (rnd);
++
++  if (gimp_path_get_n_strokes (out) == 0)
++    {
++      g_object_unref (out);
++      return NULL;
++    }
++
++  /*  floating again, like the other shapes  */
++  {
++    GimpPath *ret = gimp_path_new (image, "calligraphic");
++
++    gimp_path_copy_strokes (out, ret);
++    g_object_unref (out);
++
++    return ret;
++  }
++}
++
++/*  art: the leaves of the artwork stretched along the spines  */
++static ChopGimpVObject *
++stretched_part (GimpImage                   *image,
++                ChopGimpVObject             *art,
++                GPtrArray                   *spines,
++                const ChopGimpVBrushOptions *o,
++                gdouble                      width)
++{
++  ChopGimpVObject *group  = chopgimp_vobject_new_group (_("Forme de pinceau"));
++  GList           *leaves = chopgimp_vobjects_leaves_of (art);
++  gdouble          b[4];
++  gdouble          k = o->size / 100.0 * MAX (width, 0.01);
++
++  if (! chopgimp_vobject_preview_bounds (art, b))
++    {
++      g_list_free (leaves);
++      return group;
++    }
++
++  for (GList *l = leaves; l; l = l->next)
++    {
++      ChopGimpVObject *leaf = l->data;
++      GimpPath        *dest;
++      GimpMatrix3      m;
++
++      if (! leaf->path || ! leaf->visible)
++        continue;
++
++      chopgimp_vobject_get_world_matrix (leaf, &m);
++      dest = g_object_ref_sink (gimp_path_new (image, leaf->name));
++
++      for (guint i = 0; i < spines->len; i++)
++        {
++          const Spine *sp = g_ptr_array_index (spines, i);
++          ArtMap       am = { sp, b[0], MAX (b[2] - b[0], 1e-6), (b[1] + b[3]) / 2.0,
++                              0.0, sp->length, k, o->flip };
++
++          map_path_into (dest, leaf->path, &m, &am);
++        }
++
++      if (gimp_path_get_n_strokes (dest) > 0)
++        {
++          ChopGimpVObject *po = chopgimp_vobject_new_path (image, dest, leaf->name,
++                                                           &leaf->style);
++
++          po->opacity = leaf->opacity;
++          po->mode    = leaf->mode;
++          po->parent  = group;
++          g_ptr_array_add (group->children, po);
++        }
++
++      g_object_unref (dest);
++    }
++
++  g_list_free (leaves);
++
++  return group;
++}
++
++/*  ─── pattern: side, corner, start and end tiles ───────────────────── */
++
++typedef struct
++{
++  gint         tile;      /* ChopGimpVBrushTile                      */
++  gboolean     rigid;     /* corners: placed, not bent               */
++  const Spine *spine;
++  gdouble      s0, sl;    /* bent tiles: along the spine             */
++  GimpMatrix3  m;         /* rigid tiles: artwork → group            */
++} Place;
++
++#define CORNER_ANGLE  (30.0 * G_PI / 180.0)
++
++static ChopGimpVObject *
++pattern_part (GimpImage                   *image,
++              const gchar                 *spec,
++              GPtrArray                   *spines,
++              const ChopGimpVBrushOptions *o,
++              gdouble                      width)
++{
++  ChopGimpVObject *group = chopgimp_vobject_new_group (_("Forme de pinceau"));
++  ChopGimpVObject *arts[5];
++  gdouble          box[5][4], tw[5];
++  gdouble          k     = o->size / 100.0 * MAX (width, 0.01);
++  GArray          *places = g_array_new (FALSE, TRUE, sizeof (Place));
++
++  for (gint t = 0; t < 5; t++)
++    {
++      arts[t] = art_of (image, spec, tile_keys[t], CHOPGIMP_VBRUSH_PATTERN);
++      tw[t]   = 0.0;
++
++      if (arts[t] && chopgimp_vobject_preview_bounds (arts[t], box[t]))
++        tw[t] = MAX (box[t][2] - box[t][0], 1e-6) * k;
++      else
++        g_clear_pointer (&arts[t], chopgimp_vobject_unref);
++    }
++
++  if (! arts[CHOPGIMP_VBRUSH_TILE_SIDE])
++    goto done;
++
++  for (guint i = 0; i < spines->len; i++)
++    {
++      const Spine *sp      = g_ptr_array_index (spines, i);
++      const SPt   *p       = (const SPt *) sp->pts->data;
++      gint         n       = sp->pts->len;
++      GArray      *bs      = g_array_new (FALSE, FALSE, sizeof (gdouble));  /* corner s  */
++      GArray      *bw      = g_array_new (FALSE, FALSE, sizeof (gdouble));  /* reserve   */
++      gboolean     corners = arts[CHOPGIMP_VBRUSH_TILE_OUTER] || arts[CHOPGIMP_VBRUSH_TILE_INNER];
++
++      /*  the corners: a turn of more than 30° at a point  */
++      for (gint j = sp->closed ? 0 : 1; corners && j < n - 1; j++)
++        {
++          gint     jp = (j == 0) ? n - 2 : j - 1;
++          gdouble  ax = p[j].x - p[jp].x, ay = p[j].y - p[jp].y;
++          gdouble  bx = p[j + 1].x - p[j].x, by = p[j + 1].y - p[j].y;
++          gdouble  la = hypot (ax, ay), lb = hypot (bx, by);
++          gdouble  turn, cross, tx, ty, tl;
++          gboolean outer;
++          gint     t;
++          Place    pl = { 0, };
++
++          if (la < 1e-9 || lb < 1e-9)
++            continue;
++
++          ax /= la; ay /= la; bx /= lb; by /= lb;
++          turn = acos (CLAMP (ax * bx + ay * by, -1.0, 1.0));
++
++          if (turn < CORNER_ANGLE)
++            continue;
++
++          /*  turning right (y down): the top of the tiles is outside  */
++          cross = ax * by - ay * bx;
++          outer = (cross > 0) != (o->flip != FALSE);
++          t     = outer ? CHOPGIMP_VBRUSH_TILE_OUTER : CHOPGIMP_VBRUSH_TILE_INNER;
++
++          if (! arts[t])
++            t = outer ? CHOPGIMP_VBRUSH_TILE_INNER : CHOPGIMP_VBRUSH_TILE_OUTER;
++
++          tx = ax + bx;
++          ty = ay + by;
++          tl = hypot (tx, ty);
++          if (tl < 1e-9)
++            {
++              tx = -ay;
++              ty = ax;
++              tl = 1.0;
++            }
++
++          pl.tile  = t;
++          pl.rigid = TRUE;
++          gimp_matrix3_identity (&pl.m);
++          gimp_matrix3_translate (&pl.m, -(box[t][0] + box[t][2]) / 2.0,
++                                  -(box[t][1] + box[t][3]) / 2.0);
++          gimp_matrix3_scale (&pl.m, k, o->flip ? -k : k);
++          gimp_matrix3_rotate (&pl.m, atan2 (ty / tl, tx / tl));
++          gimp_matrix3_translate (&pl.m, p[j].x, p[j].y);
++          g_array_append_val (places, pl);
++
++          g_array_append_val (bs, p[j].s);
++          g_array_append_val (bw, tw[t]);
++        }
++
++      /*  the pieces between the corners (and the ends)  */
++      {
++        gint nc = bs->len;
++        gint np = sp->closed ? MAX (nc, 1) : nc + 1;
++
++        for (gint q = 0; q < np; q++)
++          {
++            gdouble a, b, len, tile, piece;
++            gint    nt;
++            Place   pl = { 0, };
++
++            if (sp->closed && nc == 0)
++              {
++                a = 0.0;
++                b = sp->length;
++              }
++            else if (sp->closed)
++              {
++                a = g_array_index (bs, gdouble, q) + g_array_index (bw, gdouble, q) / 2.0;
++                b = (q + 1 < nc) ? g_array_index (bs, gdouble, q + 1) -
++                                   g_array_index (bw, gdouble, q + 1) / 2.0
++                                 : g_array_index (bs, gdouble, 0) + sp->length -
++                                   g_array_index (bw, gdouble, 0) / 2.0;
++              }
++            else
++              {
++                a = (q == 0) ? 0.0 : g_array_index (bs, gdouble, q - 1) +
++                                     g_array_index (bw, gdouble, q - 1) / 2.0;
++                b = (q == nc) ? sp->length : g_array_index (bs, gdouble, q) -
++                                             g_array_index (bw, gdouble, q) / 2.0;
++
++                /*  start and end tiles, at their own size  */
++                if (q == 0 && arts[CHOPGIMP_VBRUSH_TILE_START])
++                  {
++                    pl.tile  = CHOPGIMP_VBRUSH_TILE_START;
++                    pl.spine = sp;
++                    pl.s0    = 0.0;
++                    pl.sl    = MIN (tw[CHOPGIMP_VBRUSH_TILE_START], sp->length);
++                    g_array_append_val (places, pl);
++                    a += pl.sl;
++                  }
++                if (q == nc && arts[CHOPGIMP_VBRUSH_TILE_END])
++                  {
++                    gdouble ew = MIN (tw[CHOPGIMP_VBRUSH_TILE_END], MAX (b - a, 0.0));
++
++                    pl.tile  = CHOPGIMP_VBRUSH_TILE_END;
++                    pl.spine = sp;
++                    pl.s0    = sp->length - ew;
++                    pl.sl    = ew;
++                    if (ew > 0.0)
++                      g_array_append_val (places, pl);
++                    b -= ew;
++                  }
++              }
++
++            len = b - a;
++            if (len <= 0.5)
++              continue;
++
++            /*  whole side tiles, stretched to fit  */
++            tile  = MAX (tw[CHOPGIMP_VBRUSH_TILE_SIDE] + o->spacing, 0.5);
++            nt    = CLAMP ((gint) floor (len / tile + 0.5), 1, 5000);
++            piece = len / nt;
++
++            for (gint t = 0; t < nt; t++)
++              {
++                Place side = { 0, };
++
++                side.tile  = CHOPGIMP_VBRUSH_TILE_SIDE;
++                side.spine = sp;
++                side.s0    = a + t * piece;
++                side.sl    = piece * (tw[CHOPGIMP_VBRUSH_TILE_SIDE] / tile);
++                g_array_append_val (places, side);
++              }
++          }
++      }
++
++      g_array_free (bs, TRUE);
++      g_array_free (bw, TRUE);
++    }
++
++  /*  one path object per leaf of each tile, with all its placements  */
++  for (gint t = 0; t < 5; t++)
++    {
++      GList *leaves;
++
++      if (! arts[t])
++        continue;
++
++      leaves = chopgimp_vobjects_leaves_of (arts[t]);
++
++      for (GList *l = leaves; l; l = l->next)
++        {
++          ChopGimpVObject *leaf = l->data;
++          GimpPath        *dest;
++          GimpMatrix3      lm;
++
++          if (! leaf->path || ! leaf->visible)
++            continue;
++
++          chopgimp_vobject_get_world_matrix (leaf, &lm);
++          dest = g_object_ref_sink (gimp_path_new (image, leaf->name));
++
++          for (guint q = 0; q < places->len; q++)
++            {
++              Place *pl = &g_array_index (places, Place, q);
++
++              if (pl->tile != t)
++                continue;
++
++              if (pl->rigid)
++                {
++                  GimpMatrix3  mm     = lm;
++                  GimpStroke  *stroke = NULL;
++
++                  gimp_matrix3_mult (&pl->m, &mm);
++
++                  while ((stroke = gimp_path_stroke_get_next (leaf->path, stroke)))
++                    {
++                      GimpStroke *copy = gimp_stroke_duplicate (stroke);
++
++                      gimp_stroke_transform (copy, &mm, NULL);
++                      gimp_path_stroke_add (dest, copy);
++                      g_object_unref (copy);
++                    }
++                }
++              else
++                {
++                  ArtMap am = { pl->spine, box[t][0], MAX (box[t][2] - box[t][0], 1e-6),
++                                (box[t][1] + box[t][3]) / 2.0, pl->s0, pl->sl, k, o->flip };
++
++                  map_path_into (dest, leaf->path, &lm, &am);
++                }
++            }
++
++          if (gimp_path_get_n_strokes (dest) > 0)
++            {
++              ChopGimpVObject *po = chopgimp_vobject_new_path (image, dest, leaf->name,
++                                                               &leaf->style);
++
++              po->opacity = leaf->opacity;
++              po->mode    = leaf->mode;
++              po->parent  = group;
++              g_ptr_array_add (group->children, po);
++            }
++
++          g_object_unref (dest);
++        }
++
++      g_list_free (leaves);
++    }
++
++ done:
++  for (gint t = 0; t < 5; t++)
++    if (arts[t])
++      chopgimp_vobject_unref (arts[t]);
++
++  g_array_free (places, TRUE);
++
++  return group;
++}
++
++/*  scatter: copies of the artwork along the spines  */
++static ChopGimpVObject *
++scatter_part (GimpImage                   *image,
++              ChopGimpVObject             *art,
++              GPtrArray                   *spines,
++              const ChopGimpVBrushOptions *o,
++              gdouble                      width)
++{
++  ChopGimpVObject *group = chopgimp_vobject_new_group (_("Forme de pinceau"));
++  GRand           *rnd   = g_rand_new_with_seed ((guint32) o->seed);
++  gdouble          b[4];
++  gdouble          k, aw, ah, size, step, acx, acy;
++  gint             count = 0;
++
++  if (! chopgimp_vobject_preview_bounds (art, b))
++    {
++      g_rand_free (rnd);
++      return group;
++    }
++
++  aw   = MAX (b[2] - b[0], 1e-6);
++  ah   = MAX (b[3] - b[1], 1e-6);
++  acx  = (b[0] + b[2]) / 2.0;
++  acy  = (b[1] + b[3]) / 2.0;
++  k    = o->size / 100.0 * MAX (width, 0.01);
++  size = MAX (aw, ah) * k;
++  step = MAX (size * o->spacing / 100.0, 0.5);
++
++  for (guint i = 0; i < spines->len && count < 5000; i++)
++    {
++      const Spine *sp = g_ptr_array_index (spines, i);
++
++      for (gdouble s = sp->closed ? 0.0 : MIN (step / 2.0, sp->length / 2.0);
++           s <= sp->length + 1e-9 && count < 5000;
++           s += step)
++        {
++          ChopGimpVObject *c;
++          GimpMatrix3      m;
++          gdouble          px, py, nx, ny;
++          gdouble          f   = 1.0 + o->size_var / 100.0 * g_rand_double_range (rnd, -1, 1);
++          gdouble          off = o->scatter / 100.0 * size * g_rand_double_range (rnd, -1, 1);
++          gdouble          rot = o->rotation * G_PI / 180.0 * g_rand_double_range (rnd, -1, 1);
++
++          if (sp->closed && s > sp->length - step / 2.0 && s > 0)
++            break;
++
++          spine_eval (sp, s, &px, &py, &nx, &ny);
++
++          if (o->follow)
++            rot += atan2 (nx, -ny);   /* the tangent (-ny, nx) */
++
++          gimp_matrix3_identity (&m);
++          gimp_matrix3_translate (&m, -acx, -acy);
++          gimp_matrix3_scale (&m, k * MAX (f, 0.01), k * MAX (f, 0.01));
++          gimp_matrix3_rotate (&m, rot);
++          gimp_matrix3_translate (&m, px + nx * off, py + ny * off);
++
++          c = chopgimp_vobject_copy (art, image);
++          gimp_matrix3_mult (&m, &c->transform);
++          c->parent = group;
++          g_ptr_array_add (group->children, c);
++          count++;
++        }
++    }
++
++  g_rand_free (rnd);
++
++  return group;
++}
++
++static gboolean
++brush_regen (GimpVectorLayer *layer,
++             ChopGimpVObject *g,
++             gboolean         force)
++{
++  GimpImage            *image = gimp_item_get_image (GIMP_ITEM (layer));
++  ChopGimpVObject      *key   = NULL;
++  ChopGimpVBrushOptions opts;
++  ChopGimpVEntry       *e;
++  ChopGimpPaint         paint = { 0, };
++  ChopGimpVObject      *part  = NULL;
++  GimpPath             *spine;
++  gchar                *sig, *old, *arts, *def;
++  gdouble               width;
++  guint                 key_index = 0;
++
++  for (guint i = 0; i < g->children->len && ! key; i++)
++    if (! is_part (g_ptr_array_index (g->children, i)))
++      {
++        key       = g_ptr_array_index (g->children, i);
++        key_index = i;
++      }
++
++  if (! key || key->kind != CHOPGIMP_VOBJECT_PATH)
++    return FALSE;
++
++  /*  the stroke of the key is drawn by the brush: shown again (the
++   *  options bar, the Aspect panel…), it is hidden on a copy of the key
++   *  (a new object, so that no rendering of it is kept)
++   */
++  e = chopgimp_vstyle_get_stroke (&key->style);
++
++  if (e && e->visible)
++    {
++      ChopGimpVObject *c = chopgimp_vobject_copy (key, image);
++
++      chopgimp_vstyle_get_stroke (&c->style)->visible = FALSE;
++      c->id     = key->id;
++      c->parent = g;
++      key->parent = NULL;
++      g_ptr_array_index (g->children, key_index) = c;
++      chopgimp_vobject_unref (key);
++      key = c;
++      e   = chopgimp_vstyle_get_stroke (&key->style);
++      force = TRUE;
++    }
++
++  sig = chopgimp_spec_signature (g, key);
++  old = chopgimp_spec_word (g->blend, "sig");
++
++  if (! force && ! g_strcmp0 (sig, old))
++    {
++      g_free (sig);
++      g_free (old);
++      return FALSE;
++    }
++
++  g_free (old);
++
++  spec_get (g->blend, &opts);
++  arts  = spec_arts (g->blend);
++  def   = chopgimp_spec_word (g->blend, "def");
++  width = (e && e->width > 0.0) ? e->width : 1.0;
++
++  if (e && e->paint.type != CHOPGIMP_PAINT_NONE)
++    {
++      chopgimp_vpaint_copy (&paint, &e->paint);
++    }
++  else
++    {
++      GeglColor *black = gegl_color_new ("black");
++
++      chopgimp_vpaint_set_color (&paint, black);
++      g_object_unref (black);
++    }
++
++  spine = chopgimp_vobject_path_in (layer, key, g);
++
++  if (spine)
++    {
++      g_object_ref_sink (spine);
++
++      if (opts.type == CHOPGIMP_VBRUSH_CALLIGRAPHIC)
++        {
++          gdouble   size  = (opts.size > 0.0) ? opts.size : width;
++          GimpPath *shape = calligraphic_part_shape (spine, size, &opts);
++
++          if (shape)
++            {
++              ChopGimpVStyle  st;
++              ChopGimpVEntry *fill;
++
++              g_object_ref_sink (shape);
++
++              chopgimp_vstyle_init (&st);
++              st.fill_nonzero = TRUE;
++              fill = chopgimp_vstyle_ensure_fill (&st);
++              chopgimp_vpaint_copy (&fill->paint, &paint);
++              fill->opacity = e ? e->opacity : 1.0;
++              fill->mode    = e ? e->mode    : GIMP_LAYER_MODE_NORMAL;
++
++              part = chopgimp_vobject_new_path (image, shape, _("Forme de pinceau"), &st);
++
++              chopgimp_vstyle_clear (&st);
++              g_object_unref (shape);
++            }
++        }
++      else
++        {
++          GPtrArray *spines = spines_of (spine);
++
++          if (opts.type == CHOPGIMP_VBRUSH_PATTERN)
++            {
++              part = pattern_part (image, g->blend, spines, &opts, width);
++            }
++          else
++            {
++              ChopGimpVObject *artwork = art_of (image, g->blend, "art", opts.type);
++
++              part = (opts.type == CHOPGIMP_VBRUSH_SCATTER)
++                     ? scatter_part   (image, artwork, spines, &opts, width)
++                     : stretched_part (image, artwork, spines, &opts, width);
++
++              chopgimp_vobject_unref (artwork);
++            }
++
++          if (opts.colorize)
++            colorize (part, &paint);
++
++          if (e && part)
++            part->opacity = e->opacity;
++
++          g_ptr_array_free (spines, TRUE);
++        }
++
++      g_object_unref (spine);
++    }
++
++  chopgimp_vpaint_clear (&paint);
++
++  /*  the key, then the part  */
++  chopgimp_vobject_ref (key);
++
++  for (guint i = 0; i < g->children->len; i++)
++    ((ChopGimpVObject *) g_ptr_array_index (g->children, i))->parent = NULL;
++
++  g_ptr_array_set_size (g->children, 0);
++
++  key->parent = g;
++  g_ptr_array_add (g->children, key);
++
++  if (part)
++    {
++      g_free (part->blend);
++      part->blend  = g_strdup (PART);
++      part->locked = TRUE;
++      part->parent = g;
++      g_ptr_array_add (g->children, part);
++    }
++
++  spec_set (g, &opts, arts, def, sig);
++  g_free (arts);
++  g_free (def);
++  g_free (sig);
++
++  return TRUE;
++}
++
++static void
++collect_brushes (ChopGimpVObject  *o,
++                 GList           **list)
++{
++  if (o->kind != CHOPGIMP_VOBJECT_GROUP)
++    return;
++
++  if (is_brush_group (o))
++    *list = g_list_prepend (*list, o);
++
++  for (guint i = 0; i < o->children->len; i++)
++    collect_brushes (g_ptr_array_index (o->children, i), list);
++}
++
++gboolean
++chopgimp_vbrush_refresh (GimpVectorLayer *layer)
++{
++  ChopGimpVObject *root;
++  GList           *groups = NULL;
++  gboolean         any    = FALSE;
++
++  if (! chopgimp_vbrush_enabled () || ! (root = chopgimp_vlayer_get_root (layer)))
++    return FALSE;
++
++  collect_brushes (root, &groups);
++
++  for (GList *l = groups; l; l = l->next)
++    any |= brush_regen (layer, l->data, FALSE);
++
++  g_list_free (groups);
++
++  return any;
++}
++
++
++/*  ─── commands ──────────────────────────────────────────────────────── */
++
++/*  the selected path leaves that can take a brush (g_list_free)  */
++static GList *
++brushable_leaves (GimpVectorLayer *layer)
++{
++  GList *sel  = chopgimp_vlayer_get_selected_objects (layer);
++  GList *list = NULL;
++
++  for (GList *l = sel; l; l = l->next)
++    {
++      GList *leaves;
++
++      if (chopgimp_vbrush_group_of (l->data))
++        continue;
++
++      leaves = chopgimp_vobjects_leaves_of (l->data);
++
++      for (GList *k = leaves; k; k = k->next)
++        {
++          ChopGimpVObject *o = k->data;
++
++          if (o->path && gimp_path_get_n_strokes (o->path) > 0 &&
++              ! in_dynamic (o) && ! chopgimp_vobject_is_locked (o) &&
++              ! g_list_find (list, o))
++            list = g_list_append (list, o);
++        }
++
++      g_list_free (leaves);
++    }
++
++  g_list_free (sel);
++
++  return list;
++}
++
++gboolean
++chopgimp_vbrush_can_apply (GimpVectorLayer *layer)
++{
++  GList   *list;
++  gboolean ok;
++
++  if (! chopgimp_vbrush_enabled () || ! layer || ! chopgimp_vlayer_get_root (layer))
++    return FALSE;
++
++  if (group_of_selection (layer))
++    return TRUE;
++
++  list = brushable_leaves (layer);
++  ok   = list != NULL;
++  g_list_free (list);
++
++  return ok;
++}
++
++static gchar *
++xml_b64 (const gchar *xml)
++{
++  return xml ? g_base64_encode ((const guchar *) xml, strlen (xml)) : NULL;
++}
++
++/*  the selected brushes take @opts, the selected paths become brushes;
++ *  @arts: the artwork words for all (NULL: the brushes keep theirs, new
++ *  ones get the built-in artwork); @def: the library brush or NULL
++ */
++static gboolean
++apply_internal (GimpVectorLayer             *layer,
++                const ChopGimpVBrushOptions *options,
++                const gchar                 *arts,
++                const gchar                 *def)
++{
++  GList  *sel, *leaves;
++  GArray *made;
++
++  if (! chopgimp_vbrush_can_apply (layer))
++    return FALSE;
++
++  made = g_array_new (FALSE, FALSE, sizeof (guint));
++
++  chopgimp_vlayer_push_undo (layer, _("Forme de pinceau"));
++  chopgimp_vlayer_freeze (layer);
++
++  /*  the selected brushes change  */
++  sel = chopgimp_vlayer_get_selected_objects (layer);
++
++  for (GList *l = sel; l; l = l->next)
++    {
++      ChopGimpVObject *g = chopgimp_vbrush_group_of (l->data);
++      gchar           *own;
++
++      if (! g)
++        continue;
++
++      for (guint i = 0; i < made->len; i++)
++        if (g_array_index (made, guint, i) == g->id)
++          g = NULL;
++
++      if (! g)
++        continue;
++
++      own = arts ? g_strdup (arts) : spec_arts (g->blend);
++      spec_set (g, options, own, def, NULL);
++      g_free (own);
++      brush_regen (layer, g, TRUE);
++      chopgimp_vlayer_subtree_changed (layer, g, NULL);
++      g_array_append_val (made, g->id);
++    }
++
++  g_list_free (sel);
++
++  /*  the selected paths take it  */
++  leaves = brushable_leaves (layer);
++
++  for (GList *l = leaves; l; l = l->next)
++    {
++      ChopGimpVObject *o = l->data;
++      ChopGimpVObject *g;
++      ChopGimpVStyle   st;
++      ChopGimpVEntry  *e;
++      guint            id = o->id;
++
++      chopgimp_vstyle_init (&st);
++      chopgimp_vstyle_copy (&st, &o->style);
++
++      e = chopgimp_vstyle_get_stroke (&st);
++      if (! e || ! chopgimp_ventry_is_painted (e))
++        {
++          GeglColor *black = gegl_color_new ("black");
++
++          e = chopgimp_vstyle_ensure_stroke (&st);
++          if (e->paint.type == CHOPGIMP_PAINT_NONE)
++            chopgimp_vpaint_set_color (&e->paint, black);
++          if (e->width <= 0.0)
++            e->width = 1.0;
++          if (e->opacity <= 0.0)
++            e->opacity = 1.0;
++          g_object_unref (black);
++        }
++      e->visible = FALSE;
++
++      chopgimp_vlayer_set_style (layer, id, &st, FALSE);
++      chopgimp_vstyle_clear (&st);
++
++      g = chopgimp_vlayer_group (layer, &id, 1, _("Forme de pinceau"), FALSE);
++
++      if (g)
++        {
++          spec_set (g, options, arts, def, NULL);
++          brush_regen (layer, g, TRUE);
++          chopgimp_vlayer_subtree_changed (layer, g, NULL);
++          g_array_append_val (made, g->id);
++        }
++    }
++
++  g_list_free (leaves);
++
++  if (made->len)
++    chopgimp_vlayer_set_selection (layer, (guint *) made->data, made->len);
++
++  chopgimp_vlayer_thaw (layer);
++
++  g_array_free (made, TRUE);
++
++  return TRUE;
++}
++
++gboolean
++chopgimp_vbrush_apply (GimpVectorLayer             *layer,
++                       const ChopGimpVBrushOptions *options)
++{
++  gchar   *b64  = options->use_defined ? xml_b64 (defined_art) : NULL;
++  gchar   *arts = b64 ? g_strdup_printf ("art=%s", b64) : NULL;
++  gboolean done = apply_internal (layer, options, arts, NULL);
++
++  g_free (arts);
++  g_free (b64);
++
++  return done;
++}
++
++gboolean
++chopgimp_vbrush_any (GimpVectorLayer *layer)
++{
++  return layer && chopgimp_vbrush_enabled () && chopgimp_vlayer_get_root (layer) &&
++         group_of_selection (layer) != NULL;
++}
++
++gboolean
++chopgimp_vbrush_get_options (GimpVectorLayer       *layer,
++                             ChopGimpVBrushOptions *options)
++{
++  ChopGimpVObject *g = chopgimp_vbrush_any (layer) ? group_of_selection (layer) : NULL;
++
++  if (! g)
++    return FALSE;
++
++  spec_get (g->blend, options);
++
++  return TRUE;
++}
++
++gboolean
++chopgimp_vbrush_define (GimpVectorLayer *layer)
++{
++  GList *sel;
++  gchar *id;
++
++  if (! layer || ! chopgimp_vlayer_get_root (layer))
++    return FALSE;
++
++  sel = chopgimp_vlayer_get_selected_objects (layer);
++
++  if (! sel)
++    return FALSE;
++
++  g_free (defined_art);
++  defined_art = chopgimp_vobjects_to_xml (sel);
++  g_list_free (sel);
++
++  /*  3.30.0: kept in the library too (Formes panel)  */
++  id = chopgimp_vbrush_library_add (layer, CHOPGIMP_VBRUSH_ART, NULL);
++  g_free (id);
++
++  return TRUE;
++}
++
++gboolean
++chopgimp_vbrush_has_defined (void)
++{
++  return defined_art != NULL;
++}
++
++
++/*  ─── the library (Formes panel) ────────────────────────────────────── */
++
++#define LIBRARY_PARASITE "chopgimp-brushes"
++
++typedef struct
++{
++  ChopGimpVBrushLibraryFunc func;
++  gpointer                  data;
++} Watcher;
++
++static GList    *library        = NULL;   /* ChopGimpVBrushDef *, owned */
++static gboolean  library_loaded = FALSE;
++static GList    *watchers       = NULL;   /* Watcher *                  */
++
++void
++chopgimp_vbrush_def_free (ChopGimpVBrushDef *def)
++{
++  if (! def)
++    return;
++
++  g_free (def->id);
++  g_free (def->name);
++  g_free (def->spec);
++  g_free (def);
++}
++
++static ChopGimpVBrushDef *
++def_new (const gchar *id,
++         const gchar *name,
++         const gchar *spec)
++{
++  ChopGimpVBrushDef *def = g_new0 (ChopGimpVBrushDef, 1);
++
++  def->id   = g_strdup (id);
++  def->name = g_strdup (name ? name : "");
++  def->spec = g_strdup (spec ? spec : "brush type=calligraphic");
++
++  return def;
++}
++
++static ChopGimpVBrushDef *
++def_copy (const ChopGimpVBrushDef *def)
++{
++  return def_new (def->id, def->name, def->spec);
++}
++
++static gchar *
++library_file (void)
++{
++  return g_build_filename (gimp_directory (), "chopgimp-brushes", NULL);
++}
++
++/*  the brushes of a key file (one group per id: name, spec)  */
++static GList *
++defs_from_keyfile (GKeyFile *kf)
++{
++  gchar **groups = g_key_file_get_groups (kf, NULL);
++  GList  *list   = NULL;
++
++  for (gchar **gr = groups; gr && *gr; gr++)
++    {
++      gchar *name = g_key_file_get_string (kf, *gr, "name", NULL);
++      gchar *spec = g_key_file_get_string (kf, *gr, "spec", NULL);
++
++      if (spec && g_str_has_prefix (spec, "brush"))
++        list = g_list_append (list, def_new (*gr, name, spec));
++
++      g_free (name);
++      g_free (spec);
++    }
++
++  g_strfreev (groups);
++
++  return list;
++}
++
++static void
++defs_to_keyfile (GKeyFile *kf,
++                 GList    *list)
++{
++  for (GList *l = list; l; l = l->next)
++    {
++      ChopGimpVBrushDef *def = l->data;
++
++      g_key_file_set_string (kf, def->id, "name", def->name);
++      g_key_file_set_string (kf, def->id, "spec", def->spec);
++    }
++}
++
++static void
++library_load (void)
++{
++  GKeyFile *kf;
++  gchar    *file;
++
++  if (library_loaded)
++    return;
++
++  library_loaded = TRUE;
++
++  kf   = g_key_file_new ();
++  file = library_file ();
++
++  if (g_key_file_load_from_file (kf, file, G_KEY_FILE_NONE, NULL))
++    library = defs_from_keyfile (kf);
++
++  g_key_file_free (kf);
++  g_free (file);
++}
++
++static void
++library_changed (void)
++{
++  GKeyFile *kf   = g_key_file_new ();
++  gchar    *file = library_file ();
++
++  defs_to_keyfile (kf, library);
++  g_key_file_save_to_file (kf, file, NULL);
++  g_key_file_free (kf);
++  g_free (file);
++
++  for (GList *l = watchers; l; )
++    {
++      Watcher *w = l->data;
++
++      l = l->next;   /* a watcher may go away */
++      w->func (w->data);
++    }
++}
++
++void
++chopgimp_vbrush_library_watch (ChopGimpVBrushLibraryFunc func,
++                               gpointer                  data)
++{
++  Watcher *w = g_new0 (Watcher, 1);
++
++  w->func  = func;
++  w->data  = data;
++  watchers = g_list_append (watchers, w);
++}
++
++void
++chopgimp_vbrush_library_unwatch (ChopGimpVBrushLibraryFunc func,
++                                 gpointer                  data)
++{
++  for (GList *l = watchers; l; l = l->next)
++    {
++      Watcher *w = l->data;
++
++      if (w->func == func && w->data == data)
++        {
++          watchers = g_list_delete_link (watchers, l);
++          g_free (w);
++          return;
++        }
++    }
++}
++
++static ChopGimpVBrushDef *
++library_find (const gchar *id)
++{
++  library_load ();
++
++  for (GList *l = library; l; l = l->next)
++    if (! g_strcmp0 (((ChopGimpVBrushDef *) l->data)->id, id))
++      return l->data;
++
++  return NULL;
++}
++
++GList *
++chopgimp_vbrush_library_list (void)
++{
++  GList *list = NULL;
++
++  library_load ();
++
++  for (GList *l = library; l; l = l->next)
++    list = g_list_append (list, def_copy (l->data));
++
++  return list;
++}
++
++void
++chopgimp_vbrush_library_free (GList *list)
++{
++  g_list_free_full (list, (GDestroyNotify) chopgimp_vbrush_def_free);
++}
++
++gboolean
++chopgimp_vbrush_def_get_options (const ChopGimpVBrushDef *def,
++                                 ChopGimpVBrushOptions   *options)
++{
++  if (! def)
++    return FALSE;
++
++  spec_get (def->spec, options);
++
++  return TRUE;
++}
++
++ChopGimpVObject *
++chopgimp_vbrush_def_get_art (GimpImage               *image,
++                             const ChopGimpVBrushDef *def,
++                             ChopGimpVBrushTile       tile)
++{
++  ChopGimpVBrushOptions o;
++
++  if (! def || ! image)
++    return NULL;
++
++  spec_get (def->spec, &o);
++
++  if (o.type == CHOPGIMP_VBRUSH_CALLIGRAPHIC)
++    return NULL;
++
++  return art_of (image, def->spec, tile_keys[CLAMP (tile, 0, 4)], o.type);
++}
++
++/*  the brush @def kept in @image too (XCF)  */
++static void
++library_store_in_image (GimpImage               *image,
++                        const ChopGimpVBrushDef *def)
++{
++  const GimpParasite *old;
++  GimpParasite       *parasite;
++  GKeyFile           *kf;
++  gchar              *data;
++  gsize               len;
++
++  if (! GIMP_IS_IMAGE (image) || ! def)
++    return;
++
++  kf = g_key_file_new ();
++
++  if ((old = gimp_image_parasite_find (image, LIBRARY_PARASITE)))
++    {
++      guint32      size = 0;
++      const gchar *d    = gimp_parasite_get_data (old, &size);
++
++      if (d && size)
++        g_key_file_load_from_data (kf, d, size, G_KEY_FILE_NONE, NULL);
++    }
++
++  g_key_file_set_string (kf, def->id, "name", def->name);
++  g_key_file_set_string (kf, def->id, "spec", def->spec);
++
++  data     = g_key_file_to_data (kf, &len, NULL);
++  parasite = gimp_parasite_new (LIBRARY_PARASITE, GIMP_PARASITE_PERSISTENT, len, data);
++  gimp_image_parasite_attach (image, parasite, FALSE);
++
++  gimp_parasite_free (parasite);
++  g_free (data);
++  g_key_file_free (kf);
++}
++
++void
++chopgimp_vbrush_library_merge_image (GimpImage *image)
++{
++  const GimpParasite *parasite;
++  GKeyFile           *kf;
++  GList              *defs;
++  gboolean            any = FALSE;
++  guint32             size = 0;
++  const gchar        *d;
++
++  if (! GIMP_IS_IMAGE (image) ||
++      ! (parasite = gimp_image_parasite_find (image, LIBRARY_PARASITE)))
++    return;
++
++  d = gimp_parasite_get_data (parasite, &size);
++
++  if (! d || ! size)
++    return;
++
++  kf = g_key_file_new ();
++
++  if (g_key_file_load_from_data (kf, d, size, G_KEY_FILE_NONE, NULL))
++    {
++      defs = defs_from_keyfile (kf);
++
++      for (GList *l = defs; l; l = l->next)
++        {
++          ChopGimpVBrushDef *def = l->data;
++
++          if (! library_find (def->id))
++            {
++              library = g_list_append (library, def);
++              l->data = NULL;
++              any     = TRUE;
++            }
++        }
++
++      g_list_free_full (defs, (GDestroyNotify) chopgimp_vbrush_def_free);
++    }
++
++  g_key_file_free (kf);
++
++  if (any)
++    library_changed ();
++}
++
++static gchar *
++new_id (void)
++{
++  static guint counter = 0;
++
++  return g_strdup_printf ("b%08x%04x", g_random_int (), ++counter & 0xffff);
++}
++
++gchar *
++chopgimp_vbrush_library_add (GimpVectorLayer    *layer,
++                             ChopGimpVBrushType  type,
++                             const gchar        *name)
++{
++  static const gchar   *labels[] = { N_("Calligraphique"), N_("Art"), N_("Motif"),
++                                     N_("Dispersion") };
++  ChopGimpVBrushOptions o;
++  ChopGimpVBrushDef    *def;
++  gchar                *arts = NULL, *spec, *label;
++
++  library_load ();
++
++  chopgimp_vbrush_default_options (type, &o);
++
++  if (type != CHOPGIMP_VBRUSH_CALLIGRAPHIC && layer && chopgimp_vlayer_get_root (layer))
++    {
++      GList *sel = chopgimp_vlayer_get_selected_objects (layer);
++
++      if (sel)
++        {
++          gchar *xml = chopgimp_vobjects_to_xml (sel);
++          gchar *b64 = xml_b64 (xml);
++
++          arts = g_strdup_printf ("art=%s", b64);
++          g_free (b64);
++          g_free (xml);
++        }
++
++      g_list_free (sel);
++    }
++
++  spec  = spec_compose (&o, arts, NULL, NULL);
++  label = name ? g_strdup (name)
++               : g_strdup_printf ("%s %d", _(labels[CLAMP (type, 0, 3)]),
++                                  g_list_length (library) + 1);
++  def   = def_new (NULL, label, spec);
++  g_free (def->id);
++  def->id = new_id ();
++
++  library = g_list_append (library, def);
++
++  if (layer)
++    library_store_in_image (gimp_item_get_image (GIMP_ITEM (layer)), def);
++
++  library_changed ();
++
++  g_free (label);
++  g_free (spec);
++  g_free (arts);
++
++  return g_strdup (def->id);
++}
++
++static void
++collect_def_users (ChopGimpVObject  *o,
++                   const gchar      *id,
++                   GList           **list)
++{
++  if (o->kind != CHOPGIMP_VOBJECT_GROUP)
++    return;
++
++  if (is_brush_group (o))
++    {
++      gchar *def = chopgimp_spec_word (o->blend, "def");
++
++      if (! g_strcmp0 (def, id))
++        *list = g_list_prepend (*list, o);
++
++      g_free (def);
++    }
++
++  for (guint i = 0; i < o->children->len; i++)
++    collect_def_users (g_ptr_array_index (o->children, i), id, list);
++}
++
++/*  the brushed paths of @image using @def take its spec  */
++static void
++library_update_users (const ChopGimpVBrushDef *def,
++                      GimpImage               *image)
++{
++  GList *layers;
++
++  if (! GIMP_IS_IMAGE (image))
++    return;
++
++  layers = gimp_image_get_layer_list (image);
++
++  for (GList *l = layers; l; l = l->next)
++    {
++      GimpVectorLayer       *layer;
++      GList                 *users = NULL;
++      ChopGimpVBrushOptions  o;
++      gchar                 *arts;
++
++      if (! gimp_item_is_vector_layer (GIMP_ITEM (l->data)))
++        continue;
++
++      layer = l->data;
++
++      if (! chopgimp_vlayer_has_objects (layer) || chopgimp_vlayer_is_legacy (layer))
++        continue;
++
++      collect_def_users (chopgimp_vlayer_get_root (layer), def->id, &users);
++
++      if (! users)
++        continue;
++
++      spec_get (def->spec, &o);
++      arts = spec_arts (def->spec);
++
++      chopgimp_vlayer_push_undo (layer, _("Modifier la forme de pinceau"));
++      chopgimp_vlayer_freeze (layer);
++
++      for (GList *u = users; u; u = u->next)
++        {
++          ChopGimpVObject *g = u->data;
++
++          spec_set (g, &o, arts, def->id, NULL);
++          brush_regen (layer, g, TRUE);
++          chopgimp_vlayer_subtree_changed (layer, g, NULL);
++        }
++
++      chopgimp_vlayer_thaw (layer);
++
++      g_free (arts);
++      g_list_free (users);
++    }
++
++  g_list_free (layers);
++}
++
++gboolean
++chopgimp_vbrush_library_set_options (const gchar                 *id,
++                                     const ChopGimpVBrushOptions *options,
++                                     GimpImage                   *image)
++{
++  ChopGimpVBrushDef *def = library_find (id);
++  gchar             *arts;
++
++  if (! def || ! options)
++    return FALSE;
++
++  arts = spec_arts (def->spec);
++  g_free (def->spec);
++  def->spec = spec_compose (options, arts, NULL, NULL);
++  g_free (arts);
++
++  library_changed ();
++
++  if (image)
++    {
++      library_update_users (def, image);
++      library_store_in_image (image, def);
++    }
++
++  return TRUE;
++}
++
++gboolean
++chopgimp_vbrush_library_set_tile (const gchar        *id,
++                                  GimpVectorLayer    *layer,
++                                  ChopGimpVBrushTile  tile)
++{
++  ChopGimpVBrushDef *def = library_find (id);
++  GList             *sel;
++  gchar             *xml, *b64, *spec;
++
++  if (! def || ! layer || ! chopgimp_vlayer_get_root (layer))
++    return FALSE;
++
++  sel = chopgimp_vlayer_get_selected_objects (layer);
++
++  if (! sel)
++    return FALSE;
++
++  xml  = chopgimp_vobjects_to_xml (sel);
++  b64  = xml_b64 (xml);
++  spec = spec_replace (def->spec, tile_keys[CLAMP (tile, 0, 4)], b64);
++
++  g_free (def->spec);
++  def->spec = spec;
++
++  g_free (b64);
++  g_free (xml);
++  g_list_free (sel);
++
++  library_changed ();
++  library_update_users (def, gimp_item_get_image (GIMP_ITEM (layer)));
++  library_store_in_image (gimp_item_get_image (GIMP_ITEM (layer)), def);
++
++  return TRUE;
++}
++
++gchar *
++chopgimp_vbrush_library_duplicate (const gchar *id)
++{
++  ChopGimpVBrushDef *def = library_find (id);
++  ChopGimpVBrushDef *copy;
++  gchar             *name;
++
++  if (! def)
++    return NULL;
++
++  name = g_strdup_printf (_("%s copie"), def->name);
++  copy = def_new (NULL, name, def->spec);
++  g_free (copy->id);
++  copy->id = new_id ();
++  g_free (name);
++
++  library = g_list_append (library, copy);
++  library_changed ();
++
++  return g_strdup (copy->id);
++}
++
++gboolean
++chopgimp_vbrush_library_rename (const gchar *id,
++                                const gchar *name)
++{
++  ChopGimpVBrushDef *def = library_find (id);
++
++  if (! def || ! name || ! *name)
++    return FALSE;
++
++  g_free (def->name);
++  def->name = g_strdup (name);
++  library_changed ();
++
++  return TRUE;
++}
++
++gboolean
++chopgimp_vbrush_library_remove (const gchar *id)
++{
++  ChopGimpVBrushDef *def = library_find (id);
++
++  if (! def)
++    return FALSE;
++
++  /*  the brushed paths keep their spec (and their artwork)  */
++  library = g_list_remove (library, def);
++  chopgimp_vbrush_def_free (def);
++  library_changed ();
++
++  return TRUE;
++}
++
++gboolean
++chopgimp_vbrush_apply_def (GimpVectorLayer *layer,
++                           const gchar     *id)
++{
++  ChopGimpVBrushDef    *def = library_find (id);
++  ChopGimpVBrushOptions o;
++  gchar                *arts;
++  gboolean              done;
++
++  if (! def || ! layer)
++    return FALSE;
++
++  spec_get (def->spec, &o);
++  arts = spec_arts (def->spec);
++  done = apply_internal (layer, &o, arts, def->id);
++  g_free (arts);
++
++  if (done)
++    library_store_in_image (gimp_item_get_image (GIMP_ITEM (layer)), def);
++
++  return done;
++}
++
++gboolean
++chopgimp_vbrush_release (GimpVectorLayer *layer)
++{
++  ChopGimpVObject *g = chopgimp_vbrush_any (layer) ? group_of_selection (layer) : NULL;
++  ChopGimpVObject *key = NULL;
++  guint            gid;
++
++  if (! g)
++    return FALSE;
++
++  chopgimp_vlayer_push_undo (layer, _("Retirer la forme de pinceau"));
++  chopgimp_vlayer_freeze (layer);
++
++  for (guint i = 0; i < g->children->len; )
++    {
++      ChopGimpVObject *c = g_ptr_array_index (g->children, i);
++
++      if (is_part (c))
++        {
++          c->parent = NULL;
++          g_ptr_array_remove_index (g->children, i);
++        }
++      else
++        {
++          if (! key)
++            key = c;
++          i++;
++        }
++    }
++
++  g_clear_pointer (&g->blend, g_free);
++  gid = g->id;
++  chopgimp_vlayer_subtree_changed (layer, g, NULL);
++
++  /*  the path gets its stroke back  */
++  if (key && key->kind == CHOPGIMP_VOBJECT_PATH)
++    {
++      ChopGimpVStyle  st;
++      ChopGimpVEntry *e;
++
++      chopgimp_vstyle_init (&st);
++      chopgimp_vstyle_copy (&st, &key->style);
++
++      if ((e = chopgimp_vstyle_get_stroke (&st)))
++        e->visible = TRUE;
++
++      chopgimp_vlayer_set_style (layer, key->id, &st, FALSE);
++      chopgimp_vstyle_clear (&st);
++    }
++
++  chopgimp_vlayer_ungroup (layer, gid, FALSE);
++  chopgimp_vlayer_thaw (layer);
++
++  return TRUE;
++}
++
++gboolean
++chopgimp_vbrush_expand (GimpVectorLayer *layer)
++{
++  ChopGimpVObject *g = chopgimp_vbrush_any (layer) ? group_of_selection (layer) : NULL;
++  ChopGimpVObject *key = NULL;
++
++  if (! g)
++    return FALSE;
++
++  chopgimp_vlayer_push_undo (layer, _("Décomposer la forme de pinceau"));
++  chopgimp_vlayer_freeze (layer);
++
++  for (guint i = 0; i < g->children->len; i++)
++    {
++      ChopGimpVObject *c = g_ptr_array_index (g->children, i);
++
++      if (is_part (c))
++        {
++          g_clear_pointer (&c->blend, g_free);
++          c->locked = FALSE;
++        }
++      else if (! key)
++        {
++          key = c;
++        }
++    }
++
++  g_clear_pointer (&g->blend, g_free);
++  chopgimp_vlayer_subtree_changed (layer, g, NULL);
++
++  /*  the path keeps its fill, its hidden stroke goes; nothing left: gone  */
++  if (key && key->kind == CHOPGIMP_VOBJECT_PATH)
++    {
++      ChopGimpVStyle  st;
++      ChopGimpVEntry *e;
++
++      chopgimp_vstyle_init (&st);
++      chopgimp_vstyle_copy (&st, &key->style);
++
++      if ((e = chopgimp_vstyle_get_stroke (&st)) && ! e->visible)
++        chopgimp_vstyle_remove_entry (&st, chopgimp_vstyle_get_entry_index (&st, e));
++
++      if (chopgimp_vstyle_has_fill (&st) || chopgimp_vstyle_has_stroke (&st))
++        chopgimp_vlayer_set_style (layer, key->id, &st, FALSE);
++      else
++        chopgimp_vlayer_remove (layer, key->id, FALSE);
++
++      chopgimp_vstyle_clear (&st);
++    }
++
++  chopgimp_vlayer_thaw (layer);
++
++  return TRUE;
++}
++
++
++/*  ─── Pinceau goutte ────────────────────────────────────────────────── */
++
++GimpPath *
++chopgimp_vblob_shape (GimpImage     *image,
++                      const gdouble *xy,
++                      gint           n,
++                      gdouble        size,
++                      gdouble        tolerance)
++{
++  GimpPath *like, *center = NULL, *shape;
++  gdouble   r = MAX (size, 0.5) / 2.0;
++
++  if (! image || ! xy || n < 1)
++    return NULL;
++
++  like = g_object_ref_sink (gimp_path_new (image, _("Pinceau goutte")));
++
++  if (n >= 2)
++    center = chopgimp_geom_fit_points (like, xy, n, MAX (tolerance, 0.1), FALSE);
++
++  if (center)
++    {
++      g_object_ref_sink (center);
++    }
++  else
++    {
++      /*  a click: a dot (a zero-length segment, round caps)  */
++      GimpCoords  a = chopgimp_coords (xy[0], xy[1]);
++      GimpCoords  b = chopgimp_coords (xy[0] + 0.01, xy[1]);
++      GimpStroke *st = gimp_bezier_stroke_new_moveto (&a);
++
++      gimp_bezier_stroke_lineto (st, &b);
++      center = g_object_ref_sink (gimp_path_new (image, _("Pinceau goutte")));
++      gimp_path_stroke_add (center, st);
++      g_object_unref (st);
++    }
++
++  shape = chopgimp_geom_outline (center, 2.0 * r, CHOPGIMP_JOIN_ROUND, CHOPGIMP_CAP_ROUND);
++
++  g_object_unref (center);
++  g_object_unref (like);
++
++  return shape;
++}
++
++static gboolean
++fill_key (const ChopGimpVStyle *style,
++          guint8                key[5])
++{
++  ChopGimpVEntry *e = chopgimp_vstyle_get_fill (style);
++
++  if (! e || ! e->visible || e->paint.type != CHOPGIMP_PAINT_COLOR || ! e->paint.color)
++    return FALSE;
++
++  gegl_color_get_pixel (e->paint.color, babl_format ("R'G'B'A u8"), key);
++  key[4] = (guint8) CLAMP (e->opacity * 255.0 + 0.5, 0, 255);
++
++  return TRUE;
++}
++
++static gboolean
++selected_or_ancestor (GimpVectorLayer *layer,
++                      ChopGimpVObject *o)
++{
++  for (; o && o->parent; o = o->parent)
++    if (chopgimp_vlayer_is_selected (layer, o->id))
++      return TRUE;
++
++  return FALSE;
++}
++
++ChopGimpVObject *
++chopgimp_vblob_paint (GimpVectorLayer      *layer,
++                      const gdouble        *xy,
++                      gint                  n,
++                      gdouble               size,
++                      gdouble               tolerance,
++                      const ChopGimpVStyle *style,
++                      gboolean              selection_only)
++{
++  GimpImage       *image;
++  GimpPath        *shape, *merged = NULL;
++  GPtrArray       *paths, *hits;
++  GList           *leaves;
++  guint8           key[5];
++  gdouble          sb[4] = { 0.0, 0.0, 0.0, 0.0 };
++  ChopGimpVObject *top = NULL, *parent = NULL, *object;
++  gint             position = -1;
++
++  if (! layer || ! style || ! chopgimp_vlayer_get_root (layer))
++    return NULL;
++
++  image = gimp_item_get_image (GIMP_ITEM (layer));
++  shape = chopgimp_vblob_shape (image, xy, n, size, tolerance);
++
++  if (! shape)
++    return NULL;
++
++  g_object_ref_sink (shape);
++
++  paths = g_ptr_array_new_with_free_func (g_object_unref);
++  hits  = g_ptr_array_new ();
++  g_ptr_array_add (paths, g_object_ref (shape));
++
++  /*  the free shapes of the same plain fill, no stroke, that it touches  */
++  if (fill_key (style, key) && chopgimp_path_anchor_bbox (shape, sb) && ! g_getenv ("CHOPGIMP_NO_BLOB_MERGE"))
++    {
++      leaves = chopgimp_vlayer_get_leaves (layer);
++
++      for (GList *l = leaves; l; l = l->next)
++        {
++          ChopGimpVObject *o = l->data;
++          guint8           k[5];
++          gdouble          x1, y1, x2, y2;
++          GimpPath        *world, *both[2], *inter;
++
++          if (! o->path || o->lpe || in_dynamic (o) || chopgimp_vbrush_group_of (o) ||
++              ! chopgimp_vobject_is_visible (o) || chopgimp_vobject_is_locked (o) ||
++              chopgimp_vstyle_has_stroke (&o->style) || ! fill_key (&o->style, k) ||
++              memcmp (k, key, 5) ||
++              (selection_only && ! selected_or_ancestor (layer, o)) ||
++              ! chopgimp_vobject_get_bounds (layer, o, FALSE, &x1, &y1, &x2, &y2) ||
++              x2 < sb[0] || x1 > sb[2] || y2 < sb[1] || y1 > sb[3])
++            continue;
++
++          world = chopgimp_vobject_get_world_path (layer, o, FALSE);
++          if (! world)
++            continue;
++
++          g_object_ref_sink (world);
++          both[0] = shape;
++          both[1] = world;
++          inter   = chopgimp_geom_boolean (both, 2, CHOPGIMP_BOOL_INTERSECTION);
++
++          if (inter)
++            {
++              g_object_ref_sink (inter);
++
++              if (fabs (chopgimp_geom_area (inter)) > 0.01)
++                {
++                  g_ptr_array_add (paths, g_object_ref (world));
++                  g_ptr_array_add (hits, o);
++                  top = o;   /* leaves: bottom → top */
++                }
++
++              g_object_unref (inter);
++            }
++
++          g_object_unref (world);
++        }
++
++      g_list_free (leaves);
++    }
++
++  if (paths->len > 1)
++    merged = chopgimp_geom_boolean ((GimpPath **) paths->pdata, paths->len,
++                                    CHOPGIMP_BOOL_UNION);
++
++  if (merged)
++    g_object_ref_sink (merged);
++  else
++    merged = g_object_ref (shape);
++
++  if (top)
++    {
++      parent   = (top->parent && top->parent->parent) ? top->parent : NULL;
++      position = chopgimp_vobject_get_index (top) + 1;
++    }
++  else
++    {
++      guint entered = chopgimp_vlayer_get_entered_group (layer);
++
++      parent = entered ? chopgimp_vlayer_get_object (layer, entered) : NULL;
++    }
++
++  object = chopgimp_vobject_new_path (image, merged, _("Pinceau goutte"),
++                                      top ? &top->style : style);
++  if (top)
++    {
++      object->opacity = top->opacity;
++      object->mode    = top->mode;
++    }
++
++  chopgimp_vlayer_push_undo (layer, _("Pinceau goutte"));
++  chopgimp_vlayer_freeze (layer);
++
++  chopgimp_vobjects_insert_world (layer, object, parent, position);
++
++  for (guint i = 0; i < hits->len; i++)
++    chopgimp_vlayer_remove (layer, ((ChopGimpVObject *) hits->pdata[i])->id, FALSE);
++
++  chopgimp_vlayer_thaw (layer);
++  chopgimp_vlayer_set_selection (layer, &object->id, 1);
++  chopgimp_vobject_unref (object);   /* the layer holds it */
++
++  g_ptr_array_free (hits, TRUE);
++  g_ptr_array_free (paths, TRUE);
++  g_object_unref (merged);
++  g_object_unref (shape);
++
++  return object;
++}
+diff --git a/app/path/chopgimp-vbrush.h b/app/path/chopgimp-vbrush.h
+new file mode 100644
+index 0000000..7cbf793
+--- /dev/null
++++ b/app/path/chopgimp-vbrush.h
+@@ -0,0 +1,228 @@
++/* GIMP - The GNU Image Manipulation Program
++ * chopgimp-vbrush.h — ChopGimp 3.30.0 (bloc vectoriel 4): « Formes de
++ * pinceau » (Illustrator's brushes: calligraphic, art, pattern, scatter)
++ * and the « Pinceau goutte » (Blob Brush)
++ *
++ * Formes de pinceau: a path object with a brush becomes the key of a
++ * group whose spec, in its « blend » field (the dynamic objects' field,
++ * like the Transition), is « brush type=… sig=S ». The key keeps its
++ * path, fill and stroke; its stroke is hidden and drawn by the brush,
++ * one generated child (blend « bpart », locked) made again from the
++ * change hook when the key or the options change: the path stays
++ * editable (enter the group, Sélection directe), its stroke color and
++ * width drive the brush.
++ *
++ *  - calligraphic: an elliptic nib (@angle, @roundness %, @size px; 0:
++ *    the stroke width) swept along the path: the exact Minkowski sum,
++ *    made as the round outline of the path in the nib's space;
++ *  - art: the artwork stretched along each sub-path;
++ *  - pattern: the artwork repeated along each sub-path, the tiles
++ *    stretched to fit a whole number of them (@spacing px between);
++ *  - scatter: copies of the artwork placed along the path every
++ *    @spacing % of their size, with random @scatter (across), @rotation
++ *    and @size_var (seeded: always the same result).
++ *
++ * The artwork (art, pattern, scatter) is the one « defined » from the
++ * selection (Vecteur > Formes de pinceau > Définir l'illustration, or a
++ * brush of the Formes panel), kept in the spec (base64 of the objects'
++ * XML) so that every brushed path carries its own; without one, a
++ * built-in shape (a tapered stroke, a diamond, a dot). A pattern brush
++ * may have outer / inner corner, start and end tiles; a calligraphic one
++ * random or pressure variations of its angle, roundness and diameter. Its size is multiplied by @size % and by the stroke
++ * width (Illustrator: 100 % at 1 pt). @colorize: the artwork takes the
++ * stroke's paint (Illustrator « Teintes »).
++ *
++ * CHOPGIMP_NO_VBRUSHES=1: no new brushes, the existing ones stay as
++ * they are (plain groups).
++ *
++ * Pinceau goutte: chopgimp_vblob_paint(); CHOPGIMP_NO_BLOB_MERGE=1: the
++ * blobs are never merged with the shapes under them.
++ *
++ * This program is free software: you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation; either version 3 of the License, or
++ * (at your option) any later version.
++ */
++
++#pragma once
++
++#include "chopgimp-vobject.h"
++
++G_BEGIN_DECLS
++
++
++typedef enum
++{
++  CHOPGIMP_VBRUSH_CALLIGRAPHIC,
++  CHOPGIMP_VBRUSH_ART,
++  CHOPGIMP_VBRUSH_PATTERN,
++  CHOPGIMP_VBRUSH_SCATTER
++} ChopGimpVBrushType;
++
++/*  3.30.0: how a calligraphic setting varies (Illustrator « Fixe »,
++ *  « Aléatoire », « Pression »): random = one value per sub-path in
++ *  base ± variation (seeded), pressure = base + variation × (2 p − 1)
++ *  with the pressure p recorded in the path's points
++ */
++typedef enum
++{
++  CHOPGIMP_VBRUSH_FIXED,
++  CHOPGIMP_VBRUSH_RANDOM,
++  CHOPGIMP_VBRUSH_PRESSURE
++} ChopGimpVBrushVary;
++
++typedef struct
++{
++  ChopGimpVBrushType type;
++  gdouble            angle;       /* CALLIGRAPHIC: deg, counter-clockwise   */
++  gdouble            roundness;   /* CALLIGRAPHIC: % (1..100)               */
++  gdouble            size;        /* CALLIGRAPHIC: px (0: stroke width);
++                                   * others: % of the artwork × width       */
++  gdouble            spacing;     /* PATTERN: px; SCATTER: % of the size    */
++  gdouble            scatter;     /* SCATTER: % of the size, ± random       */
++  gdouble            rotation;    /* SCATTER: deg, ± random                 */
++  gdouble            size_var;    /* SCATTER: %, ± random                   */
++  gboolean           follow;      /* SCATTER: turned along the path         */
++  gboolean           flip;        /* ART / PATTERN: across the path         */
++  gboolean           colorize;    /* ART / PATTERN / SCATTER                */
++  gint               seed;        /* SCATTER                                */
++  gboolean           use_defined; /* apply: take the defined artwork        */
++  /*  CALLIGRAPHIC variations (angle: deg, roundness: %, diameter: px)  */
++  ChopGimpVBrushVary angle_mode, round_mode, diam_mode;
++  gdouble            angle_var,  round_var,  diam_var;
++} ChopGimpVBrushOptions;
++
++/*  pattern tiles (Illustrator « Motif »): the side tile is the artwork;
++ *  the others are optional (spec keys art-outer, art-inner, art-start,
++ *  art-end)
++ */
++typedef enum
++{
++  CHOPGIMP_VBRUSH_TILE_SIDE,
++  CHOPGIMP_VBRUSH_TILE_OUTER,
++  CHOPGIMP_VBRUSH_TILE_INNER,
++  CHOPGIMP_VBRUSH_TILE_START,
++  CHOPGIMP_VBRUSH_TILE_END
++} ChopGimpVBrushTile;
++
++/*  « Formes » panel: the brush library, kept in <gimpdir>/chopgimp-brushes
++ *  (key file) and in the images that use or define a brush (parasite
++ *  « chopgimp-brushes », merged into the library when the image is seen
++ *  by the panel). A brush is a spec (type, options, artworks).
++ */
++typedef struct
++{
++  gchar *id;
++  gchar *name;
++  gchar *spec;
++} ChopGimpVBrushDef;
++
++
++gboolean          chopgimp_vbrush_enabled          (void);
++void              chopgimp_vbrush_default_options  (ChopGimpVBrushType     type,
++                                                    ChopGimpVBrushOptions *options);
++/*  the brushes whose key or options changed; TRUE when some were made
++ *  again (called by the objects' change hook)
++ */
++gboolean          chopgimp_vbrush_refresh          (GimpVectorLayer       *layer);
++/*  the brush group of @object (itself, its group, its part), or NULL  */
++ChopGimpVObject * chopgimp_vbrush_group_of         (ChopGimpVObject       *object);
++
++/*  ─── commands (one undo step each; the caller flushes) ─────────────── */
++
++/*  some selected path object (or group of them) can take a brush  */
++gboolean          chopgimp_vbrush_can_apply        (GimpVectorLayer       *layer);
++/*  the selected paths take the brush (the selected brushes change to
++ *  it); the brush groups are selected
++ */
++gboolean          chopgimp_vbrush_apply            (GimpVectorLayer       *layer,
++                                                    const ChopGimpVBrushOptions *options);
++gboolean          chopgimp_vbrush_any              (GimpVectorLayer       *layer);
++gboolean          chopgimp_vbrush_get_options      (GimpVectorLayer       *layer,
++                                                    ChopGimpVBrushOptions *options);
++/*  « Définir l'illustration »: the selected objects become the artwork of
++ *  the next art / pattern / scatter brushes (kept for the session)
++ */
++gboolean          chopgimp_vbrush_define           (GimpVectorLayer       *layer);
++gboolean          chopgimp_vbrush_has_defined      (void);
++/*  « Retirer la forme »: the path keeps its stroke, the brush is removed  */
++gboolean          chopgimp_vbrush_release          (GimpVectorLayer       *layer);
++/*  « Décomposer l'aspect »: the brush becomes ordinary objects  */
++gboolean          chopgimp_vbrush_expand           (GimpVectorLayer       *layer);
++
++
++/*  ─── the library (Formes panel) ────────────────────────────────────── */
++
++/*  the brushes, in order (chopgimp_vbrush_library_free)  */
++GList           * chopgimp_vbrush_library_list     (void);
++void              chopgimp_vbrush_library_free     (GList                 *list);
++void              chopgimp_vbrush_def_free         (ChopGimpVBrushDef     *def);
++/*  its options and whether it has artwork of its own  */
++gboolean          chopgimp_vbrush_def_get_options  (const ChopGimpVBrushDef *def,
++                                                    ChopGimpVBrushOptions *options);
++/*  the artwork of a tile of a brush (or its built-in one; unref), NULL
++ *  for a calligraphic brush or a missing tile
++ */
++ChopGimpVObject * chopgimp_vbrush_def_get_art      (GimpImage             *image,
++                                                    const ChopGimpVBrushDef *def,
++                                                    ChopGimpVBrushTile     tile);
++/*  a new brush of @type (artwork: the selected objects of @layer, may be
++ *  NULL); its id (g_free)
++ */
++gchar           * chopgimp_vbrush_library_add      (GimpVectorLayer       *layer,
++                                                    ChopGimpVBrushType     type,
++                                                    const gchar           *name);
++/*  the options of a brush change; the brushed paths of @image (may be
++ *  NULL) that use it follow (one undo step per layer)
++ */
++gboolean          chopgimp_vbrush_library_set_options (const gchar        *id,
++                                                    const ChopGimpVBrushOptions *options,
++                                                    GimpImage             *image);
++/*  the selected objects of @layer become the tile @tile of the brush  */
++gboolean          chopgimp_vbrush_library_set_tile (const gchar           *id,
++                                                    GimpVectorLayer       *layer,
++                                                    ChopGimpVBrushTile     tile);
++gchar           * chopgimp_vbrush_library_duplicate (const gchar          *id);
++gboolean          chopgimp_vbrush_library_rename   (const gchar           *id,
++                                                    const gchar           *name);
++gboolean          chopgimp_vbrush_library_remove   (const gchar           *id);
++/*  the brushes kept in @image join the library  */
++void              chopgimp_vbrush_library_merge_image (GimpImage          *image);
++/*  the selected paths of @layer take the brush @id  */
++gboolean          chopgimp_vbrush_apply_def        (GimpVectorLayer       *layer,
++                                                    const gchar           *id);
++/*  @func is called after every change of the library  */
++typedef void (* ChopGimpVBrushLibraryFunc) (gpointer data);
++void              chopgimp_vbrush_library_watch    (ChopGimpVBrushLibraryFunc func,
++                                                    gpointer               data);
++void              chopgimp_vbrush_library_unwatch  (ChopGimpVBrushLibraryFunc func,
++                                                    gpointer               data);
++
++
++/*  ─── Pinceau goutte ────────────────────────────────────────────────── */
++
++/*  the stroke of a round brush of diameter @size through the @n points
++ *  @xy (image coordinates, smoothed with @tolerance px) becomes a filled
++ *  object of @style (its fill must be a color), merged with the free
++ *  objects of the same plain fill color and no stroke that it touches
++ *  (only the selected ones when @selection_only); returns the new
++ *  object (selected). One undo step.
++ */
++ChopGimpVObject * chopgimp_vblob_paint             (GimpVectorLayer       *layer,
++                                                    const gdouble         *xy,
++                                                    gint                   n,
++                                                    gdouble                size,
++                                                    gdouble                tolerance,
++                                                    const ChopGimpVStyle  *style,
++                                                    gboolean               selection_only);
++/*  the shape of such a stroke alone (a new floating path of @image), or
++ *  NULL
++ */
++GimpPath        * chopgimp_vblob_shape             (GimpImage             *image,
++                                                    const gdouble         *xy,
++                                                    gint                   n,
++                                                    gdouble                size,
++                                                    gdouble                tolerance);
++
++
++G_END_DECLS
+diff --git a/app/path/chopgimp-vrepeat.c b/app/path/chopgimp-vrepeat.c
+new file mode 100644
+index 0000000..043d4af
+--- /dev/null
++++ b/app/path/chopgimp-vrepeat.c
+@@ -0,0 +1,966 @@
++/* GIMP - The GNU Image Manipulation Program
++ * chopgimp-vrepeat.c — ChopGimp 3.30.0: « Répétition » (radial, grid,
++ * mirror), see chopgimp-vrepeat.h. Built like the Transition of
++ * chopgimp-vmaterial.c: a group with a spec, generated children made
++ * again from the change hook when their signature changes.
++ *
++ * This program is free software: you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation; either version 3 of the License, or
++ * (at your option) any later version.
++ */
++
++#include "config.h"
++
++#include <math.h>
++#include <stdlib.h>
++#include <string.h>
++
++#include <cairo.h>
++#include <gdk-pixbuf/gdk-pixbuf.h>
++#include <gegl.h>
++
++#include "libgimpbase/gimpbase.h"
++#include "libgimpmath/gimpmath.h"
++
++#include "path-types.h"
++
++#include "core/gimpimage.h"
++#include "core/gimpitem.h"
++
++#include "gimppath.h"
++#include "gimpstroke.h"
++#include "gimpvectorlayer.h"
++#include "chopgimp-vobject.h"
++#include "chopgimp-vutil.h"
++#include "chopgimp-vrepeat.h"
++
++#include "gimp-intl.h"
++
++
++#define INSTANCE "rinst"
++
++
++gboolean
++chopgimp_vrepeat_enabled (void)
++{
++  static gint enabled = -1;
++
++  if (enabled < 0)
++    enabled = (g_getenv ("CHOPGIMP_NO_REPEAT") == NULL);
++
++  return enabled;
++}
++
++
++/*  ─── helpers ───────────────────────────────────────────────────────── */
++
++static gboolean
++is_repeat_group (ChopGimpVObject *o)
++{
++  return o->kind == CHOPGIMP_VOBJECT_GROUP && o->blend &&
++         g_str_has_prefix (o->blend, "repeat");
++}
++
++static gboolean
++is_instance (ChopGimpVObject *o)
++{
++  return o->blend && ! strcmp (o->blend, INSTANCE);
++}
++
++ChopGimpVObject *
++chopgimp_vrepeat_group_of (ChopGimpVObject *object)
++{
++  for (ChopGimpVObject *o = object; o; o = o->parent)
++    if (is_repeat_group (o))
++      return o;
++
++  return NULL;
++}
++
++static ChopGimpVObject *
++group_of_selection (GimpVectorLayer *layer)
++{
++  GList           *sel = chopgimp_vlayer_get_selected_objects (layer);
++  ChopGimpVObject *g   = NULL;
++
++  for (GList *l = sel; l && ! g; l = l->next)
++    g = chopgimp_vrepeat_group_of (l->data);
++
++  g_list_free (sel);
++
++  return g;
++}
++
++/*  the selected objects with a common parent, bottom → top (g_list_free)  */
++static GList *
++selected_siblings (GimpVectorLayer *layer)
++{
++  GList           *sel    = chopgimp_vlayer_get_selected_objects (layer);
++  ChopGimpVObject *parent = NULL;
++  GList           *list   = NULL;
++
++  for (GList *l = sel; l; l = l->next)
++    {
++      ChopGimpVObject *o = l->data;
++
++      if (! list)
++        parent = o->parent;
++      else if (o->parent != parent)
++        {
++          g_list_free (sel);
++          g_list_free (list);
++          return NULL;
++        }
++
++      list = g_list_append (list, o);
++    }
++
++  g_list_free (sel);
++
++  if (list && parent)
++    {
++      GList *sorted = NULL;
++
++      for (guint i = 0; i < parent->children->len; i++)
++        if (g_list_find (list, g_ptr_array_index (parent->children, i)))
++          sorted = g_list_append (sorted, g_ptr_array_index (parent->children, i));
++
++      g_list_free (list);
++      list = sorted;
++    }
++
++  return list;
++}
++
++/*  the box of the curves of @path (interpolated); FALSE when empty  */
++static gboolean
++path_box (GimpPath *path,
++          gdouble   b[4])
++{
++  GimpStroke *stroke = NULL;
++  gboolean    any    = FALSE;
++
++  while ((stroke = gimp_path_stroke_get_next (path, stroke)))
++    {
++      gboolean  closed;
++      GArray   *pts = gimp_stroke_interpolate (stroke, 0.5, &closed);
++
++      for (guint i = 0; pts && i < pts->len; i++)
++        {
++          GimpCoords *c = &g_array_index (pts, GimpCoords, i);
++
++          if (! any)
++            {
++              b[0] = b[2] = c->x;
++              b[1] = b[3] = c->y;
++              any = TRUE;
++            }
++          else
++            {
++              b[0] = MIN (b[0], c->x);
++              b[1] = MIN (b[1], c->y);
++              b[2] = MAX (b[2], c->x);
++              b[3] = MAX (b[3], c->y);
++            }
++        }
++
++      if (pts)
++        g_array_unref (pts);
++    }
++
++  return any;
++}
++
++static gboolean
++source_box (GimpVectorLayer *layer,
++            ChopGimpVObject *src,
++            ChopGimpVObject *g,
++            gdouble          b[4])
++{
++  GimpPath *p = chopgimp_vobject_path_in (layer, src, g);
++  gboolean  ok;
++
++  if (! p)
++    return FALSE;
++
++  g_object_ref_sink (p);
++  ok = path_box (p, b);
++  g_object_unref (p);
++
++  return ok;
++}
++
++/*  a copy is a snapshot: the dynamic specs of the groups inside it are
++ *  dropped (their generated parts stay, locked)
++ */
++static void
++strip_specs (ChopGimpVObject *o)
++{
++  if (o->kind == CHOPGIMP_VOBJECT_GROUP && o->blend &&
++      (g_str_has_prefix (o->blend, "blend") || g_str_has_prefix (o->blend, "repeat") ||
++       g_str_has_prefix (o->blend, "brush")))
++    g_clear_pointer (&o->blend, g_free);
++
++  if (o->children)
++    for (guint i = 0; i < o->children->len; i++)
++      strip_specs (g_ptr_array_index (o->children, i));
++}
++
++
++/*  ─── options ⇄ spec ────────────────────────────────────────────────── */
++
++void
++chopgimp_vrepeat_default_options (ChopGimpRepeatType     type,
++                                  gdouble                width,
++                                  gdouble                height,
++                                  ChopGimpRepeatOptions *o)
++{
++  gdouble size = MAX (MAX (width, height), 1.0);
++
++  memset (o, 0, sizeof (*o));
++
++  o->type     = type;
++  o->count    = 8;
++  o->radius   = size * 1.5;
++  o->angle    = (type == CHOPGIMP_REPEAT_MIRROR) ? 90.0 : -90.0;
++  o->cols     = 3;
++  o->rows     = 3;
++  o->hgap     = MAX (width, 1.0) * 0.25;
++  o->vgap     = MAX (height, 1.0) * 0.25;
++  o->flip_row = 0;
++  o->flip_col = 0;
++  o->offset   = MAX (width, 1.0) / 2.0 + MAX (10.0, width * 0.1);
++}
++
++static void
++options_sanitize (ChopGimpRepeatOptions *o)
++{
++  o->type     = CLAMP (o->type, CHOPGIMP_REPEAT_RADIAL, CHOPGIMP_REPEAT_MIRROR);
++  o->count    = CLAMP (o->count, 2, 360);
++  o->radius   = CLAMP (o->radius, 0.0, 100000.0);
++  o->cols     = CLAMP (o->cols, 1, 200);
++  o->rows     = CLAMP (o->rows, 1, 200);
++  o->hgap     = CLAMP (o->hgap, -10000.0, 100000.0);
++  o->vgap     = CLAMP (o->vgap, -10000.0, 100000.0);
++  o->flip_row = CLAMP (o->flip_row, 0, 2);
++  o->flip_col = CLAMP (o->flip_col, 0, 2);
++}
++
++static void
++spec_get (const gchar           *spec,
++          ChopGimpRepeatOptions *o)
++{
++  gchar *type = chopgimp_spec_word (spec, "type");
++
++  chopgimp_vrepeat_default_options (CHOPGIMP_REPEAT_RADIAL, 100, 100, o);
++
++  if (! g_strcmp0 (type, "grid"))
++    o->type = CHOPGIMP_REPEAT_GRID;
++  else if (! g_strcmp0 (type, "mirror"))
++    o->type = CHOPGIMP_REPEAT_MIRROR;
++
++  g_free (type);
++
++  o->count    = (gint) chopgimp_spec_dbl (spec, "n", o->count);
++  o->radius   = chopgimp_spec_dbl (spec, "r", o->radius);
++  o->angle    = chopgimp_spec_dbl (spec, "a", o->type == CHOPGIMP_REPEAT_MIRROR ? 90.0 : -90.0);
++  o->cols     = (gint) chopgimp_spec_dbl (spec, "cols", o->cols);
++  o->rows     = (gint) chopgimp_spec_dbl (spec, "rows", o->rows);
++  o->hgap     = chopgimp_spec_dbl (spec, "hgap", o->hgap);
++  o->vgap     = chopgimp_spec_dbl (spec, "vgap", o->vgap);
++  o->flip_row = (gint) chopgimp_spec_dbl (spec, "frow", 0);
++  o->flip_col = (gint) chopgimp_spec_dbl (spec, "fcol", 0);
++  o->offset   = chopgimp_spec_dbl (spec, "off", o->offset);
++
++  options_sanitize (o);
++}
++
++static void
++spec_set (ChopGimpVObject             *g,
++          const ChopGimpRepeatOptions *opts,
++          const gchar                 *sig)
++{
++  ChopGimpRepeatOptions o = *opts;
++  GString              *s = g_string_new ("repeat");
++
++  options_sanitize (&o);
++
++  switch (o.type)
++    {
++    case CHOPGIMP_REPEAT_RADIAL:
++      g_string_append (s, " type=radial");
++      g_string_append_printf (s, " n=%d", o.count);
++      chopgimp_spec_put_dbl (s, "r", o.radius);
++      chopgimp_spec_put_dbl (s, "a", o.angle);
++      break;
++
++    case CHOPGIMP_REPEAT_GRID:
++      g_string_append (s, " type=grid");
++      g_string_append_printf (s, " cols=%d rows=%d", o.cols, o.rows);
++      chopgimp_spec_put_dbl (s, "hgap", o.hgap);
++      chopgimp_spec_put_dbl (s, "vgap", o.vgap);
++      g_string_append_printf (s, " frow=%d fcol=%d", o.flip_row, o.flip_col);
++      break;
++
++    case CHOPGIMP_REPEAT_MIRROR:
++      g_string_append (s, " type=mirror");
++      chopgimp_spec_put_dbl (s, "a", o.angle);
++      chopgimp_spec_put_dbl (s, "off", o.offset);
++      break;
++    }
++
++  if (sig)
++    g_string_append_printf (s, " sig=%s", sig);
++
++  g_free (g->blend);
++  g->blend = g_string_free (s, FALSE);
++}
++
++
++/*  ─── the instances ─────────────────────────────────────────────────── */
++
++/*  M = T(c) · F · T(-c), F: a flip (1: horizontal, 2: vertical)  */
++static void
++flip_about (GimpMatrix3 *m,
++            gint         flip,
++            gdouble      cx,
++            gdouble      cy)
++{
++  if (! flip)
++    return;
++
++  gimp_matrix3_translate (m, -cx, -cy);
++  gimp_matrix3_scale (m, flip == 1 ? -1.0 : 1.0, flip == 2 ? -1.0 : 1.0);
++  gimp_matrix3_translate (m, cx, cy);
++}
++
++/*  the transformations (group space) of the instances, source excluded  */
++static GArray *
++instance_matrices (const ChopGimpRepeatOptions *o,
++                   const gdouble                b[4])
++{
++  GArray  *a  = g_array_new (FALSE, FALSE, sizeof (GimpMatrix3));
++  gdouble  cx = (b[0] + b[2]) / 2.0;
++  gdouble  cy = (b[1] + b[3]) / 2.0;
++  gdouble  w  = b[2] - b[0];
++  gdouble  h  = b[3] - b[1];
++
++  switch (o->type)
++    {
++    case CHOPGIMP_REPEAT_RADIAL:
++      {
++        gdouble ar = o->angle * G_PI / 180.0;
++        gdouble ox = cx - o->radius * cos (ar);
++        gdouble oy = cy - o->radius * sin (ar);
++
++        for (gint k = 1; k < o->count; k++)
++          {
++            GimpMatrix3 m;
++
++            gimp_matrix3_identity (&m);
++            gimp_matrix3_translate (&m, -ox, -oy);
++            gimp_matrix3_rotate (&m, 2.0 * G_PI * k / o->count);
++            gimp_matrix3_translate (&m, ox, oy);
++            g_array_append_val (a, m);
++          }
++      }
++      break;
++
++    case CHOPGIMP_REPEAT_GRID:
++      for (gint j = 0; j < o->rows; j++)
++        for (gint i = 0; i < o->cols; i++)
++          {
++            GimpMatrix3 m;
++
++            if (i == 0 && j == 0)
++              continue;
++
++            gimp_matrix3_identity (&m);
++            if (j % 2)
++              flip_about (&m, o->flip_row, cx, cy);
++            if (i % 2)
++              flip_about (&m, o->flip_col, cx, cy);
++            gimp_matrix3_translate (&m, i * (w + o->hgap), j * (h + o->vgap));
++            g_array_append_val (a, m);
++          }
++      break;
++
++    case CHOPGIMP_REPEAT_MIRROR:
++      {
++        gdouble     ar = o->angle * G_PI / 180.0;
++        gdouble     ax = cx + o->offset * cos (ar - G_PI / 2.0);
++        gdouble     ay = cy + o->offset * sin (ar - G_PI / 2.0);
++        GimpMatrix3 m;
++
++        gimp_matrix3_identity (&m);
++        gimp_matrix3_translate (&m, -ax, -ay);
++        gimp_matrix3_rotate (&m, -ar);
++        gimp_matrix3_scale (&m, 1.0, -1.0);
++        gimp_matrix3_rotate (&m, ar);
++        gimp_matrix3_translate (&m, ax, ay);
++        g_array_append_val (a, m);
++      }
++      break;
++    }
++
++  return a;
++}
++
++static gboolean
++repeat_regen (GimpVectorLayer *layer,
++              ChopGimpVObject *g,
++              gboolean         force)
++{
++  GimpImage            *image = gimp_item_get_image (GIMP_ITEM (layer));
++  ChopGimpVObject      *src   = NULL;
++  ChopGimpRepeatOptions opts;
++  GPtrArray            *made;
++  gchar                *sig, *old;
++  gdouble               b[4];
++
++  for (guint i = 0; i < g->children->len && ! src; i++)
++    if (! is_instance (g_ptr_array_index (g->children, i)))
++      src = g_ptr_array_index (g->children, i);
++
++  if (! src)
++    return FALSE;
++
++  spec_get (g->blend, &opts);
++
++  sig = chopgimp_spec_signature (g, src);
++  old = chopgimp_spec_word (g->blend, "sig");
++
++  if (! force && ! g_strcmp0 (sig, old))
++    {
++      g_free (sig);
++      g_free (old);
++      return FALSE;
++    }
++
++  g_free (old);
++
++  made = g_ptr_array_new ();
++  g_ptr_array_add (made, chopgimp_vobject_ref (src));
++
++  if (source_box (layer, src, g, b))
++    {
++      GArray *ms = instance_matrices (&opts, b);
++
++      for (guint k = 0; k < ms->len; k++)
++        {
++          ChopGimpVObject *c    = chopgimp_vobject_copy (src, image);
++          gchar           *name = g_strdup_printf (_("Instance %d"), k + 2);
++
++          strip_specs (c);
++          g_free (c->blend);
++          c->blend  = g_strdup (INSTANCE);
++          c->locked = TRUE;
++          g_free (c->name);
++          c->name   = name;
++          gimp_matrix3_mult (&g_array_index (ms, GimpMatrix3, k), &c->transform);
++
++          g_ptr_array_add (made, c);
++        }
++
++      g_array_free (ms, TRUE);
++    }
++
++  for (guint i = 0; i < g->children->len; i++)
++    ((ChopGimpVObject *) g_ptr_array_index (g->children, i))->parent = NULL;
++
++  g_ptr_array_set_size (g->children, 0);
++
++  for (guint i = 0; i < made->len; i++)
++    {
++      ChopGimpVObject *o = g_ptr_array_index (made, i);
++
++      o->parent = g;
++      g_ptr_array_add (g->children, o);
++    }
++
++  g_ptr_array_free (made, TRUE);
++
++  /*  the signature of what was just made (the spec without it is the same)  */
++  spec_set (g, &opts, sig);
++  g_free (sig);
++
++  return TRUE;
++}
++
++static void
++collect_repeats (ChopGimpVObject  *o,
++                 GList           **list)
++{
++  if (o->kind != CHOPGIMP_VOBJECT_GROUP)
++    return;
++
++  if (is_repeat_group (o))
++    *list = g_list_prepend (*list, o);
++
++  for (guint i = 0; i < o->children->len; i++)
++    collect_repeats (g_ptr_array_index (o->children, i), list);
++}
++
++gboolean
++chopgimp_vrepeat_refresh (GimpVectorLayer *layer)
++{
++  ChopGimpVObject *root;
++  GList           *groups = NULL;
++  gboolean         any    = FALSE;
++
++  if (! chopgimp_vrepeat_enabled () || ! (root = chopgimp_vlayer_get_root (layer)))
++    return FALSE;
++
++  /*  innermost first (prepended in depth-first order): a repeat inside
++   *  the source of another one is made before it is copied
++   */
++  collect_repeats (root, &groups);
++
++  for (GList *l = groups; l; l = l->next)
++    any |= repeat_regen (layer, l->data, FALSE);
++
++  g_list_free (groups);
++
++  return any;
++}
++
++
++/*  ─── commands ──────────────────────────────────────────────────────── */
++
++gboolean
++chopgimp_vrepeat_can_make (GimpVectorLayer *layer)
++{
++  GList   *list;
++  gboolean ok;
++
++  if (! chopgimp_vrepeat_enabled () || ! layer || ! chopgimp_vlayer_get_root (layer))
++    return FALSE;
++
++  list = selected_siblings (layer);
++  ok   = list != NULL;
++
++  for (GList *l = list; l; l = l->next)
++    if (chopgimp_vrepeat_group_of (l->data) || chopgimp_vobject_is_locked (l->data))
++      ok = FALSE;
++
++  g_list_free (list);
++
++  return ok;
++}
++
++ChopGimpVObject *
++chopgimp_vrepeat_make (GimpVectorLayer             *layer,
++                       ChopGimpRepeatType           type,
++                       const ChopGimpRepeatOptions *options)
++{
++  GList                *list;
++  GArray               *ids;
++  ChopGimpVObject      *src, *g = NULL;
++  ChopGimpRepeatOptions opts;
++  static const gchar   *names[] = { N_("Répétition radiale"), N_("Répétition en grille"),
++                                    N_("Répétition miroir") };
++
++  if (! chopgimp_vrepeat_can_make (layer))
++    return NULL;
++
++  list = selected_siblings (layer);
++  ids  = g_array_new (FALSE, FALSE, sizeof (guint));
++
++  for (GList *l = list; l; l = l->next)
++    g_array_append_val (ids, ((ChopGimpVObject *) l->data)->id);
++
++  g_list_free (list);
++
++  chopgimp_vlayer_push_undo (layer, _("Créer une répétition"));
++  chopgimp_vlayer_freeze (layer);
++
++  src = (ids->len == 1) ? chopgimp_vlayer_get_object (layer, g_array_index (ids, guint, 0))
++                        : chopgimp_vlayer_group (layer, (guint *) ids->data, ids->len,
++                                                 _("Source"), FALSE);
++
++  if (src)
++    g = chopgimp_vlayer_group (layer, &src->id, 1,
++                               _(names[CLAMP (type, 0, 2)]), FALSE);
++
++  if (g)
++    {
++      gdouble b[4] = { 0, 0, 100, 100 };
++
++      if (options)
++        {
++          opts = *options;
++        }
++      else
++        {
++          source_box (layer, src, g, b);
++          chopgimp_vrepeat_default_options (type, b[2] - b[0], b[3] - b[1], &opts);
++        }
++
++      opts.type = type;
++      spec_set (g, &opts, NULL);
++      repeat_regen (layer, g, TRUE);
++      chopgimp_vlayer_subtree_changed (layer, g, NULL);
++      chopgimp_vlayer_set_selection (layer, &g->id, 1);
++    }
++
++  chopgimp_vlayer_thaw (layer);
++  g_array_free (ids, TRUE);
++
++  return g;
++}
++
++gboolean
++chopgimp_vrepeat_any (GimpVectorLayer *layer)
++{
++  return layer && chopgimp_vrepeat_enabled () && chopgimp_vlayer_get_root (layer) &&
++         group_of_selection (layer) != NULL;
++}
++
++gboolean
++chopgimp_vrepeat_get_options (GimpVectorLayer       *layer,
++                              ChopGimpRepeatOptions *options)
++{
++  ChopGimpVObject *g = chopgimp_vrepeat_any (layer) ? group_of_selection (layer) : NULL;
++
++  if (! g)
++    return FALSE;
++
++  spec_get (g->blend, options);
++
++  return TRUE;
++}
++
++gboolean
++chopgimp_vrepeat_set_options (GimpVectorLayer             *layer,
++                              const ChopGimpRepeatOptions *options)
++{
++  ChopGimpVObject *g = chopgimp_vrepeat_any (layer) ? group_of_selection (layer) : NULL;
++
++  if (! g)
++    return FALSE;
++
++  chopgimp_vlayer_push_undo (layer, _("Options de répétition"));
++  spec_set (g, options, NULL);
++  repeat_regen (layer, g, TRUE);
++  chopgimp_vlayer_subtree_changed (layer, g, NULL);
++
++  return TRUE;
++}
++
++gboolean
++chopgimp_vrepeat_release (GimpVectorLayer *layer)
++{
++  ChopGimpVObject *g = chopgimp_vrepeat_any (layer) ? group_of_selection (layer) : NULL;
++  GPtrArray       *keep;
++  guint            gid;
++
++  if (! g)
++    return FALSE;
++
++  chopgimp_vlayer_push_undo (layer, _("Libérer la répétition"));
++  chopgimp_vlayer_freeze (layer);
++
++  keep = g_ptr_array_new ();
++
++  for (guint i = 0; i < g->children->len; i++)
++    {
++      ChopGimpVObject *c = g_ptr_array_index (g->children, i);
++
++      if (is_instance (c))
++        c->parent = NULL;
++      else
++        g_ptr_array_add (keep, chopgimp_vobject_ref (c));
++    }
++
++  g_ptr_array_set_size (g->children, 0);
++
++  for (guint i = 0; i < keep->len; i++)
++    g_ptr_array_add (g->children, g_ptr_array_index (keep, i));
++
++  g_ptr_array_free (keep, TRUE);
++  g_clear_pointer (&g->blend, g_free);
++  gid = g->id;
++
++  chopgimp_vlayer_subtree_changed (layer, g, NULL);
++  /*  the source takes the place of the repeat  */
++  chopgimp_vlayer_ungroup (layer, gid, FALSE);
++
++  chopgimp_vlayer_thaw (layer);
++
++  return TRUE;
++}
++
++gboolean
++chopgimp_vrepeat_expand (GimpVectorLayer *layer)
++{
++  ChopGimpVObject *g = chopgimp_vrepeat_any (layer) ? group_of_selection (layer) : NULL;
++
++  if (! g)
++    return FALSE;
++
++  chopgimp_vlayer_push_undo (layer, _("Décomposer la répétition"));
++
++  for (guint i = 0; i < g->children->len; i++)
++    {
++      ChopGimpVObject *c = g_ptr_array_index (g->children, i);
++
++      if (is_instance (c))
++        {
++          g_clear_pointer (&c->blend, g_free);
++          c->locked = FALSE;
++        }
++    }
++
++  g_clear_pointer (&g->blend, g_free);
++  chopgimp_vlayer_subtree_changed (layer, g, NULL);
++
++  return TRUE;
++}
++
++
++/*  ─── on-canvas widgets ─────────────────────────────────────────────── */
++
++static ChopGimpVObject *
++selected_repeat (GimpVectorLayer *layer)
++{
++  const guint     *ids;
++  gint             n = 0;
++  ChopGimpVObject *o;
++
++  if (! layer || ! chopgimp_vrepeat_enabled () || ! chopgimp_vlayer_get_root (layer))
++    return NULL;
++
++  ids = chopgimp_vlayer_get_selection (layer, &n);
++
++  if (n != 1 || ! (o = chopgimp_vlayer_get_object (layer, ids[0])) ||
++      ! is_repeat_group (o) || chopgimp_vobject_is_locked (o))
++    return NULL;
++
++  return o;
++}
++
++static ChopGimpVObject *
++source_of (ChopGimpVObject *g)
++{
++  for (guint i = 0; i < g->children->len; i++)
++    if (! is_instance (g_ptr_array_index (g->children, i)))
++      return g_ptr_array_index (g->children, i);
++
++  return NULL;
++}
++
++static void
++add_handle (ChopGimpRepeatWidgets *w,
++            const GimpMatrix3     *m,
++            gint                   handle,
++            gdouble                x,
++            gdouble                y)
++{
++  if (w->n >= 4)
++    return;
++
++  w->handle[w->n] = handle;
++  gimp_matrix3_transform_point (m, x, y, &w->x[w->n], &w->y[w->n]);
++  w->n++;
++}
++
++gboolean
++chopgimp_vrepeat_get_widgets (GimpVectorLayer       *layer,
++                              ChopGimpRepeatWidgets *w)
++{
++  ChopGimpVObject      *g = selected_repeat (layer);
++  ChopGimpVObject      *src;
++  ChopGimpRepeatOptions o;
++  GimpMatrix3           m;
++  gdouble               b[4], cx, cy, wd, ht;
++
++  memset (w, 0, sizeof (*w));
++
++  if (! g || ! (src = source_of (g)) || ! source_box (layer, src, g, b))
++    return FALSE;
++
++  spec_get (g->blend, &o);
++  chopgimp_vobject_get_world_matrix (g, &m);
++
++  cx = (b[0] + b[2]) / 2.0;
++  cy = (b[1] + b[3]) / 2.0;
++  wd = b[2] - b[0];
++  ht = b[3] - b[1];
++
++  switch (o.type)
++    {
++    case CHOPGIMP_REPEAT_RADIAL:
++      {
++        gdouble ar = o.angle * G_PI / 180.0;
++        gdouble ox = cx - o.radius * cos (ar);
++        gdouble oy = cy - o.radius * sin (ar);
++        gdouble a2 = ar + 2.0 * G_PI / o.count;
++        gdouble sx, sy;
++
++        add_handle (w, &m, CHOPGIMP_REPEAT_HANDLE_CENTER, ox, oy);
++        add_handle (w, &m, CHOPGIMP_REPEAT_HANDLE_RADIUS,
++                    ox - o.radius * cos (ar), oy - o.radius * sin (ar));
++        add_handle (w, &m, CHOPGIMP_REPEAT_HANDLE_COUNT,
++                    ox + o.radius * cos (a2), oy + o.radius * sin (a2));
++
++        w->circle = TRUE;
++        gimp_matrix3_transform_point (&m, ox, oy, &w->cx, &w->cy);
++        gimp_matrix3_transform_point (&m, ox + o.radius, oy, &sx, &sy);
++        w->r = hypot (sx - w->cx, sy - w->cy);
++      }
++      break;
++
++    case CHOPGIMP_REPEAT_GRID:
++      add_handle (w, &m, CHOPGIMP_REPEAT_HANDLE_HGAP, b[2] + o.hgap, cy);
++      add_handle (w, &m, CHOPGIMP_REPEAT_HANDLE_VGAP, cx, b[3] + o.vgap);
++      add_handle (w, &m, CHOPGIMP_REPEAT_HANDLE_SIZE,
++                  b[0] + o.cols * (wd + o.hgap) - o.hgap,
++                  b[1] + o.rows * (ht + o.vgap) - o.vgap);
++      break;
++
++    case CHOPGIMP_REPEAT_MIRROR:
++      {
++        gdouble ar = o.angle * G_PI / 180.0;
++        gdouble ax = cx + o.offset * cos (ar - G_PI / 2.0);
++        gdouble ay = cy + o.offset * sin (ar - G_PI / 2.0);
++        gdouble l  = MAX (wd, ht) / 2.0 + 20.0;
++
++        add_handle (w, &m, CHOPGIMP_REPEAT_HANDLE_AXIS, ax, ay);
++        add_handle (w, &m, CHOPGIMP_REPEAT_HANDLE_AXIS_END,
++                    ax + l * cos (ar), ay + l * sin (ar));
++
++        w->line = TRUE;
++        gimp_matrix3_transform_point (&m, ax - l * cos (ar), ay - l * sin (ar), &w->x1, &w->y1);
++        gimp_matrix3_transform_point (&m, ax + l * cos (ar), ay + l * sin (ar), &w->x2, &w->y2);
++      }
++      break;
++    }
++
++  return TRUE;
++}
++
++gboolean
++chopgimp_vrepeat_drag_handle (GimpVectorLayer *layer,
++                              gint             handle,
++                              gdouble          x,
++                              gdouble          y)
++{
++  ChopGimpVObject      *g = selected_repeat (layer);
++  ChopGimpVObject      *src;
++  ChopGimpRepeatOptions o;
++  GimpMatrix3           m, inv;
++  gdouble               b[4], cx, cy, px, py, wd, ht;
++  gdouble               move_x = 0.0, move_y = 0.0;
++
++  if (! g || ! (src = source_of (g)) || ! source_box (layer, src, g, b))
++    return FALSE;
++
++  spec_get (g->blend, &o);
++  chopgimp_vobject_get_world_matrix (g, &m);
++  inv = m;
++  gimp_matrix3_invert (&inv);
++  gimp_matrix3_transform_point (&inv, x, y, &px, &py);
++
++  cx = (b[0] + b[2]) / 2.0;
++  cy = (b[1] + b[3]) / 2.0;
++  wd = MAX (b[2] - b[0], 1e-6);
++  ht = MAX (b[3] - b[1], 1e-6);
++
++  switch (handle)
++    {
++    case CHOPGIMP_REPEAT_HANDLE_CENTER:
++      o.radius = hypot (cx - px, cy - py);
++      if (o.radius > 1e-6)
++        o.angle = atan2 (cy - py, cx - px) * 180.0 / G_PI;
++      break;
++
++    case CHOPGIMP_REPEAT_HANDLE_RADIUS:
++      {
++        /*  the centre stays: the source moves along its direction  */
++        gdouble ar = o.angle * G_PI / 180.0;
++        gdouble ox = cx - o.radius * cos (ar);
++        gdouble oy = cy - o.radius * sin (ar);
++        gdouble nr = MAX (hypot (px - ox, py - oy), 0.0);
++
++        move_x   = (nr - o.radius) * cos (ar);
++        move_y   = (nr - o.radius) * sin (ar);
++        o.radius = nr;
++      }
++      break;
++
++    case CHOPGIMP_REPEAT_HANDLE_COUNT:
++      {
++        gdouble ar = o.angle * G_PI / 180.0;
++        gdouble ox = cx - o.radius * cos (ar);
++        gdouble oy = cy - o.radius * sin (ar);
++        gdouble d  = atan2 (py - oy, px - ox) - ar;
++
++        while (d <= 0.0)
++          d += 2.0 * G_PI;
++        while (d > 2.0 * G_PI)
++          d -= 2.0 * G_PI;
++
++        o.count = CLAMP ((gint) floor (2.0 * G_PI / MAX (d, 1e-3) + 0.5), 2, 360);
++      }
++      break;
++
++    case CHOPGIMP_REPEAT_HANDLE_HGAP:
++      o.hgap = px - b[2];
++      break;
++
++    case CHOPGIMP_REPEAT_HANDLE_VGAP:
++      o.vgap = py - b[3];
++      break;
++
++    case CHOPGIMP_REPEAT_HANDLE_SIZE:
++      o.cols = MAX (1, (gint) floor ((px - b[0] + o.hgap) / MAX (wd + o.hgap, 1.0) + 0.5));
++      o.rows = MAX (1, (gint) floor ((py - b[1] + o.vgap) / MAX (ht + o.vgap, 1.0) + 0.5));
++      break;
++
++    case CHOPGIMP_REPEAT_HANDLE_AXIS:
++      {
++        gdouble ar = o.angle * G_PI / 180.0;
++
++        o.offset = (px - cx) * cos (ar - G_PI / 2.0) + (py - cy) * sin (ar - G_PI / 2.0);
++      }
++      break;
++
++    case CHOPGIMP_REPEAT_HANDLE_AXIS_END:
++      {
++        /*  turned about the point of the axis nearest the source  */
++        gdouble ar = o.angle * G_PI / 180.0;
++        gdouble ax = cx + o.offset * cos (ar - G_PI / 2.0);
++        gdouble ay = cy + o.offset * sin (ar - G_PI / 2.0);
++        gdouble na = atan2 (py - ay, px - ax);
++
++        o.angle  = na * 180.0 / G_PI;
++        o.offset = (ax - cx) * cos (na - G_PI / 2.0) + (ay - cy) * sin (na - G_PI / 2.0);
++      }
++      break;
++
++    default:
++      return FALSE;
++    }
++
++  spec_set (g, &o, NULL);
++
++  if (move_x != 0.0 || move_y != 0.0)
++    {
++      /*  group space → image space (a vector)  */
++      gdouble ix0, iy0, ix1, iy1;
++
++      gimp_matrix3_transform_point (&m, 0.0, 0.0, &ix0, &iy0);
++      gimp_matrix3_transform_point (&m, move_x, move_y, &ix1, &iy1);
++
++      /*  the repeat is made again by the change hook (new spec, moved source)  */
++      chopgimp_vlayer_translate (layer, &src->id, 1, ix1 - ix0, iy1 - iy0, FALSE);
++    }
++  else
++    {
++      repeat_regen (layer, g, TRUE);
++      chopgimp_vlayer_subtree_changed (layer, g, NULL);
++    }
++
++  return TRUE;
++}
+diff --git a/app/path/chopgimp-vrepeat.h b/app/path/chopgimp-vrepeat.h
+new file mode 100644
+index 0000000..b63e5e8
+--- /dev/null
++++ b/app/path/chopgimp-vrepeat.h
+@@ -0,0 +1,137 @@
++/* GIMP - The GNU Image Manipulation Program
++ * chopgimp-vrepeat.h — ChopGimp 3.30.0 (bloc vectoriel 5): « Répétition »
++ * (Illustrator's Object > Repeat: radial, grid, mirror)
++ *
++ * A repeat is a group object of a vector layer whose spec, kept in its
++ * « blend » field (the dynamic objects' field, like the Transition), is
++ * « repeat type=radial|grid|mirror … sig=S ». Its first child is the
++ * source (the repeated object, editable: enter the group), the others
++ * are its instances (blend « rinst », locked), copies of the source with
++ * their own transformation. When the source or the options change, the
++ * instances are made again (objects' change hook, as the Transition):
++ * the repeat stays modifiable. Saved in the XCF and exported to SVG as
++ * plain groups (the spec in chopgimp:dynamic).
++ *
++ *  - radial: @count instances turned around a centre at @radius px from
++ *    the source's centre, in the direction @angle + 180° (the source is
++ *    at @angle, -90 = above the centre);
++ *  - grid: @cols × @rows cells, @hgap / @vgap px between the boxes; every
++ *    other row / column can be flipped (1 horizontally, 2 vertically);
++ *  - mirror: one instance, the source flipped across an axis at @angle
++ *    degrees (90: vertical) and @offset px from the source's centre.
++ *
++ * CHOPGIMP_NO_REPEAT=1: no new repeats, the existing ones stay as they
++ * are (plain groups).
++ *
++ * This program is free software: you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation; either version 3 of the License, or
++ * (at your option) any later version.
++ */
++
++#pragma once
++
++#include "chopgimp-vobject.h"
++
++G_BEGIN_DECLS
++
++
++typedef enum
++{
++  CHOPGIMP_REPEAT_RADIAL,
++  CHOPGIMP_REPEAT_GRID,
++  CHOPGIMP_REPEAT_MIRROR
++} ChopGimpRepeatType;
++
++typedef struct
++{
++  ChopGimpRepeatType type;
++  gint               count;      /* RADIAL: instances, source included (2..360) */
++  gdouble            radius;     /* RADIAL: px                                  */
++  gdouble            angle;      /* RADIAL: source direction; MIRROR: axis (deg) */
++  gint               cols, rows; /* GRID (1..200)                               */
++  gdouble            hgap, vgap; /* GRID: px between the boxes                  */
++  gint               flip_row;   /* GRID: every other row: 0, 1 (H), 2 (V)      */
++  gint               flip_col;   /* GRID: every other column                    */
++  gdouble            offset;     /* MIRROR: px from the source's centre         */
++} ChopGimpRepeatOptions;
++
++
++gboolean          chopgimp_vrepeat_enabled         (void);
++/*  the instances of the repeats whose source or options changed; TRUE
++ *  when some were made again (called by the objects' change hook)
++ */
++gboolean          chopgimp_vrepeat_refresh         (GimpVectorLayer       *layer);
++/*  the repeat group of @object (itself, its group, an instance), or NULL  */
++ChopGimpVObject * chopgimp_vrepeat_group_of        (ChopGimpVObject       *object);
++/*  the default options of @type for a source of @width × @height px  */
++void              chopgimp_vrepeat_default_options (ChopGimpRepeatType     type,
++                                                    gdouble                width,
++                                                    gdouble                height,
++                                                    ChopGimpRepeatOptions *options);
++
++/*  ─── commands (one undo step each; the caller flushes) ─────────────── */
++
++/*  the selected objects (same parent, not inside a repeat) */
++gboolean          chopgimp_vrepeat_can_make        (GimpVectorLayer       *layer);
++/*  they become the source of a new repeat (several: grouped first), with
++ *  the default options of @type (or @options when not NULL); it is
++ *  selected and returned
++ */
++ChopGimpVObject * chopgimp_vrepeat_make            (GimpVectorLayer       *layer,
++                                                    ChopGimpRepeatType     type,
++                                                    const ChopGimpRepeatOptions *options);
++/*  a repeat is selected (or contains the selection)  */
++gboolean          chopgimp_vrepeat_any             (GimpVectorLayer       *layer);
++gboolean          chopgimp_vrepeat_get_options     (GimpVectorLayer       *layer,
++                                                    ChopGimpRepeatOptions *options);
++/*  the type may change (radial → grid…)  */
++gboolean          chopgimp_vrepeat_set_options     (GimpVectorLayer       *layer,
++                                                    const ChopGimpRepeatOptions *options);
++/*  « Libérer »: the instances are removed, the source takes the place of
++ *  the repeat
++ */
++gboolean          chopgimp_vrepeat_release         (GimpVectorLayer       *layer);
++/*  « Décomposer »: the instances become ordinary objects of a group  */
++gboolean          chopgimp_vrepeat_expand          (GimpVectorLayer       *layer);
++
++
++/*  ─── on-canvas widgets (Illustrator): the Selection tool shows them on
++ *  the only selected repeat; positions in image coordinates
++ */
++typedef enum
++{
++  CHOPGIMP_REPEAT_HANDLE_CENTER,   /* radial: the centre (the source stays) */
++  CHOPGIMP_REPEAT_HANDLE_RADIUS,   /* radial: the radius (the centre stays) */
++  CHOPGIMP_REPEAT_HANDLE_COUNT,    /* radial: the 2nd instance → count      */
++  CHOPGIMP_REPEAT_HANDLE_HGAP,     /* grid: horizontal spacing              */
++  CHOPGIMP_REPEAT_HANDLE_VGAP,     /* grid: vertical spacing                */
++  CHOPGIMP_REPEAT_HANDLE_SIZE,     /* grid: columns and rows                */
++  CHOPGIMP_REPEAT_HANDLE_AXIS,     /* mirror: moves the axis                */
++  CHOPGIMP_REPEAT_HANDLE_AXIS_END  /* mirror: turns the axis                */
++} ChopGimpRepeatHandle;
++
++typedef struct
++{
++  gint     n;
++  gint     handle[4];       /* ChopGimpRepeatHandle */
++  gdouble  x[4], y[4];
++  gboolean circle;          /* radial: the circle of the instances */
++  gdouble  cx, cy, r;
++  gboolean line;            /* mirror: the axis */
++  gdouble  x1, y1, x2, y2;
++} ChopGimpRepeatWidgets;
++
++/*  FALSE unless the only selected object is a repeat  */
++gboolean          chopgimp_vrepeat_get_widgets     (GimpVectorLayer       *layer,
++                                                    ChopGimpRepeatWidgets *widgets);
++/*  @handle dragged to (@x, @y) (image coordinates): the repeat changes,
++ *  no undo step (the caller pushes one at the start of the drag)
++ */
++gboolean          chopgimp_vrepeat_drag_handle     (GimpVectorLayer       *layer,
++                                                    gint                   handle,
++                                                    gdouble                x,
++                                                    gdouble                y);
++
++
++G_END_DECLS
+diff --git a/app/tools/chopgimp-blobtool.c b/app/tools/chopgimp-blobtool.c
+new file mode 100644
+index 0000000..c36b7ec
+--- /dev/null
++++ b/app/tools/chopgimp-blobtool.c
+@@ -0,0 +1,603 @@
++/* GIMP - The GNU Image Manipulation Program
++ * Copyright (C) 1995 Spencer Kimball and Peter Mattis
++ *
++ * chopgimp-blobtool.c — ChopGimp 3.30.0 (bloc vectoriel 4): the
++ * « Pinceau goutte » (Illustrator's Blob Brush).
++ *
++ * Painting draws a filled shape (the stroke of a round brush of the
++ * chosen size, smoothed by « Fidélité ») with the stroke color of the
++ * options (the fill color when the stroke is off), as Illustrator; on release it becomes an object of the active vector layer
++ * (a new vector layer when there is none), merged with the free objects
++ * of the same plain fill color and no stroke that it touches (only the
++ * selected ones with « Fusionner avec la sélection »). The geometry is
++ * chopgimp_vblob_paint() (app/path/chopgimp-vbrush.c, lib2geom).
++ *
++ * This program is free software: you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation; either version 3 of the License, or
++ * (at your option) any later version.
++ */
++
++#include "config.h"
++
++#include <math.h>
++#include <string.h>
++
++#include <gegl.h>
++#include <gtk/gtk.h>
++
++#include "libgimpbase/gimpbase.h"
++#include "libgimpconfig/gimpconfig.h"
++#include "libgimpmath/gimpmath.h"
++#include "libgimpwidgets/gimpwidgets.h"
++
++#include "tools-types.h"
++
++#include "core/gimp.h"
++#include "core/gimpcontext.h"
++#include "core/gimpfilloptions.h"
++#include "core/gimpimage.h"
++#include "core/gimpimage-undo.h"
++#include "core/gimpstrokeoptions.h"
++
++#include "path/gimppath.h"
++#include "path/gimpvectorlayer.h"
++#include "path/gimpvectorlayeroptions.h"
++#include "path/chopgimp-vobject.h"
++#include "path/chopgimp-vobject-ops.h"
++#include "path/chopgimp-vbrush.h"
++
++#include "widgets/gimphelp-ids.h"
++
++#include "display/gimpcanvasitem.h"
++#include "display/gimpcanvaspath.h"
++#include "display/gimpdisplay.h"
++#include "display/gimpdisplayshell.h"
++
++#include "gimpdrawtool.h"
++#include "gimppathoptions.h"
++#include "gimptoolcontrol.h"
++#include "gimptooloptions-gui.h"
++#include "chopgimp-tools.h"
++#include "chopgimp-blobtool.h"
++
++#include "gimp-intl.h"
++
++
++#define MAX_POINTS     20000
++#define PREVIEW_POINTS  3000   /* filled preview up to this many points */
++
++
++/*  ─── options ───────────────────────────────────────────────────────── */
++
++enum
++{
++  PROP_0,
++  PROP_SIZE,
++  PROP_FIDELITY,
++  PROP_MERGE_SELECTION_ONLY,
++  PROP_KEEP_SELECTED
++};
++
++typedef struct
++{
++  GimpPathOptions parent_instance;
++
++  gdouble         size;                  /* px (image)                    */
++  gdouble         fidelity;              /* 0 accurate … 100 smooth       */
++  gboolean        merge_selection_only;
++  gboolean        keep_selected;
++} GimpVBlobOptions;
++
++typedef GimpToolOptionsClass GimpVBlobOptionsClass;
++
++static GType gimp_vblob_options_get_type (void) G_GNUC_CONST;
++
++G_DEFINE_TYPE (GimpVBlobOptions, gimp_vblob_options, GIMP_TYPE_PATH_OPTIONS)
++
++#define GIMP_TYPE_VBLOB_OPTIONS (gimp_vblob_options_get_type ())
++#define VBLOB_OPTIONS(tool)     ((GimpVBlobOptions *) gimp_tool_get_options (GIMP_TOOL (tool)))
++
++static void
++gimp_vblob_options_set_property (GObject      *object,
++                                 guint         property_id,
++                                 const GValue *value,
++                                 GParamSpec   *pspec)
++{
++  GimpVBlobOptions *o = (GimpVBlobOptions *) object;
++
++  switch (property_id)
++    {
++    case PROP_SIZE:                 o->size                 = g_value_get_double  (value); break;
++    case PROP_FIDELITY:             o->fidelity             = g_value_get_double  (value); break;
++    case PROP_MERGE_SELECTION_ONLY: o->merge_selection_only = g_value_get_boolean (value); break;
++    case PROP_KEEP_SELECTED:        o->keep_selected        = g_value_get_boolean (value); break;
++    default:
++      G_OBJECT_WARN_INVALID_PROPERTY_ID (object, property_id, pspec);
++      break;
++    }
++}
++
++static void
++gimp_vblob_options_get_property (GObject    *object,
++                                 guint       property_id,
++                                 GValue     *value,
++                                 GParamSpec *pspec)
++{
++  GimpVBlobOptions *o = (GimpVBlobOptions *) object;
++
++  switch (property_id)
++    {
++    case PROP_SIZE:                 g_value_set_double  (value, o->size);                 break;
++    case PROP_FIDELITY:             g_value_set_double  (value, o->fidelity);             break;
++    case PROP_MERGE_SELECTION_ONLY: g_value_set_boolean (value, o->merge_selection_only); break;
++    case PROP_KEEP_SELECTED:        g_value_set_boolean (value, o->keep_selected);        break;
++    default:
++      G_OBJECT_WARN_INVALID_PROPERTY_ID (object, property_id, pspec);
++      break;
++    }
++}
++
++static void
++gimp_vblob_options_class_init (GimpVBlobOptionsClass *klass)
++{
++  GObjectClass *object_class = G_OBJECT_CLASS (klass);
++
++  object_class->set_property = gimp_vblob_options_set_property;
++  object_class->get_property = gimp_vblob_options_get_property;
++
++  GIMP_CONFIG_PROP_DOUBLE (object_class, PROP_SIZE,
++                           "blob-size", "Taille",
++                           "Diamètre du pinceau goutte (pixels de l'image)",
++                           1.0, 2000.0, 20.0,
++                           GIMP_PARAM_STATIC_STRINGS);
++  GIMP_CONFIG_PROP_DOUBLE (object_class, PROP_FIDELITY,
++                           "blob-fidelity", "Fidélité",
++                           "0 : précis (suit le geste) — 100 : lisse",
++                           0.0, 100.0, 50.0,
++                           GIMP_PARAM_STATIC_STRINGS);
++  GIMP_CONFIG_PROP_BOOLEAN (object_class, PROP_MERGE_SELECTION_ONLY,
++                            "blob-merge-selection-only", "Fusionner avec la sélection",
++                            "Ne fusionner qu'avec les objets sélectionnés",
++                            FALSE,
++                            GIMP_PARAM_STATIC_STRINGS);
++  GIMP_CONFIG_PROP_BOOLEAN (object_class, PROP_KEEP_SELECTED,
++                            "blob-keep-selected", "Garder la sélection",
++                            "La forme peinte reste sélectionnée",
++                            FALSE,
++                            GIMP_PARAM_STATIC_STRINGS);
++}
++
++static void
++gimp_vblob_options_init (GimpVBlobOptions *options)
++{
++}
++
++static GtkWidget *
++vblob_options_gui (GimpToolOptions *tool_options)
++{
++  GObject   *config = G_OBJECT (tool_options);
++  GtkWidget *vbox   = gimp_tool_options_gui (tool_options);
++  GtkWidget *w;
++
++  w = gimp_prop_spin_scale_new (config, "blob-size", 1.0, 10.0, 1);
++  gimp_spin_scale_set_scale_limits (GIMP_SPIN_SCALE (w), 1.0, 200.0);
++  gtk_box_pack_start (GTK_BOX (vbox), w, FALSE, FALSE, 0);
++
++  w = gimp_prop_spin_scale_new (config, "blob-fidelity", 1.0, 10.0, 0);
++  gtk_box_pack_start (GTK_BOX (vbox), w, FALSE, FALSE, 0);
++
++  w = gimp_prop_check_button_new (config, "blob-merge-selection-only", NULL);
++  gtk_box_pack_start (GTK_BOX (vbox), w, FALSE, FALSE, 0);
++
++  w = gimp_prop_check_button_new (config, "blob-keep-selected", NULL);
++  gtk_box_pack_start (GTK_BOX (vbox), w, FALSE, FALSE, 0);
++
++  w = gtk_label_new (_("Peignez : chaque coup devient une forme remplie de la couleur "
++                       "du contour (du fond s'il n'y a pas de contour), fusionnée avec "
++                       "les formes de même couleur (sans contour) qu'il touche."));
++  gtk_label_set_xalign (GTK_LABEL (w), 0.0);
++  gtk_label_set_line_wrap (GTK_LABEL (w), TRUE);
++  gimp_label_set_attributes (GTK_LABEL (w), PANGO_ATTR_SCALE, PANGO_SCALE_SMALL, -1);
++  gtk_box_pack_start (GTK_BOX (vbox), w, FALSE, FALSE, 0);
++
++  gtk_widget_show_all (vbox);
++
++  return vbox;
++}
++
++
++/*  ─── the tool ──────────────────────────────────────────────────────── */
++
++typedef struct
++{
++  GimpDrawTool  parent_instance;
++
++  GArray       *pts;          /* GimpVector2, image coordinates */
++  gboolean      painting;
++  gboolean      hovering;
++  gdouble       hover_x, hover_y;
++} GimpVBlobTool;
++
++typedef struct
++{
++  GimpDrawToolClass parent_class;
++} GimpVBlobToolClass;
++
++static GType gimp_vblob_tool_get_type (void) G_GNUC_CONST;
++
++G_DEFINE_TYPE (GimpVBlobTool, gimp_vblob_tool, GIMP_TYPE_DRAW_TOOL)
++
++
++static gdouble
++vblob_tolerance (GimpVBlobTool *bt,
++                 GimpDisplay   *display)
++{
++  GimpVBlobOptions *o     = VBLOB_OPTIONS (bt);
++  gdouble           scale = MAX (gimp_display_get_shell (display)->scale_x, 1e-6);
++
++  /*  screen px → image px  */
++  return (0.3 + o->fidelity * 0.04) / scale;
++}
++
++static gdouble *
++vblob_xy (GimpVBlobTool *bt)
++{
++  gdouble *xy = g_new (gdouble, 2 * MAX (bt->pts->len, 1));
++
++  for (guint i = 0; i < bt->pts->len; i++)
++    {
++      GimpVector2 *v = &g_array_index (bt->pts, GimpVector2, i);
++
++      xy[2 * i]     = v->x;
++      xy[2 * i + 1] = v->y;
++    }
++
++  return xy;
++}
++
++/*  Illustrator: the blob takes the stroke color (the fill color when
++ *  there is no stroke); it is a fill, with no stroke
++ */
++static void
++vblob_style (GimpPathOptions *popts,
++             GimpImage       *image,
++             ChopGimpVStyle  *style)
++{
++  ChopGimpVEntry *stroke, *fill;
++
++  chopgimp_vobjects_style_from_tool (style, image,
++                                     popts->enable_fill, popts->fill_options,
++                                     popts->enable_stroke, popts->stroke_options);
++
++  stroke = chopgimp_vstyle_get_stroke (style);
++  fill   = chopgimp_vstyle_ensure_fill (style);
++
++  if (stroke && stroke->paint.type != CHOPGIMP_PAINT_NONE && stroke->visible &&
++      popts->enable_stroke)
++    {
++      chopgimp_vpaint_copy (&fill->paint, &stroke->paint);
++      fill->opacity = stroke->opacity;
++      fill->visible = TRUE;
++    }
++  else if (fill->paint.type == CHOPGIMP_PAINT_NONE)
++    {
++      GeglColor *black = gegl_color_new ("black");
++
++      chopgimp_vpaint_set_color (&fill->paint, black);
++      g_object_unref (black);
++    }
++
++  if (stroke)
++    chopgimp_vpaint_clear (&stroke->paint);
++}
++
++static void
++vblob_commit (GimpVBlobTool *bt,
++              GimpDisplay   *display)
++{
++  GimpVBlobOptions *o     = VBLOB_OPTIONS (bt);
++  GimpPathOptions  *popts = GIMP_PATH_OPTIONS (o);
++  GimpImage        *image = gimp_display_get_image (display);
++  GimpVectorLayer  *layer;
++  ChopGimpVStyle    style;
++  gdouble          *xy;
++  gdouble           tol;
++
++  if (! image || bt->pts->len < 1)
++    return;
++
++  gimp_path_options_ensure_fill_stroke (popts);
++  vblob_style (popts, image, &style);
++
++  xy  = vblob_xy (bt);
++  tol = vblob_tolerance (bt, display);
++
++  if ((layer = chopgimp_vobjects_get_target_layer (image)))
++    {
++      ChopGimpVObject *obj;
++
++      obj = chopgimp_vblob_paint (layer, xy, bt->pts->len, o->size, tol, &style,
++                                  o->merge_selection_only);
++
++      if (obj && ! o->keep_selected)
++        chopgimp_vlayer_set_selection (layer, NULL, 0);
++    }
++  else
++    {
++      /*  no vector layer: a new one with the blob  */
++      GimpPath *shape = chopgimp_vblob_shape (image, xy, bt->pts->len, o->size, tol);
++
++      if (shape)
++        {
++          ChopGimpVObject *first;
++
++          gimp_image_undo_group_start (image, GIMP_UNDO_GROUP_DRAWABLE, _("Pinceau goutte"));
++
++          gimp_object_set_name (GIMP_OBJECT (shape), _("Pinceau goutte"));
++          gimp_image_add_path (image, shape, GIMP_IMAGE_ACTIVE_PARENT, -1, TRUE);
++
++          layer = gimp_vector_layer_new (image, shape, gimp_get_user_context (image->gimp));
++
++          g_object_set (layer->options,
++                        "enable-fill",   TRUE,
++                        "enable-stroke", FALSE,
++                        NULL);
++
++          gimp_image_add_layer (image, GIMP_LAYER (layer), GIMP_IMAGE_ACTIVE_PARENT, -1, TRUE);
++          gimp_vector_layer_refresh (layer);
++
++          /*  its color: the object's style (stroke color, as Illustrator)  */
++          if (chopgimp_vlayer_get_root (layer) &&
++              (first = chopgimp_vlayer_get_first_leaf (layer)))
++            chopgimp_vlayer_set_style (layer, first->id, &style, TRUE);
++
++          gimp_image_undo_group_end (image);
++        }
++    }
++
++  chopgimp_vstyle_clear (&style);
++  g_free (xy);
++  gimp_image_flush (image);
++}
++
++static void
++gimp_vblob_tool_button_press (GimpTool            *tool,
++                              const GimpCoords    *coords,
++                              guint32              time,
++                              GdkModifierType      state,
++                              GimpButtonPressType  press_type,
++                              GimpDisplay         *display)
++{
++  GimpVBlobTool *bt = (GimpVBlobTool *) tool;
++  GimpVector2    v  = { coords->x, coords->y };
++
++  if (press_type != GIMP_BUTTON_PRESS_NORMAL || ! gimp_display_get_image (display))
++    return;
++
++  if (tool->display && tool->display != display &&
++      gimp_draw_tool_is_active (GIMP_DRAW_TOOL (tool)))
++    gimp_draw_tool_stop (GIMP_DRAW_TOOL (tool));
++
++  tool->display = display;
++
++  gimp_draw_tool_pause (GIMP_DRAW_TOOL (bt));
++
++  g_array_set_size (bt->pts, 0);
++  g_array_append_val (bt->pts, v);
++  bt->painting = TRUE;
++
++  gimp_tool_control_activate (tool->control);
++  gimp_draw_tool_resume (GIMP_DRAW_TOOL (bt));
++  chopgimp_draw_tool_redraw (GIMP_DRAW_TOOL (bt), display);
++}
++
++static void
++gimp_vblob_tool_motion (GimpTool         *tool,
++                        const GimpCoords *coords,
++                        guint32           time,
++                        GdkModifierType   state,
++                        GimpDisplay      *display)
++{
++  GimpVBlobTool *bt = (GimpVBlobTool *) tool;
++  GimpVector2    v  = { coords->x, coords->y };
++
++  gimp_draw_tool_pause (GIMP_DRAW_TOOL (bt));
++
++  bt->hover_x  = coords->x;
++  bt->hover_y  = coords->y;
++  bt->hovering = TRUE;
++
++  if (bt->painting && bt->pts->len < MAX_POINTS)
++    g_array_append_val (bt->pts, v);
++
++  gimp_draw_tool_resume (GIMP_DRAW_TOOL (bt));
++}
++
++static void
++gimp_vblob_tool_button_release (GimpTool              *tool,
++                                const GimpCoords      *coords,
++                                guint32                time,
++                                GdkModifierType        state,
++                                GimpButtonReleaseType  release_type,
++                                GimpDisplay           *display)
++{
++  GimpVBlobTool *bt = (GimpVBlobTool *) tool;
++
++  gimp_tool_control_halt (tool->control);
++  gimp_draw_tool_pause (GIMP_DRAW_TOOL (bt));
++
++  if (bt->painting && release_type != GIMP_BUTTON_RELEASE_CANCEL)
++    vblob_commit (bt, display);
++
++  bt->painting = FALSE;
++  g_array_set_size (bt->pts, 0);
++
++  gimp_draw_tool_resume (GIMP_DRAW_TOOL (bt));
++}
++
++static void
++gimp_vblob_tool_oper_update (GimpTool         *tool,
++                             const GimpCoords *coords,
++                             GdkModifierType   state,
++                             gboolean          proximity,
++                             GimpDisplay      *display)
++{
++  GimpVBlobTool *bt = (GimpVBlobTool *) tool;
++
++  bt->hover_x  = coords->x;
++  bt->hover_y  = coords->y;
++  bt->hovering = proximity;
++
++  if (proximity)
++    gimp_tool_replace_status (tool, display, "%s",
++                              _("Peignez une forme remplie : elle fusionne avec les formes "
++                                "de même couleur qu'elle touche"));
++
++  chopgimp_draw_tool_redraw (GIMP_DRAW_TOOL (bt), display);
++}
++
++static void
++gimp_vblob_tool_draw (GimpDrawTool *dt)
++{
++  GimpVBlobTool *bt = (GimpVBlobTool *) dt;
++  gdouble        r  = VBLOB_OPTIONS (bt)->size / 2.0;
++
++  if (! dt->display)
++    return;
++
++  if (bt->painting && bt->pts->len >= 1)
++    {
++      GimpImage *image  = gimp_display_get_image (dt->display);
++      GimpPath  *shape  = NULL;
++
++      if (image && bt->pts->len <= PREVIEW_POINTS)
++        {
++          gdouble *xy = vblob_xy (bt);
++
++          shape = chopgimp_vblob_shape (image, xy, bt->pts->len, 2.0 * r,
++                                        vblob_tolerance (bt, dt->display));
++          g_free (xy);
++        }
++
++      if (shape)
++        {
++          g_object_ref_sink (shape);
++
++          if (gimp_path_get_bezier (shape))
++            {
++              GimpCanvasItem *item =
++                gimp_canvas_path_new (gimp_display_get_shell (dt->display),
++                                      gimp_path_get_bezier (shape), 0, 0, TRUE,
++                                      GIMP_PATH_STYLE_DEFAULT);
++              ChopGimpVStyle  style;
++              ChopGimpVEntry *fill;
++
++              /*  4.0.0: the preview in the color of the result  */
++              vblob_style (GIMP_PATH_OPTIONS (VBLOB_OPTIONS (bt)), image, &style);
++              fill = chopgimp_vstyle_get_fill (&style);
++
++              if (fill && fill->paint.type == CHOPGIMP_PAINT_COLOR && fill->paint.color)
++                gimp_canvas_path_set_fill_color (item, fill->paint.color, fill->opacity);
++
++              chopgimp_vstyle_clear (&style);
++
++              gimp_draw_tool_add_item (dt, item);
++              g_object_unref (item);
++            }
++
++          g_object_unref (shape);
++        }
++      else if (bt->pts->len > 1)
++        {
++          gimp_draw_tool_add_lines (dt, (GimpVector2 *) bt->pts->data, bt->pts->len,
++                                    NULL, FALSE);
++        }
++    }
++
++  if (bt->hovering)
++    gimp_draw_tool_add_arc (dt, FALSE, bt->hover_x - r, bt->hover_y - r,
++                            2 * r, 2 * r, 0.0, 2 * G_PI);
++}
++
++static void
++gimp_vblob_tool_control (GimpTool       *tool,
++                         GimpToolAction  action,
++                         GimpDisplay    *display)
++{
++  GimpVBlobTool *bt = (GimpVBlobTool *) tool;
++
++  if (action == GIMP_TOOL_ACTION_HALT || action == GIMP_TOOL_ACTION_COMMIT)
++    {
++      if (gimp_draw_tool_is_active (GIMP_DRAW_TOOL (tool)))
++        gimp_draw_tool_stop (GIMP_DRAW_TOOL (tool));
++
++      bt->painting = FALSE;
++      bt->hovering = FALSE;
++      g_array_set_size (bt->pts, 0);
++    }
++
++  GIMP_TOOL_CLASS (gimp_vblob_tool_parent_class)->control (tool, action, display);
++}
++
++static void
++gimp_vblob_tool_finalize (GObject *object)
++{
++  GimpVBlobTool *bt = (GimpVBlobTool *) object;
++
++  g_array_unref (bt->pts);
++
++  G_OBJECT_CLASS (gimp_vblob_tool_parent_class)->finalize (object);
++}
++
++static void
++gimp_vblob_tool_class_init (GimpVBlobToolClass *klass)
++{
++  GObjectClass      *object_class    = G_OBJECT_CLASS (klass);
++  GimpToolClass     *tool_class      = GIMP_TOOL_CLASS (klass);
++  GimpDrawToolClass *draw_tool_class = GIMP_DRAW_TOOL_CLASS (klass);
++
++  object_class->finalize     = gimp_vblob_tool_finalize;
++
++  tool_class->is_destructive = FALSE;
++  tool_class->control        = gimp_vblob_tool_control;
++  tool_class->button_press   = gimp_vblob_tool_button_press;
++  tool_class->motion         = gimp_vblob_tool_motion;
++  tool_class->button_release = gimp_vblob_tool_button_release;
++  tool_class->oper_update    = gimp_vblob_tool_oper_update;
++
++  draw_tool_class->draw      = gimp_vblob_tool_draw;
++}
++
++static void
++gimp_vblob_tool_init (GimpVBlobTool *bt)
++{
++  GimpTool *tool = GIMP_TOOL (bt);
++
++  bt->pts = g_array_new (FALSE, TRUE, sizeof (GimpVector2));
++
++  gimp_tool_control_set_motion_mode (tool->control, GIMP_MOTION_MODE_EXACT);
++  gimp_tool_control_set_tool_cursor (tool->control, GIMP_TOOL_CURSOR_PAINTBRUSH);
++  gimp_tool_control_set_cursor      (tool->control, GIMP_CURSOR_MOUSE);
++}
++
++
++/*  ─── registration ──────────────────────────────────────────────────── */
++
++void
++gimp_vblob_tool_register (GimpToolRegisterCallback  callback,
++                          gpointer                  data)
++{
++  (* callback) (gimp_vblob_tool_get_type (),
++                GIMP_TYPE_VBLOB_OPTIONS,
++                vblob_options_gui,
++                0,
++                "gimp-vblob-tool",
++                _("Pinceau goutte"),
++                _("Pinceau goutte : peindre des formes remplies qui fusionnent avec "
++                  "les formes de même couleur qu'elles touchent"),
++                N_("Pinceau _goutte"), NULL,
++                NULL, GIMP_HELP_TOOL_PATH,
++                "chopgimp-tool-vblob",
++                data);
++}
+diff --git a/app/tools/chopgimp-blobtool.h b/app/tools/chopgimp-blobtool.h
+new file mode 100644
+index 0000000..e779c04
+--- /dev/null
++++ b/app/tools/chopgimp-blobtool.h
+@@ -0,0 +1,14 @@
++/* GIMP - The GNU Image Manipulation Program
++ * chopgimp-blobtool.h — ChopGimp 3.30.0: « Pinceau goutte » (Illustrator's
++ * Blob Brush)
++ *
++ * This program is free software: you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation; either version 3 of the License, or
++ * (at your option) any later version.
++ */
++
++#pragma once
++
++void   gimp_vblob_tool_register   (GimpToolRegisterCallback  callback,
++                                   gpointer                  data);

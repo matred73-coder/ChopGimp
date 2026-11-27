@@ -64,6 +64,7 @@ PROC_OCG = "chopgimp-pdf-ocg-layers"
 # 4.2.0 : Fichier > Exporter pour l'imprimeur ; profils PSO v3 de l'ECI
 PROC_PRINT = "file-chopgimp-print-export"
 PROC_ECI = "plug-in-chopgimp-cmyk-download"
+PROC_SVG_PASTE = "plug-in-chopgimp-svg-to-vobjects"   # 4.2.1 : coller un SVG
 MAX_SIDE = 16384          # côté maximal d'un rendu en pixels (la résolution est réduite)
 MAX_OBJECTS = 50000       # au-delà, la page est importée en image
 
@@ -1067,6 +1068,76 @@ def load_svg(procedure, run_mode, file, metadata, flags, config, data):
     ]), flags
 
 
+# ─── 4.2.1 : SVG du presse-papiers (Inkscape, Illustrator) → objets ─────
+
+def svg_paste_nodes(text):
+    """Texte SVG (seul ou au milieu d'un autre texte) → objets de l'import
+    SVG (un objet par forme ; calques et groupes SVG gardés en groupes),
+    en pixels à 96 ppp. → [VNode]"""
+    import xml.etree.ElementTree as ET
+    i = text.find("<svg")
+    if i < 0:
+        return []
+    j = text.rfind("<?xml", 0, i)
+    text = text[j if j >= 0 else i:]
+    k = text.rfind("</svg>")
+    if k >= 0:
+        text = text[:k + 6]
+    root = ET.fromstring(text.encode("utf-8"))
+    w0 = h0 = 0.0
+    try:
+        gi.require_version("Rsvg", "2.0")
+        from gi.repository import Rsvg
+        handle = Rsvg.Handle.new_from_data(text.encode("utf-8"))
+        handle.set_dpi(96.0)
+        ok_, w0, h0 = handle.get_intrinsic_size_in_pixels()
+        if not ok_:
+            w0 = h0 = 0.0
+    except Exception:  # noqa: BLE001 — tailles lues dans le XML
+        pass
+    if w0 <= 0 or h0 <= 0:
+        vb = vobjects._num_list(root.get("viewBox"))
+        w0 = vobjects.parse_length(root.get("width"), 0.0, vb[2] if len(vb) == 4 else 100.0)
+        h0 = vobjects.parse_length(root.get("height"), 0.0, vb[3] if len(vb) == 4 else 100.0)
+    imp = vobjects.SvgImport(root, vobjects.svg_base_matrix(root, w0, h0), "SVG", False, False)
+
+    def nodes_of(items):
+        out = []
+        for it in items:
+            if not it.get("visible", True) or it["kind"] not in ("vector", "group"):
+                continue
+            kids = it["nodes"] if it["kind"] == "vector" else nodes_of(it["items"])
+            if not kids:
+                continue
+            if it["kind"] == "group" or it.get("opacity", 1.0) < 1.0:
+                g = vobjects.VNode("group", it.get("name") or "")
+                g.opacity = it.get("opacity", 1.0)
+                g.children = kids
+                kids = [g]
+            out.extend(kids)
+        return out
+
+    nodes = nodes_of(imp.plan())
+    # un seul calque SVG (cas d'Inkscape) : ses objets, sans groupe autour
+    while len(nodes) == 1 and nodes[0].kind == "group" and not nodes[0].clip and \
+            nodes[0].opacity >= 1.0 and nodes[0].transform is None and nodes[0].symbol is None:
+        nodes = nodes[0].children
+    return nodes
+
+
+def svg_paste(procedure, config, data):
+    try:
+        nodes = svg_paste_nodes(config.get_property("svg") or "")
+        xml = vobjects.to_xml(nodes) if nodes else ""
+        n = sum(x.count() for x in nodes)
+    except Exception:  # noqa: BLE001 — SVG illisible : rien à coller
+        xml, n = "", 0
+    return Gimp.ValueArray.new_from_values([
+        GObject.Value(Gimp.PDBStatusType, Gimp.PDBStatusType.SUCCESS),
+        GObject.Value(GObject.TYPE_STRING, xml),
+        GObject.Value(GObject.TYPE_INT, n)])
+
+
 # ─── procédures ─────────────────────────────────────────────────────────
 
 def classic(file, run_mode):
@@ -1475,7 +1546,7 @@ class ChopGimpPDF(Gimp.PlugIn):
     def do_query_procedures(self):
         # la vignette d'abord : GIMP refuse un chargeur de vignette pas encore déclaré
         return [PROC_THUMB, PROC_PS_THUMB, PROC_SVG_THUMB, PROC, PROC_PS, PROC_SVG, PROC_OCG,
-                PROC_PRINT, PROC_ECI]
+                PROC_PRINT, PROC_ECI, PROC_SVG_PASTE]
 
     def do_create_procedure(self, name):
         if name == PROC_PRINT:
@@ -1546,6 +1617,18 @@ class ChopGimpPDF(Gimp.PlugIn):
             p.set_attribution("ChopGimp", "ChopGimp", "2026")
             p.add_enum_argument("run-mode", "Run mode", "Run mode", Gimp.RunMode,
                                 Gimp.RunMode.INTERACTIVE, GObject.ParamFlags.READWRITE)
+            return p
+        if name == PROC_SVG_PASTE:
+            p = Gimp.Procedure.new(self, name, Gimp.PDBProcType.PLUGIN, svg_paste, None)
+            p.set_documentation("SVG collé → objets d'un calque vectoriel",
+                                "Le texte SVG (presse-papiers d'Inkscape ou d'Illustrator) au format "
+                                "des objets (chopgimp-vobjects-set-xml), un objet par forme", name)
+            p.set_attribution("ChopGimp", "ChopGimp", "2026")
+            p.add_string_argument("svg", "SVG", "Texte SVG", "", GObject.ParamFlags.READWRITE)
+            p.add_string_return_value("xml", "XML", "Objets (vide : aucun)", "",
+                                      GObject.ParamFlags.READWRITE)
+            p.add_int_return_value("n-objects", "Objets", "Nombre d'objets", 0, 1 << 30, 0,
+                                   GObject.ParamFlags.READWRITE)
             return p
         if name == PROC_OCG:
             p = Gimp.Procedure.new(self, name, Gimp.PDBProcType.PLUGIN, ocg_export_layers, None)

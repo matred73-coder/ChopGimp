@@ -1,0 +1,4115 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: ChopGimp <mathieu.redon@proton.me>
+Date: Fri, 27 Nov 2026 08:34:14 +0100
+Subject: [PATCH 05/23] ChopGimp T04: barre d'options
+
+Anciens patchs : 0009, 0018, 0019, 0021, 0022, 0023, 0025, 0031, 0032, 0108, 0109, 0114, 0173.
+---
+ app/display/gimpoptionsbar.c       | 2806 ++++++++++++++++++++++++++++
+ app/display/gimpoptionsbar.h       |   45 +
+ app/display/meson.build            |    7 +
+ app/tools/gimppathoptions.c        |  103 +-
+ app/tools/gimppathoptions.h        |    3 +
+ app/widgets/chopgimp-value-field.c |  975 ++++++++++
+ app/widgets/chopgimp-value-field.h |   39 +
+ 7 files changed, 3947 insertions(+), 31 deletions(-)
+ create mode 100644 app/display/gimpoptionsbar.c
+ create mode 100644 app/display/gimpoptionsbar.h
+ create mode 100644 app/widgets/chopgimp-value-field.c
+ create mode 100644 app/widgets/chopgimp-value-field.h
+
+diff --git a/app/display/gimpoptionsbar.c b/app/display/gimpoptionsbar.c
+new file mode 100644
+index 0000000..3ec6cc3
+--- /dev/null
++++ b/app/display/gimpoptionsbar.c
+@@ -0,0 +1,2806 @@
++/* GIMP - The GNU Image Manipulation Program
++ * Copyright (C) 1995 Spencer Kimball and Peter Mattis
++ *
++ * gimpoptionsbar.c — PhotoGIMP Pro: Photoshop-like horizontal tool options bar
++ * Copyright (C) 2026 PhotoGIMP Pro
++ *
++ * This program is free software: you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation; either version 3 of the License, or
++ * (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License
++ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
++ */
++
++/*  The bar sits below the menubar of every image window. It follows the
++ *  active tool and shows its most used options as compact horizontal
++ *  widgets, bound to the very same GimpToolOptions object as the Tool
++ *  Options dockable (both stay in sync). A « … » button opens the full
++ *  Tool Options dockable.
++ */
++
++#include "config.h"
++
++#include <string.h>
++
++#include <gegl.h>
++#include <gtk/gtk.h>
++
++#include "libgimpcolor/gimpcolor.h"
++#include "libgimpwidgets/gimpwidgets.h"
++
++#include "display-types.h"
++
++#include "core/gimp.h"
++#include "core/gimpcontext.h"
++#include "core/gimpcontainer.h"
++#include "core/gimplist.h"
++#include "core/gimpdatafactory.h"
++#include "core/gimpdynamics.h"
++#include "core/gimp-palettes.h"
++#include "core/gimppalette.h"
++#include "core/gimppattern.h"
++#include "core/gimpstrokeoptions.h"
++#include "core/gimptoolinfo.h"
++#include "core/gimpviewable.h"
++#include "core/gimpchannel.h"
++#include "core/gimpdrawable.h"
++#include "core/gimpimage.h"
++#include "core/gimpimage-undo.h"
++#include "core/gimpitem.h"
++#include "core/gimppickable-auto-shrink.h"
++#include "core/chopgimp-alpha-bounds.h"
++#include "core/gimpcurve.h"
++
++#include "tools/tools-types.h"
++#include "tools/gimppathoptions.h"
++#include "tools/gimptexttool.h"
++#include "tools/tool_manager.h"
++
++#include "widgets/gimptextbuffer.h"
++#include "widgets/chopgimp-value-field.h"
++
++#include "widgets/gimplayermodebox.h"
++#include "widgets/gimpview.h"
++#include "widgets/gimppropwidgets.h"
++#include "widgets/gimpuimanager.h"
++#include "widgets/gimpviewablebox.h"
++#include "widgets/gimpdeviceinfo.h"
++#include "widgets/gimpdevicemanager.h"
++#include "widgets/gimpdevices.h"
++#include "widgets/gimpwidgets-utils.h"
++
++#include "menus/menus.h"
++
++#include "gimpoptionsbar.h"
++#include "chopgimp-vobjectbar.h"
++#include "widgets/chopgimp-width-profile-box.h"
++
++#include "path/gimpvectorlayer.h"
++#include "path/chopgimp-vobject.h"
++#include "path/chopgimp-vobject-ops.h"
++#include "path/chopgimp-vcolors.h"
++
++#include "widgets/chopgimp-global-colors-editor.h"
++
++#include "gimp-intl.h"
++
++
++#define BAR_KEY "photogimp-options-bar-tool"
++
++/*  Most used options per tool, in Photoshop's options-bar order.
++ *  Special entries: "brush", "font", "gradient", "pattern" (resource
++ *  pickers), "paint-mode" (layer mode menu), "operation" / "justify" /
++ *  "type" (icon boxes), "foreground" (color button). Missing properties
++ *  are silently skipped.
++ */
++typedef struct
++{
++  const gchar *tool;
++  const gchar *props[28];
++} BarSpec;
++
++/*  "|" separates two groups of options (a separator is drawn between
++ *  them). When the window is too narrow, the options of lowest priority
++ *  (gimp_options_bar_priority ()) go into the « ⋯ » menu.
++ */
++#define PAINT_COMMON "brush", "brush-size", "brush-hardness", "brush-angle", "|", \
++                     "paint-mode", "opacity"
++#define SEL_COMMON   "operation", "|", "feather", "feather-radius", "antialias"
++#define TR_COMMON    "type", "|", "interpolation", "clip", "|", "show-preview", "grid-type"
++
++/*  ChopGimp: options shown in the bar for every tool of the toolbox,
++ *  in the order of Photoshop's options bar.
++ */
++static const BarSpec bar_specs[] =
++{
++  /* Peinture */
++  { "gimp-paintbrush-tool",        { PAINT_COMMON, "|", "use-smoothing", "stabilizer",
++                                     "stabilizer-length", "|", "@pressure", "quickshape",
++                                     "|", "paper-texture", "pattern", "paper-strength",
++                                     "|", "defer-filters", NULL } },
++  { "gimp-pencil-tool",            { PAINT_COMMON, "|", "use-smoothing", "stabilizer",
++                                     "stabilizer-length", "|", "@pressure", "quickshape",
++                                     "|", "defer-filters", NULL } },
++  { "gimp-airbrush-tool",          { PAINT_COMMON, "flow", "rate", "|", "motion-only",
++                                     "|", "defer-filters", NULL } },
++  { "gimp-eraser-tool",            { "brush", "brush-size", "brush-hardness", "|", "opacity",
++                                     "|", "hard", "anti-erase", "use-smoothing",
++                                     "|", "defer-filters", NULL } },
++  { "gimp-clone-tool",             { "brush", "brush-size", "brush-hardness", "|",
++                                     "paint-mode", "opacity", "|",
++                                     "clone-type", "align-mode", "sample-merged", NULL } },
++  { "gimp-perspective-clone-tool", { "brush", "brush-size", "brush-hardness", "|", "opacity",
++                                     "|", "clone-type", "sample-merged", NULL } },
++  { "gimp-spot-heal-tool",         { "size", NULL } },
++  { "gimp-heal-tool",              { "brush", "brush-size", "brush-hardness", "|", "opacity",
++                                     "|", "align-mode", "sample-merged", NULL } },
++  { "gimp-smudge-tool",            { "brush", "brush-size", "brush-hardness", "|", "rate", "flow",
++                                     "|", "no-erasing", "sample-merged", NULL } },
++  { "gimp-convolve-tool",          { "brush", "brush-size", "brush-hardness", "|", "type", "rate",
++                                     NULL } },
++  { "gimp-dodge-burn-tool",        { "brush", "brush-size", "brush-hardness", "|", "type", "mode",
++                                     "exposure", NULL } },
++  { "gimp-ink-tool",               { "size", "|", "blob-type", "blob-angle", "blob-aspect",
++                                     "|", "tilt-angle", "size-sensitivity", "|", "opacity", NULL } },
++  { "gimp-mypaint-brush-tool",     { "radius", "hardness", "|", "opacity", "|", "eraser",
++                                     "no-erasing", NULL } },
++
++  /* Sélections */
++  { "gimp-rect-select-tool",       { SEL_COMMON, "|", "fixed-rule-active", "fixed-rule",
++                                     "|", "round-corners", "corner-radius", NULL } },
++  { "gimp-ellipse-select-tool",    { SEL_COMMON, "|", "fixed-rule-active", "fixed-rule", NULL } },
++  { "gimp-free-select-tool",       { SEL_COMMON, NULL } },
++  { "gimp-iscissors-tool",         { SEL_COMMON, NULL } },
++  { "gimp-magnetic-lasso-tool",    { SEL_COMMON, "|", "magnetic-width", "magnetic-contrast",
++                                     "magnetic-frequency", NULL } },
++  { "gimp-fuzzy-select-tool",      { SEL_COMMON, "|", "threshold", "select-criterion",
++                                     "|", "sample-merged", "select-transparent",
++                                     "diagonal-neighbors", NULL } },
++  { "gimp-by-color-select-tool",   { SEL_COMMON, "|", "threshold", "select-criterion",
++                                     "|", "sample-merged", "select-transparent", NULL } },
++  { "gimp-foreground-select-tool", { "operation", "|", "draw-mode", "stroke-width", "|",
++                                     "engine", "preview-mode", NULL } },
++  { "gimp-paint-select-tool",      { "operation", "|", "stroke-width", "|", "sample-merged",
++                                     "auto-enhance", "local-area", "|", "show-scribbles", NULL } },
++
++  /* Déplacement, alignement, recadrage */
++  { "gimp-move-tool",              { "move-current", "move-type", "|", "@vobjects", "|",
++                                     "@align", NULL } },
++  { "gimp-align-tool",             { "align-reference", "|", "align-contents", "align-layers",
++                                     "align-paths", NULL } },
++  { "gimp-crop-tool",              { "fixed-rule-active", "fixed-rule", "|", "delete-pixels",
++                                     "allow-growing", "layer-only", "|", "guide", "highlight",
++                                     NULL } },
++
++  /* Transformations */
++  { "gimp-unified-transform-tool", { TR_COMMON, "|", "constrain-scale", "constrain-rotate",
++                                     "frompivot-scale", NULL } },
++  { "gimp-scale-tool",             { TR_COMMON, "|", "constrain-scale", "frompivot-scale", NULL } },
++  { "gimp-rotate-tool",            { TR_COMMON, "|", "constrain-rotate", NULL } },
++  { "gimp-shear-tool",             { TR_COMMON, "|", "constrain-shear", "frompivot-shear", NULL } },
++  { "gimp-perspective-tool",       { TR_COMMON, "|", "constrain-perspective",
++                                     "frompivot-perspective", NULL } },
++  { "gimp-flip-tool",              { "type", "flip-type", "|", "interpolation", "clip", NULL } },
++  { "gimp-handle-transform-tool",  { TR_COMMON, "|", "handle-mode", NULL } },
++  { "gimp-transform-3d-tool",      { TR_COMMON, "|", "mode", "unified", "constrain-axis", NULL } },
++  { "gimp-warp-tool",              { "behavior", "|", "effect-size", "effect-hardness",
++                                     "effect-strength", "stroke-spacing", "|",
++                                     "interpolation", "abyss-policy", NULL } },
++  { "gimp-cage-tool",              { "cage-mode", "fill-plain-color", NULL } },
++  { "gimp-n-point-deformation-tool", { "square-size", "rigidity", "|", "asap-deformation",
++                                     "mls-weights", "mesh-visible", NULL } },
++
++  /* Texte, remplissages, mesure */
++  { "gimp-text-tool",              { "font", "font-size", "foreground", "|", "@text-style",
++                                     "|", "justify", "|", "letter-spacing", "line-spacing",
++                                     "|", "box-mode", "|", "@text", NULL } },
++  { "gimp-gradient-tool",          { "gradient", "gradient-type", "|", "paint-mode", "opacity",
++                                     "|", "gradient-reverse", "distance-metric", "offset",
++                                     "dither", "instant", NULL } },
++  { "gimp-bucket-fill-tool",       { "fill-mode", "|", "paint-mode", "opacity", "|",
++                                     "fill-area", "threshold", "fill-criterion", "|",
++                                     "sample-merged", "antialias", "fill-transparent", NULL } },
++  { "gimp-color-picker-tool",      { "sample-average", "average-radius", "|", "pick-target",
++                                     "|", "sample-merged", "use-info-window", NULL } },
++  { "gimp-measure-tool",           { "orientation", "|", "use-info-window", NULL } },
++  { "gimp-zoom-tool",              { "zoom-type", "|", "auto-resize", NULL } },
++  /*  3.29.0: Courbure, Crayon vectoriel, Lissage  */
++  { "gimp-curvature-tool",         { "enable-fill", "fill-foreground", "@fill-opacity",
++                                     "|", "enable-stroke", "stroke-foreground", "stroke-width",
++                                     "@stroke-opacity", "|", "add-to-vector-layer", NULL } },
++  { "gimp-vpencil-tool",           { "fidelity", "keep-selected", "|", "enable-stroke",
++                                     "stroke-foreground", "stroke-width", "@stroke-opacity",
++                                     "|", "enable-fill", "fill-foreground",
++                                     "|", "add-to-vector-layer", NULL } },
++  { "gimp-vsmooth-tool",           { "brush-radius", "smooth-strength", NULL } },
++  /*  3.30.0: Pinceau goutte  */
++  { "gimp-vblob-tool",             { "blob-size", "blob-fidelity", "|", "enable-stroke",
++                                     "stroke-foreground", "@stroke-opacity", "|",
++                                     "fill-foreground", "@fill-opacity", "|",
++                                     "blob-merge-selection-only",
++                                     "blob-keep-selected", NULL } },
++  /*  3.31.0: Plan de travail, Grille de perspective  */
++  { "gimp-artboard-tool",          { "artboard-move-artwork", "artboard-fit-canvas", NULL } },
++  { "gimp-perspective-grid-tool",  { "pgrid-type", "pgrid-cell", "pgrid-opacity", "|",
++                                     "pgrid-snap", "pgrid-locked", "pgrid-lock-station",
++                                     NULL } },
++  { "gimp-shape-tool",             { "shape-type", "corner-radius", "sides", "star-ratio",
++                                     "spiral-turns", "spiral-decay", "arc-closed",
++                                     "arc-concave", "grid-rows", "grid-cols", "grid-frame",
++                                     "|", "enable-fill", "fill-foreground", "@fill-opacity",
++                                     "|", "enable-stroke", "stroke-foreground", "stroke-width",
++                                     "@stroke-opacity", "@stroke-dash", "|",
++                                     "add-to-vector-layer", "|", "@pathfinder", NULL } },
++  { "gimp-shape-builder-tool",     { "@pathfinder", "|", "@vobjects", NULL } },
++  /*  3.29.5: the objects first: at equal priority the rightmost item
++   *  goes first into « ⋯ », so the « Rayon » of the dynamic corners stays
++   *  in the bar (it went into « ⋯ » at 1600 px)
++   */
++  { "gimp-direct-select-tool",     { "@vobjects", "|", "@nodes", "|", "@pathfinder", NULL } },
++  { "gimp-direct-lasso-tool",      { "@vobjects", "|", "@nodes", "|", "@pathfinder", NULL } },
++  /*  3.27.6: outil Largeur, outil Enveloppe  */
++  { "gimp-width-tool",             { "@widthprofile", "|", "@vobjects", NULL } },
++  { "gimp-envelope-tool",          { "@distort", "|", "@vobjects", NULL } },
++  /*  3.28.1: Peinture dynamique  */
++  { "gimp-live-paint-bucket-tool", { "@vobjects", NULL } },
++  { "gimp-live-paint-select-tool", { "@vobjects", NULL } },
++  { "gimp-path-tool",              { "path-edit-mode", "path-polygonal",
++                                     "|", "enable-fill", "fill-foreground", "@fill-opacity",
++                                     "|", "enable-stroke", "stroke-foreground", "stroke-width",
++                                     "@stroke-opacity", "@stroke-dash",
++                                     "|", "add-to-vector-layer", "@vector-layer",
++                                     "|", "@pathfinder", NULL } },
++};
++
++/*  ChopGimp: priority of an option in the bar: when the window is too
++ *  narrow, the lowest ones go first into the « ⋯ » menu (at equal
++ *  priority, the rightmost one first).
++ */
++static gint
++gimp_options_bar_priority (const gchar *prop)
++{
++  static const gchar *const high[] =    /*  never moved unless really needed  */
++  {
++    "brush", "brush-size", "size", "radius", "font", "font-size", "foreground",
++    "operation", "paint-mode", "opacity", "gradient", "gradient-type", "fill-mode",
++    "shape-type", "path-edit-mode", "type", "behavior", "effect-size", "cage-mode",
++    "move-current", "zoom-type", "orientation", "draw-mode", "mode", "clone-type",
++    "sample-average", "blob-type", "fixed-rule-active", "fixed-rule",
++    "enable-fill", "fill-foreground", "enable-stroke", "stroke-foreground",
++    "stroke-width", "align-reference", "@nodes", "flip-type", "@vobjects",
++    NULL
++  };
++  /*  3.32.0: the main option of its tool, kept before everything else
++   *  (the Width tool's profile went into « ⋯ » before the objects' bar)
++   */
++  static const gchar *const top[] =
++  {
++    "@widthprofile", NULL
++  };
++  static const gchar *const medium[] =
++  {
++    "brush-hardness", "hardness", "brush-angle", "flow", "exposure", "rate",
++    "feather", "feather-radius", "antialias", "justify", "@text-style", "@align",
++    "threshold", "interpolation", "@fill-opacity", "@stroke-opacity", "corner-radius",
++    "move-type", "average-radius", "fill-area", "sides", "star-ratio",
++    "spiral-turns", "spiral-decay", "arc-closed", "arc-concave", "grid-rows",
++    "grid-cols", "grid-frame",
++    "add-to-vector-layer", NULL
++  };
++  static const gchar *const low[] =     /*  first ones in « ⋯ »  */
++  {
++    "defer-filters", "@pressure", "quickshape", "paper-texture", "pattern",
++    "paper-strength", "use-info-window", "auto-resize", "show-preview", "grid-type",
++    "clip", "highlight", "guide", "dither", "instant", "distance-metric",
++    "diagonal-neighbors", "select-transparent", "fill-transparent", "sample-merged",
++    "@text", "@vector-layer", "@stroke-dash", "box-mode", "mesh-visible",
++    "abyss-policy", "preview-mode", "engine", "show-scribbles", NULL
++  };
++  gint i;
++
++  for (i = 0; top[i]; i++)
++    if (! strcmp (prop, top[i]))
++      return 100;
++
++  for (i = 0; high[i]; i++)
++    if (! strcmp (prop, high[i]))
++      return 90;
++
++  for (i = 0; medium[i]; i++)
++    if (! strcmp (prop, medium[i]))
++      return 70;
++
++  for (i = 0; low[i]; i++)
++    if (! strcmp (prop, low[i]))
++      return 20;
++
++  return 50;
++}
++
++/*  ChopGimp: rows of icon buttons running an action (plug-in procedures
++ *  of chopgimp_vector.py): { action, icon, tooltip }
++ */
++static const gchar *const chopgimp_pathfinder_buttons[] =
++{
++  "chopgimp-pathfinder-union",     "chopgimp-pf-union",     N_("Pathfinder : réunir les formes sélectionnées"),
++  "chopgimp-pathfinder-minus",     "chopgimp-pf-minus",     N_("Pathfinder : soustraire les formes du dessus"),
++  "chopgimp-pathfinder-intersect", "chopgimp-pf-intersect", N_("Pathfinder : intersection"),
++  "chopgimp-pathfinder-exclude",   "chopgimp-pf-exclude",   N_("Pathfinder : exclure les chevauchements"),
++  "chopgimp-pathfinder-divide",    "chopgimp-pf-divide",    N_("Pathfinder : diviser en morceaux"),
++  NULL
++};
++
++/*  3.27.6: « Objet > Distorsion »  */
++static const gchar *const chopgimp_distort_buttons[] =
++{
++  "layers-vobjects-distort-warp",          "chopgimp-distort-warp",     N_("Déformation (arc, drapeau, onde…)"),
++  "layers-vobjects-distort-mesh",          "chopgimp-distort-mesh",     N_("Enveloppe : créer d'après une maille"),
++  "layers-vobjects-distort-top",           "chopgimp-distort-top",      N_("Enveloppe : créer d'après l'objet du dessus"),
++  "layers-vobjects-distort-free",          "chopgimp-distort-free",     N_("Distorsion libre (4 coins)"),
++  "layers-vobjects-distort-to-mesh",       "chopgimp-distort-mesh",     N_("Convertir la déformation en maille"),
++  "layers-vobjects-distort-edit-contents", "chopgimp-distort-contents", N_("Modifier le contenu"),
++  "layers-vobjects-distort-expand",        "chopgimp-distort-expand",   N_("Décomposer la distorsion"),
++  NULL
++};
++
++/*  ChopGimp: text tool — warp and panels (the floating style bar of the
++ *  canvas is gone: its settings are here and in the Character panel)
++ */
++static const gchar *const chopgimp_text_buttons[] =
++{
++  "chopgimp-text-warp", "gimp-tool-warp",       N_("Déformer le texte"),
++  "dialogs-character",  "gimp-tool-text",       N_("Panneaux Caractère et Paragraphe"),
++  NULL
++};
++
++static const gchar *const chopgimp_nodes_buttons[] =
++{
++  "chopgimp-nodes-corner",          "chopgimp-node-corner",    N_("Nœud angulaire"),
++  "chopgimp-nodes-smooth",          "chopgimp-node-smooth",    N_("Nœud doux"),
++  "chopgimp-nodes-symmetric",       "chopgimp-node-symmetric", N_("Nœud symétrique"),
++  "chopgimp-nodes-auto",            "chopgimp-node-auto",      N_("Nœud automatique"),
++  "chopgimp-nodes-line",            "chopgimp-node-line",      N_("Segments en lignes droites"),
++  "chopgimp-nodes-curve",           "chopgimp-node-curve",     N_("Segments en courbes"),
++  "chopgimp-nodes-align-left",      "chopgimp-node-align-left",    N_("Aligner les nœuds à gauche"),
++  "chopgimp-nodes-align-hcenter",   "chopgimp-node-align-hcenter", N_("Aligner les nœuds au centre (vertical)"),
++  "chopgimp-nodes-align-top",       "chopgimp-node-align-top",     N_("Aligner les nœuds en haut"),
++  "chopgimp-nodes-align-vcenter",   "chopgimp-node-align-vcenter", N_("Aligner les nœuds au centre (horizontal)"),
++  "chopgimp-nodes-distribute-h",    "chopgimp-node-distribute-h",  N_("Répartir les nœuds horizontalement"),
++  "chopgimp-nodes-join",            "chopgimp-node-join",      N_("Joindre deux extrémités"),
++  "chopgimp-nodes-break",           "chopgimp-node-break",     N_("Couper le chemin aux nœuds"),
++  "chopgimp-nodes-delete",          "chopgimp-node-delete",    N_("Supprimer les nœuds en gardant la forme"),
++  "chopgimp-nodes-round",           "chopgimp-node-round",     N_("Arrondir les coins sélectionnés…"),
++  NULL
++};
++
++static void
++gimp_options_bar_action_clicked (GtkWidget   *button,
++                                 const gchar *action_name)
++{
++  GApplication *app    = g_application_get_default ();
++  GAction      *action = NULL;
++
++  if (G_IS_ACTION_MAP (app))
++    action = g_action_map_lookup_action (G_ACTION_MAP (app), action_name);
++
++  if (action && g_action_get_enabled (action))
++    g_action_activate (action, NULL);
++  else
++    gdk_display_beep (gtk_widget_get_display (button));
++}
++
++static GtkWidget *
++gimp_options_bar_action_row (const gchar *const *buttons)
++{
++  GtkWidget *row = gtk_box_new (GTK_ORIENTATION_HORIZONTAL, 0);
++
++  for (gint i = 0; buttons[i]; i += 3)
++    {
++      const gchar *names[] = { buttons[i + 1], "image-missing", NULL };
++      GIcon       *icon    = g_themed_icon_new_from_names ((gchar **) names, -1);
++      GtkWidget   *button  = gtk_button_new ();
++      GtkWidget   *image   = gtk_image_new_from_gicon (icon, GTK_ICON_SIZE_MENU);
++
++      g_object_unref (icon);
++      gtk_container_add (GTK_CONTAINER (button), image);
++      gtk_button_set_relief (GTK_BUTTON (button), GTK_RELIEF_NONE);
++      gtk_widget_set_can_focus (button, FALSE);
++      gimp_help_set_help_data (button, gettext (buttons[i + 2]), NULL);
++      g_signal_connect (button, "clicked",
++                        G_CALLBACK (gimp_options_bar_action_clicked),
++                        (gpointer) buttons[i]);
++      gtk_box_pack_start (GTK_BOX (row), button, FALSE, FALSE, 0);
++    }
++
++  gtk_widget_show_all (row);
++
++  return row;
++}
++
++
++/*  ChopGimp: bold / italic / underline / strike of the selected
++ *  characters, applied by the text tool being used
++ */
++static void
++gimp_options_bar_text_style_clicked (GtkButton *button,
++                                     Gimp      *gimp)
++{
++  GimpTool    *tool = tool_manager_get_active (gimp);
++  const gchar *tag  = g_object_get_data (G_OBJECT (button), "chopgimp-tag");
++  GimpTextTool *text_tool;
++
++  if (! GIMP_IS_TEXT_TOOL (tool) || ! GIMP_TEXT_TOOL (tool)->buffer)
++    return;
++
++  text_tool = GIMP_TEXT_TOOL (tool);
++
++  if (! strcmp (tag, "b"))
++    gimp_text_tool_toggle_tag (text_tool, text_tool->buffer->bold_tag);
++  else if (! strcmp (tag, "i"))
++    gimp_text_tool_toggle_tag (text_tool, text_tool->buffer->italic_tag);
++  else if (! strcmp (tag, "u"))
++    gimp_text_tool_toggle_tag (text_tool, text_tool->buffer->underline_tag);
++  else
++    gimp_text_tool_toggle_tag (text_tool, text_tool->buffer->strikethrough_tag);
++}
++
++static GtkWidget *
++gimp_options_bar_text_style_row (Gimp *gimp)
++{
++  static const struct { const gchar *tag, *markup, *tip; } styles[] =
++  {
++    { "b", "<b>G</b>",   N_("Gras (Ctrl+B)") },
++    { "i", "<i>I</i>",   N_("Italique (Ctrl+I)") },
++    { "u", "<u>S</u>",   N_("Souligné (Ctrl+U)") },
++    { "s", "<s>B</s>",   N_("Barré") },
++  };
++  GtkWidget *row = gtk_box_new (GTK_ORIENTATION_HORIZONTAL, 0);
++  guint      i;
++
++  for (i = 0; i < G_N_ELEMENTS (styles); i++)
++    {
++      GtkWidget *button = gtk_button_new ();
++      GtkWidget *label  = gtk_label_new (NULL);
++
++      gtk_label_set_markup (GTK_LABEL (label), styles[i].markup);
++      gtk_container_add (GTK_CONTAINER (button), label);
++      gtk_button_set_relief (GTK_BUTTON (button), GTK_RELIEF_NONE);
++      gtk_widget_set_can_focus (button, FALSE);
++      gimp_help_set_help_data (button, _(styles[i].tip), NULL);
++      g_object_set_data (G_OBJECT (button), "chopgimp-tag", (gpointer) styles[i].tag);
++      g_signal_connect (button, "clicked",
++                        G_CALLBACK (gimp_options_bar_text_style_clicked), gimp);
++      gtk_box_pack_start (GTK_BOX (row), button, FALSE, FALSE, 0);
++    }
++
++  gtk_widget_show_all (row);
++
++  return row;
++}
++
++/*  ChopGimp: Align / distribute (Photoshop move tool options).
++ *  One layer: on the selection, or the canvas. Several: on their union.
++ *  Bounds are the visible content (alpha), not the layer frame.
++ */
++enum { AL_LEFT, AL_HCENTER, AL_RIGHT, AL_TOP, AL_VCENTER, AL_BOTTOM, AL_DIST_H, AL_DIST_V };
++
++typedef struct { GimpItem *item; gint x, y, w, h; } AlignBox;
++
++static void
++chopgimp_content_box (GimpItem *item,
++                      AlignBox *b)
++{
++  gint ox, oy;
++
++  b->item = item;
++  gimp_item_get_offset (item, &ox, &oy);
++
++  if (GIMP_IS_DRAWABLE (item) && ! gimp_viewable_get_children (GIMP_VIEWABLE (item)) &&
++      chopgimp_alpha_bounds (GIMP_DRAWABLE (item), &b->x, &b->y, &b->w, &b->h) ==
++      GIMP_AUTO_SHRINK_SHRINK)
++    {
++      b->x += ox;
++      b->y += oy;
++      return;
++    }
++  b->x = ox;
++  b->y = oy;
++  b->w = gimp_item_get_width  (item);
++  b->h = gimp_item_get_height (item);
++}
++
++static gint
++chopgimp_box_cmp_x (gconstpointer a, gconstpointer b)
++{
++  return ((const AlignBox *) a)->x - ((const AlignBox *) b)->x;
++}
++
++static gint
++chopgimp_box_cmp_y (gconstpointer a, gconstpointer b)
++{
++  return ((const AlignBox *) a)->y - ((const AlignBox *) b)->y;
++}
++
++static void
++gimp_options_bar_align_clicked (GtkButton *button,
++                                Gimp      *gimp)
++{
++  GimpImage *image = gimp_context_get_image (gimp_get_user_context (gimp));
++  gint       mode  = GPOINTER_TO_INT (g_object_get_data (G_OBJECT (button), "chopgimp-align"));
++  GList     *layers, *iter;
++  GArray    *boxes;
++  gint       rx, ry, rw, rh;
++  guint      i;
++
++  if (! image)
++    return;
++
++  /*  ChopGimp lot V2: the selected objects of a vector layer  */
++  {
++    GimpVectorLayer *vlayer = chopgimp_vobjects_get_active_layer (image);
++
++    if (chopgimp_vobjects_n_selected (vlayer) > 0)
++      {
++        static const ChopGimpVAlign modes[] =
++        {
++          CHOPGIMP_VALIGN_LEFT, CHOPGIMP_VALIGN_HCENTER, CHOPGIMP_VALIGN_RIGHT,
++          CHOPGIMP_VALIGN_TOP, CHOPGIMP_VALIGN_VCENTER, CHOPGIMP_VALIGN_BOTTOM,
++          CHOPGIMP_VALIGN_DISTRIBUTE_H, CHOPGIMP_VALIGN_DISTRIBUTE_V
++        };
++
++        if (chopgimp_vobjects_align (vlayer, modes[mode]))
++          gimp_image_flush (image);
++        return;
++      }
++  }
++
++  layers = gimp_image_get_selected_layers (image);
++  if (! layers)
++    return;
++
++  boxes = g_array_new (FALSE, FALSE, sizeof (AlignBox));
++  for (iter = layers; iter; iter = iter->next)
++    {
++      AlignBox b;
++
++      if (gimp_item_is_position_locked (iter->data, NULL))
++        continue;
++      chopgimp_content_box (iter->data, &b);
++      if (b.w > 0 && b.h > 0)
++        g_array_append_val (boxes, b);
++    }
++
++  if (boxes->len == 0 || (mode >= AL_DIST_H && boxes->len < 3))
++    {
++      g_array_free (boxes, TRUE);
++      return;
++    }
++
++  /*  reference rectangle  */
++  if (boxes->len == 1)
++    {
++      if (! gimp_channel_is_empty (gimp_image_get_mask (image)))
++        gimp_item_bounds (GIMP_ITEM (gimp_image_get_mask (image)), &rx, &ry, &rw, &rh);
++      else
++        {
++          rx = ry = 0;
++          rw = gimp_image_get_width  (image);
++          rh = gimp_image_get_height (image);
++        }
++    }
++  else
++    {
++      gint x2 = G_MININT, y2 = G_MININT;
++
++      rx = ry = G_MAXINT;
++      for (i = 0; i < boxes->len; i++)
++        {
++          AlignBox *b = &g_array_index (boxes, AlignBox, i);
++
++          rx = MIN (rx, b->x);
++          ry = MIN (ry, b->y);
++          x2 = MAX (x2, b->x + b->w);
++          y2 = MAX (y2, b->y + b->h);
++        }
++      rw = x2 - rx;
++      rh = y2 - ry;
++    }
++
++  gimp_image_undo_group_start (image, GIMP_UNDO_GROUP_ITEM_DISPLACE,
++                               mode >= AL_DIST_H ? _("Répartir") : _("Aligner"));
++
++  if (mode >= AL_DIST_H)
++    {
++      gboolean h     = mode == AL_DIST_H;
++      gint     total = 0, gap, pos;
++
++      g_array_sort (boxes, h ? chopgimp_box_cmp_x : chopgimp_box_cmp_y);
++      for (i = 0; i < boxes->len; i++)
++        total += h ? g_array_index (boxes, AlignBox, i).w : g_array_index (boxes, AlignBox, i).h;
++      gap = ((h ? rw : rh) - total) / (gint) (boxes->len - 1);
++      pos = h ? rx : ry;
++
++      for (i = 0; i < boxes->len; i++)
++        {
++          AlignBox *b = &g_array_index (boxes, AlignBox, i);
++
++          if (h)
++            gimp_item_translate (b->item, pos - b->x, 0, TRUE);
++          else
++            gimp_item_translate (b->item, 0, pos - b->y, TRUE);
++          pos += (h ? b->w : b->h) + gap;
++        }
++    }
++  else
++    {
++      for (i = 0; i < boxes->len; i++)
++        {
++          AlignBox *b  = &g_array_index (boxes, AlignBox, i);
++          gint      dx = 0, dy = 0;
++
++          switch (mode)
++            {
++            case AL_LEFT:    dx = rx - b->x;                         break;
++            case AL_HCENTER: dx = rx + (rw - b->w) / 2 - b->x;       break;
++            case AL_RIGHT:   dx = rx + rw - b->w - b->x;             break;
++            case AL_TOP:     dy = ry - b->y;                         break;
++            case AL_VCENTER: dy = ry + (rh - b->h) / 2 - b->y;       break;
++            case AL_BOTTOM:  dy = ry + rh - b->h - b->y;             break;
++            }
++          if (dx || dy)
++            gimp_item_translate (b->item, dx, dy, TRUE);
++        }
++    }
++
++  gimp_image_undo_group_end (image);
++  gimp_image_flush (image);
++  g_array_free (boxes, TRUE);
++}
++
++static GtkWidget *
++gimp_options_bar_align_row (Gimp *gimp)
++{
++  static const struct { gint mode; const gchar *icon, *tip; } aligns[] =
++  {
++    { AL_LEFT,    GIMP_ICON_GRAVITY_WEST,          N_("Aligner les bords gauches") },
++    { AL_HCENTER, GIMP_ICON_CENTER_HORIZONTAL,     N_("Centrer horizontalement") },
++    { AL_RIGHT,   GIMP_ICON_GRAVITY_EAST,          N_("Aligner les bords droits") },
++    { AL_TOP,     GIMP_ICON_GRAVITY_NORTH,         N_("Aligner les bords supérieurs") },
++    { AL_VCENTER, GIMP_ICON_CENTER_VERTICAL,       N_("Centrer verticalement") },
++    { AL_BOTTOM,  GIMP_ICON_GRAVITY_SOUTH,         N_("Aligner les bords inférieurs") },
++    { AL_DIST_H,  GIMP_ICON_EVEN_HORIZONTAL_GAP,   N_("Répartir horizontalement (3 calques ou plus)") },
++    { AL_DIST_V,  GIMP_ICON_EVEN_VERTICAL_GAP,     N_("Répartir verticalement (3 calques ou plus)") },
++  };
++  GtkWidget *row = gtk_box_new (GTK_ORIENTATION_HORIZONTAL, 0);
++  guint      i;
++
++  for (i = 0; i < G_N_ELEMENTS (aligns); i++)
++    {
++      GtkWidget *button = gtk_button_new_from_icon_name (aligns[i].icon, GTK_ICON_SIZE_SMALL_TOOLBAR);
++
++      gtk_button_set_relief (GTK_BUTTON (button), GTK_RELIEF_NONE);
++      gtk_widget_set_can_focus (button, FALSE);
++      gimp_help_set_help_data (button, _(aligns[i].tip), NULL);
++      g_object_set_data (G_OBJECT (button), "chopgimp-align", GINT_TO_POINTER (aligns[i].mode));
++      g_signal_connect (button, "clicked", G_CALLBACK (gimp_options_bar_align_clicked), gimp);
++      gtk_box_pack_start (GTK_BOX (row), button, FALSE, FALSE, 0);
++      if (aligns[i].mode == AL_BOTTOM)
++        gtk_box_pack_start (GTK_BOX (row), gtk_separator_new (GTK_ORIENTATION_VERTICAL),
++                            FALSE, FALSE, 4);
++    }
++
++  gtk_widget_show_all (row);
++  return row;
++}
++
++/*  ChopGimp: quick pressure curve of the current input device  */
++static void
++gimp_options_bar_pressure_changed (GtkComboBox *combo,
++                                   Gimp        *gimp)
++{
++  static const gdouble presets[][3][2] =
++  {
++    { { 0.0, 0.0 }, { 0.50, 0.50 }, { 1.0, 1.0 } },   /*  linéaire  */
++    { { 0.0, 0.0 }, { 0.25, 0.50 }, { 1.0, 1.0 } },   /*  douce     */
++    { { 0.0, 0.0 }, { 0.60, 0.30 }, { 1.0, 1.0 } },   /*  ferme     */
++    { { 0.0, 0.15 }, { 0.40, 0.70 }, { 1.0, 1.0 } },  /*  légère    */
++  };
++  GimpDeviceInfo *info;
++  GimpCurve      *curve;
++  gint            i = gtk_combo_box_get_active (combo);
++  gint            k;
++
++  if (i < 0 || i >= (gint) G_N_ELEMENTS (presets))
++    return;
++
++  info = gimp_device_manager_get_current_device (gimp_devices_get_manager (gimp));
++  if (! info || ! (curve = gimp_device_info_get_curve (info, GDK_AXIS_PRESSURE)))
++    return;
++
++  gimp_data_freeze (GIMP_DATA (curve));
++  gimp_curve_set_curve_type (curve, GIMP_CURVE_SMOOTH);
++  gimp_curve_clear_points (curve);
++  for (k = 0; k < 3; k++)
++    gimp_curve_add_point (curve, presets[i][k][0], presets[i][k][1]);
++  gimp_data_thaw (GIMP_DATA (curve));
++}
++
++static GtkWidget *
++gimp_options_bar_pressure_combo (Gimp *gimp)
++{
++  GtkWidget *combo = gtk_combo_box_text_new ();
++
++  gtk_combo_box_text_append_text (GTK_COMBO_BOX_TEXT (combo), _("Pression : linéaire"));
++  gtk_combo_box_text_append_text (GTK_COMBO_BOX_TEXT (combo), _("Pression : douce"));
++  gtk_combo_box_text_append_text (GTK_COMBO_BOX_TEXT (combo), _("Pression : ferme"));
++  gtk_combo_box_text_append_text (GTK_COMBO_BOX_TEXT (combo), _("Pression : légère"));
++  gtk_combo_box_set_active (GTK_COMBO_BOX (combo), 0);
++  gimp_help_set_help_data (combo, _("Courbe de pression du stylet actif (réglage fin : "
++                                    "Édition > Périphériques d'entrée)"), NULL);
++  g_signal_connect (combo, "changed", G_CALLBACK (gimp_options_bar_pressure_changed), gimp);
++  gtk_widget_show (combo);
++  return combo;
++}
++
++static void   gimp_options_bar_tool_changed (GimpContext  *context,
++                                             GimpToolInfo *tool_info,
++                                             GtkWidget    *bar);
++static void   gimp_options_bar_more_clicked (GtkWidget    *button,
++                                             Gimp         *gimp);
++
++
++static const BarSpec *
++gimp_options_bar_get_spec (const gchar *tool_name)
++{
++  gint i;
++
++  for (i = 0; i < G_N_ELEMENTS (bar_specs); i++)
++    if (! strcmp (bar_specs[i].tool, tool_name))
++      return &bar_specs[i];
++
++  return NULL;
++}
++
++static void
++gimp_options_bar_pack (GtkWidget *box,
++                       GtkWidget *widget)
++{
++  gtk_box_pack_start (GTK_BOX (box), widget, FALSE, FALSE, 0);
++  gtk_widget_set_visible (widget, TRUE);
++}
++
++/*  one item of the bar: [label] widget  */
++static GtkWidget *
++gimp_options_bar_labeled (const gchar *label,
++                          GtkWidget   *widget)
++{
++  GtkWidget *hbox = gtk_box_new (GTK_ORIENTATION_HORIZONTAL, 4);
++
++  if (label)
++    {
++      GtkWidget *l = gtk_label_new (label);
++
++      gtk_style_context_add_class (gtk_widget_get_style_context (l), "dim-label");
++      gtk_box_pack_start (GTK_BOX (hbox), l, FALSE, FALSE, 0);
++      gtk_widget_set_visible (l, TRUE);
++    }
++
++  gtk_box_pack_start (GTK_BOX (hbox), widget, FALSE, FALSE, 0);
++  gtk_widget_set_visible (widget, TRUE);
++  gtk_widget_set_visible (hbox, TRUE);
++
++  return hbox;
++}
++
++/*  ChopGimp: Photoshop-like labels for some properties of the bar  */
++static const gchar *
++gimp_options_bar_label (const gchar *prop)
++{
++  if (! strcmp (prop, "enable-fill"))   return _("Fond");
++  if (! strcmp (prop, "add-to-vector-layer")) return _("Ajouter au calque");
++  if (! strcmp (prop, "enable-stroke")) return _("Contour");
++  if (! strcmp (prop, "stroke-width"))  return _("Épaisseur");
++  if (! strcmp (prop, "move-type"))     return _("Déplacer");
++  if (! strcmp (prop, "letter-spacing")) return _("Approche");
++  if (! strcmp (prop, "line-spacing"))   return _("Interlignage");
++  if (! strcmp (prop, "font-size"))      return _("Taille");
++  if (! strcmp (prop, "box-mode"))       return _("Cadre");
++  if (! strcmp (prop, "fixed-rule-active")) return _("Fixe");
++  if (! strcmp (prop, "fixed-rule"))        return " ";
++  if (! strcmp (prop, "round-corners"))     return _("Coins arrondis");
++  if (! strcmp (prop, "constrain-scale"))  return _("Conserver les proportions");
++  if (! strcmp (prop, "constrain-rotate")) return _("Rotation par 15°");
++  if (! strcmp (prop, "constrain-shear"))  return _("Inclinaison contrainte");
++  if (! strcmp (prop, "constrain-move"))   return _("Déplacement contraint");
++  if (! strcmp (prop, "brush-hardness") ||
++      ! strcmp (prop, "hardness"))          return _("Dureté");
++  if (! strcmp (prop, "brush-angle"))      return _("Angle");
++  if (! strcmp (prop, "opacity"))          return _("Opacité");
++  if (! strcmp (prop, "flow"))             return _("Flux");
++  if (! strcmp (prop, "size"))             return _("Taille");
++  if (! strcmp (prop, "feather-radius"))   return _("Rayon");
++  if (! strcmp (prop, "corner-radius"))    return _("Rayon");
++  if (! strcmp (prop, "threshold"))        return _("Seuil");
++  if (! strcmp (prop, "exposure"))         return _("Exposition");
++  if (! strcmp (prop, "rate"))             return _("Débit");
++  return NULL;
++}
++
++static void
++gimp_options_bar_vector_layer_clicked (GtkWidget *button,
++                                       GObject   *options)
++{
++  Gimp          *gimp    = GIMP_CONTEXT (options)->gimp;
++  GimpUIManager *manager = menus_get_image_manager_singleton (gimp);
++
++  gimp_ui_manager_activate_action (manager, "paths", "paths-to-vector-layer");
++}
++
++static void
++gimp_options_bar_dash_changed (GtkComboBox       *combo,
++                               GimpStrokeOptions *stroke)
++{
++  static const GimpDashPreset presets[] = { GIMP_DASH_LINE, GIMP_DASH_MEDIUM_DASH,
++                                            GIMP_DASH_NORMAL_DOTS, GIMP_DASH_DASH_DOT };
++  gint i = gtk_combo_box_get_active (combo);
++
++  if (i >= 0 && i < G_N_ELEMENTS (presets))
++    gimp_stroke_options_take_dash_pattern (stroke, presets[i], NULL);
++}
++
++/*  Opacity slider bound to the fill or stroke options of the path tool
++ *  (each one has its own opacity, applied when rendering vector layers).
++ */
++static GtkWidget *
++gimp_options_bar_sub_opacity (GObject     *sub,
++                              const gchar *label,
++                              const gchar *title)
++{
++  GtkWidget *w = chopgimp_value_field_new (sub, "opacity", label, "%");
++
++  if (w)
++    {
++      chopgimp_value_field_set_factor (CHOPGIMP_VALUE_FIELD (w), 100.0);
++      chopgimp_value_field_set_title (CHOPGIMP_VALUE_FIELD (w), title);
++      gtk_widget_set_visible (w, TRUE);
++    }
++
++  return w;
++}
++
++/*  ChopGimp: Photoshop-like color drop-down for fill / stroke / text color:
++ *  « None », recent colors, a swatch grid and the full color picker.
++ */
++#define CHOPGIMP_PALETTE "ChopGimp — Nuancier"
++
++typedef struct
++{
++  Gimp        *gimp;
++  GObject     *options;
++  gchar       *prop;
++  const gchar *enable_prop;
++  const gchar *style_prop;    /* fill/stroke-custom-style (path tool) */
++  const gchar *pattern_prop;  /* fill/stroke-pattern      (path tool) */
++  GtkWidget   *popover;
++  GtkWidget   *dialog_button;
++  GtkWidget   *link;          /* ◆ (3.27.2: the paint follows a global color) */
++} ColorPop;
++
++#define CHOPGIMP_GLOBAL_HOOKS "chopgimp-global-color-hooks"
++
++void
++chopgimp_options_bar_set_global_hooks (GObject                        *options,
++                                       const ChopGimpGlobalColorHooks *hooks)
++{
++  g_return_if_fail (G_IS_OBJECT (options));
++
++  g_object_set_data (options, CHOPGIMP_GLOBAL_HOOKS, (gpointer) hooks);
++}
++
++static const ChopGimpGlobalColorHooks *
++colorpop_hooks (ColorPop *cp)
++{
++  if (! chopgimp_vobjects_enabled ())
++    return NULL;
++
++  return g_object_get_data (cp->options, CHOPGIMP_GLOBAL_HOOKS);
++}
++
++/*  the ◆ next to the swatch  */
++static void
++colorpop_update_link (GtkWidget *link)
++{
++  ColorPop                       *cp    = g_object_get_data (G_OBJECT (link), "chopgimp-colorpop");
++  const ChopGimpGlobalColorHooks *hooks = cp ? colorpop_hooks (cp) : NULL;
++  GimpImage                      *image = hooks ? hooks->get_image (cp->options) : NULL;
++  const gchar                    *id    = image ? hooks->get_global (cp->options, cp->prop) : NULL;
++  const ChopGimpVColor           *c     = id ? chopgimp_vcolors_lookup (image, id) : NULL;
++
++  gtk_widget_set_visible (link, c != NULL);
++
++  if (c)
++    {
++      gchar *tip = g_strdup_printf (_("Couleur globale « %s » : la modifier dans le "
++                                      "panneau Couleurs globales change tous les "
++                                      "objets liés"), c->name);
++
++      gimp_help_set_help_data (link, tip, NULL);
++      g_free (tip);
++    }
++}
++
++static void
++colorpop_global_clicked (GtkWidget *button,
++                         ColorPop  *cp)
++{
++  const ChopGimpGlobalColorHooks *hooks = colorpop_hooks (cp);
++  const gchar                    *id    = g_object_get_data (G_OBJECT (button), "chopgimp-global");
++
++  gtk_popover_popdown (GTK_POPOVER (cp->popover));
++
++  if (hooks)
++    hooks->set_global (cp->options, cp->prop, id);
++
++  if (cp->link)
++    colorpop_update_link (cp->link);
++}
++
++static void
++colorpop_global_new_clicked (GtkWidget *button,
++                             ColorPop  *cp)
++{
++  const ChopGimpGlobalColorHooks *hooks = colorpop_hooks (cp);
++  GimpImage                      *image = hooks ? hooks->get_image (cp->options) : NULL;
++  GeglColor                      *color = NULL;
++  GList                          *list;
++  gchar                          *name;
++  gchar                          *id;
++
++  gtk_popover_popdown (GTK_POPOVER (cp->popover));
++
++  if (! image)
++    return;
++
++  g_object_get (cp->options, cp->prop, &color, NULL);
++  if (! color)
++    color = gegl_color_new ("black");
++
++  list = chopgimp_vcolors_list (image);
++  name = g_strdup_printf (_("Couleur globale %d"), g_list_length (list) + 1);
++  g_list_free (list);
++
++  gimp_image_undo_group_start (image, GIMP_UNDO_GROUP_MISC, _("Nouvelle couleur globale"));
++
++  id = chopgimp_vcolors_add (image, name, color, NULL, TRUE);
++  if (id)
++    hooks->set_global (cp->options, cp->prop, id);
++
++  gimp_image_undo_group_end (image);
++  gimp_image_flush (image);
++
++  g_free (id);
++  g_free (name);
++  g_object_unref (color);
++
++  if (cp->link)
++    colorpop_update_link (cp->link);
++}
++
++/*  « Couleurs globales »: the global colors of the image  */
++static void
++colorpop_build_globals (ColorPop  *cp,
++                        GtkWidget *vbox)
++{
++  const ChopGimpGlobalColorHooks *hooks = colorpop_hooks (cp);
++  GimpImage                      *image = hooks ? hooks->get_image (cp->options) : NULL;
++  const gchar                    *cur;
++  GtkWidget                      *label;
++  GtkWidget                      *grid;
++  GtkWidget                      *row;
++  GtkWidget                      *button;
++  GList                          *colors;
++  gint                            i;
++
++  if (! image)
++    return;
++
++  cur    = hooks->get_global (cp->options, cp->prop);
++  colors = chopgimp_vcolors_list (image);
++
++  label = gtk_label_new (_("Couleurs globales"));
++  gtk_widget_set_halign (label, GTK_ALIGN_START);
++  gtk_style_context_add_class (gtk_widget_get_style_context (label), "dim-label");
++  gtk_box_pack_start (GTK_BOX (vbox), label, FALSE, FALSE, 0);
++
++  grid = gtk_grid_new ();
++  gtk_box_pack_start (GTK_BOX (vbox), grid, FALSE, FALSE, 0);
++
++  i = 0;
++  for (GList *l = colors; l && i < 48; l = l->next, i++)
++    {
++      const ChopGimpVColor *c = l->data;
++
++      button = gtk_button_new ();
++      gtk_container_add (GTK_CONTAINER (button), chopgimp_global_swatch_new (c->color, 18));
++      gtk_button_set_relief (GTK_BUTTON (button),
++                             ! g_strcmp0 (c->id, cur) ? GTK_RELIEF_NORMAL : GTK_RELIEF_NONE);
++      gtk_style_context_add_class (gtk_widget_get_style_context (button), "chopgimp-swatch");
++      gimp_help_set_help_data (button, c->name, NULL);
++      g_object_set_data_full (G_OBJECT (button), "chopgimp-global", g_strdup (c->id), g_free);
++      g_signal_connect (button, "clicked", G_CALLBACK (colorpop_global_clicked), cp);
++      gtk_grid_attach (GTK_GRID (grid), button, i % 12, i / 12, 1, 1);
++    }
++
++  row = gtk_box_new (GTK_ORIENTATION_HORIZONTAL, 4);
++  gtk_box_pack_start (GTK_BOX (vbox), row, FALSE, FALSE, 0);
++
++  button = gtk_button_new_with_label (_("＋ Nouvelle couleur globale"));
++  gimp_help_set_help_data (button, _("Faire de la couleur actuelle une couleur globale, "
++                                     "suivie par ce fond ou ce contour"), NULL);
++  g_signal_connect (button, "clicked", G_CALLBACK (colorpop_global_new_clicked), cp);
++  gtk_box_pack_start (GTK_BOX (row), button, FALSE, FALSE, 0);
++
++  if (cur)
++    {
++      button = gtk_button_new_with_label (_("Délier"));
++      gimp_help_set_help_data (button, _("Ne plus suivre la couleur globale (la couleur "
++                                         "reste)"), NULL);
++      g_signal_connect (button, "clicked", G_CALLBACK (colorpop_global_clicked), cp);
++      gtk_box_pack_start (GTK_BOX (row), button, FALSE, FALSE, 0);
++    }
++
++  g_list_free (colors);
++}
++
++static void
++colorpop_free (ColorPop *cp)
++{
++  if (cp->link)
++    {
++      g_object_set_data (G_OBJECT (cp->link), "chopgimp-colorpop", NULL);
++      g_object_remove_weak_pointer (G_OBJECT (cp->link), (gpointer *) &cp->link);
++    }
++
++  g_free (cp->prop);
++  g_free (cp);
++}
++
++static void
++colorpop_swatch_clicked (GtkWidget *button,
++                         ColorPop  *cp)
++{
++  GeglColor *color = g_object_get_data (G_OBJECT (button), "photogimp-color");
++
++  if (color)
++    {
++      g_object_set (cp->options, cp->prop, color, NULL);
++      if (cp->style_prop)
++        g_object_set (cp->options, cp->style_prop, GIMP_CUSTOM_STYLE_SOLID_COLOR, NULL);
++      if (cp->enable_prop)
++        g_object_set (cp->options, cp->enable_prop, TRUE, NULL);
++      gimp_palettes_add_color_history (cp->gimp, color);
++    }
++
++  gtk_popover_popdown (GTK_POPOVER (cp->popover));
++}
++
++static void
++colorpop_pattern_clicked (GtkWidget *button,
++                          ColorPop  *cp)
++{
++  GimpPattern *pattern = g_object_get_data (G_OBJECT (button), "photogimp-pattern");
++
++  if (pattern && cp->style_prop && cp->pattern_prop)
++    {
++      g_object_set (cp->options,
++                    cp->pattern_prop, pattern,
++                    cp->style_prop,   GIMP_CUSTOM_STYLE_PATTERN,
++                    NULL);
++      if (cp->enable_prop)
++        g_object_set (cp->options, cp->enable_prop, TRUE, NULL);
++    }
++
++  gtk_popover_popdown (GTK_POPOVER (cp->popover));
++}
++
++static void
++colorpop_none_clicked (GtkWidget *button,
++                       ColorPop  *cp)
++{
++  if (cp->enable_prop)
++    g_object_set (cp->options, cp->enable_prop, FALSE, NULL);
++
++  gtk_popover_popdown (GTK_POPOVER (cp->popover));
++}
++
++static void
++colorpop_picker_clicked (GtkWidget *button,
++                         ColorPop  *cp)
++{
++  gtk_popover_popdown (GTK_POPOVER (cp->popover));
++
++  if (cp->enable_prop)
++    g_object_set (cp->options, cp->enable_prop, TRUE, NULL);
++
++  gtk_button_clicked (GTK_BUTTON (cp->dialog_button));
++}
++
++static GtkWidget *
++colorpop_swatch (ColorPop  *cp,
++                 GeglColor *color,
++                 gint       size)
++{
++  GtkWidget *button = gtk_button_new ();
++  GtkWidget *area   = gimp_color_area_new (color, GIMP_COLOR_AREA_SMALL_CHECKS, 0);
++
++  gtk_widget_set_size_request (area, size, size);
++  gtk_container_add (GTK_CONTAINER (button), area);
++  gtk_button_set_relief (GTK_BUTTON (button), GTK_RELIEF_NONE);
++  gtk_style_context_add_class (gtk_widget_get_style_context (button), "chopgimp-swatch");
++  g_object_set_data_full (G_OBJECT (button), "photogimp-color",
++                          gegl_color_duplicate (color), g_object_unref);
++  g_signal_connect (button, "clicked", G_CALLBACK (colorpop_swatch_clicked), cp);
++
++  return button;
++}
++
++static void
++colorpop_build (GtkWidget *popover,
++                ColorPop  *cp)
++{
++  GtkWidget     *old = gtk_bin_get_child (GTK_BIN (popover));
++  GtkWidget     *vbox;
++  GtkWidget     *row;
++  GtkWidget     *grid;
++  GtkWidget     *button;
++  GimpPalette   *history;
++  GimpContainer *palettes;
++  GimpObject    *palette;
++  GList         *list;
++  gint           i;
++
++  if (old)
++    gtk_widget_destroy (old);
++
++  vbox = gtk_box_new (GTK_ORIENTATION_VERTICAL, 6);
++  gtk_container_set_border_width (GTK_CONTAINER (vbox), 8);
++
++  /*  « None » + recent colors  */
++  row = gtk_box_new (GTK_ORIENTATION_HORIZONTAL, 2);
++  gtk_box_pack_start (GTK_BOX (vbox), row, FALSE, FALSE, 0);
++
++  if (cp->enable_prop)
++    {
++      button = gtk_button_new_with_label (_("⊘ Aucune"));
++      gimp_help_set_help_data (button, _("Pas de couleur (désactive le fond ou le contour)"), NULL);
++      g_signal_connect (button, "clicked", G_CALLBACK (colorpop_none_clicked), cp);
++      gtk_box_pack_start (GTK_BOX (row), button, FALSE, FALSE, 4);
++    }
++
++  history = gimp_palettes_get_color_history (cp->gimp);
++  if (history)
++    for (list = gimp_palette_get_colors (history), i = 0; list && i < 10;
++         list = list->next, i++)
++      {
++        GimpPaletteEntry *entry = list->data;
++
++        gtk_box_pack_start (GTK_BOX (row), colorpop_swatch (cp, entry->color, 18),
++                            FALSE, FALSE, 0);
++      }
++
++  /*  swatch grid  */
++  palettes = gimp_data_factory_get_container (cp->gimp->palette_factory);
++  palette  = gimp_container_get_child_by_name (palettes, CHOPGIMP_PALETTE);
++  if (! palette)
++    palette = gimp_container_get_child_by_name (palettes, "Default");
++
++  if (palette)
++    {
++      gint cols = gimp_palette_get_columns (GIMP_PALETTE (palette));
++
++      if (cols <= 0)
++        cols = 12;
++
++      grid = gtk_grid_new ();
++      gtk_box_pack_start (GTK_BOX (vbox), grid, FALSE, FALSE, 0);
++
++      for (list = gimp_palette_get_colors (GIMP_PALETTE (palette)), i = 0;
++           list && i < 144; list = list->next, i++)
++        {
++          GimpPaletteEntry *entry = list->data;
++
++          gtk_grid_attach (GTK_GRID (grid), colorpop_swatch (cp, entry->color, 16),
++                           i % cols, i / cols, 1, 1);
++        }
++    }
++
++  /*  3.27.2: the global colors of the image  */
++  colorpop_build_globals (cp, vbox);
++
++  /*  patterns (fill / stroke of shapes)  */
++  if (cp->pattern_prop)
++    {
++      GimpContainer *patterns = gimp_data_factory_get_container (cp->gimp->pattern_factory);
++      GimpContext   *context  = gimp_get_user_context (cp->gimp);
++      GtkWidget     *label    = gtk_label_new (_("Motifs"));
++      GtkWidget     *pgrid    = gtk_grid_new ();
++      GList         *plist;
++
++      gtk_widget_set_halign (label, GTK_ALIGN_START);
++      gtk_style_context_add_class (gtk_widget_get_style_context (label), "dim-label");
++      gtk_box_pack_start (GTK_BOX (vbox), label, FALSE, FALSE, 0);
++      gtk_box_pack_start (GTK_BOX (vbox), pgrid, FALSE, FALSE, 0);
++
++      for (plist = GIMP_LIST (patterns)->queue->head, i = 0; plist && i < 36;
++           plist = plist->next, i++)
++        {
++          GtkWidget *pbutton = gtk_button_new ();
++          GtkWidget *view    = gimp_view_new (context, GIMP_VIEWABLE (plist->data), 24, 1, FALSE);
++
++          gtk_container_add (GTK_CONTAINER (pbutton), view);
++          gtk_button_set_relief (GTK_BUTTON (pbutton), GTK_RELIEF_NONE);
++          gtk_style_context_add_class (gtk_widget_get_style_context (pbutton), "chopgimp-swatch");
++          gimp_help_set_help_data (pbutton, gimp_object_get_name (plist->data), NULL);
++          g_object_set_data (G_OBJECT (pbutton), "photogimp-pattern", plist->data);
++          g_signal_connect (pbutton, "clicked", G_CALLBACK (colorpop_pattern_clicked), cp);
++          gtk_grid_attach (GTK_GRID (pgrid), pbutton, i % 12, i / 12, 1, 1);
++        }
++    }
++
++  /*  full color picker  */
++  button = gtk_button_new_with_label (_("Sélecteur de couleur…"));
++  g_signal_connect (button, "clicked", G_CALLBACK (colorpop_picker_clicked), cp);
++  gtk_box_pack_start (GTK_BOX (vbox), button, FALSE, FALSE, 0);
++
++  gtk_container_add (GTK_CONTAINER (popover), vbox);
++  gtk_widget_show_all (vbox);
++}
++
++static GtkWidget *
++gimp_options_bar_color_dropdown (GObject     *options,
++                                 const gchar *prop,
++                                 const gchar *title,
++                                 const gchar *label)
++{
++  ColorPop  *cp   = g_new0 (ColorPop, 1);
++  GtkWidget *hbox = gtk_box_new (GTK_ORIENTATION_HORIZONTAL, 2);
++  GtkWidget *menu = gtk_menu_button_new ();
++  GtkWidget *area;
++
++  /*  lot V2: also the object mode of the bar (not a context)  */
++  cp->gimp    = GIMP_IS_CONTEXT (options) ? GIMP_CONTEXT (options)->gimp
++                                          : g_object_get_data (options, "gimp");
++  cp->options = options;
++  cp->prop    = g_strdup (prop);
++  if (! strcmp (prop, "fill-foreground"))
++    {
++      cp->enable_prop  = "enable-fill";
++      cp->style_prop   = "fill-custom-style";
++      cp->pattern_prop = "fill-pattern";
++    }
++  else if (! strcmp (prop, "stroke-foreground"))
++    {
++      cp->enable_prop  = "enable-stroke";
++      cp->style_prop   = "stroke-custom-style";
++      cp->pattern_prop = "stroke-pattern";
++    }
++
++  /*  hidden swatch button: opens GIMP's full color dialog  */
++  cp->dialog_button = gimp_prop_color_button_new (options, prop, title, TRUE,
++                                                  20, 20, GIMP_COLOR_AREA_SMALL_CHECKS);
++  gtk_box_pack_end (GTK_BOX (hbox), cp->dialog_button, FALSE, FALSE, 0);
++  gtk_widget_set_no_show_all (cp->dialog_button, TRUE);
++  gtk_widget_set_visible (cp->dialog_button, FALSE);
++
++  area = gimp_prop_color_area_new (options, prop, 34, 18, GIMP_COLOR_AREA_SMALL_CHECKS);
++  gtk_container_add (GTK_CONTAINER (menu), area);
++  gtk_widget_set_visible (area, TRUE);
++  gimp_help_set_help_data (menu, title, NULL);
++
++  cp->popover = gtk_popover_new (menu);
++  gtk_menu_button_set_popover (GTK_MENU_BUTTON (menu), cp->popover);
++  g_signal_connect (cp->popover, "show", G_CALLBACK (colorpop_build), cp);
++  g_object_set_data_full (G_OBJECT (menu), "photogimp-colorpop", cp,
++                          (GDestroyNotify) colorpop_free);
++
++  if (label)
++    {
++      GtkWidget *l = gtk_label_new (label);
++
++      gtk_style_context_add_class (gtk_widget_get_style_context (l), "dim-label");
++      gtk_box_pack_start (GTK_BOX (hbox), l, FALSE, FALSE, 2);
++      gtk_widget_set_visible (l, TRUE);
++    }
++
++  gtk_box_pack_start (GTK_BOX (hbox), menu, FALSE, FALSE, 0);
++  gtk_widget_set_visible (menu, TRUE);
++  gtk_widget_set_visible (hbox, TRUE);
++
++  /*  3.27.2: ◆ when the paint follows a global color  */
++  if (colorpop_hooks (cp))
++    {
++      const gchar *props[] = { prop, cp->enable_prop, cp->style_prop };
++
++      cp->link = gtk_label_new ("◆");
++      gtk_style_context_add_class (gtk_widget_get_style_context (cp->link),
++                                   "chopgimp-global-link");
++      g_object_set_data (G_OBJECT (cp->link), "chopgimp-colorpop", cp);
++      g_object_add_weak_pointer (G_OBJECT (cp->link), (gpointer *) &cp->link);
++      gtk_box_pack_start (GTK_BOX (hbox), cp->link, FALSE, FALSE, 0);
++      gtk_widget_set_no_show_all (cp->link, TRUE);
++
++      for (guint i = 0; i < G_N_ELEMENTS (props); i++)
++        if (props[i])
++          {
++            gchar *signal = g_strdup_printf ("notify::%s", props[i]);
++
++            g_signal_connect_object (options, signal,
++                                     G_CALLBACK (colorpop_update_link), cp->link,
++                                     G_CONNECT_SWAPPED);
++            g_free (signal);
++          }
++
++      colorpop_update_link (cp->link);
++    }
++
++  return hbox;
++}
++
++GtkWidget *
++chopgimp_options_bar_color_dropdown (GObject     *options,
++                                     const gchar *prop,
++                                     const gchar *title,
++                                     const gchar *label)
++{
++  g_return_val_if_fail (G_IS_OBJECT (options), NULL);
++  g_return_val_if_fail (prop != NULL, NULL);
++
++  return gimp_options_bar_color_dropdown (options, prop, title, label);
++}
++
++/*  ChopGimp: unit shown after the value  */
++static const gchar *
++gimp_options_bar_unit (GObject     *options,
++                       const gchar *prop)
++{
++  static const gchar *const px[] =
++  {
++    "brush-size", "size", "feather-radius", "stroke-width", "corner-radius", "brush-radius",
++    "average-radius", "effect-size", "stabilizer-length", "square-size",
++    /*  Pango letter_spacing attribute, in device units (pixels) whatever
++     *  the text unit (gimp_text_layout_apply_tags ())
++     */
++    "letter-spacing", NULL
++  };
++  static const gchar *const percent[] =
++  {
++    "flow", "exposure", "rate", "offset",
++    /*  warp: hardness / 100, spacing in % of the effect size  */
++    "effect-hardness", "effect-strength", "stroke-spacing", NULL
++  };
++  gint i;
++
++  /*  the line spacing is in the text unit, like the font size
++   *  (gimp_text_layout_new (): gimp_units_to_pixels (line_spacing, unit))
++   */
++  if ((! strcmp (prop, "font-size") || ! strcmp (prop, "line-spacing")) &&
++      g_object_class_find_property (G_OBJECT_GET_CLASS (options), "font-size-unit"))
++    {
++      GimpUnit    *unit = NULL;
++      const gchar *abbr = "px";
++
++      g_object_get (options, "font-size-unit", &unit, NULL);
++      if (unit)
++        {
++          abbr = gimp_unit_get_abbreviation (unit);
++          g_object_unref (unit);
++        }
++
++      return abbr;
++    }
++
++  if (strstr (prop, "angle"))
++    return "°";
++
++  for (i = 0; px[i]; i++)
++    if (! strcmp (prop, px[i]))
++      return "px";
++
++  for (i = 0; percent[i]; i++)
++    if (! strcmp (prop, percent[i]))
++      return "%";
++
++  return NULL;
++}
++
++static void
++gimp_options_bar_font_unit_changed (GObject            *options,
++                                    GParamSpec         *pspec,
++                                    ChopGimpValueField *field)
++{
++  const gchar *prop = g_object_get_data (G_OBJECT (field),
++                                         "chopgimp-options-bar-prop");
++
++  chopgimp_value_field_set_unit (field,
++                                 gimp_options_bar_unit (options,
++                                                        prop ? prop : "font-size"));
++}
++
++/*  ChopGimp: compact value field « Dureté [50 % ▾] » for a numeric option  */
++static GtkWidget *
++gimp_options_bar_value_field (GObject     *options,
++                              const gchar *prop,
++                              GParamSpec  *pspec)
++{
++  const gchar        *label = gimp_options_bar_label (prop);
++  const gchar        *unit  = gimp_options_bar_unit (options, prop);
++  const gchar        *nick  = g_param_spec_get_nick (pspec);
++  ChopGimpValueField *field;
++  GtkWidget          *w;
++  gdouble             lower = 0.0, upper = 0.0;
++
++  if (G_IS_PARAM_SPEC_DOUBLE (pspec))
++    {
++      lower = G_PARAM_SPEC_DOUBLE (pspec)->minimum;
++      upper = G_PARAM_SPEC_DOUBLE (pspec)->maximum;
++    }
++
++  /*  the brush preview stands for the label of the size  */
++  if (! strcmp (prop, "brush-size"))
++    label = NULL;
++  else if (! strcmp (prop, "font-size"))
++    label = NULL;
++  else if (! strcmp (prop, "letter-spacing"))
++    label = "VA";
++  else if (! strcmp (prop, "line-spacing"))
++    label = "↕";
++  else if (! label)
++    label = nick;
++
++  w = chopgimp_value_field_new (options, prop, label, NULL);
++  if (! w)
++    return NULL;
++
++  field = CHOPGIMP_VALUE_FIELD (w);
++
++  if (G_IS_PARAM_SPEC_DOUBLE (pspec) && lower == 0.0 && upper == 1.0)
++    {
++      /*  0..1 shown in %  */
++      chopgimp_value_field_set_factor (field, 100.0);
++      unit = "%";
++    }
++  else if (G_IS_PARAM_SPEC_DOUBLE (pspec) && upper - lower <= 10.0)
++    {
++      chopgimp_value_field_set_digits (field, 2);
++      chopgimp_value_field_set_increments (field, 0.01, 0.1);
++    }
++
++  chopgimp_value_field_set_unit (field, unit);
++
++  if (! strcmp (prop, "brush-size") || ! strcmp (prop, "font-size"))
++    {
++      chopgimp_value_field_set_scale_limits (field, 1.0, 1000.0);
++      chopgimp_value_field_set_gamma (field, 1.7);
++    }
++  else if (! strcmp (prop, "stroke-width"))
++    {
++      chopgimp_value_field_set_digits (field, 1);
++      chopgimp_value_field_set_scale_limits (field, 0.0, 100.0);
++    }
++  else if (! strcmp (prop, "letter-spacing"))
++    {
++      chopgimp_value_field_set_digits (field, 1);
++      chopgimp_value_field_set_scale_limits (field, -100.0, 100.0);
++    }
++  else if (! strcmp (prop, "line-spacing"))
++    {
++      chopgimp_value_field_set_digits (field, 1);
++      chopgimp_value_field_set_scale_limits (field, -50.0, 200.0);
++    }
++  else if (G_IS_PARAM_SPEC_DOUBLE (pspec) && upper - lower > 2000.0)
++    {
++      /*  huge ranges: a usable slider, typing goes beyond  */
++      if (lower >= 0.0)
++        {
++          chopgimp_value_field_set_scale_limits (field, lower, MAX (lower + 1.0, 1000.0));
++          chopgimp_value_field_set_gamma (field, 1.7);
++        }
++      else
++        {
++          chopgimp_value_field_set_scale_limits (field, -500.0, 500.0);
++        }
++    }
++
++  if (! strcmp (prop, "font-size") || ! strcmp (prop, "line-spacing"))
++    {
++      g_object_set_data_full (G_OBJECT (field), "chopgimp-options-bar-prop",
++                              g_strdup (prop), g_free);
++      g_signal_connect_object (options, "notify::font-size-unit",
++                               G_CALLBACK (gimp_options_bar_font_unit_changed),
++                               field, 0);
++    }
++
++  /*  popover title and tooltip: the full name  */
++  if (! strcmp (prop, "letter-spacing"))
++    nick = _("Approche");
++  else if (! strcmp (prop, "line-spacing"))
++    nick = _("Interlignage");
++  else if (! strcmp (prop, "font-size"))
++    nick = _("Taille de police");
++  else if (! strcmp (prop, "brush-size"))
++    nick = _("Taille");
++  else if (gimp_options_bar_label (prop))
++    nick = gimp_options_bar_label (prop);
++
++  chopgimp_value_field_set_title (field, nick);
++  if (g_param_spec_get_blurb (pspec))
++    gimp_help_set_help_data (w, g_param_spec_get_blurb (pspec), NULL);
++
++  gtk_widget_set_visible (w, TRUE);
++
++  return w;
++}
++
++/*  ChopGimp: wider font picker, the full font name shows  */
++static void
++gimp_options_bar_widen_entry (GtkWidget *widget,
++                              gpointer   width)
++{
++  if (GTK_IS_ENTRY (widget))
++    {
++      gtk_entry_set_width_chars (GTK_ENTRY (widget), 16);
++      gtk_widget_set_size_request (widget, GPOINTER_TO_INT (width), -1);
++    }
++  else if (GTK_IS_CONTAINER (widget))
++    {
++      gtk_container_foreach (GTK_CONTAINER (widget),
++                             gimp_options_bar_widen_entry, width);
++    }
++}
++
++/*  Cap the natural width of a combo box's text cells (the layer mode
++ *  box asked for the width of its longest mode name)
++ */
++static void
++gimp_options_bar_cap_combo_width (GtkWidget *widget,
++                                  gpointer   data)
++{
++  if (GTK_IS_COMBO_BOX (widget))
++    {
++      GList *cells = gtk_cell_layout_get_cells (GTK_CELL_LAYOUT (widget));
++      GList *list;
++
++      for (list = cells; list; list = g_list_next (list))
++        if (GTK_IS_CELL_RENDERER_TEXT (list->data))
++          g_object_set (list->data,
++                        "ellipsize",       PANGO_ELLIPSIZE_END,
++                        "max-width-chars", 12,
++                        NULL);
++
++      g_list_free (cells);
++    }
++  else if (GTK_IS_CONTAINER (widget))
++    {
++      gtk_container_foreach (GTK_CONTAINER (widget),
++                             gimp_options_bar_cap_combo_width, NULL);
++    }
++}
++
++/*  Build the bar item (widget, with its label if any) for @prop of
++ *  @options, or NULL. *title is set to the name shown in front of the
++ *  item in the « ⋯ » menu, for items without a label of their own.
++ */
++static GtkWidget *
++gimp_options_bar_widget (GObject      *options,
++                         const gchar  *prop,
++                         const gchar **title)
++{
++  GimpContext *context = GIMP_CONTEXT (options);
++  GParamSpec  *pspec;
++  GtkWidget   *w = NULL;
++
++  *title = NULL;
++
++  if (! strcmp (prop, "brush"))
++    {
++      *title = _("Brosse");
++      return gimp_prop_brush_box_new (NULL, context, NULL, 2,
++                                      "brush-view-type", "brush-view-size",
++                                      "gimp-brush-editor", _("Edit this brush"));
++    }
++  if (! strcmp (prop, "font"))
++    {
++      *title = _("Police");
++      w = gimp_prop_font_box_new (NULL, context, NULL, 2,
++                                  "font-view-type", "font-view-size");
++      gimp_options_bar_widen_entry (w, GINT_TO_POINTER (130));
++      return w;
++    }
++  if (! strcmp (prop, "gradient"))
++    {
++      *title = _("Dégradé");
++      return gimp_prop_gradient_box_new (NULL, context, NULL, 2,
++                                         "gradient-view-type", "gradient-view-size",
++                                         "gradient-reverse",
++                                         "gradient-blend-color-space",
++                                         "gimp-gradient-editor",
++                                         _("Edit this gradient"));
++    }
++
++  if (GIMP_IS_PATH_OPTIONS (options) && prop[0] == '@')
++    gimp_path_options_ensure_fill_stroke (GIMP_PATH_OPTIONS (options));
++
++  if (GIMP_IS_PATH_OPTIONS (options) && ! strcmp (prop, "@fill-opacity"))
++    return gimp_options_bar_sub_opacity (G_OBJECT (GIMP_PATH_OPTIONS (options)->fill_options),
++                                         _("Opacité"), _("Opacité du fond"));
++
++  if (GIMP_IS_PATH_OPTIONS (options) && ! strcmp (prop, "@stroke-opacity"))
++    return gimp_options_bar_sub_opacity (G_OBJECT (GIMP_PATH_OPTIONS (options)->stroke_options),
++                                         _("Opacité"), _("Opacité du contour"));
++
++  if (GIMP_IS_PATH_OPTIONS (options) && ! strcmp (prop, "@stroke-dash"))
++    {
++      *title = _("Tracé");
++      w = gtk_combo_box_text_new ();
++      gtk_combo_box_text_append_text (GTK_COMBO_BOX_TEXT (w), _("Trait plein"));
++      gtk_combo_box_text_append_text (GTK_COMBO_BOX_TEXT (w), _("Tirets"));
++      gtk_combo_box_text_append_text (GTK_COMBO_BOX_TEXT (w), _("Pointillés"));
++      gtk_combo_box_text_append_text (GTK_COMBO_BOX_TEXT (w), _("Tiret-point"));
++      gtk_combo_box_set_active (GTK_COMBO_BOX (w), 0);
++      g_signal_connect (w, "changed", G_CALLBACK (gimp_options_bar_dash_changed),
++                        GIMP_PATH_OPTIONS (options)->stroke_options);
++      return w;
++    }
++
++  if (! strcmp (prop, "@pathfinder"))
++    {
++      *title = _("Pathfinder");
++      return gimp_options_bar_action_row (chopgimp_pathfinder_buttons);
++    }
++
++  if (! strcmp (prop, "@distort"))
++    {
++      *title = _("Distorsion");
++      return gimp_options_bar_action_row (chopgimp_distort_buttons);
++    }
++
++  /*  3.27.6: outil Largeur  */
++  if (! strcmp (prop, "@widthprofile"))
++    {
++      *title = _("Profil de largeur");
++      return chopgimp_width_profile_box_new (GIMP_CONTEXT (options)->gimp);
++    }
++
++  if (! strcmp (prop, "@text"))
++    {
++      *title = _("Texte");
++      return gimp_options_bar_action_row (chopgimp_text_buttons);
++    }
++
++  if (! strcmp (prop, "@text-style"))
++    {
++      *title = _("Style");
++      return gimp_options_bar_text_style_row (GIMP_CONTEXT (options)->gimp);
++    }
++
++  if (! strcmp (prop, "@align"))
++    {
++      *title = _("Aligner");
++      return gimp_options_bar_align_row (GIMP_CONTEXT (options)->gimp);
++    }
++
++  /*  ChopGimp lot V2: the selected objects of a vector layer  */
++  if (! strcmp (prop, "@vobjects"))
++    return chopgimp_vobject_bar_new (GIMP_CONTEXT (options)->gimp,
++                                     gimp_options_bar_color_dropdown);
++
++  if (! strcmp (prop, "@pressure"))
++    return gimp_options_bar_pressure_combo (GIMP_CONTEXT (options)->gimp);
++
++  if (! strcmp (prop, "@nodes"))
++    {
++      *title = _("Nœuds");
++      return gimp_options_bar_action_row (chopgimp_nodes_buttons);
++    }
++
++  if (! strcmp (prop, "@vector-layer"))
++    {
++      w = gtk_button_new_with_label (_("Créer un calque vectoriel"));
++      gimp_help_set_help_data (w, _("Transforme le chemin tracé en forme vectorielle "
++                                    "modifiable (fond et contour)"), NULL);
++      g_signal_connect (w, "clicked",
++                        G_CALLBACK (gimp_options_bar_vector_layer_clicked), options);
++      return w;
++    }
++
++  pspec = g_object_class_find_property (G_OBJECT_GET_CLASS (options), prop);
++
++  if (! pspec)
++    return NULL;
++
++  if (GIMP_IS_PARAM_SPEC_COLOR (pspec) || GEGL_IS_PARAM_SPEC_COLOR (pspec))
++    {
++      const gchar *ctitle = g_param_spec_get_nick (pspec);
++
++      if (! strcmp (prop, "fill-foreground"))
++        ctitle = _("Couleur du fond");
++      else if (! strcmp (prop, "stroke-foreground"))
++        ctitle = _("Couleur du contour");
++      else if (! strcmp (prop, "foreground"))
++        ctitle = _("Couleur");
++
++      *title = (ctitle && *ctitle) ? ctitle : _("Color");
++
++      /*  text: the swatch alone, like Photoshop (tooltip « Couleur »)  */
++      return gimp_options_bar_color_dropdown (options, prop,
++                                              (ctitle && *ctitle) ? ctitle : _("Color"),
++                                              NULL);
++    }
++
++  if (G_IS_PARAM_SPEC_BOOLEAN (pspec) && gimp_options_bar_label (prop))
++    return gimp_prop_check_button_new (options, prop, gimp_options_bar_label (prop));
++
++  if (! strcmp (prop, "paint-mode"))
++    {
++      w = gimp_prop_layer_mode_box_new (options, prop,
++                                        GIMP_LAYER_MODE_CONTEXT_PAINT);
++      gimp_layer_mode_box_set_label (GIMP_LAYER_MODE_BOX (w), _("Mode"));
++      /*  the longest mode name made the box ~240 px wide  */
++      gimp_layer_mode_box_set_ellipsize (GIMP_LAYER_MODE_BOX (w),
++                                         PANGO_ELLIPSIZE_END);
++      gtk_container_foreach (GTK_CONTAINER (w),
++                             gimp_options_bar_cap_combo_width, NULL);
++      return w;
++    }
++
++  if (! strcmp (prop, "operation"))
++    {
++      *title = _("Mode de sélection");
++      return gimp_prop_enum_icon_box_new (options, prop, "gimp-selection", 0, 0);
++    }
++
++  if (! strcmp (prop, "justify"))
++    {
++      *title = _("Alignement");
++      return gimp_prop_enum_icon_box_new (options, prop, "format-justify", 0, 0);
++    }
++
++  if (! strcmp (prop, "type") && G_IS_PARAM_SPEC_ENUM (pspec) &&
++      g_object_class_find_property (G_OBJECT_GET_CLASS (options), "direction"))
++    {
++      *title = g_param_spec_get_nick (pspec);
++      return gimp_prop_enum_icon_box_new (options, prop, "gimp", 0, 0);
++    }
++
++  if (! strcmp (prop, "move-current"))
++    {
++      w = gimp_prop_boolean_combo_box_new (options, prop,
++                                           _("Déplacer le calque actif"),
++                                           _("Sélection automatique du calque"));
++      *title = _("Déplacer");
++      return w;
++    }
++
++  if (G_IS_PARAM_SPEC_BOOLEAN (pspec))
++    return gimp_prop_check_button_new (options, prop, NULL);
++
++  if (G_IS_PARAM_SPEC_ENUM (pspec))
++    {
++      w = gimp_prop_enum_combo_box_new (options, prop, 0, 0);
++
++      return gimp_options_bar_labeled (gimp_options_bar_label (prop) ?
++                                       gimp_options_bar_label (prop) :
++                                       g_param_spec_get_nick (pspec), w);
++    }
++
++  if (G_IS_PARAM_SPEC_DOUBLE (pspec) || G_IS_PARAM_SPEC_INT (pspec))
++    {
++      w = gimp_options_bar_value_field (options, prop, pspec);
++
++      if (w && (! strcmp (prop, "brush-size") || ! strcmp (prop, "font-size")))
++        *title = ! strcmp (prop, "brush-size") ? _("Taille") : _("Taille de police");
++
++      return w;
++    }
++
++  return NULL;
++}
++
++
++/*  Photoshop's two stylus buttons: « always use pressure for size » and
++ *  « always use pressure for opacity ». They map to GIMP dynamics:
++ *  none = dynamics off, size = "Pressure Size", opacity = "Pressure
++ *  Opacity", both = "Pression taille + opacité" (shipped by ChopGimp).
++ */
++#define DYN_SIZE    "Pressure Size"
++#define DYN_OPACITY "Pressure Opacity"
++#define DYN_BOTH    "Pression taille + opacité"
++
++typedef struct
++{
++  GObject   *options;
++  GtkWidget *size;
++  GtkWidget *opacity;
++  gboolean   updating;
++} PressureUI;
++
++static void
++pressure_sync (PressureUI *ui)
++{
++  GimpDynamics *dyn;
++  const gchar  *name = "";
++  gboolean      enabled;
++
++  if (! ui || ! ui->size || ! ui->opacity)
++    return;
++
++  g_object_get (ui->options, "dynamics-enabled", &enabled, NULL);
++  dyn = gimp_context_get_dynamics (GIMP_CONTEXT (ui->options));
++  if (dyn)
++    name = gimp_object_get_name (dyn);
++
++  ui->updating = TRUE;
++  gtk_toggle_button_set_active (GTK_TOGGLE_BUTTON (ui->size),
++                                enabled && (! strcmp (name, DYN_SIZE) ||
++                                            ! strcmp (name, DYN_BOTH)));
++  gtk_toggle_button_set_active (GTK_TOGGLE_BUTTON (ui->opacity),
++                                enabled && (! strcmp (name, DYN_OPACITY) ||
++                                            ! strcmp (name, DYN_BOTH)));
++  ui->updating = FALSE;
++}
++
++static void
++pressure_notify (GObject    *options,
++                 GParamSpec *pspec,
++                 GtkWidget  *button)
++{
++  pressure_sync (g_object_get_data (G_OBJECT (button), "pressure-ui"));
++}
++
++static void
++pressure_dynamics_changed (GimpContext  *context,
++                           GimpDynamics *dynamics,
++                           GtkWidget    *button)
++{
++  pressure_sync (g_object_get_data (G_OBJECT (button), "pressure-ui"));
++}
++
++static void
++pressure_toggled (GtkToggleButton *button,
++                  PressureUI      *ui)
++{
++  gboolean     size, opacity;
++  const gchar *name;
++
++  if (ui->updating || ! ui->size || ! ui->opacity)
++    return;
++
++  size    = gtk_toggle_button_get_active (GTK_TOGGLE_BUTTON (ui->size));
++  opacity = gtk_toggle_button_get_active (GTK_TOGGLE_BUTTON (ui->opacity));
++
++  if (! size && ! opacity)
++    {
++      g_object_set (ui->options, "dynamics-enabled", FALSE, NULL);
++      return;
++    }
++
++  name = (size && opacity) ? DYN_BOTH : (size ? DYN_SIZE : DYN_OPACITY);
++
++  {
++    Gimp          *gimp = GIMP_CONTEXT (ui->options)->gimp;
++    GimpContainer *container;
++    GimpObject    *dyn;
++
++    container = gimp_data_factory_get_container (gimp->dynamics_factory);
++    dyn       = gimp_container_get_child_by_name (container, name);
++
++    if (dyn)
++      gimp_context_set_dynamics (GIMP_CONTEXT (ui->options), GIMP_DYNAMICS (dyn));
++  }
++
++  g_object_set (ui->options, "dynamics-enabled", TRUE, NULL);
++}
++
++static GtkWidget *
++pressure_button (PressureUI  *ui,
++                 const gchar *icon,
++                 const gchar *tooltip)
++{
++  GtkWidget *b = gtk_toggle_button_new ();
++
++  gtk_container_add (GTK_CONTAINER (b),
++                     gtk_image_new_from_icon_name (icon, GTK_ICON_SIZE_SMALL_TOOLBAR));
++  gtk_widget_show_all (b);
++  gtk_button_set_relief (GTK_BUTTON (b), GTK_RELIEF_NONE);
++  gimp_help_set_help_data (b, tooltip, NULL);
++  g_object_set_data (G_OBJECT (b), "pressure-ui", ui);
++  g_signal_connect (b, "toggled", G_CALLBACK (pressure_toggled), ui);
++  g_signal_connect_object (ui->options, "notify::dynamics-enabled",
++                           G_CALLBACK (pressure_notify), b, 0);
++  g_signal_connect_object (ui->options, "dynamics-changed",
++                           G_CALLBACK (pressure_dynamics_changed), b, 0);
++  return b;
++}
++
++static void
++pressure_ui_free (PressureUI *ui)
++{
++  g_free (ui);
++}
++
++static void
++pressure_widget_destroyed (GtkWidget  *widget,
++                           PressureUI *ui)
++{
++  g_object_set_data (G_OBJECT (widget), "pressure-ui", NULL);
++
++  if (widget == ui->size)
++    ui->size = NULL;
++  if (widget == ui->opacity)
++    ui->opacity = NULL;
++}
++
++/*  ChopGimp: the bar never scrolls. Each option is an « item » (the
++ *  control with its label, and the stylus button next to the size and
++ *  the opacity); when the window is too narrow, the items of lowest
++ *  priority go into the « ⋯ » menu, and come back when there is room.
++ *
++ *  - the box of the bar reports a minimum width of 0, so it never
++ *    widens the window;
++ *  - in size-allocate, the children that would go past the end are
++ *    only hidden (child-visible), nothing is moved there;
++ *  - an idle then computes, from the natural widths, which items fit
++ *    (greedy: lowest priority, rightmost first) and moves them between
++ *    the bar and the menu. Items come back only when they fit with a
++ *    margin (BAR_HYSTERESIS): no back and forth at a given width, and a
++ *    second pass finds the same result and changes nothing (no loop).
++ */
++#define BAR_STATE_KEY   "chopgimp-bar-state"
++#define BAR_ROW_LABEL   "chopgimp-bar-row-label"
++#define BAR_HYSTERESIS  24
++
++typedef struct
++{
++  GtkWidget *widget;
++  gchar     *title;      /* name in front of it in « ⋯ », or NULL */
++  gint       priority;
++  gint       group;
++  gint       width;      /* natural width, measured in the bar */
++  gboolean   overflow;   /* currently in « ⋯ » */
++} BarItem;
++
++typedef struct
++{
++  GtkWidget *box;        /* tool icon and name, separators, items */
++  GtkWidget *more;       /* « ⋯ » */
++  GtkWidget *more_count;
++  GtkWidget *more_title;
++  GtkWidget *more_grid;
++  GtkWidget *more_sep;
++  GtkWidget *bolt;       /* « ⚡ » */
++  GPtrArray *items;      /* BarItem, in bar order */
++  GPtrArray *seps;       /* separator before group i */
++  gint       n_fixed;    /* children of box before the first item */
++  gint       avail;
++  guint      idle_id;
++} BarState;
++
++static void
++bar_item_free (BarItem *item)
++{
++  g_free (item->title);
++  g_free (item);
++}
++
++static void
++bar_state_free (BarState *st)
++{
++  if (st->idle_id)
++    g_source_remove (st->idle_id);
++
++  g_ptr_array_free (st->items, TRUE);
++  g_ptr_array_free (st->seps, TRUE);
++  g_free (st);
++}
++
++static gint
++bar_natural_width (GtkWidget *widget)
++{
++  gint natural = 0;
++
++  gtk_widget_get_preferred_width (widget, NULL, &natural);
++
++  return natural;
++}
++
++/*  separator before group @g (g >= 1): shown when this group and an
++ *  earlier one have items in the bar
++ */
++static gboolean
++bar_sep_visible (BarState       *st,
++                 const gboolean *overflow,
++                 gint            g)
++{
++  gboolean before = FALSE;
++  gboolean here   = FALSE;
++  guint    i;
++
++  for (i = 0; i < st->items->len; i++)
++    {
++      BarItem *item = g_ptr_array_index (st->items, i);
++
++      if (overflow[i])
++        continue;
++
++      if (item->group < g)
++        before = TRUE;
++      else if (item->group == g)
++        here = TRUE;
++    }
++
++  return before && here;
++}
++
++static gint
++bar_needed_width (BarState       *st,
++                  const gint     *widths,
++                  const gboolean *overflow,
++                  gint            fixed,
++                  gint            sep_width,
++                  gint            spacing)
++{
++  gint  total = fixed;
++  guint i;
++
++  for (i = 0; i < st->items->len; i++)
++    if (! overflow[i])
++      total += widths[i] + spacing;
++
++  for (i = 1; i < st->seps->len; i++)
++    if (bar_sep_visible (st, overflow, i))
++      total += sep_width + spacing;
++
++  return total - spacing;
++}
++
++/*  greedy: send to « ⋯ » the lowest priority item (rightmost at equal
++ *  priority) until the rest fits; returns the number of items sent
++ */
++static gint
++bar_compute (BarState   *st,
++             gint        avail,
++             const gint *widths,
++             gboolean   *overflow,
++             gint        fixed,
++             gint        sep_width,
++             gint        spacing)
++{
++  gint  count = 0;
++  guint i;
++
++  for (i = 0; i < st->items->len; i++)
++    overflow[i] = FALSE;
++
++  while (bar_needed_width (st, widths, overflow, fixed, sep_width, spacing) > avail)
++    {
++      gint victim = -1;
++
++      for (i = 0; i < st->items->len; i++)
++        {
++          BarItem *item = g_ptr_array_index (st->items, i);
++
++          if (overflow[i])
++            continue;
++
++          if (victim < 0 ||
++              item->priority <= ((BarItem *) g_ptr_array_index (st->items, victim))->priority)
++            victim = i;
++        }
++
++      if (victim < 0)
++        break;
++
++      overflow[victim] = TRUE;
++      count++;
++    }
++
++  return count;
++}
++
++/*  move the items between the bar and « ⋯ » as told by @overflow  */
++static void
++bar_apply (BarState       *st,
++           const gboolean *overflow)
++{
++  GList *children;
++  GList *iter;
++  gint   pos;
++  gint   row   = 0;
++  gint   count = 0;
++  guint  i;
++  guint  g;
++
++  /*  take out what moves (and everything in the menu, rebuilt below)  */
++  for (i = 0; i < st->items->len; i++)
++    {
++      BarItem *item = g_ptr_array_index (st->items, i);
++
++      if (item->overflow)
++        {
++          g_object_ref (item->widget);
++          gtk_container_remove (GTK_CONTAINER (st->more_grid), item->widget);
++        }
++      else if (overflow[i])
++        {
++          g_object_ref (item->widget);
++          gtk_container_remove (GTK_CONTAINER (st->box), item->widget);
++        }
++    }
++
++  children = gtk_container_get_children (GTK_CONTAINER (st->more_grid));
++  for (iter = children; iter; iter = iter->next)
++    gtk_widget_destroy (iter->data);
++  g_list_free (children);
++
++  /*  back into the bar  */
++  for (i = 0; i < st->items->len; i++)
++    {
++      BarItem *item = g_ptr_array_index (st->items, i);
++
++      if (item->overflow && ! overflow[i])
++        {
++          gtk_box_pack_start (GTK_BOX (st->box), item->widget, FALSE, FALSE, 0);
++          g_object_unref (item->widget);
++        }
++    }
++
++  /*  order of the bar and its separators  */
++  pos = st->n_fixed;
++  for (g = 0; g < MAX (st->seps->len, 1); g++)
++    {
++      if (g >= 1)
++        {
++          GtkWidget *sep = g_ptr_array_index (st->seps, g);
++
++          gtk_widget_set_visible (sep, bar_sep_visible (st, overflow, g));
++          gtk_box_reorder_child (GTK_BOX (st->box), sep, pos++);
++        }
++
++      for (i = 0; i < st->items->len; i++)
++        {
++          BarItem *item = g_ptr_array_index (st->items, i);
++
++          if (item->group == (gint) g && ! overflow[i])
++            gtk_box_reorder_child (GTK_BOX (st->box), item->widget, pos++);
++        }
++    }
++
++  /*  « ⋯ » menu: one row per item, its name in front when needed  */
++  for (i = 0; i < st->items->len; i++)
++    {
++      BarItem *item = g_ptr_array_index (st->items, i);
++
++      if (overflow[i])
++        {
++          if (item->title)
++            {
++              GtkWidget *label = gtk_label_new (item->title);
++
++              gtk_label_set_xalign (GTK_LABEL (label), 0.0);
++              gtk_style_context_add_class (gtk_widget_get_style_context (label),
++                                           "dim-label");
++              g_object_set_data (G_OBJECT (label), BAR_ROW_LABEL, GINT_TO_POINTER (1));
++              gtk_grid_attach (GTK_GRID (st->more_grid), label, 0, row, 1, 1);
++              gtk_widget_set_visible (label, TRUE);
++              gtk_grid_attach (GTK_GRID (st->more_grid), item->widget, 1, row, 1, 1);
++            }
++          else
++            {
++              gtk_grid_attach (GTK_GRID (st->more_grid), item->widget, 0, row, 2, 1);
++            }
++
++          g_object_unref (item->widget);   /*  ref taken when removed  */
++
++          row++;
++          count++;
++        }
++
++      item->overflow = overflow[i];
++    }
++
++  /*  « ⋯ 3 »  */
++  if (count > 0)
++    {
++      gchar *text = g_strdup_printf ("%d", count);
++
++      gtk_label_set_text (GTK_LABEL (st->more_count), text);
++      g_free (text);
++    }
++  gtk_widget_set_visible (st->more_count, count > 0);
++  gtk_widget_set_visible (st->more_title, count > 0);
++  gtk_widget_set_visible (st->more_grid,  count > 0);
++  gtk_widget_set_visible (st->more_sep,   count > 0);
++}
++
++static void
++bar_relayout (BarState *st,
++              gboolean  force)
++{
++  GList    *children;
++  GList    *iter;
++  gint     *widths;
++  gboolean *overflow;
++  gint      spacing;
++  gint      fixed     = 0;
++  gint      sep_width = 0;
++  gint      n_cur     = 0;
++  gint      n_new;
++  gboolean  changed   = force;
++  guint     i;
++  gint      k;
++
++  if (! st->box)
++    return;
++
++  /*  not allocated yet: everything stays in the bar for now  */
++  if (st->avail <= 1 && ! force)
++    return;
++
++  spacing  = gtk_box_get_spacing (GTK_BOX (st->box));
++  widths   = g_new0 (gint, MAX (st->items->len, 1));
++  overflow = g_new0 (gboolean, MAX (st->items->len, 1));
++
++  children = gtk_container_get_children (GTK_CONTAINER (st->box));
++  for (iter = children, k = 0; iter && k < st->n_fixed; iter = iter->next, k++)
++    fixed += bar_natural_width (iter->data) + spacing;
++  g_list_free (children);
++
++  if (st->seps->len > 0)
++    sep_width = bar_natural_width (g_ptr_array_index (st->seps, 0));
++
++  for (i = 0; i < st->items->len; i++)
++    {
++      BarItem *item = g_ptr_array_index (st->items, i);
++
++      /*  measured in the bar only: the style differs in the menu, and
++       *  a different width there could make an item go back and forth
++       */
++      if (! item->overflow || item->width <= 0)
++        item->width = bar_natural_width (item->widget);
++
++      widths[i] = item->width;
++      if (item->overflow)
++        n_cur++;
++    }
++
++  if (st->avail > 1)
++    {
++      n_new = bar_compute (st, st->avail, widths, overflow, fixed, sep_width, spacing);
++
++      /*  coming back into the bar: only with some room to spare  */
++      if (n_new < n_cur)
++        bar_compute (st, st->avail - BAR_HYSTERESIS, widths, overflow,
++                     fixed, sep_width, spacing);
++    }
++
++  for (i = 0; i < st->items->len; i++)
++    if (overflow[i] != ((BarItem *) g_ptr_array_index (st->items, i))->overflow)
++      changed = TRUE;
++
++  if (changed)
++    bar_apply (st, overflow);
++
++  g_free (widths);
++  g_free (overflow);
++}
++
++static gboolean
++bar_relayout_idle (gpointer data)
++{
++  BarState *st = data;
++
++  st->idle_id = 0;
++  bar_relayout (st, FALSE);
++
++  return G_SOURCE_REMOVE;
++}
++
++
++/*  the box of the bar: minimum width 0, children past the end hidden  */
++typedef GtkBox      ChopGimpBarBox;
++typedef GtkBoxClass ChopGimpBarBoxClass;
++
++GType chopgimp_bar_box_get_type (void);
++
++G_DEFINE_TYPE (ChopGimpBarBox, chopgimp_bar_box, GTK_TYPE_BOX)
++
++static void
++chopgimp_bar_box_get_preferred_width (GtkWidget *widget,
++                                      gint      *minimum,
++                                      gint      *natural)
++{
++  GTK_WIDGET_CLASS (chopgimp_bar_box_parent_class)->get_preferred_width (widget,
++                                                                         minimum,
++                                                                         natural);
++  /*  what does not fit goes into « ⋯ »  */
++  *minimum = 0;
++}
++
++static void
++chopgimp_bar_box_get_preferred_height_for_width (GtkWidget *widget,
++                                                 gint       width,
++                                                 gint      *minimum,
++                                                 gint      *natural)
++{
++  GTK_WIDGET_CLASS (chopgimp_bar_box_parent_class)->get_preferred_height (widget,
++                                                                          minimum,
++                                                                          natural);
++}
++
++static void
++chopgimp_bar_box_get_preferred_height_and_baseline_for_width (GtkWidget *widget,
++                                                              gint       width,
++                                                              gint      *minimum,
++                                                              gint      *natural,
++                                                              gint      *minimum_baseline,
++                                                              gint      *natural_baseline)
++{
++  GTK_WIDGET_CLASS (chopgimp_bar_box_parent_class)->get_preferred_height_and_baseline_for_width (widget, -1,
++                                                                                                minimum,
++                                                                                                natural,
++                                                                                                minimum_baseline,
++                                                                                                natural_baseline);
++}
++
++static void
++chopgimp_bar_box_size_allocate (GtkWidget     *widget,
++                                GtkAllocation *allocation)
++{
++  BarState      *st   = g_object_get_data (G_OBJECT (widget), BAR_STATE_KEY);
++  GtkAllocation  real = *allocation;
++  GList         *children;
++  GList         *iter;
++  gint           minimum;
++
++  /*  GtkBox never gets less than its true minimum...  */
++  GTK_WIDGET_CLASS (chopgimp_bar_box_parent_class)->get_preferred_width (widget,
++                                                                         &minimum,
++                                                                         NULL);
++  real.width = MAX (real.width, minimum);
++
++  GTK_WIDGET_CLASS (chopgimp_bar_box_parent_class)->size_allocate (widget, &real);
++
++  /*  ...and what goes past the end is hidden until the idle moves it  */
++  children = gtk_container_get_children (GTK_CONTAINER (widget));
++  for (iter = children; iter; iter = iter->next)
++    {
++      GtkWidget     *child = iter->data;
++      GtkAllocation  ca;
++      gboolean       fits;
++
++      if (! gtk_widget_get_visible (child))
++        continue;
++
++      gtk_widget_get_allocation (child, &ca);
++      fits = ca.x + ca.width <= allocation->x + allocation->width;
++
++      if (gtk_widget_get_child_visible (child) != fits)
++        gtk_widget_set_child_visible (child, fits);
++    }
++  g_list_free (children);
++
++  if (real.width != allocation->width)
++    {
++      gtk_widget_set_allocation (widget, allocation);
++      gtk_widget_set_clip (widget, allocation);
++    }
++
++  if (st)
++    {
++      st->avail = allocation->width;
++
++      if (! st->idle_id)
++        st->idle_id = g_idle_add_full (G_PRIORITY_HIGH_IDLE + 15,
++                                       bar_relayout_idle, st, NULL);
++    }
++}
++
++static void
++chopgimp_bar_box_class_init (ChopGimpBarBoxClass *klass)
++{
++  GtkWidgetClass *widget_class = GTK_WIDGET_CLASS (klass);
++
++  widget_class->get_preferred_width            = chopgimp_bar_box_get_preferred_width;
++  widget_class->get_preferred_height_for_width = chopgimp_bar_box_get_preferred_height_for_width;
++  widget_class->get_preferred_height_and_baseline_for_width =
++    chopgimp_bar_box_get_preferred_height_and_baseline_for_width;
++  widget_class->size_allocate                  = chopgimp_bar_box_size_allocate;
++}
++
++static void
++chopgimp_bar_box_init (ChopGimpBarBox *box)
++{
++}
++
++
++static void
++gimp_options_bar_add_item (BarState    *st,
++                           GtkWidget   *widget,
++                           const gchar *prop,
++                           const gchar *title,
++                           gint         group)
++{
++  BarItem *item = g_new0 (BarItem, 1);
++
++  item->widget   = widget;
++  item->title    = g_strdup (title);
++  item->priority = gimp_options_bar_priority (prop);
++  item->group    = group;
++
++  gtk_widget_set_halign (widget, GTK_ALIGN_START);
++  gtk_widget_set_valign (widget, GTK_ALIGN_CENTER);
++  gimp_options_bar_pack (st->box, widget);
++  g_ptr_array_add (st->items, item);
++}
++
++static void
++gimp_options_bar_tool_changed (GimpContext  *context,
++                               GimpToolInfo *tool_info,
++                               GtkWidget    *bar)
++{
++  BarState      *st = g_object_get_data (G_OBJECT (bar), BAR_STATE_KEY);
++  GtkWidget     *box;
++  GtkWidget     *icon;
++  GtkWidget     *label;
++  const BarSpec *spec;
++  GList         *children;
++  GList         *iter;
++  gint           i;
++
++  if (! st || ! st->box || ! tool_info)
++    return;
++
++  if (g_object_get_data (G_OBJECT (bar), BAR_KEY) == tool_info)
++    return;
++
++  g_object_set_data (G_OBJECT (bar), BAR_KEY, tool_info);
++
++  box = st->box;
++
++  children = gtk_container_get_children (GTK_CONTAINER (st->more_grid));
++  for (iter = children; iter; iter = iter->next)
++    gtk_widget_destroy (iter->data);
++  g_list_free (children);
++
++  children = gtk_container_get_children (GTK_CONTAINER (box));
++  for (iter = children; iter; iter = iter->next)
++    gtk_widget_destroy (iter->data);
++  g_list_free (children);
++
++  g_ptr_array_set_size (st->items, 0);
++  g_ptr_array_set_size (st->seps, 0);
++
++  /*  tool icon + name, like Photoshop's tool preset picker  */
++  icon = gtk_image_new_from_icon_name (gimp_viewable_get_icon_name (GIMP_VIEWABLE (tool_info)),
++                                       GTK_ICON_SIZE_LARGE_TOOLBAR);
++  gimp_options_bar_pack (box, icon);
++
++  label = gtk_label_new (tool_info->label);
++  gtk_style_context_add_class (gtk_widget_get_style_context (label), "photogimp-tool-name");
++  gimp_options_bar_pack (box, label);
++
++  st->n_fixed = 2;
++
++  spec = gimp_options_bar_get_spec (gimp_object_get_name (tool_info));
++
++  if (spec && tool_info->tool_options)
++    {
++      GObject    *options  = G_OBJECT (tool_info->tool_options);
++      PressureUI *pressure = NULL;
++      GtkWidget  *sep;
++      gint        group    = 0;
++
++      sep = gtk_separator_new (GTK_ORIENTATION_VERTICAL);
++      gimp_options_bar_pack (box, sep);
++      g_ptr_array_add (st->seps, sep);
++      st->n_fixed = 3;
++
++      if (g_object_class_find_property (G_OBJECT_GET_CLASS (options), "dynamics-enabled"))
++        {
++          pressure = g_new0 (PressureUI, 1);
++          pressure->options = options;
++          g_object_set_data_full (G_OBJECT (box), "pressure-ui", pressure,
++                                  (GDestroyNotify) pressure_ui_free);
++        }
++
++      for (i = 0; spec->props[i]; i++)
++        {
++          const gchar *title = NULL;
++          GtkWidget   *w;
++          GtkWidget   *stylus = NULL;
++
++          if (! strcmp (spec->props[i], "|"))
++            {
++              sep = gtk_separator_new (GTK_ORIENTATION_VERTICAL);
++              gimp_options_bar_pack (box, sep);
++              g_ptr_array_add (st->seps, sep);
++              group++;
++              continue;
++            }
++
++          w = gimp_options_bar_widget (options, spec->props[i], &title);
++
++          if (! w)
++            continue;
++
++          /*  Photoshop: stylus buttons next to opacity and size  */
++          if (pressure && ! strcmp (spec->props[i], "opacity"))
++            {
++              pressure->opacity = pressure_button (pressure, "chopgimp-pressure-opacity",
++                                                   _("Toujours utiliser la pression pour l'opacité"));
++              g_signal_connect (pressure->opacity, "destroy",
++                                G_CALLBACK (pressure_widget_destroyed), pressure);
++              stylus = pressure->opacity;
++            }
++          else if (pressure && ! strcmp (spec->props[i], "brush-size"))
++            {
++              pressure->size = pressure_button (pressure, "chopgimp-pressure-size",
++                                                _("Toujours utiliser la pression pour la taille"));
++              g_signal_connect (pressure->size, "destroy",
++                                G_CALLBACK (pressure_widget_destroyed), pressure);
++              stylus = pressure->size;
++            }
++
++          if (stylus)
++            {
++              GtkWidget *hbox = gtk_box_new (GTK_ORIENTATION_HORIZONTAL, 2);
++
++              gtk_box_pack_start (GTK_BOX (hbox), w, FALSE, FALSE, 0);
++              gtk_widget_set_visible (w, TRUE);
++              gtk_box_pack_start (GTK_BOX (hbox), stylus, FALSE, FALSE, 0);
++              gtk_widget_set_visible (stylus, TRUE);
++              w = hbox;
++            }
++
++          gimp_options_bar_add_item (st, w, spec->props[i], title, group);
++        }
++
++      if (pressure)
++        pressure_sync (pressure);
++    }
++
++  /*  initial placement with the current width (no frame with
++   *  everything in the bar)
++   */
++  bar_relayout (st, TRUE);
++}
++
++static void
++gimp_options_bar_more_clicked (GtkWidget *button,
++                               Gimp      *gimp)
++{
++  GimpUIManager *manager = menus_get_image_manager_singleton (gimp);
++  GtkWidget     *popover = gtk_widget_get_ancestor (button, GTK_TYPE_POPOVER);
++
++  if (popover)
++    gtk_popover_popdown (GTK_POPOVER (popover));
++
++  gimp_ui_manager_activate_action (manager, "dialogs", "dialogs-tool-options");
++}
++
++static void
++gimp_options_bar_destroy (GtkWidget *bar,
++                          BarState  *st)
++{
++  if (st->idle_id)
++    {
++      g_source_remove (st->idle_id);
++      st->idle_id = 0;
++    }
++
++  if (st->box)
++    g_object_set_data (G_OBJECT (st->box), BAR_STATE_KEY, NULL);
++
++  st->box = NULL;
++}
++
++/*  « ⚡ » is highlighted when one of its two settings is on  */
++static void
++gimp_options_bar_bolt_update (GObject    *config,
++                              GParamSpec *pspec,
++                              GtkWidget  *bolt)
++{
++  gboolean fast       = FALSE;
++  gboolean background = FALSE;
++
++  g_object_get (config,
++                "fast-preview",      &fast,
++                "background-render", &background,
++                NULL);
++
++  if (fast || background)
++    gtk_style_context_add_class (gtk_widget_get_style_context (bolt), "chopgimp-active");
++  else
++    gtk_style_context_remove_class (gtk_widget_get_style_context (bolt), "chopgimp-active");
++}
++
++static GtkWidget *
++gimp_options_bar_popover_title (const gchar *text)
++{
++  GtkWidget *label = gtk_label_new (text);
++
++  gtk_label_set_xalign (GTK_LABEL (label), 0.0);
++  gtk_style_context_add_class (gtk_widget_get_style_context (label),
++                               "chopgimp-popover-title");
++  return label;
++}
++
++GtkWidget *
++gimp_options_bar_new (Gimp *gimp)
++{
++  GimpContext *context;
++  BarState    *st;
++  GtkWidget   *bar;
++  GtkWidget   *box;
++  GtkWidget   *popover;
++  GtkWidget   *vbox;
++  GtkWidget   *hbox;
++  GtkWidget   *label;
++  GtkWidget   *button;
++
++  g_return_val_if_fail (GIMP_IS_GIMP (gimp), NULL);
++
++  context = gimp_get_user_context (gimp);
++
++  st        = g_new0 (BarState, 1);
++  st->items = g_ptr_array_new_with_free_func ((GDestroyNotify) bar_item_free);
++  st->seps  = g_ptr_array_new ();
++
++  bar = gtk_box_new (GTK_ORIENTATION_HORIZONTAL, 2);
++  gtk_widget_set_name (bar, "photogimp-options-bar");
++  gtk_container_set_border_width (GTK_CONTAINER (bar), 2);
++  g_object_set_data_full (G_OBJECT (bar), BAR_STATE_KEY, st,
++                          (GDestroyNotify) bar_state_free);
++  g_signal_connect (bar, "destroy",
++                    G_CALLBACK (gimp_options_bar_destroy), st);
++
++  /*  no scrolling: what does not fit goes into « ⋯ »  */
++  box = g_object_new (chopgimp_bar_box_get_type (),
++                      "orientation", GTK_ORIENTATION_HORIZONTAL,
++                      "spacing",     8,
++                      NULL);
++  g_object_set_data (G_OBJECT (box), BAR_STATE_KEY, st);
++  gtk_box_pack_start (GTK_BOX (bar), box, TRUE, TRUE, 0);
++  gtk_widget_set_visible (box, TRUE);
++  st->box = box;
++
++  /*  « ⚡ » : Aperçu rapide / Rendu en arrière-plan (display preferences,
++   *  whatever the tool)
++   */
++  st->bolt = gtk_menu_button_new ();
++  label = gtk_label_new ("⚡\xef\xb8\x8e");   /*  U+26A1 U+FE0E (text style)  */
++  gtk_container_add (GTK_CONTAINER (st->bolt), label);
++  gtk_widget_set_visible (label, TRUE);
++  gtk_button_set_relief (GTK_BUTTON (st->bolt), GTK_RELIEF_NONE);
++  gtk_widget_set_can_focus (st->bolt, FALSE);
++  gtk_style_context_add_class (gtk_widget_get_style_context (st->bolt),
++                               "chopgimp-bar-menu");
++  gimp_help_set_help_data (st->bolt, _("Rendu : Aperçu rapide, Rendu en arrière-plan"),
++                           NULL);
++
++  popover = gtk_popover_new (st->bolt);
++  gtk_menu_button_set_popover (GTK_MENU_BUTTON (st->bolt), popover);
++
++  vbox = gtk_box_new (GTK_ORIENTATION_VERTICAL, 4);
++  gtk_container_set_border_width (GTK_CONTAINER (vbox), 6);
++  gtk_container_add (GTK_CONTAINER (popover), vbox);
++  gtk_box_pack_start (GTK_BOX (vbox), gimp_options_bar_popover_title (_("Rendu")),
++                      FALSE, FALSE, 0);
++
++  button = gimp_prop_check_button_new (G_OBJECT (gimp->config),
++                                       "fast-preview",
++                                       _("Aperçu rapide"));
++  gimp_help_set_help_data (button,
++                           _("Aperçu rapide pendant les actions : pendant "
++                             "qu'on modifie l'image, la partie visible est "
++                             "calculée d'abord, par petites tranches qui "
++                             "laissent le pointeur fluide ; le reste est "
++                             "calculé dès que les modifications s'arrêtent ; "
++                             "pendant l'action, les zones modifiées sont "
++                             "d'abord montrées en basse résolution "
++                             "(brouillon), puis affinées. "
++                             "Le rendu final est identique."),
++                           NULL);
++  gtk_box_pack_start (GTK_BOX (vbox), button, FALSE, FALSE, 0);
++
++  button = gimp_prop_check_button_new (G_OBJECT (gimp->config),
++                                       "background-render",
++                                       _("Rendu en arrière-plan"));
++  gimp_help_set_help_data (button,
++                           _("Rendu en arrière-plan : l'image est calculée "
++                             "dans un fil d'exécution à part, l'interface "
++                             "ne bloque plus sur les images lourdes. "
++                             "Expérimental (désactivable aussi par "
++                             "CHOPGIMP_NO_THREADED_RENDER=1). "
++                             "Le rendu final est identique."),
++                           NULL);
++  gtk_box_pack_start (GTK_BOX (vbox), button, FALSE, FALSE, 0);
++  gtk_widget_show_all (vbox);
++
++  g_signal_connect_object (gimp->config, "notify::fast-preview",
++                           G_CALLBACK (gimp_options_bar_bolt_update), st->bolt, 0);
++  g_signal_connect_object (gimp->config, "notify::background-render",
++                           G_CALLBACK (gimp_options_bar_bolt_update), st->bolt, 0);
++  gimp_options_bar_bolt_update (G_OBJECT (gimp->config), NULL, st->bolt);
++
++  gtk_box_pack_end (GTK_BOX (bar), st->bolt, FALSE, FALSE, 0);
++  gtk_widget_set_visible (st->bolt, TRUE);
++
++  /*  « ⋯ » : the options that do not fit, and the whole Tool Options  */
++  st->more = gtk_menu_button_new ();
++  hbox = gtk_box_new (GTK_ORIENTATION_HORIZONTAL, 3);
++  gtk_container_add (GTK_CONTAINER (st->more), hbox);
++  gtk_box_pack_start (GTK_BOX (hbox), gtk_label_new ("⋯"), FALSE, FALSE, 0);
++  st->more_count = gtk_label_new (NULL);
++  gtk_style_context_add_class (gtk_widget_get_style_context (st->more_count),
++                               "chopgimp-more-count");
++  gtk_box_pack_start (GTK_BOX (hbox), st->more_count, FALSE, FALSE, 0);
++  gtk_widget_show_all (hbox);
++  gtk_widget_set_visible (st->more_count, FALSE);
++  gtk_button_set_relief (GTK_BUTTON (st->more), GTK_RELIEF_NONE);
++  gtk_widget_set_can_focus (st->more, FALSE);
++  gtk_style_context_add_class (gtk_widget_get_style_context (st->more),
++                               "chopgimp-bar-menu");
++  gimp_help_set_help_data (st->more, _("Autres réglages"), NULL);
++
++  popover = gtk_popover_new (st->more);
++  gtk_style_context_add_class (gtk_widget_get_style_context (popover),
++                               "chopgimp-more-popover");
++  gtk_menu_button_set_popover (GTK_MENU_BUTTON (st->more), popover);
++
++  vbox = gtk_box_new (GTK_ORIENTATION_VERTICAL, 6);
++  gtk_container_set_border_width (GTK_CONTAINER (vbox), 6);
++  gtk_container_add (GTK_CONTAINER (popover), vbox);
++
++  st->more_title = gimp_options_bar_popover_title (_("Autres réglages"));
++  gtk_box_pack_start (GTK_BOX (vbox), st->more_title, FALSE, FALSE, 0);
++
++  st->more_grid = gtk_grid_new ();
++  gtk_grid_set_row_spacing (GTK_GRID (st->more_grid), 6);
++  gtk_grid_set_column_spacing (GTK_GRID (st->more_grid), 8);
++  gtk_box_pack_start (GTK_BOX (vbox), st->more_grid, FALSE, FALSE, 0);
++
++  st->more_sep = gtk_separator_new (GTK_ORIENTATION_HORIZONTAL);
++  gtk_box_pack_start (GTK_BOX (vbox), st->more_sep, FALSE, FALSE, 0);
++
++  button = gtk_button_new_with_label (_("Toutes les options de l'outil…"));
++  gtk_button_set_relief (GTK_BUTTON (button), GTK_RELIEF_NONE);
++  gtk_label_set_xalign (GTK_LABEL (gtk_bin_get_child (GTK_BIN (button))), 0.0);
++  gimp_help_set_help_data (button, _("Afficher toutes les options de l'outil"), NULL);
++  g_signal_connect (button, "clicked",
++                    G_CALLBACK (gimp_options_bar_more_clicked), gimp);
++  gtk_box_pack_start (GTK_BOX (vbox), button, FALSE, FALSE, 0);
++
++  gtk_widget_show_all (vbox);
++  gtk_widget_set_visible (st->more_title, FALSE);
++  gtk_widget_set_visible (st->more_grid,  FALSE);
++  gtk_widget_set_visible (st->more_sep,   FALSE);
++
++  gtk_box_pack_end (GTK_BOX (bar), st->more, FALSE, FALSE, 0);
++  gtk_widget_set_visible (st->more, TRUE);
++
++  g_signal_connect_object (context, "tool-changed",
++                           G_CALLBACK (gimp_options_bar_tool_changed),
++                           bar, 0);
++
++  gimp_options_bar_tool_changed (context, gimp_context_get_tool (context), bar);
++
++  return bar;
++}
+diff --git a/app/display/gimpoptionsbar.h b/app/display/gimpoptionsbar.h
+new file mode 100644
+index 0000000..be8a00f
+--- /dev/null
++++ b/app/display/gimpoptionsbar.h
+@@ -0,0 +1,45 @@
++/* GIMP - The GNU Image Manipulation Program
++ * gimpoptionsbar.h — PhotoGIMP Pro: Photoshop-like horizontal tool options bar
++ *
++ * This program is free software: you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation; either version 3 of the License, or
++ * (at your option) any later version.
++ */
++
++#pragma once
++
++GtkWidget * gimp_options_bar_new (Gimp *gimp);
++
++/*  ChopGimp 3.27.2: the color drop-down of the bar (none, recent colors,
++ *  swatches, patterns, color dialog) for the « Aspect » panel. @prop is
++ *  « fill-foreground » or « stroke-foreground »; @options must also have
++ *  the « enable- », « -custom-style » and « -pattern » properties of that
++ *  kind, and a « gimp » data when it is not a GimpContext.
++ */
++GtkWidget * chopgimp_options_bar_color_dropdown (GObject     *options,
++                                                 const gchar *prop,
++                                                 const gchar *title,
++                                                 const gchar *label);
++
++/*  ChopGimp 3.27.2 (lot V6 point 2): « Couleurs globales » in the color
++ *  drop-down. When @options carries these hooks (set before the drop-down
++ *  is made), its popover has a « Couleurs globales » row (a click links
++ *  the paint, « Nouvelle couleur globale » makes one from the current
++ *  color and links it, « Délier »), and a ◆ next to the swatch tells that
++ *  the paint follows a global color. @hooks must stay valid (static).
++ */
++typedef struct
++{
++  GimpImage   * (* get_image)  (GObject     *options);
++  /*  the global color followed by the paint of @prop, or NULL  */
++  const gchar * (* get_global) (GObject     *options,
++                                const gchar *prop);
++  /*  the paint of @prop follows @id (NULL: unlinked, keeps the color)  */
++  void          (* set_global) (GObject     *options,
++                                const gchar *prop,
++                                const gchar *id);
++} ChopGimpGlobalColorHooks;
++
++void        chopgimp_options_bar_set_global_hooks (GObject                        *options,
++                                                   const ChopGimpGlobalColorHooks *hooks);
+diff --git a/app/display/meson.build b/app/display/meson.build
+index c8450bf..63c772e 100644
+--- a/app/display/meson.build
++++ b/app/display/meson.build
+@@ -42,6 +42,11 @@ libappdisplay_sources = [
+   'gimpcanvasprogress.c',
+   'gimpcanvasproxygroup.c',
+   'gimpcanvasrectangle.c',
++  'chopgimp-canvasartboards.c',
++  'chopgimp-canvashighlight.c',
++  'chopgimp-canvastrace.c',
++  'chopgimp-statusbar-info.c',
++  'chopgimp-popup-palette.c',
+   'gimpcanvasrectangleguides.c',
+   'gimpcanvassamplepoint.c',
+   'gimpcanvastextcursor.c',
+@@ -86,6 +91,8 @@ libappdisplay_sources = [
+   'gimpdisplayshell.c',
+   'gimpmodifiersmanager.c',
+   'gimpimagewindow.c',
++  'gimpoptionsbar.c',
++  'chopgimp-vobjectbar.c',
+   'gimpmotionbuffer.c',
+   'gimpmultiwindowstrategy.c',
+   'gimpnavigationeditor.c',
+diff --git a/app/tools/gimppathoptions.c b/app/tools/gimppathoptions.c
+index 1995991..3a53aeb 100644
+--- a/app/tools/gimppathoptions.c
++++ b/app/tools/gimppathoptions.c
+@@ -68,7 +68,8 @@ enum
+   PROP_STROKE_CAP_STYLE,
+   PROP_STROKE_JOIN_STYLE,
+   PROP_STROKE_MITER_LIMIT,
+-  PROP_STROKE_DASH_OFFSET
++  PROP_STROKE_DASH_OFFSET,
++  PROP_ADD_TO_VECTOR_LAYER
+ };
+ 
+ static void      gimp_path_options_config_iface_init    (GimpConfigInterface *config_iface);
+@@ -145,6 +146,17 @@ gimp_path_options_class_init (GimpPathOptionsClass *klass)
+                             TRUE,
+                             GIMP_PARAM_STATIC_STRINGS);
+ 
++  /*  ChopGimp 3.27 lot V2: a new shape / path becomes an object of the
++   *  active vector layer instead of a new layer
++   */
++  GIMP_CONFIG_PROP_BOOLEAN (object_class, PROP_ADD_TO_VECTOR_LAYER,
++                            "add-to-vector-layer",
++                            "Ajouter au calque vectoriel actif",
++                            "Une nouvelle forme devient un objet du calque vectoriel "
++                            "sélectionné au lieu d'un nouveau calque",
++                            TRUE,
++                            GIMP_PARAM_STATIC_STRINGS);
++
+   GIMP_CONFIG_PROP_ENUM (object_class, PROP_FILL_STYLE,
+                          "fill-custom-style",
+                          NULL, NULL,
+@@ -290,6 +302,9 @@ gimp_path_options_set_property (GObject      *object,
+     case PROP_ENABLE_STROKE:
+       options->enable_stroke = g_value_get_boolean (value);
+       break;
++    case PROP_ADD_TO_VECTOR_LAYER:
++      options->add_to_vector_layer = g_value_get_boolean (value);
++      break;
+ 
+     case PROP_FILL_STYLE:
+       options->fill_style = g_value_get_enum (value);
+@@ -384,6 +399,9 @@ gimp_path_options_get_property (GObject    *object,
+     case PROP_ENABLE_STROKE:
+       g_value_set_boolean (value, options->enable_stroke);
+       break;
++    case PROP_ADD_TO_VECTOR_LAYER:
++      g_value_set_boolean (value, options->add_to_vector_layer);
++      break;
+ 
+     case PROP_FILL_STYLE:
+       g_value_set_enum (value, options->fill_style);
+@@ -521,6 +539,54 @@ button_append_modifier (GtkWidget       *button,
+   g_free (str);
+ }
+ 
++
++/*  ChopGimp: the fill and stroke options used for vector layers used to be
++ *  created only together with the Tool Options GUI. The options bar and the
++ *  Shape tool need them even when that GUI was never built.
++ */
++void
++gimp_path_options_ensure_fill_stroke (GimpPathOptions *options)
++{
++  g_return_if_fail (GIMP_IS_PATH_OPTIONS (options));
++
++  if (! options->fill_options)
++    {
++      options->fill_options =
++        gimp_fill_options_new (GIMP_CONTEXT (options)->gimp, NULL, FALSE);
++
++#define FILL_BIND(a)                                 \
++  g_object_bind_property (options, "fill-" #a,       \
++                          options->fill_options, #a, \
++                          G_BINDING_BIDIRECTIONAL | G_BINDING_SYNC_CREATE)
++      FILL_BIND (custom-style);
++      FILL_BIND (foreground);
++      FILL_BIND (pattern);
++#undef FILL_BIND
++    }
++
++  if (! options->stroke_options)
++    {
++      options->stroke_options =
++        gimp_stroke_options_new (GIMP_CONTEXT (options)->gimp, NULL, FALSE);
++
++#define STROKE_BIND(a)                                 \
++  g_object_bind_property (options, "stroke-" #a,       \
++                          options->stroke_options, #a, \
++                          G_BINDING_BIDIRECTIONAL | G_BINDING_SYNC_CREATE)
++      STROKE_BIND (custom-style);
++      STROKE_BIND (foreground);
++      STROKE_BIND (pattern);
++      STROKE_BIND (width);
++      STROKE_BIND (unit);
++      STROKE_BIND (cap-style);
++      STROKE_BIND (join-style);
++      STROKE_BIND (miter-limit);
++      STROKE_BIND (antialias);
++      STROKE_BIND (dash-offset);
++#undef STROKE_BIND
++    }
++}
++
+ GtkWidget *
+ gimp_path_options_gui (GimpToolOptions *tool_options)
+ {
+@@ -553,6 +619,10 @@ gimp_path_options_gui (GimpToolOptions *tool_options)
+   button = gimp_prop_check_button_new (config, "path-polygonal", NULL);
+   gtk_box_pack_start (GTK_BOX (vbox), button, FALSE, FALSE, 0);
+ 
++  /*  ChopGimp lot V2  */
++  button = gimp_prop_check_button_new (config, "add-to-vector-layer", NULL);
++  gtk_box_pack_start (GTK_BOX (vbox), button, FALSE, FALSE, 0);
++
+   str = g_strdup_printf (_("Path to Selection\n"
+                            "%s  Add\n"
+                            "%s  Subtract\n"
+@@ -588,17 +658,7 @@ gimp_path_options_gui (GimpToolOptions *tool_options)
+     GtkWidget *frame;
+     GtkWidget *fill_editor;
+ 
+-    options->fill_options =
+-      gimp_fill_options_new (GIMP_CONTEXT (options)->gimp,
+-                             NULL, FALSE);
+-
+-#define FILL_BIND(a)                                 \
+-  g_object_bind_property (options, "fill-" #a,       \
+-                          options->fill_options, #a, \
+-                          G_BINDING_BIDIRECTIONAL | G_BINDING_SYNC_CREATE)
+-    FILL_BIND (custom-style);
+-    FILL_BIND (foreground);
+-    FILL_BIND (pattern);
++    gimp_path_options_ensure_fill_stroke (options);
+ 
+     fill_editor = gimp_fill_editor_new (options->fill_options,
+                                         TRUE, TRUE);
+@@ -614,25 +674,6 @@ gimp_path_options_gui (GimpToolOptions *tool_options)
+     GtkWidget *frame;
+     GtkWidget *stroke_editor;
+ 
+-    options->stroke_options =
+-      gimp_stroke_options_new (GIMP_CONTEXT (options)->gimp,
+-                               NULL, FALSE);
+-
+-#define STROKE_BIND(a)                                 \
+-  g_object_bind_property (options, "stroke-" #a,       \
+-                          options->stroke_options, #a, \
+-                          G_BINDING_BIDIRECTIONAL | G_BINDING_SYNC_CREATE)
+-    STROKE_BIND (custom-style);
+-    STROKE_BIND (foreground);
+-    STROKE_BIND (pattern);
+-    STROKE_BIND (width);
+-    STROKE_BIND (unit);
+-    STROKE_BIND (cap-style);
+-    STROKE_BIND (join-style);
+-    STROKE_BIND (miter-limit);
+-    STROKE_BIND (antialias);
+-    STROKE_BIND (dash-offset);
+-
+     stroke_editor = gimp_stroke_editor_new (options->stroke_options, 72.0,
+                                             TRUE, TRUE);
+     gtk_widget_set_visible (stroke_editor, TRUE);
+diff --git a/app/tools/gimppathoptions.h b/app/tools/gimppathoptions.h
+index d81933b..5f99b95 100644
+--- a/app/tools/gimppathoptions.h
++++ b/app/tools/gimppathoptions.h
+@@ -41,6 +41,7 @@ struct _GimpPathOptions
+   /* vector layer */
+   gboolean           enable_fill;
+   gboolean           enable_stroke;
++  gboolean           add_to_vector_layer;   /* ChopGimp lot V2 */
+   GimpFillOptions   *fill_options;
+   GimpStrokeOptions *stroke_options;
+ 
+@@ -69,3 +70,5 @@ struct _GimpPathOptions
+ GType       gimp_path_options_get_type (void);
+ 
+ GtkWidget * gimp_path_options_gui      (GimpToolOptions *tool_options);
++
++void        gimp_path_options_ensure_fill_stroke (GimpPathOptions *options);
+diff --git a/app/widgets/chopgimp-value-field.c b/app/widgets/chopgimp-value-field.c
+new file mode 100644
+index 0000000..40352e1
+--- /dev/null
++++ b/app/widgets/chopgimp-value-field.c
+@@ -0,0 +1,975 @@
++/* GIMP - The GNU Image Manipulation Program
++ * Copyright (C) 1995 Spencer Kimball and Peter Mattis
++ *
++ * chopgimp-value-field.c — ChopGimp: compact value field of the options bar
++ * Copyright (C) 2026 ChopGimp
++ *
++ * This program is free software: you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation; either version 3 of the License, or
++ * (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License
++ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
++ */
++
++/*  Photoshop-like compact field bound to a numeric property:
++ *
++ *    Dureté [ 50 % ▾ ]
++ *
++ *  - dragging the label (↔ pointer) scrubs the value, Shift = fine (× 0.1),
++ *    the slider range being mapped over SCRUB_SPAN pixels;
++ *  - the number can be typed (Enter / focus out), the wheel and the
++ *    Up / Down keys change it (Shift = × 10, Page Up / Down = page);
++ *  - « ▾ » opens a popover with a thin slider, live; Escape closes it.
++ *
++ *  Like GimpSpinScale it knows a display factor (× 100 for 0..1
++ *  properties shown in %), scale limits and a gamma for the slider
++ *  (non-linear mapping, e.g. 1.7 for the brush size).
++ */
++
++#include "config.h"
++
++#include <math.h>
++#include <string.h>
++
++#include <gegl.h>
++#include <gtk/gtk.h>
++#include <gdk/gdkkeysyms.h>
++
++#include "libgimpwidgets/gimpwidgets.h"
++#include "libgimpwidgets/gimpeevl-private.h"
++
++#include "widgets-types.h"
++
++#include "chopgimp-value-field.h"
++
++
++#define SCRUB_SPAN 300.0   /* pixels for the whole slider range */
++
++
++struct _ChopGimpValueField
++{
++  GtkBox      parent_instance;
++
++  GObject    *config;
++  gchar      *property;
++  GParamSpec *pspec;
++  gchar      *title;
++
++  gdouble     factor;
++  gint        digits;
++  gdouble     step;
++  gdouble     page;
++  gdouble     lower;        /* display units (property × factor) */
++  gdouble     upper;
++  gboolean    has_limits;
++  gdouble     slider_lower;
++  gdouble     slider_upper;
++  gdouble     gamma;
++  gdouble     value;        /* display units */
++
++  GtkWidget  *label_box;
++  GtkWidget  *label;
++  GtkWidget  *frame;
++  GtkWidget  *entry;
++  GtkWidget  *unit;
++  GtkWidget  *arrow;
++  GtkWidget  *popover;
++  GtkWidget  *pop_title;
++  GtkWidget  *scale;
++  GtkWidget  *pop_value;
++
++  gboolean    updating;
++  gboolean    mixed;        /* 4.1.1: shows « mixte » */
++
++  gboolean    scrubbing;
++  gdouble     anchor_x;
++  gdouble     anchor_pos;
++  gboolean    anchor_fine;
++};
++
++
++static void     chopgimp_value_field_dispose  (GObject            *object);
++static void     chopgimp_value_field_finalize (GObject            *object);
++
++static void     value_field_sync              (ChopGimpValueField *field,
++                                               gboolean            sync_scale);
++
++
++G_DEFINE_TYPE (ChopGimpValueField, chopgimp_value_field, GTK_TYPE_BOX)
++
++#define parent_class chopgimp_value_field_parent_class
++
++
++static void
++chopgimp_value_field_class_init (ChopGimpValueFieldClass *klass)
++{
++  GObjectClass *object_class = G_OBJECT_CLASS (klass);
++
++  object_class->dispose  = chopgimp_value_field_dispose;
++  object_class->finalize = chopgimp_value_field_finalize;
++}
++
++static void
++chopgimp_value_field_init (ChopGimpValueField *field)
++{
++  field->factor = 1.0;
++  field->step   = 1.0;
++  field->page   = 10.0;
++  field->gamma  = 1.0;
++}
++
++static void
++chopgimp_value_field_dispose (GObject *object)
++{
++  ChopGimpValueField *field = CHOPGIMP_VALUE_FIELD (object);
++
++  if (field->popover)
++    {
++      GtkWidget *popover = field->popover;
++
++      field->popover   = NULL;
++      field->scale     = NULL;
++      field->pop_value = NULL;
++      field->pop_title = NULL;
++      gtk_widget_destroy (popover);
++    }
++
++  field->entry = NULL;
++  field->unit  = NULL;
++
++  G_OBJECT_CLASS (parent_class)->dispose (object);
++}
++
++static void
++chopgimp_value_field_finalize (GObject *object)
++{
++  ChopGimpValueField *field = CHOPGIMP_VALUE_FIELD (object);
++
++  g_clear_object (&field->config);
++  g_clear_pointer (&field->property, g_free);
++  g_clear_pointer (&field->title, g_free);
++
++  G_OBJECT_CLASS (parent_class)->finalize (object);
++}
++
++
++/*  value <-> property  */
++
++static gdouble
++value_field_get_property (ChopGimpValueField *field)
++{
++  GValue  v = G_VALUE_INIT;
++  gdouble d = 0.0;
++
++  g_value_init (&v, field->pspec->value_type);
++  g_object_get_property (field->config, field->property, &v);
++
++  switch (G_TYPE_FUNDAMENTAL (field->pspec->value_type))
++    {
++    case G_TYPE_DOUBLE: d = g_value_get_double (&v); break;
++    case G_TYPE_FLOAT:  d = g_value_get_float  (&v); break;
++    case G_TYPE_INT:    d = g_value_get_int    (&v); break;
++    case G_TYPE_UINT:   d = g_value_get_uint   (&v); break;
++    default: break;
++    }
++
++  g_value_unset (&v);
++
++  return d * field->factor;
++}
++
++static void
++value_field_set_property (ChopGimpValueField *field,
++                          gdouble             display)
++{
++  GValue  v = G_VALUE_INIT;
++  gdouble d = display / field->factor;
++
++  g_value_init (&v, field->pspec->value_type);
++
++  switch (G_TYPE_FUNDAMENTAL (field->pspec->value_type))
++    {
++    case G_TYPE_DOUBLE: g_value_set_double (&v, d);                  break;
++    case G_TYPE_FLOAT:  g_value_set_float  (&v, d);                  break;
++    case G_TYPE_INT:    g_value_set_int    (&v, (gint) floor (d + 0.5));  break;
++    case G_TYPE_UINT:   g_value_set_uint   (&v, (guint) floor (MAX (d, 0.0) + 0.5)); break;
++    default: break;
++    }
++
++  g_param_value_validate (field->pspec, &v);
++  g_object_set_property (field->config, field->property, &v);
++  g_value_unset (&v);
++}
++
++static gdouble
++value_field_round (ChopGimpValueField *field,
++                   gdouble             value)
++{
++  gdouble scale = pow (10.0, field->digits);
++
++  value = floor (value * scale + 0.5) / scale;
++
++  if (fabs (value) < 0.5 / scale)
++    value = 0.0;
++
++  return value;
++}
++
++static void
++value_field_slider_range (ChopGimpValueField *field,
++                          gdouble            *lo,
++                          gdouble            *hi)
++{
++  *lo = field->has_limits ? field->slider_lower : field->lower;
++  *hi = field->has_limits ? field->slider_upper : field->upper;
++
++  if (*hi <= *lo)
++    *hi = *lo + 1.0;
++}
++
++/*  slider position (0..1 inside the slider range) <-> value, with gamma  */
++static gdouble
++value_field_value_to_pos (ChopGimpValueField *field,
++                          gdouble             value)
++{
++  gdouble lo, hi, t;
++
++  value_field_slider_range (field, &lo, &hi);
++  t = (value - lo) / (hi - lo);
++
++  if (t <= 0.0)
++    return t;
++
++  return pow (t, 1.0 / field->gamma);
++}
++
++static gdouble
++value_field_pos_to_value (ChopGimpValueField *field,
++                          gdouble             pos)
++{
++  gdouble lo, hi;
++
++  value_field_slider_range (field, &lo, &hi);
++
++  if (pos <= 0.0)
++    return lo + pos * (hi - lo);
++
++  return lo + pow (pos, field->gamma) * (hi - lo);
++}
++
++static gchar *
++value_field_format (ChopGimpValueField *field,
++                    gdouble             value)
++{
++  gchar *text = g_strdup_printf ("%.*f", field->digits, value);
++
++  /*  « 2,50 » -> « 2,5 », « 3,00 » -> « 3 »  */
++  if (field->digits > 0 && (strchr (text, '.') || strchr (text, ',')))
++    {
++      gchar *end = text + strlen (text) - 1;
++
++      while (end > text && *end == '0')
++        *end-- = '\0';
++      if (*end == '.' || *end == ',')
++        *end = '\0';
++    }
++
++  return text;
++}
++
++static void
++value_field_set_value (ChopGimpValueField *field,
++                       gdouble             value,
++                       gboolean            sync_scale)
++{
++  value = value_field_round (field, CLAMP (value, field->lower, field->upper));
++
++  if (value != field->value || value != value_field_get_property (field))
++    {
++      field->updating = TRUE;
++      value_field_set_property (field, value);
++      field->updating = FALSE;
++    }
++
++  field->value = value_field_round (field, value_field_get_property (field));
++  value_field_sync (field, sync_scale);
++}
++
++static void
++value_field_sync (ChopGimpValueField *field,
++                  gboolean            sync_scale)
++{
++  gchar *text = field->mixed ? g_strdup ("mixte")
++                             : value_field_format (field, field->value);
++
++  if (field->entry)
++    {
++      gtk_entry_set_text (GTK_ENTRY (field->entry), text);
++      g_object_set_data (G_OBJECT (field->entry), "chopgimp-dirty", NULL);
++    }
++
++  if (field->pop_value)
++    {
++      const gchar *unit = field->unit ? gtk_label_get_text (GTK_LABEL (field->unit)) : "";
++      gchar       *full = g_strdup_printf ("%s %s", text, unit);
++
++      gtk_label_set_text (GTK_LABEL (field->pop_value), g_strstrip (full));
++      g_free (full);
++    }
++
++  if (sync_scale && field->scale)
++    {
++      gboolean old = field->updating;
++
++      field->updating = TRUE;
++      gtk_range_set_value (GTK_RANGE (field->scale),
++                           value_field_value_to_pos (field, field->value));
++      field->updating = old;
++    }
++
++  g_free (text);
++}
++
++static void
++value_field_notify (GObject            *config,
++                    GParamSpec         *pspec,
++                    ChopGimpValueField *field)
++{
++  if (field->updating || ! field->entry)
++    return;
++
++  field->value = value_field_round (field, value_field_get_property (field));
++  value_field_sync (field, TRUE);
++}
++
++
++/*  typed value  */
++
++/*  units are not converted here: every identifier is a dimensionless
++ *  factor of 1 ("2px*5" = 10), so GimpEevl only does the arithmetic
++ */
++static gboolean
++value_field_eevl_unit_resolver (const gchar      *identifier,
++                                GimpEevlQuantity *factor,
++                                gdouble          *offset,
++                                gpointer          data)
++{
++  factor->value     = 1.0;
++  factor->dimension = 0;
++  *offset           = 0.0;
++
++  return identifier == NULL                   ||
++         ! g_ascii_strcasecmp (identifier, "px") ||
++         ! g_ascii_strcasecmp (identifier, "pt");
++}
++
++/*  "2*5", "50+10", "100/3", "(1+2)*3" — the expression parser of
++ *  GimpSpinButton / GimpSizeEntry
++ */
++static gboolean
++value_field_evaluate (const gchar *text,
++                      gdouble     *value)
++{
++  GimpEevlOptions   options   = GIMP_EEVL_OPTIONS_INIT;
++  GimpEevlQuantity  result    = { 0.0, 0 };
++  const gchar      *error_pos = NULL;
++  GError           *error     = NULL;
++
++  if (! text || ! *text)
++    return FALSE;
++
++  options.unit_resolver_proc = value_field_eevl_unit_resolver;
++
++  if (! gimp_eevl_evaluate (text, &options, &result, &error_pos, &error))
++    {
++      g_clear_error (&error);
++      return FALSE;
++    }
++
++  if (! isfinite (result.value))
++    return FALSE;
++
++  *value = result.value;
++
++  return TRUE;
++}
++
++static void
++value_field_commit (ChopGimpValueField *field)
++{
++  gchar   *text;
++  gchar   *p;
++  gchar   *end;
++  gdouble  value;
++
++  if (! field->entry ||
++      ! g_object_get_data (G_OBJECT (field->entry), "chopgimp-dirty"))
++    return;
++
++  text = g_strdup (gtk_entry_get_text (GTK_ENTRY (field->entry)));
++
++  for (p = text; *p; p++)
++    if (*p == ',')
++      *p = '.';
++
++  g_strstrip (text);
++
++  /*  drop the unit typed or left after the number ("51 px", "50 %")  */
++  if (field->unit)
++    {
++      const gchar *unit = gtk_label_get_text (GTK_LABEL (field->unit));
++
++      if (unit && *unit && g_str_has_suffix (text, unit))
++        {
++          text[strlen (text) - strlen (unit)] = '\0';
++          g_strstrip (text);
++        }
++    }
++
++  if (value_field_evaluate (text, &value))
++    {
++      value_field_set_value (field, value, TRUE);
++    }
++  else
++    {
++      value = g_ascii_strtod (text, &end);
++
++      if (end == text)
++        value_field_sync (field, TRUE);       /*  not a number: revert  */
++      else
++        value_field_set_value (field, value, TRUE);
++    }
++
++  g_free (text);
++}
++
++static void
++value_field_nudge (ChopGimpValueField *field,
++                   gdouble             delta)
++{
++  value_field_commit (field);
++  value_field_set_value (field, field->value + delta, TRUE);
++}
++
++static void
++value_field_entry_changed (GtkEditable        *editable,
++                           ChopGimpValueField *field)
++{
++  g_object_set_data (G_OBJECT (editable), "chopgimp-dirty", GINT_TO_POINTER (1));
++}
++
++static void
++value_field_entry_activate (GtkEntry           *entry,
++                            ChopGimpValueField *field)
++{
++  value_field_commit (field);
++  gtk_editable_select_region (GTK_EDITABLE (entry), 0, -1);
++}
++
++static gboolean
++value_field_entry_focus_out (GtkWidget          *widget,
++                             GdkEventFocus      *event,
++                             ChopGimpValueField *field)
++{
++  value_field_commit (field);
++
++  return FALSE;
++}
++
++static gboolean
++value_field_entry_key_press (GtkWidget          *widget,
++                             GdkEventKey        *event,
++                             ChopGimpValueField *field)
++{
++  gdouble mult = (event->state & GDK_SHIFT_MASK) ? 10.0 : 1.0;
++
++  switch (event->keyval)
++    {
++    case GDK_KEY_Up:
++    case GDK_KEY_KP_Up:
++      value_field_nudge (field, field->step * mult);
++      return TRUE;
++
++    case GDK_KEY_Down:
++    case GDK_KEY_KP_Down:
++      value_field_nudge (field, -field->step * mult);
++      return TRUE;
++
++    case GDK_KEY_Page_Up:
++    case GDK_KEY_KP_Page_Up:
++      value_field_nudge (field, field->page);
++      return TRUE;
++
++    case GDK_KEY_Page_Down:
++    case GDK_KEY_KP_Page_Down:
++      value_field_nudge (field, -field->page);
++      return TRUE;
++
++    case GDK_KEY_Escape:
++      value_field_sync (field, TRUE);     /*  forget the typed text  */
++      gtk_editable_select_region (GTK_EDITABLE (widget), 0, -1);
++      return TRUE;
++
++    default:
++      break;
++    }
++
++  return FALSE;
++}
++
++static gboolean
++value_field_scroll (GtkWidget          *widget,
++                    GdkEventScroll     *event,
++                    ChopGimpValueField *field)
++{
++  gdouble mult = (event->state & GDK_SHIFT_MASK) ? 10.0 : 1.0;
++  gdouble dy   = 0.0;
++
++  switch (event->direction)
++    {
++    case GDK_SCROLL_UP:     dy = -1.0; break;
++    case GDK_SCROLL_DOWN:   dy =  1.0; break;
++    case GDK_SCROLL_SMOOTH: dy = event->delta_y; break;
++    default: return FALSE;
++    }
++
++  if (dy == 0.0)
++    return TRUE;
++
++  value_field_nudge (field, (dy < 0.0 ? 1.0 : -1.0) * field->step * mult);
++
++  return TRUE;
++}
++
++
++/*  label scrubbing  */
++
++static void
++value_field_label_realize (GtkWidget *widget,
++                           gpointer   data)
++{
++  GdkCursor *cursor = gdk_cursor_new_from_name (gtk_widget_get_display (widget),
++                                                "ew-resize");
++
++  if (cursor)
++    {
++      gdk_window_set_cursor (gtk_widget_get_window (widget), cursor);
++      g_object_unref (cursor);
++    }
++}
++
++static gboolean
++value_field_label_press (GtkWidget          *widget,
++                         GdkEventButton     *event,
++                         ChopGimpValueField *field)
++{
++  if (event->button != 1 || event->type != GDK_BUTTON_PRESS)
++    return FALSE;
++
++  value_field_commit (field);
++
++  field->scrubbing   = TRUE;
++  field->anchor_x    = event->x_root;
++  field->anchor_pos  = value_field_value_to_pos (field, field->value);
++  field->anchor_fine = (event->state & GDK_SHIFT_MASK) != 0;
++
++  gtk_style_context_add_class (gtk_widget_get_style_context (widget), "scrubbing");
++
++  return TRUE;
++}
++
++static gboolean
++value_field_label_motion (GtkWidget          *widget,
++                          GdkEventMotion     *event,
++                          ChopGimpValueField *field)
++{
++  gboolean fine;
++  gdouble  pos;
++
++  if (! field->scrubbing)
++    return FALSE;
++
++  fine = (event->state & GDK_SHIFT_MASK) != 0;
++
++  /*  Shift pressed or released while dragging: start again from here  */
++  if (fine != field->anchor_fine)
++    {
++      field->anchor_x    = event->x_root;
++      field->anchor_pos  = value_field_value_to_pos (field, field->value);
++      field->anchor_fine = fine;
++    }
++
++  pos = field->anchor_pos +
++        (event->x_root - field->anchor_x) / SCRUB_SPAN * (fine ? 0.1 : 1.0);
++  pos = CLAMP (pos, MIN (0.0, field->anchor_pos), MAX (1.0, field->anchor_pos));
++
++  value_field_set_value (field, value_field_pos_to_value (field, pos), TRUE);
++
++  return TRUE;
++}
++
++static gboolean
++value_field_label_release (GtkWidget          *widget,
++                           GdkEventButton     *event,
++                           ChopGimpValueField *field)
++{
++  if (event->button != 1 || ! field->scrubbing)
++    return FALSE;
++
++  field->scrubbing = FALSE;
++  gtk_style_context_remove_class (gtk_widget_get_style_context (widget), "scrubbing");
++
++  return TRUE;
++}
++
++
++/*  slider popover  */
++
++static void
++value_field_scale_changed (GtkRange           *range,
++                           ChopGimpValueField *field)
++{
++  if (field->updating)
++    return;
++
++  /*  don't move the slider under the pointer (rounding)  */
++  value_field_set_value (field,
++                         value_field_pos_to_value (field, gtk_range_get_value (range)),
++                         FALSE);
++}
++
++static void
++value_field_build_popover (ChopGimpValueField *field)
++{
++  GtkWidget *vbox;
++  GtkWidget *hbox;
++
++  field->popover = gtk_popover_new (field->frame);
++  gtk_popover_set_position (GTK_POPOVER (field->popover), GTK_POS_BOTTOM);
++  gtk_style_context_add_class (gtk_widget_get_style_context (field->popover),
++                               "chopgimp-value-popover");
++
++  vbox = gtk_box_new (GTK_ORIENTATION_VERTICAL, 4);
++  gtk_container_set_border_width (GTK_CONTAINER (vbox), 4);
++  gtk_container_add (GTK_CONTAINER (field->popover), vbox);
++
++  field->pop_title = gtk_label_new (field->title);
++  gtk_label_set_xalign (GTK_LABEL (field->pop_title), 0.0);
++  gtk_style_context_add_class (gtk_widget_get_style_context (field->pop_title),
++                               "chopgimp-popover-title");
++  gtk_box_pack_start (GTK_BOX (vbox), field->pop_title, FALSE, FALSE, 0);
++
++  hbox = gtk_box_new (GTK_ORIENTATION_HORIZONTAL, 8);
++  gtk_box_pack_start (GTK_BOX (vbox), hbox, FALSE, FALSE, 0);
++
++  field->scale = gtk_scale_new_with_range (GTK_ORIENTATION_HORIZONTAL,
++                                           0.0, 1.0, 0.001);
++  gtk_range_set_increments (GTK_RANGE (field->scale), 0.01, 0.1);
++  gtk_scale_set_draw_value (GTK_SCALE (field->scale), FALSE);
++  gtk_widget_set_size_request (field->scale, 180, -1);
++  gtk_style_context_add_class (gtk_widget_get_style_context (field->scale),
++                               "chopgimp-thin-scale");
++  gtk_box_pack_start (GTK_BOX (hbox), field->scale, TRUE, TRUE, 0);
++
++  field->pop_value = gtk_label_new (NULL);
++  gtk_label_set_width_chars (GTK_LABEL (field->pop_value), 7);
++  gtk_label_set_xalign (GTK_LABEL (field->pop_value), 1.0);
++  gtk_style_context_add_class (gtk_widget_get_style_context (field->pop_value),
++                               "dim-label");
++  gtk_box_pack_start (GTK_BOX (hbox), field->pop_value, FALSE, FALSE, 0);
++
++  g_signal_connect (field->scale, "value-changed",
++                    G_CALLBACK (value_field_scale_changed), field);
++
++  gtk_widget_show_all (vbox);
++}
++
++static void
++value_field_arrow_clicked (GtkWidget          *button,
++                           ChopGimpValueField *field)
++{
++  value_field_commit (field);
++
++  if (! field->popover)
++    value_field_build_popover (field);
++
++  if (gtk_widget_get_visible (field->popover))
++    {
++      gtk_popover_popdown (GTK_POPOVER (field->popover));
++      return;
++    }
++
++  value_field_sync (field, TRUE);
++  gtk_popover_popup (GTK_POPOVER (field->popover));
++  gtk_widget_grab_focus (field->scale);
++}
++
++
++/*  public functions  */
++
++GtkWidget *
++chopgimp_value_field_new (GObject     *config,
++                          const gchar *property_name,
++                          const gchar *label,
++                          const gchar *unit)
++{
++  ChopGimpValueField *field;
++  GParamSpec         *pspec;
++  gchar              *signal;
++
++  g_return_val_if_fail (G_IS_OBJECT (config), NULL);
++  g_return_val_if_fail (property_name != NULL, NULL);
++
++  pspec = g_object_class_find_property (G_OBJECT_GET_CLASS (config), property_name);
++
++  if (! pspec)
++    return NULL;
++
++  field = g_object_new (CHOPGIMP_TYPE_VALUE_FIELD,
++                        "orientation", GTK_ORIENTATION_HORIZONTAL,
++                        "spacing",     4,
++                        NULL);
++
++  field->config   = g_object_ref (config);
++  field->property = g_strdup (property_name);
++  field->pspec    = pspec;
++  field->title    = g_strdup ((label && *label) ? label : g_param_spec_get_nick (pspec));
++
++  if (G_IS_PARAM_SPEC_DOUBLE (pspec))
++    {
++      field->lower = G_PARAM_SPEC_DOUBLE (pspec)->minimum;
++      field->upper = G_PARAM_SPEC_DOUBLE (pspec)->maximum;
++    }
++  else if (G_IS_PARAM_SPEC_FLOAT (pspec))
++    {
++      field->lower = G_PARAM_SPEC_FLOAT (pspec)->minimum;
++      field->upper = G_PARAM_SPEC_FLOAT (pspec)->maximum;
++    }
++  else if (G_IS_PARAM_SPEC_INT (pspec))
++    {
++      field->lower = G_PARAM_SPEC_INT (pspec)->minimum;
++      field->upper = G_PARAM_SPEC_INT (pspec)->maximum;
++    }
++  else if (G_IS_PARAM_SPEC_UINT (pspec))
++    {
++      field->lower = G_PARAM_SPEC_UINT (pspec)->minimum;
++      field->upper = G_PARAM_SPEC_UINT (pspec)->maximum;
++    }
++  else
++    {
++      g_warning ("%s: property '%s' is not numeric", G_STRFUNC, property_name);
++      g_object_ref_sink (field);
++      g_object_unref (field);
++      return NULL;
++    }
++
++  gtk_style_context_add_class (gtk_widget_get_style_context (GTK_WIDGET (field)),
++                               "chopgimp-value-field");
++
++  /*  label, drag it to change the value  */
++  field->label_box = gtk_event_box_new ();
++  gtk_event_box_set_visible_window (GTK_EVENT_BOX (field->label_box), TRUE);
++  gtk_widget_add_events (field->label_box,
++                         GDK_BUTTON_PRESS_MASK | GDK_BUTTON_RELEASE_MASK |
++                         GDK_POINTER_MOTION_MASK);
++  gtk_style_context_add_class (gtk_widget_get_style_context (field->label_box),
++                               "chopgimp-scrub-label");
++  gtk_box_pack_start (GTK_BOX (field), field->label_box, FALSE, FALSE, 0);
++
++  field->label = gtk_label_new (label);
++  gtk_style_context_add_class (gtk_widget_get_style_context (field->label), "dim-label");
++  gtk_container_add (GTK_CONTAINER (field->label_box), field->label);
++  gtk_widget_set_visible (field->label, TRUE);
++  gtk_widget_set_visible (field->label_box, label && *label);
++
++  g_signal_connect (field->label_box, "realize",
++                    G_CALLBACK (value_field_label_realize), NULL);
++  g_signal_connect (field->label_box, "button-press-event",
++                    G_CALLBACK (value_field_label_press), field);
++  g_signal_connect (field->label_box, "motion-notify-event",
++                    G_CALLBACK (value_field_label_motion), field);
++  g_signal_connect (field->label_box, "button-release-event",
++                    G_CALLBACK (value_field_label_release), field);
++
++  /*  [ 51 px ▾ ]  */
++  field->frame = gtk_box_new (GTK_ORIENTATION_HORIZONTAL, 0);
++  gtk_widget_set_valign (field->frame, GTK_ALIGN_CENTER);
++  gtk_style_context_add_class (gtk_widget_get_style_context (field->frame),
++                               "chopgimp-field");
++  gtk_box_pack_start (GTK_BOX (field), field->frame, FALSE, FALSE, 0);
++  gtk_widget_set_visible (field->frame, TRUE);
++
++  field->entry = gtk_entry_new ();
++  gtk_entry_set_has_frame (GTK_ENTRY (field->entry), FALSE);
++  gtk_entry_set_width_chars (GTK_ENTRY (field->entry), 4);
++  gtk_entry_set_max_width_chars (GTK_ENTRY (field->entry), 5);
++  gtk_entry_set_alignment (GTK_ENTRY (field->entry), 1.0);
++  gtk_entry_set_input_purpose (GTK_ENTRY (field->entry), GTK_INPUT_PURPOSE_NUMBER);
++  gtk_widget_add_events (field->entry, GDK_SCROLL_MASK | GDK_SMOOTH_SCROLL_MASK);
++  gtk_box_pack_start (GTK_BOX (field->frame), field->entry, FALSE, FALSE, 0);
++  gtk_widget_set_visible (field->entry, TRUE);
++
++  g_signal_connect (field->entry, "changed",
++                    G_CALLBACK (value_field_entry_changed), field);
++  g_signal_connect (field->entry, "activate",
++                    G_CALLBACK (value_field_entry_activate), field);
++  g_signal_connect (field->entry, "focus-out-event",
++                    G_CALLBACK (value_field_entry_focus_out), field);
++  g_signal_connect (field->entry, "key-press-event",
++                    G_CALLBACK (value_field_entry_key_press), field);
++  g_signal_connect (field->entry, "scroll-event",
++                    G_CALLBACK (value_field_scroll), field);
++
++  field->unit = gtk_label_new (unit);
++  gtk_style_context_add_class (gtk_widget_get_style_context (field->unit),
++                               "chopgimp-unit");
++  gtk_box_pack_start (GTK_BOX (field->frame), field->unit, FALSE, FALSE, 0);
++  gtk_widget_set_visible (field->unit, unit && *unit);
++
++  field->arrow = gtk_button_new_with_label ("▾");
++  gtk_button_set_relief (GTK_BUTTON (field->arrow), GTK_RELIEF_NONE);
++  gtk_widget_set_can_focus (field->arrow, FALSE);
++  gtk_style_context_add_class (gtk_widget_get_style_context (field->arrow),
++                               "chopgimp-field-arrow");
++  gimp_help_set_help_data (field->arrow, field->title, NULL);
++  gtk_box_pack_start (GTK_BOX (field->frame), field->arrow, FALSE, FALSE, 0);
++  gtk_widget_set_visible (field->arrow, TRUE);
++
++  g_signal_connect (field->arrow, "clicked",
++                    G_CALLBACK (value_field_arrow_clicked), field);
++
++  /*  the wheel works on the whole field  */
++  gtk_widget_add_events (field->arrow, GDK_SCROLL_MASK | GDK_SMOOTH_SCROLL_MASK);
++  g_signal_connect (field->arrow, "scroll-event",
++                    G_CALLBACK (value_field_scroll), field);
++
++  signal = g_strconcat ("notify::", property_name, NULL);
++  g_signal_connect_object (config, signal,
++                           G_CALLBACK (value_field_notify), field, 0);
++  g_free (signal);
++
++  field->value = value_field_round (field, value_field_get_property (field));
++  value_field_sync (field, TRUE);
++
++  return GTK_WIDGET (field);
++}
++
++/*  property × factor is shown (100 for 0..1 properties shown in %)  */
++void
++chopgimp_value_field_set_factor (ChopGimpValueField *field,
++                                 gdouble             factor)
++{
++  g_return_if_fail (CHOPGIMP_IS_VALUE_FIELD (field));
++  g_return_if_fail (factor > 0.0);
++
++  field->lower  = field->lower / field->factor * factor;
++  field->upper  = field->upper / field->factor * factor;
++  field->factor = factor;
++
++  field->value = value_field_round (field, value_field_get_property (field));
++  value_field_sync (field, TRUE);
++}
++
++void
++chopgimp_value_field_set_digits (ChopGimpValueField *field,
++                                 gint                digits)
++{
++  g_return_if_fail (CHOPGIMP_IS_VALUE_FIELD (field));
++
++  field->digits = CLAMP (digits, 0, 6);
++  gtk_entry_set_width_chars (GTK_ENTRY (field->entry), digits > 0 ? 5 : 4);
++
++  field->value = value_field_round (field, value_field_get_property (field));
++  value_field_sync (field, TRUE);
++}
++
++void
++chopgimp_value_field_set_increments (ChopGimpValueField *field,
++                                     gdouble             step,
++                                     gdouble             page)
++{
++  g_return_if_fail (CHOPGIMP_IS_VALUE_FIELD (field));
++
++  field->step = step;
++  field->page = page;
++}
++
++/*  range of the popover slider and of the label drag (display units);
++ *  typed values may go beyond, up to the property limits
++ */
++void
++chopgimp_value_field_set_scale_limits (ChopGimpValueField *field,
++                                       gdouble             lower,
++                                       gdouble             upper)
++{
++  g_return_if_fail (CHOPGIMP_IS_VALUE_FIELD (field));
++
++  field->has_limits   = TRUE;
++  field->slider_lower = MAX (lower, field->lower);
++  field->slider_upper = MIN (upper, field->upper);
++
++  value_field_sync (field, TRUE);
++}
++
++void
++chopgimp_value_field_set_gamma (ChopGimpValueField *field,
++                                gdouble             gamma)
++{
++  g_return_if_fail (CHOPGIMP_IS_VALUE_FIELD (field));
++  g_return_if_fail (gamma > 0.0);
++
++  field->gamma = gamma;
++
++  value_field_sync (field, TRUE);
++}
++
++void
++chopgimp_value_field_set_unit (ChopGimpValueField *field,
++                               const gchar        *unit)
++{
++  g_return_if_fail (CHOPGIMP_IS_VALUE_FIELD (field));
++
++  gtk_label_set_text (GTK_LABEL (field->unit), unit ? unit : "");
++  gtk_widget_set_visible (field->unit, unit && *unit);
++
++  value_field_sync (field, FALSE);
++}
++
++/*  title of the slider popover and tooltip of « ▾ »  */
++void
++chopgimp_value_field_set_title (ChopGimpValueField *field,
++                                const gchar        *title)
++{
++  g_return_if_fail (CHOPGIMP_IS_VALUE_FIELD (field));
++
++  g_free (field->title);
++  field->title = g_strdup (title ? title : "");
++
++  if (field->pop_title)
++    gtk_label_set_text (GTK_LABEL (field->pop_title), field->title);
++
++  gimp_help_set_help_data (field->arrow, field->title, NULL);
++}
++
++/*  4.1.1: the objects edited have different values: « mixte » until the
++ *  next value
++ */
++void
++chopgimp_value_field_set_mixed (ChopGimpValueField *field,
++                                gboolean            mixed)
++{
++  g_return_if_fail (CHOPGIMP_IS_VALUE_FIELD (field));
++
++  if (field->mixed == mixed)
++    return;
++
++  field->mixed = mixed;
++  value_field_sync (field, FALSE);
++}
+diff --git a/app/widgets/chopgimp-value-field.h b/app/widgets/chopgimp-value-field.h
+new file mode 100644
+index 0000000..e30ff6e
+--- /dev/null
++++ b/app/widgets/chopgimp-value-field.h
+@@ -0,0 +1,39 @@
++/* GIMP - The GNU Image Manipulation Program
++ * chopgimp-value-field.h — ChopGimp: compact value field of the options bar
++ * (« Dureté [50 % ▾] »: drag the label, type the value, slider popover)
++ *
++ * This program is free software: you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation; either version 3 of the License, or
++ * (at your option) any later version.
++ */
++
++#pragma once
++
++#define CHOPGIMP_TYPE_VALUE_FIELD (chopgimp_value_field_get_type ())
++G_DECLARE_FINAL_TYPE (ChopGimpValueField, chopgimp_value_field,
++                      CHOPGIMP, VALUE_FIELD, GtkBox)
++
++GtkWidget * chopgimp_value_field_new              (GObject            *config,
++                                                   const gchar        *property_name,
++                                                   const gchar        *label,
++                                                   const gchar        *unit);
++
++void        chopgimp_value_field_set_factor       (ChopGimpValueField *field,
++                                                   gdouble             factor);
++void        chopgimp_value_field_set_digits       (ChopGimpValueField *field,
++                                                   gint                digits);
++void        chopgimp_value_field_set_increments   (ChopGimpValueField *field,
++                                                   gdouble             step,
++                                                   gdouble             page);
++void        chopgimp_value_field_set_scale_limits (ChopGimpValueField *field,
++                                                   gdouble             lower,
++                                                   gdouble             upper);
++void        chopgimp_value_field_set_gamma        (ChopGimpValueField *field,
++                                                   gdouble             gamma);
++void        chopgimp_value_field_set_unit         (ChopGimpValueField *field,
++                                                   const gchar        *unit);
++void        chopgimp_value_field_set_title        (ChopGimpValueField *field,
++                                                   const gchar        *title);
++void        chopgimp_value_field_set_mixed        (ChopGimpValueField *field,
++                                                   gboolean            mixed);

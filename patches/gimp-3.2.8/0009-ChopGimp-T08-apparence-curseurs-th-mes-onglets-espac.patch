@@ -1,0 +1,2807 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: ChopGimp <mathieu.redon@proton.me>
+Date: Fri, 27 Nov 2026 08:34:14 +0100
+Subject: [PATCH 09/23] =?UTF-8?q?ChopGimp=20T08:=20apparence=20:=20curseur?=
+ =?UTF-8?q?s,=20th=C3=A8mes,=20onglets,=20espaces=20de=20travail?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Anciens patchs : 0063, 0064, 0071, 0072, 0112, 0168, 0171.
+---
+ app/actions/windows-actions.c    |  237 +++++++
+ app/actions/windows-commands.c   |  341 +++++++++
+ app/actions/windows-commands.h   |   30 +
+ app/dialogs/preferences-dialog.c |  143 ++++
+ app/gui/themes.c                 |  157 +++++
+ app/widgets/gimpcursor.c         |  227 ++++++
+ app/widgets/gimpprefsbox.c       |   40 ++
+ app/widgets/gimpprefsbox.h       |    2 +
+ libgimpwidgets/gimppropwidgets.c |   34 +
+ libgimpwidgets/gimpspinscale.c   | 1104 +++++++++++++++++++++++++++++-
+ 10 files changed, 2289 insertions(+), 26 deletions(-)
+
+diff --git a/app/actions/windows-actions.c b/app/actions/windows-actions.c
+index 88d6220..5a75c5a 100644
+--- a/app/actions/windows-actions.c
++++ b/app/actions/windows-actions.c
+@@ -38,6 +38,7 @@
+ #include "widgets/gimpdialogfactory.h"
+ #include "widgets/gimpdock.h"
+ #include "widgets/gimpdockwindow.h"
++#include "widgets/chopgimp-rc.h"
+ #include "widgets/gimphelp-ids.h"
+ 
+ #include "display/gimpdisplay.h"
+@@ -122,6 +123,25 @@ static const GimpActionEntry windows_actions[] =
+ 
+   { "windows-tab-position",        NULL, NC_("windows-action",
+                                              "_Tabs Position")   },
++
++  /*  ChopGimp (Photoshop: Window > Workspace > Reset)  */
++  { "windows-reset-panels", GIMP_ICON_RESET,
++    NC_("windows-action", "_Réinitialiser les panneaux"), NULL, { NULL },
++    NC_("windows-action", "Referme tous les panneaux et rétablit leur disposition d'origine"),
++    windows_reset_panels_cmd_callback,
++    GIMP_HELP_WINDOWS_HIDE_DOCKS },
++
++  { "windows-workspace-save", GIMP_ICON_DOCUMENT_SAVE,
++    NC_("windows-action", "En_registrer l'espace de travail"), NULL, { NULL },
++    NC_("windows-action", "Garde la disposition actuelle des panneaux comme « Mon espace de travail »"),
++    windows_workspace_save_cmd_callback,
++    GIMP_HELP_WINDOWS_HIDE_DOCKS },
++
++  { "windows-edit-toolbar", GIMP_ICON_PREFERENCES_SYSTEM,
++    NC_("windows-action", "_Modifier la barre d'outils…"), NULL, { NULL },
++    NC_("windows-action", "Choisir les outils visibles et leurs groupes (Préférences > Boîte à outils)"),
++    windows_edit_toolbar_cmd_callback,
++    GIMP_HELP_PREFS_TOOLBOX }
+ };
+ 
+ static const GimpToggleActionEntry windows_toggle_actions[] =
+@@ -133,6 +153,14 @@ static const GimpToggleActionEntry windows_toggle_actions[] =
+     FALSE,
+     GIMP_HELP_WINDOWS_HIDE_DOCKS },
+ 
++  /*  ChopGimp (Photoshop Shift+Tab): only the column of panels  */
++  { "windows-hide-right-docks", NULL,
++    NC_("windows-action", "Masquer les _panneaux de droite"), NULL, { NULL },
++    NC_("windows-action", "Masque la colonne de panneaux à droite de l'image ; la boîte à outils et la barre d'options restent affichées."),
++    windows_hide_right_docks_cmd_callback,
++    FALSE,
++    GIMP_HELP_WINDOWS_HIDE_DOCKS },
++
+   { "windows-show-tabs", NULL,
+     NC_("windows-action", "_Show Tabs"), NULL, { NULL },
+     NC_("windows-action", "When enabled, the image tabs bar is shown."),
+@@ -171,6 +199,160 @@ static const GimpRadioActionEntry windows_tabs_position_actions[] =
+     GIMP_POSITION_RIGHT, GIMP_HELP_WINDOWS_TABS_POSITION },
+ };
+ 
++/*  ChopGimp: Affichage > Apparence  */
++static const GimpRadioActionEntry windows_appearance_actions[] =
++{
++  { "windows-appearance-sombre", NULL,
++    NC_("windows-action", "_Sombre (Photoshop)"), NULL, { NULL },
++    NC_("windows-action", "Variante de couleurs de l'interface"),
++    0, NULL },
++  { "windows-appearance-gris", NULL,
++    NC_("windows-action", "_Gris moyen"), NULL, { NULL },
++    NC_("windows-action", "Variante de couleurs de l'interface"),
++    1, NULL },
++  { "windows-appearance-gris-clair", NULL,
++    NC_("windows-action", "Gris c_lair"), NULL, { NULL },
++    NC_("windows-action", "Variante de couleurs de l'interface"),
++    2, NULL },
++  { "windows-appearance-clair", NULL,
++    NC_("windows-action", "_Clair"), NULL, { NULL },
++    NC_("windows-action", "Variante de couleurs de l'interface"),
++    3, NULL },
++  { "windows-appearance-contraste", NULL,
++    NC_("windows-action", "Contraste _élevé"), NULL, { NULL },
++    NC_("windows-action", "Variante de couleurs de l'interface"),
++    4, NULL },
++  { "windows-appearance-affinity", NULL,
++    NC_("windows-action", "_Anthracite (Affinity)"), NULL, { NULL },
++    NC_("windows-action", "Variante de couleurs de l'interface"),
++    5, NULL },
++  { "windows-appearance-krita", NULL,
++    NC_("windows-action", "Gris _bleuté (Krita)"), NULL, { NULL },
++    NC_("windows-action", "Variante de couleurs de l'interface"),
++    6, NULL },
++};
++
++static const GimpRadioActionEntry windows_accent_actions[] =
++{
++  { "windows-accent-variante", NULL,
++    NC_("windows-action", "Couleur de la _variante"), NULL, { NULL },
++    NC_("windows-action", "Couleur d'accent de l'interface"),
++    0, NULL },
++  { "windows-accent-bleu", NULL,
++    NC_("windows-action", "_Bleu"), NULL, { NULL },
++    NC_("windows-action", "Couleur d'accent de l'interface"),
++    1, NULL },
++  { "windows-accent-cyan", NULL,
++    NC_("windows-action", "C_yan"), NULL, { NULL },
++    NC_("windows-action", "Couleur d'accent de l'interface"),
++    2, NULL },
++  { "windows-accent-violet", NULL,
++    NC_("windows-action", "_Violet"), NULL, { NULL },
++    NC_("windows-action", "Couleur d'accent de l'interface"),
++    3, NULL },
++  { "windows-accent-vert", NULL,
++    NC_("windows-action", "V_ert"), NULL, { NULL },
++    NC_("windows-action", "Couleur d'accent de l'interface"),
++    4, NULL },
++  { "windows-accent-orange", NULL,
++    NC_("windows-action", "_Orange"), NULL, { NULL },
++    NC_("windows-action", "Couleur d'accent de l'interface"),
++    5, NULL },
++  { "windows-accent-rouge", NULL,
++    NC_("windows-action", "_Rouge"), NULL, { NULL },
++    NC_("windows-action", "Couleur d'accent de l'interface"),
++    6, NULL },
++  { "windows-accent-rose", NULL,
++    NC_("windows-action", "Ro_se"), NULL, { NULL },
++    NC_("windows-action", "Couleur d'accent de l'interface"),
++    7, NULL },
++  { "windows-accent-jaune", NULL,
++    NC_("windows-action", "_Jaune"), NULL, { NULL },
++    NC_("windows-action", "Couleur d'accent de l'interface"),
++    8, NULL },
++};
++
++static const GimpRadioActionEntry windows_density_actions[] =
++{
++  { "windows-density-compact", NULL,
++    NC_("windows-action", "_Compacte"), NULL, { NULL },
++    NC_("windows-action", "Espacement des boutons, champs et menus"),
++    0, NULL },
++  { "windows-density-normal", NULL,
++    NC_("windows-action", "_Normale"), NULL, { NULL },
++    NC_("windows-action", "Espacement des boutons, champs et menus"),
++    1, NULL },
++  { "windows-density-comfortable", NULL,
++    NC_("windows-action", "_Aérée"), NULL, { NULL },
++    NC_("windows-action", "Espacement des boutons, champs et menus"),
++    2, NULL },
++};
++
++static const GimpRadioActionEntry windows_ui_font_actions[] =
++{
++  { "windows-ui-font-inter", NULL,
++    NC_("windows-action", "_Inter"), NULL, { NULL },
++    NC_("windows-action", "Police de l'interface"),
++    0, NULL },
++  { "windows-ui-font-source", NULL,
++    NC_("windows-action", "_Source Sans 3"), NULL, { NULL },
++    NC_("windows-action", "Police de l'interface"),
++    1, NULL },
++  { "windows-ui-font-system", NULL,
++    NC_("windows-action", "Police du _système"), NULL, { NULL },
++    NC_("windows-action", "Police de l'interface"),
++    2, NULL },
++};
++
++static const GimpRadioActionEntry windows_ui_size_actions[] =
++{
++  { "windows-ui-size-90", NULL,
++    NC_("windows-action", "_90 %"), NULL, { NULL },
++    NC_("windows-action", "Taille de l'interface (texte et icônes)"),
++    0, NULL },
++  { "windows-ui-size-100", NULL,
++    NC_("windows-action", "_100 %"), NULL, { NULL },
++    NC_("windows-action", "Taille de l'interface (texte et icônes)"),
++    1, NULL },
++  { "windows-ui-size-115", NULL,
++    NC_("windows-action", "11_5 %"), NULL, { NULL },
++    NC_("windows-action", "Taille de l'interface (texte et icônes)"),
++    2, NULL },
++  { "windows-ui-size-130", NULL,
++    NC_("windows-action", "1_30 %"), NULL, { NULL },
++    NC_("windows-action", "Taille de l'interface (texte et icônes)"),
++    3, NULL },
++};
++
++/*  ChopGimp: Fenêtres > Espace de travail (Photoshop)  */
++static const GimpEnumActionEntry windows_workspace_actions[] =
++{
++  { "windows-workspace-essentiel", NULL,
++    NC_("windows-action", "_Essentiel"), NULL, { NULL },
++    NC_("windows-action", "Panneaux de l'espace de travail Essentiel"),
++    0, FALSE, NULL },
++  { "windows-workspace-photographie", NULL,
++    NC_("windows-action", "_Photographie"), NULL, { NULL },
++    NC_("windows-action", "Histogramme, navigation, historique, calques"),
++    1, FALSE, NULL },
++  { "windows-workspace-peinture", NULL,
++    NC_("windows-action", "P_einture"), NULL, { NULL },
++    NC_("windows-action", "Couleurs, pinceaux, préréglages, dynamiques, symétrie"),
++    2, FALSE, NULL },
++  { "windows-workspace-typographie", NULL,
++    NC_("windows-action", "_Typographie"), NULL, { NULL },
++    NC_("windows-action", "Caractère, paragraphe, glyphes, styles de texte, polices"),
++    3, FALSE, NULL },
++  { "windows-workspace-illustration", NULL,
++    NC_("windows-action", "_Illustration"), NULL, { NULL },
++    NC_("windows-action", "Couleurs, dégradés, chemins, symétrie, calques"),
++    4, FALSE, NULL },
++  { "windows-workspace-personnel", NULL,
++    NC_("windows-action", "Mon espace de tra_vail"), NULL, { NULL },
++    NC_("windows-action", "La disposition enregistrée avec « Enregistrer l'espace de travail »"),
++    5, FALSE, NULL },
++};
++
+ void
+ windows_actions_setup (GimpActionGroup *group)
+ {
+@@ -180,6 +362,32 @@ windows_actions_setup (GimpActionGroup *group)
+                                  windows_actions,
+                                  G_N_ELEMENTS (windows_actions));
+ 
++  gimp_action_group_add_enum_actions (group, "windows-action",
++                                      windows_workspace_actions,
++                                      G_N_ELEMENTS (windows_workspace_actions),
++                                      windows_workspace_cmd_callback);
++
++  gimp_action_group_add_radio_actions (group, "windows-action",
++                                       windows_appearance_actions,
++                                       G_N_ELEMENTS (windows_appearance_actions),
++                                       NULL, 0, windows_appearance_cmd_callback);
++  gimp_action_group_add_radio_actions (group, "windows-action",
++                                       windows_accent_actions,
++                                       G_N_ELEMENTS (windows_accent_actions),
++                                       NULL, 0, windows_accent_cmd_callback);
++  gimp_action_group_add_radio_actions (group, "windows-action",
++                                       windows_density_actions,
++                                       G_N_ELEMENTS (windows_density_actions),
++                                       NULL, 1, windows_density_cmd_callback);
++  gimp_action_group_add_radio_actions (group, "windows-action",
++                                       windows_ui_font_actions,
++                                       G_N_ELEMENTS (windows_ui_font_actions),
++                                       NULL, 0, windows_ui_font_cmd_callback);
++  gimp_action_group_add_radio_actions (group, "windows-action",
++                                       windows_ui_size_actions,
++                                       G_N_ELEMENTS (windows_ui_size_actions),
++                                       NULL, 1, windows_ui_size_cmd_callback);
++
+   gimp_action_group_add_toggle_actions (group, "windows-action",
+                                         windows_toggle_actions,
+                                         G_N_ELEMENTS (windows_toggle_actions));
+@@ -261,6 +469,8 @@ windows_actions_update (GimpActionGroup *group,
+ 
+   SET_ACTIVE ("windows-use-single-window-mode", config->single_window_mode);
+   SET_ACTIVE ("windows-hide-docks", config->hide_docks);
++  SET_ACTIVE ("windows-hide-right-docks",
++              chopgimp_rc_get_boolean ("panels", "right-hidden", FALSE));
+   SET_ACTIVE ("windows-show-tabs", config->show_tabs);
+ 
+   switch (config->tabs_position)
+@@ -288,6 +498,33 @@ windows_actions_update (GimpActionGroup *group,
+   gimp_action_group_set_action_sensitive (group, "windows-show-tabs", config->single_window_mode,
+                                           _("Single-window mode disabled"));
+ 
++  /*  ChopGimp: the appearance radio items follow chopgimprc  */
++  {
++    static const struct { const gchar *key, *prefix; } radios[] =
++    {
++      { "variant",     "windows-appearance" },
++      { "accent-name", "windows-accent"     },
++      { "density",     "windows-density"    },
++      { "font",        "windows-ui-font"    },
++      { "size",        "windows-ui-size"    },
++    };
++
++    for (guint r = 0; r < G_N_ELEMENTS (radios); r++)
++      {
++        /*  only a stored choice: the defaults are the initial radio values,
++         *  and setting a radio item runs its callback
++         */
++        gchar *value = chopgimp_rc_get_string ("appearance", radios[r].key, NULL);
++        gchar *name  = value ? g_strdup_printf ("%s-%s", radios[r].prefix, value) : NULL;
++
++        if (name && gimp_action_group_get_action (group, name))
++          gimp_action_group_set_action_active (group, name, TRUE);
++
++        g_free (name);
++        g_free (value);
++      }
++  }
++
+ #undef SET_ACTIVE
+ }
+ 
+diff --git a/app/actions/windows-commands.c b/app/actions/windows-commands.c
+index 9bd6798..8c0f65b 100644
+--- a/app/actions/windows-commands.c
++++ b/app/actions/windows-commands.c
+@@ -22,11 +22,14 @@
+ #include <gegl.h>
+ #include <gtk/gtk.h>
+ 
++#include "libgimpbase/gimpbase.h"
++#include "libgimpconfig/gimpconfig.h"
+ #include "libgimpwidgets/gimpwidgets.h"
+ 
+ #include "actions-types.h"
+ 
+ #include "config/gimpdisplayconfig.h"
++#include "config/config-enums.h"
+ #include "config/gimpguiconfig.h"
+ 
+ #include "core/gimp.h"
+@@ -34,11 +37,19 @@
+ 
+ #include "widgets/gimpactiongroup.h"
+ #include "widgets/gimpdialogfactory.h"
++#include "widgets/gimphelp-ids.h"
++#include "widgets/gimpprefsbox.h"
+ #include "widgets/gimpsessioninfo.h"
++#include "widgets/gimptoggleaction.h"
++#include "widgets/gimpuimanager.h"
+ #include "widgets/gimpwidgets-utils.h"
++#include "widgets/chopgimp-rc.h"
++
++#include "menus/menus.h"
+ 
+ #include "display/gimpdisplay.h"
+ #include "display/gimpdisplayshell.h"
++#include "display/gimpimagewindow.h"
+ 
+ #include "dialogs/dialogs.h"
+ 
+@@ -66,6 +77,189 @@ windows_hide_docks_cmd_callback (GimpAction *action,
+                   NULL);
+ }
+ 
++/*  ChopGimp: hide / show the column of panels on the right  */
++void
++windows_hide_right_docks_cmd_callback (GimpAction *action,
++                                       GVariant   *value,
++                                       gpointer    data)
++{
++  Gimp     *gimp;
++  GList    *windows;
++  GList    *iter;
++  gboolean  active;
++  return_if_no_gimp (gimp, data);
++
++  active = g_variant_get_boolean (value);
++
++  if (active == chopgimp_rc_get_boolean ("panels", "right-hidden", FALSE))
++    return;
++
++  chopgimp_rc_set_boolean ("panels", "right-hidden", active);
++
++  windows = gimp_get_image_windows (gimp);
++  for (iter = windows; iter; iter = g_list_next (iter))
++    gimp_image_window_right_docks_changed (iter->data);
++  g_list_free (windows);
++}
++
++/*  ChopGimp: the column of panels shown again before a new arrangement  */
++static void
++chopgimp_show_all_panels (Gimp *gimp)
++{
++  GimpAction *hide;
++
++  hide = gimp_ui_manager_find_action (menus_get_image_manager_singleton (gimp),
++                                      "windows", "windows-hide-right-docks");
++  if (hide)
++    gimp_toggle_action_set_active (GIMP_TOGGLE_ACTION (hide), FALSE);
++
++  if (GIMP_GUI_CONFIG (gimp->config)->hide_docks)
++    g_object_set (gimp->config, "hide-docks", FALSE, NULL);
++}
++
++static GFile *
++chopgimp_personal_workspace_file (void)
++{
++  return gimp_directory_file ("chopgimp-workspace.sessionrc", NULL);
++}
++
++/*  ChopGimp: Fenêtres > Espace de travail  */
++void
++windows_workspace_cmd_callback (GimpAction *action,
++                                GVariant   *value,
++                                gpointer    data)
++{
++  static const gchar *names[] = { "essentiel", "photographie", "peinture",
++                                  "typographie", "illustration" };
++  Gimp  *gimp;
++  GList *windows;
++  GFile *file;
++  gint   w;
++  return_if_no_gimp (gimp, data);
++
++  w = g_variant_get_int32 (value);
++
++  if (w >= 0 && w < (gint) G_N_ELEMENTS (names))
++    {
++      gchar *name = g_strdup_printf ("%s.sessionrc", names[w]);
++
++      file = gimp_sysconf_directory_file ("workspaces", name, NULL);
++      g_free (name);
++    }
++  else
++    {
++      file = chopgimp_personal_workspace_file ();
++    }
++
++  if (! g_file_query_exists (file, NULL))
++    {
++      gimp_message_literal (gimp, NULL, GIMP_MESSAGE_WARNING,
++                            w < (gint) G_N_ELEMENTS (names) ?
++                            _("Espace de travail introuvable.") :
++                            _("Aucun espace de travail enregistré : utilisez d'abord "
++                              "« Enregistrer l'espace de travail »."));
++      g_object_unref (file);
++      return;
++    }
++
++  chopgimp_show_all_panels (gimp);
++
++  windows = gimp_get_image_windows (gimp);
++  if (windows)
++    gimp_image_window_restore_panels (windows->data, file);
++  g_list_free (windows);
++
++  g_object_unref (file);
++}
++
++void
++windows_workspace_save_cmd_callback (GimpAction *action,
++                                     GVariant   *value,
++                                     gpointer    data)
++{
++  Gimp             *gimp;
++  GFile            *file;
++  GimpConfigWriter *writer;
++  GError           *error = NULL;
++  return_if_no_gimp (gimp, data);
++
++  file   = chopgimp_personal_workspace_file ();
++  writer = gimp_config_writer_new_from_file (file, TRUE,
++                                             "ChopGimp — mon espace de travail",
++                                             &error);
++  if (writer)
++    {
++      gimp_dialog_factory_save (gimp_dialog_factory_get_singleton (), writer);
++      gimp_config_writer_finish (writer, "end of workspace", &error);
++    }
++
++  if (error)
++    {
++      gimp_message_literal (gimp, NULL, GIMP_MESSAGE_ERROR, error->message);
++      g_clear_error (&error);
++    }
++  else
++    {
++      gimp_message_literal (gimp, NULL, GIMP_MESSAGE_INFO,
++                            _("Espace de travail enregistré : Fenêtres > Espace de travail > "
++                              "Mon espace de travail."));
++    }
++
++  g_object_unref (file);
++}
++
++/*  ChopGimp: Photoshop « Edit Toolbar » = the Toolbox page of the
++ *  preferences (visible tools and their groups)
++ */
++void
++windows_edit_toolbar_cmd_callback (GimpAction *action,
++                                   GVariant   *value,
++                                   gpointer    data)
++{
++  Gimp      *gimp;
++  GtkWidget *dialog;
++  GtkWidget *prefs_box;
++  return_if_no_gimp (gimp, data);
++
++  dialog = gimp_dialog_factory_dialog_raise (gimp_dialog_factory_get_singleton (),
++                                             gdk_display_get_monitor (gdk_display_get_default (), 0),
++                                             NULL,
++                                             "gimp-preferences-dialog", -1);
++  if (! dialog)
++    return;
++
++  prefs_box = g_object_get_data (G_OBJECT (dialog), "prefs-box");
++  if (GIMP_IS_PREFS_BOX (prefs_box))
++    gimp_prefs_box_set_current_help_id (GIMP_PREFS_BOX (prefs_box),
++                                        GIMP_HELP_PREFS_TOOLBOX);
++}
++
++/*  ChopGimp: back to the factory arrangement of the panels  */
++void
++windows_reset_panels_cmd_callback (GimpAction *action,
++                                   GVariant   *value,
++                                   gpointer    data)
++{
++  Gimp       *gimp;
++  GList      *windows;
++  GimpAction *hide;
++  return_if_no_gimp (gimp, data);
++
++  /*  show the column again if it was hidden  */
++  hide = gimp_ui_manager_find_action (menus_get_image_manager_singleton (gimp),
++                                      "windows", "windows-hide-right-docks");
++  if (hide)
++    gimp_toggle_action_set_active (GIMP_TOGGLE_ACTION (hide), FALSE);
++
++  if (GIMP_GUI_CONFIG (gimp->config)->hide_docks)
++    g_object_set (gimp->config, "hide-docks", FALSE, NULL);
++
++  windows = gimp_get_image_windows (gimp);
++  if (windows)
++    gimp_image_window_reset_panels (windows->data);
++  g_list_free (windows);
++}
++
+ void
+ windows_use_single_window_mode_cmd_callback (GimpAction *action,
+                                              GVariant   *value,
+@@ -232,3 +426,150 @@ windows_open_recent_cmd_callback (GimpAction *action,
+ 
+   g_object_unref (info);
+ }
++
++
++/*  ChopGimp: Affichage > Apparence — the settings are kept in chopgimprc
++ *  [appearance] and applied by app/gui/themes.c (re-read on « theme »)
++ */
++static void
++chopgimp_appearance_changed (Gimp *gimp)
++{
++  g_object_notify (G_OBJECT (gimp->config), "theme");
++}
++
++static gboolean
++chopgimp_appearance_store (const gchar *key,
++                           const gchar *value)
++{
++  gchar   *old     = chopgimp_rc_get_string ("appearance", key, NULL);
++  gboolean changed = g_strcmp0 (old, value) != 0;
++
++  if (changed)
++    chopgimp_rc_set_string ("appearance", key, value);
++
++  g_free (old);
++
++  return changed;
++}
++
++void
++windows_appearance_cmd_callback (GimpAction *action,
++                                 GVariant   *value,
++                                 gpointer    data)
++{
++  static const struct { const gchar *name; GimpThemeScheme scheme; } variants[] =
++  {
++    { "sombre",     GIMP_THEME_DARK  },
++    { "gris",       GIMP_THEME_GRAY  },
++    { "gris-clair", GIMP_THEME_LIGHT },
++    { "clair",      GIMP_THEME_LIGHT },
++    { "contraste",  GIMP_THEME_DARK  },
++    { "affinity",   GIMP_THEME_DARK  },
++    { "krita",      GIMP_THEME_DARK  },
++  };
++  Gimp *gimp;
++  gint  v;
++  return_if_no_gimp (gimp, data);
++
++  v = CLAMP (g_variant_get_int32 (value), 0, (gint) G_N_ELEMENTS (variants) - 1);
++
++  /*  (the menu also sets the radio item when it updates: no change)  */
++  if (! chopgimp_appearance_store ("variant", variants[v].name))
++    return;
++
++  /*  the scheme (light / gray / dark) gives the base styles, the variant
++   *  its palette; setting them notifies « theme » (re-applied)
++   */
++  g_object_set (gimp->config,
++                "theme",              "ChopGimp",
++                "theme-color-scheme", variants[v].scheme,
++                NULL);
++  chopgimp_appearance_changed (gimp);
++}
++
++void
++windows_accent_cmd_callback (GimpAction *action,
++                             GVariant   *value,
++                             gpointer    data)
++{
++  static const struct { const gchar *name; const gchar *color; } accents[] =
++  {
++    { "variante", ""        },
++    { "bleu",     "#378EF0" },
++    { "cyan",     "#00B4E6" },
++    { "violet",   "#8A63D2" },
++    { "vert",     "#2DA44E" },
++    { "orange",   "#F28C28" },
++    { "rouge",    "#E34850" },
++    { "rose",     "#E0529C" },
++    { "jaune",    "#E0B000" },
++  };
++  Gimp *gimp;
++  gint  a;
++  return_if_no_gimp (gimp, data);
++
++  a = CLAMP (g_variant_get_int32 (value), 0, (gint) G_N_ELEMENTS (accents) - 1);
++
++  if (chopgimp_appearance_store ("accent-name", accents[a].name))
++    {
++      chopgimp_rc_set_string ("appearance", "accent", accents[a].color);
++      chopgimp_appearance_changed (gimp);
++    }
++}
++
++void
++windows_density_cmd_callback (GimpAction *action,
++                              GVariant   *value,
++                              gpointer    data)
++{
++  static const gchar *names[] = { "compact", "normal", "comfortable" };
++  Gimp *gimp;
++  return_if_no_gimp (gimp, data);
++
++  if (chopgimp_appearance_store ("density",
++                                 names[CLAMP (g_variant_get_int32 (value), 0, 2)]))
++    chopgimp_appearance_changed (gimp);
++}
++
++void
++windows_ui_font_cmd_callback (GimpAction *action,
++                              GVariant   *value,
++                              gpointer    data)
++{
++  static const gchar *names[] = { "inter", "source", "system" };
++  Gimp *gimp;
++  return_if_no_gimp (gimp, data);
++
++  if (chopgimp_appearance_store ("font",
++                                 names[CLAMP (g_variant_get_int32 (value), 0, 2)]))
++    chopgimp_appearance_changed (gimp);
++}
++
++void
++windows_ui_size_cmd_callback (GimpAction *action,
++                              GVariant   *value,
++                              gpointer    data)
++{
++  static const struct { const gchar *name; gdouble font; gboolean override; GimpIconSize icons; } sizes[] =
++  {
++    { "90",  0.90, TRUE,  GIMP_ICON_SIZE_SMALL  },
++    { "100", 1.00, FALSE, GIMP_ICON_SIZE_SMALL  },
++    { "115", 1.15, TRUE,  GIMP_ICON_SIZE_MEDIUM },
++    { "130", 1.30, TRUE,  GIMP_ICON_SIZE_LARGE  },
++  };
++  Gimp *gimp;
++  gint  s;
++  return_if_no_gimp (gimp, data);
++
++  s = CLAMP (g_variant_get_int32 (value), 0, (gint) G_N_ELEMENTS (sizes) - 1);
++
++  if (! chopgimp_appearance_store ("size", sizes[s].name))
++    return;
++
++  /*  the Preferences' own settings: they re-apply the theme  */
++  g_object_set (gimp->config,
++                "font-relative-size",       sizes[s].font,
++                "override-theme-icon-size", sizes[s].override,
++                "custom-icon-size",         sizes[s].icons,
++                NULL);
++}
+diff --git a/app/actions/windows-commands.h b/app/actions/windows-commands.h
+index a7de8ff..dcfbc96 100644
+--- a/app/actions/windows-commands.h
++++ b/app/actions/windows-commands.h
+@@ -18,6 +18,36 @@
+ #pragma once
+ 
+ 
++void  windows_workspace_cmd_callback      (GimpAction *action,
++                                         GVariant   *value,
++                                         gpointer    data);
++void  windows_workspace_save_cmd_callback (GimpAction *action,
++                                         GVariant   *value,
++                                         gpointer    data);
++void  windows_edit_toolbar_cmd_callback  (GimpAction *action,
++                                         GVariant   *value,
++                                         gpointer    data);
++void  windows_appearance_cmd_callback    (GimpAction *action,
++                                         GVariant   *value,
++                                         gpointer    data);
++void  windows_accent_cmd_callback        (GimpAction *action,
++                                         GVariant   *value,
++                                         gpointer    data);
++void  windows_density_cmd_callback       (GimpAction *action,
++                                         GVariant   *value,
++                                         gpointer    data);
++void  windows_ui_font_cmd_callback       (GimpAction *action,
++                                         GVariant   *value,
++                                         gpointer    data);
++void  windows_ui_size_cmd_callback       (GimpAction *action,
++                                         GVariant   *value,
++                                         gpointer    data);
++void  windows_hide_right_docks_cmd_callback        (GimpAction *action,
++                                                    GVariant   *value,
++                                                    gpointer    data);
++void  windows_reset_panels_cmd_callback            (GimpAction *action,
++                                                    GVariant   *value,
++                                                    gpointer    data);
+ void  windows_hide_docks_cmd_callback             (GimpAction *action,
+                                                    GVariant   *value,
+                                                    gpointer    data);
+diff --git a/app/dialogs/preferences-dialog.c b/app/dialogs/preferences-dialog.c
+index 78ea5e9..ca781ae 100644
+--- a/app/dialogs/preferences-dialog.c
++++ b/app/dialogs/preferences-dialog.c
+@@ -54,6 +54,7 @@
+ #include "widgets/gimpgrideditor.h"
+ #include "widgets/gimphelp.h"
+ #include "widgets/gimphelp-ids.h"
++#include "widgets/chopgimp-rc.h"
+ #include "widgets/gimplanguagecombobox.h"
+ #include "widgets/gimpmessagebox.h"
+ #include "widgets/gimpmessagedialog.h"
+@@ -75,6 +76,8 @@
+ #include "gui/modifiers.h"
+ #include "gui/themes.h"
+ 
++#include "display/chopgimp-vobjectbar.h"
++
+ #include "preferences-dialog.h"
+ #include "preferences-dialog-utils.h"
+ #include "resolution-calibrate-dialog.h"
+@@ -1116,6 +1119,9 @@ prefs_behavior_options_frame_add (Gimp         *gimp,
+   prefs_check_button_add (object, "snap-to-equidistance",
+                           _("Snap to _Equidistance"),
+                           GTK_BOX (checks_vbox));
++  prefs_check_button_add (object, "snap-to-pixels",
++                          _("Aligner sur les pixels"),
++                          GTK_BOX (checks_vbox));
+ }
+ 
+ static void
+@@ -1131,6 +1137,86 @@ prefs_help_func (const gchar *help_id,
+   gimp_standard_help_func (help_id, NULL);
+ }
+ 
++/*  ChopGimp: the « Apparence » page drives the same actions as the menu
++ *  Affichage > Apparence (settings in chopgimprc [appearance])
++ */
++typedef struct
++{
++  const gchar *label;
++  const gchar *rc_key;
++  const gchar *action_prefix;
++  const gchar *keys[10];
++  const gchar *names[10];
++} ChopGimpAppearanceRow;
++
++static const ChopGimpAppearanceRow chopgimp_appearance_rows[] =
++{
++  { N_("Variante :"), "variant", "windows-appearance",
++    { "sombre", "gris", "gris-clair", "clair", "contraste", "affinity", "krita", NULL },
++    { N_("Sombre (Photoshop)"), N_("Gris moyen"), N_("Gris clair"), N_("Clair"),
++      N_("Contraste élevé"), N_("Anthracite (Affinity)"), N_("Gris bleuté (Krita)"), NULL } },
++  { N_("Couleur d'accent :"), "accent-name", "windows-accent",
++    { "variante", "bleu", "cyan", "violet", "vert", "orange", "rouge", "rose", "jaune", NULL },
++    { N_("Celle de la variante"), N_("Bleu"), N_("Cyan"), N_("Violet"), N_("Vert"),
++      N_("Orange"), N_("Rouge"), N_("Rose"), N_("Jaune"), NULL } },
++  { N_("Densité :"), "density", "windows-density",
++    { "compact", "normal", "comfortable", NULL },
++    { N_("Compacte"), N_("Normale"), N_("Aérée"), NULL } },
++  { N_("Police de l'interface :"), "font", "windows-ui-font",
++    { "inter", "source", "system", NULL },
++    { N_("Inter"), N_("Source Sans 3"), N_("Police du système"), NULL } },
++  { N_("Taille de l'interface :"), "size", "windows-ui-size",
++    { "90", "100", "115", "130", NULL },
++    { N_("90 %"), N_("100 %"), N_("115 %"), N_("130 %"), NULL } },
++};
++
++static void
++chopgimp_prefs_appearance_changed (GtkComboBox *combo,
++                                   Gimp        *gimp)
++{
++  const ChopGimpAppearanceRow *row = g_object_get_data (G_OBJECT (combo), "chopgimp-row");
++  gint                          i   = gtk_combo_box_get_active (combo);
++  gchar                        *name;
++
++  if (i < 0)
++    return;
++
++  name = g_strdup_printf ("%s-%s", row->action_prefix, row->keys[i]);
++  g_action_group_activate_action (G_ACTION_GROUP (gimp->app), name,
++                                  g_variant_new_int32 (i));
++  g_free (name);
++}
++
++static void
++chopgimp_prefs_appearance (Gimp    *gimp,
++                           GtkGrid *grid)
++{
++  guint r;
++
++  for (r = 0; r < G_N_ELEMENTS (chopgimp_appearance_rows); r++)
++    {
++      const ChopGimpAppearanceRow *row   = &chopgimp_appearance_rows[r];
++      GtkWidget                   *combo = gtk_combo_box_text_new ();
++      gchar                       *value = chopgimp_rc_get_string ("appearance", row->rc_key, NULL);
++      gint                         i, active = (r == 2 || r == 4) ? 1 : 0;
++
++      for (i = 0; row->keys[i]; i++)
++        {
++          gtk_combo_box_text_append_text (GTK_COMBO_BOX_TEXT (combo), _(row->names[i]));
++          if (value && ! strcmp (value, row->keys[i]))
++            active = i;
++        }
++
++      gtk_combo_box_set_active (GTK_COMBO_BOX (combo), active);
++      g_object_set_data (G_OBJECT (combo), "chopgimp-row", (gpointer) row);
++      g_signal_connect (combo, "changed",
++                        G_CALLBACK (chopgimp_prefs_appearance_changed), gimp);
++
++      prefs_widget_add_aligned (combo, _(row->label), grid, r, FALSE, NULL);
++      g_free (value);
++    }
++}
++
+ static GtkWidget *
+ prefs_dialog_new (Gimp       *gimp,
+                   GimpConfig *config)
+@@ -1850,6 +1936,15 @@ prefs_dialog_new (Gimp       *gimp,
+                                     GIMP_ICON_TOOL_MOVE,
+                                     GTK_BOX (vbox2), size_group);
+ 
++  /*  ChopGimp 3.28.2: vector objects (Illustrator's general preference)  */
++  vbox2 = prefs_frame_new (_("Objets vectoriels"),
++                           GTK_CONTAINER (vbox), FALSE);
++  gtk_box_pack_start (GTK_BOX (vbox2),
++                      chopgimp_vobject_scale_strokes_check_new (
++                        _("Mettre à l'échelle les _contours et effets")),
++                      FALSE, FALSE, 0);
++  gtk_widget_show_all (vbox2);
++
+   g_clear_object (&size_group);
+ 
+ 
+@@ -2017,6 +2112,34 @@ prefs_dialog_new (Gimp       *gimp,
+                     gimp);
+ 
+ 
++  /*****************************************/
++  /*  ChopGimp: Interface / Apparence      */
++  /*****************************************/
++  vbox = gimp_prefs_box_add_page (GIMP_PREFS_BOX (prefs_box),
++                                  "gimp-prefs-theme",
++                                  _("Apparence ChopGimp"),
++                                  _("Apparence"),
++                                  GIMP_HELP_PREFS_THEME,
++                                  &top_iter,
++                                  &child_iter);
++
++  vbox2 = prefs_frame_new (_("Apparence de l'interface"), GTK_CONTAINER (vbox), FALSE);
++  grid  = prefs_grid_new (GTK_CONTAINER (vbox2));
++  chopgimp_prefs_appearance (gimp, GTK_GRID (grid));
++
++  vbox2 = prefs_frame_new (_("Espaces de travail"), GTK_CONTAINER (vbox), FALSE);
++  {
++    GtkWidget *label = gtk_label_new (_("Fenêtres > Espace de travail : Essentiel, Photographie, "
++                                        "Peinture, Typographie, Illustration, ou le vôtre "
++                                        "(« Enregistrer l'espace de travail »)."));
++
++    gtk_label_set_line_wrap (GTK_LABEL (label), TRUE);
++    gtk_label_set_xalign (GTK_LABEL (label), 0.0);
++    gtk_box_pack_start (GTK_BOX (vbox2), label, FALSE, FALSE, 0);
++    gtk_widget_set_visible (label, TRUE);
++  }
++
++
+   /***********************/
+   /*  Interface / Theme  */
+   /***********************/
+@@ -3461,6 +3584,26 @@ prefs_boolean_combo_box_add (object, "initial-zoom-to-fit",
+                           _("Show pointer for paint _tools"),
+                           GTK_BOX (vbox2));
+ 
++  /*  ChopGimp 3.28.3: « Croix au centre de la brosse » (Photoshop)  */
++  {
++    GtkListStore *crosshair_store;
++    GtkWidget    *crosshair_grid;
++    GtkWidget    *crosshair_combo;
++
++    crosshair_store = gimp_int_store_new ("Toujours",                  0,
++                                          "Petites brosses seulement", 1,
++                                          "Jamais",                    2,
++                                          NULL);
++    crosshair_combo = gimp_prop_int_combo_box_new (object, "brush-crosshair",
++                                                   GIMP_INT_STORE (crosshair_store));
++    g_object_unref (crosshair_store);
++
++    crosshair_grid = prefs_grid_new (GTK_CONTAINER (vbox2));
++    prefs_widget_add_aligned (crosshair_combo,
++                              "Croix au centre de la _brosse :",
++                              GTK_GRID (crosshair_grid), 0, FALSE, NULL);
++  }
++
+   /*  Extended Input Devices  */
+   vbox2 = prefs_frame_new (_("Extended Input Devices"),
+                            GTK_CONTAINER (vbox), FALSE);
+diff --git a/app/gui/themes.c b/app/gui/themes.c
+index a6bc4fd..df7f0fd 100644
+--- a/app/gui/themes.c
++++ b/app/gui/themes.c
+@@ -17,7 +17,10 @@
+ 
+ #include "config.h"
+ 
++#include <math.h>
++#include <stdio.h>
+ #include <stdlib.h>
++#include <string.h>
+ 
+ #include <gegl.h>
+ #include <gtk/gtk.h>
+@@ -43,6 +46,7 @@
+ #include "display/gimpimagewindow.h"
+ 
+ #include "widgets/gimpwidgets-utils.h"
++#include "widgets/chopgimp-rc.h"
+ 
+ #include "icon-themes.h"
+ #include "themes.h"
+@@ -277,6 +281,125 @@ themes_get_theme_file (Gimp        *gimp,
+   return file;
+ }
+ 
++/*  ChopGimp: appearance settings (chopgimprc [appearance]):
++ *    variant  palette (themes/ChopGimp/palette-<variant>.css)
++ *    accent   #RRGGBB, empty: the palette's own
++ *    density  compact | normal | comfortable
++ *    font     inter | source | system
++ */
++static void
++chopgimp_shade (const gchar *hex,
++                gdouble      factor,
++                gchar       *out)
++{
++  guint r = 0x37, g = 0x8E, b = 0xF0;
++
++  if (hex && strlen (hex) == 7)
++    sscanf (hex + 1, "%02x%02x%02x", &r, &g, &b);
++
++  if (factor > 1.0)   /* towards white */
++    {
++      r = r + (255 - r) * (factor - 1.0);
++      g = g + (255 - g) * (factor - 1.0);
++      b = b + (255 - b) * (factor - 1.0);
++    }
++  else
++    {
++      r *= factor;
++      g *= factor;
++      b *= factor;
++    }
++
++  g_snprintf (out, 8, "#%02X%02X%02X", MIN (r, 255), MIN (g, 255), MIN (b, 255));
++}
++
++static gchar *
++chopgimp_themes_appearance_css (void)
++{
++  GString *css     = g_string_new ("\n/* ChopGimp: apparence */\n");
++  gchar   *accent  = chopgimp_rc_get_string ("appearance", "accent", "");
++  gchar   *density = chopgimp_rc_get_string ("appearance", "density", "normal");
++
++  if (accent && strlen (accent) == 7 && accent[0] == '#')
++    {
++      gchar   hover[8], pressed[8];
++      guint   r = 0, g = 0, b = 0;
++      gdouble lum;
++
++      chopgimp_shade (accent, 1.15, hover);
++      chopgimp_shade (accent, 0.85, pressed);
++
++      /*  4.0.0: the text on the accent (as tools/build_themes.py): white
++       *  while its WCAG contrast stays >= 3, else black
++       */
++      sscanf (accent + 1, "%02x%02x%02x", &r, &g, &b);
++      {
++        gdouble c[3] = { r / 255.0, g / 255.0, b / 255.0 };
++
++        for (gint i = 0; i < 3; i++)
++          c[i] = (c[i] <= 0.03928) ? c[i] / 12.92 : pow ((c[i] + 0.055) / 1.055, 2.4);
++
++        lum = 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2];
++      }
++
++      g_string_append_printf (css,
++                              "@define-color ps-accent %s;\n"
++                              "@define-color ps-accent-hover %s;\n"
++                              "@define-color ps-accent-pressed %s;\n"
++                              "@define-color ps-on-accent %s;\n",
++                              accent, hover, pressed,
++                              (1.05 / (lum + 0.05) >= 3.0) ? "#FFFFFF" : "#000000");
++    }
++
++  if (! g_strcmp0 (density, "compact"))
++    g_string_append (css,
++                     "button, entry, spinbutton, combobox button, notebook > header > tabs > tab "
++                     "{ min-height: 16px; padding-top: 0; padding-bottom: 0; }\n"
++                     "treeview.view { padding-top: 0; padding-bottom: 0; }\n"
++                     "menuitem { min-height: 18px; padding-top: 1px; padding-bottom: 1px; }\n");
++  else if (! g_strcmp0 (density, "comfortable"))
++    g_string_append (css,
++                     "button, entry, spinbutton, combobox button "
++                     "{ min-height: 28px; padding-top: 3px; padding-bottom: 3px; }\n"
++                     "notebook > header > tabs > tab { min-height: 26px; }\n"
++                     "treeview.view { padding-top: 3px; padding-bottom: 3px; }\n"
++                     "menuitem { min-height: 26px; padding-top: 4px; padding-bottom: 4px; }\n");
++
++  g_free (accent);
++  g_free (density);
++
++  return g_string_free (css, FALSE);
++}
++
++static void
++chopgimp_themes_set_font (void)
++{
++  static gchar *system_font = NULL;
++  GtkSettings  *settings    = gtk_settings_get_for_screen (gdk_screen_get_default ());
++  gchar        *font        = chopgimp_rc_get_string ("appearance", "font", "inter");
++  const gchar  *name;
++
++  /*  remember the desktop's font, for « Système »  */
++  if (! system_font)
++    g_object_get (settings, "gtk-font-name", &system_font, NULL);
++
++  if (! g_strcmp0 (font, "source"))
++    name = "Source Sans 3 10";
++  else if (! g_strcmp0 (font, "system"))
++    name = system_font;
++  else
++#ifdef G_OS_WIN32
++    name = "Inter, Segoe UI 9";
++#else
++    name = "Inter 9";
++#endif
++
++  if (name)
++    g_object_set (settings, "gtk-font-name", name, NULL);
++
++  g_free (font);
++}
++
+ void
+ themes_theme_change_notify (GimpGuiConfig *config,
+                             GParamSpec    *pspec,
+@@ -292,6 +415,9 @@ themes_theme_change_notify (GimpGuiConfig *config,
+ 
+   themes_apply_theme (gimp, config);
+ 
++  /*  ChopGimp: the interface font and its size (1rem everywhere)  */
++  chopgimp_themes_set_font ();
++
+   theme_css = gimp_directory_file ("theme.css", NULL);
+ 
+   if (gimp->be_verbose)
+@@ -568,6 +694,29 @@ themes_apply_theme (Gimp          *gimp,
+ 
+       css_files = g_slist_reverse (css_files);
+ 
++      /*  ChopGimp: the palette of the chosen variant comes right after the
++       *  theme (its colours replace those of the scheme)
++       */
++      {
++        gchar *variant = chopgimp_rc_get_string ("appearance", "variant", NULL);
++        GFile *dir     = themes_get_theme_dir (gimp, config->theme);
++
++        if (variant && *variant && dir && css_files)
++          {
++            gchar *name    = g_strdup_printf ("palette-%s.css", variant);
++            GFile *palette = g_file_get_child (dir, name);
++
++            if (g_file_query_exists (palette, NULL))
++              css_files = g_slist_insert (css_files, palette, 1);
++            else
++              g_object_unref (palette);
++
++            g_free (name);
++          }
++
++        g_free (variant);
++      }
++
+       g_output_stream_printf (
+         output, NULL, NULL, &error,
+         "/* GIMP theme.css\n"
+@@ -609,6 +758,14 @@ themes_apply_theme (Gimp          *gimp,
+             icon_themes_current_prefer_symbolic (gimp) ? "symbolic" : "regular",
+             prefer_dark_theme ? "/* prefer-dark-theme */\n" : "");
+ 
++          /*  ChopGimp: accent colour and density (menu Affichage > Apparence)  */
++          if (! error)
++            {
++              gchar *css = chopgimp_themes_appearance_css ();
++
++              g_output_stream_printf (output, NULL, NULL, &error, "%s", css);
++              g_free (css);
++            }
+         }
+ 
+ #if defined(PLATFORM_OSX) && MAC_OS_X_VERSION_MIN_REQUIRED >= 101000
+diff --git a/app/widgets/gimpcursor.c b/app/widgets/gimpcursor.c
+index 2097d25..f9c7a9a 100644
+--- a/app/widgets/gimpcursor.c
++++ b/app/widgets/gimpcursor.c
+@@ -28,6 +28,8 @@
+ #include <gdk/gdkwin32.h>
+ #endif
+ 
++#include "libgimpbase/gimpbase.h"
++
+ #include "widgets-types.h"
+ 
+ #include "gimpcursor.h"
+@@ -295,6 +297,204 @@ get_cursor_pixbuf (GimpCursor *cursor,
+     return cursor->pixbuf;
+ }
+ 
++/* ─── ChopGimp: Photoshop-like cursors ──────────────────────────────
++ *
++ *  One whole cursor per tool (cursors/chopgimp/<name>.png and -x2.png,
++ *  hot spots in chopgimp-cursors.ini, drawn by tools/build_cursors.py)
++ *  instead of a crosshair with a small tool icon; the modifiers are small
++ *  symbols in the bottom right corner (inside the lens for the zoom).
++ */
++
++typedef struct
++{
++  GdkPixbuf *pixbuf;
++  GdkPixbuf *pixbuf_x2;
++  gint       hot_x;
++  gint       hot_y;
++  gboolean   loaded;
++} ChopGimpCursor;
++
++static ChopGimpCursor chopgimp_tool_cursors[GIMP_TOOL_CURSOR_LAST];
++static ChopGimpCursor chopgimp_modifiers[GIMP_CURSOR_MODIFIER_LAST];
++static GKeyFile      *chopgimp_hotspots = NULL;
++
++static GdkPixbuf *
++chopgimp_cursor_load (const gchar *name,
++                      const gchar *suffix)
++{
++  gchar     *file_name = g_strconcat (name, suffix, ".png", NULL);
++  GFile     *file      = gimp_data_directory_file ("cursors", "chopgimp",
++                                                   file_name, NULL);
++  GdkPixbuf *pixbuf    = gdk_pixbuf_new_from_file (g_file_peek_path (file), NULL);
++
++  g_object_unref (file);
++  g_free (file_name);
++
++  return pixbuf;
++}
++
++static ChopGimpCursor *
++chopgimp_cursor_get (ChopGimpCursor *table,
++                     gint            index,
++                     const gchar    *name)
++{
++  ChopGimpCursor *c = &table[index];
++
++  if (! name)
++    return NULL;
++
++  if (! c->loaded)
++    {
++      c->loaded    = TRUE;
++      c->pixbuf    = chopgimp_cursor_load (name, "");
++      c->pixbuf_x2 = chopgimp_cursor_load (name, "-x2");
++
++      if (! chopgimp_hotspots)
++        {
++          GFile *file = gimp_data_directory_file ("cursors", "chopgimp",
++                                                  "chopgimp-cursors.ini", NULL);
++
++          chopgimp_hotspots = g_key_file_new ();
++          g_key_file_load_from_file (chopgimp_hotspots, g_file_peek_path (file),
++                                     G_KEY_FILE_NONE, NULL);
++          g_object_unref (file);
++        }
++
++      {
++        gsize  n   = 0;
++        gint  *hot = g_key_file_get_integer_list (chopgimp_hotspots, name, "hot",
++                                                  &n, NULL);
++
++        if (hot && n == 2)
++          {
++            c->hot_x = hot[0];
++            c->hot_y = hot[1];
++          }
++        g_free (hot);
++      }
++    }
++
++  return c->pixbuf ? c : NULL;
++}
++
++static GdkCursor *
++chopgimp_cursor_from_pixbuf (GdkDisplay *display,
++                             GdkPixbuf  *pixbuf,
++                             gint        hot_x,
++                             gint        hot_y,
++                             gint        scale_factor)
++{
++  GdkCursor *cursor;
++
++  if (scale_factor > 1)
++    {
++      cairo_surface_t *surface =
++        gdk_cairo_surface_create_from_pixbuf (pixbuf, scale_factor, NULL);
++
++      if (FALSE                            ||
++#ifdef GDK_WINDOWING_QUARTZ
++          GDK_IS_QUARTZ_DISPLAY (display)  ||
++#endif
++#ifdef GDK_WINDOWING_WIN32
++          GDK_IS_WIN32_DISPLAY (display)   ||
++#endif
++          FALSE)
++        {
++          hot_x *= scale_factor;
++          hot_y *= scale_factor;
++        }
++
++      cursor = gdk_cursor_new_from_surface (display, surface, hot_x, hot_y);
++      cairo_surface_destroy (surface);
++    }
++  else
++    {
++      cursor = gdk_cursor_new_from_pixbuf (display, pixbuf, hot_x, hot_y);
++    }
++
++  return cursor;
++}
++
++static GdkCursor *
++chopgimp_cursor_new (GdkWindow          *window,
++                     GimpHandedness      cursor_handedness,
++                     GimpToolCursorType  tool_cursor,
++                     GimpCursorModifier  modifier)
++{
++  ChopGimpCursor *tool;
++  ChopGimpCursor *mod = NULL;
++  GdkPixbuf      *src;
++  GdkPixbuf      *pixbuf;
++  gint            scale_factor;
++  gint            hot_x, hot_y;
++  GdkCursor      *cursor;
++
++  tool = chopgimp_cursor_get (chopgimp_tool_cursors, tool_cursor,
++                              gimp_tool_cursors[tool_cursor].resource_name);
++  if (! tool)
++    return NULL;
++
++  if (modifier > GIMP_CURSOR_MODIFIER_NONE && modifier < GIMP_CURSOR_MODIFIER_LAST)
++    mod = chopgimp_cursor_get (chopgimp_modifiers, modifier,
++                               gimp_cursor_modifiers[modifier].resource_name);
++
++  scale_factor = CLAMP (gdk_window_get_scale_factor (window), 1, 2);
++
++  src = (scale_factor == 2 && tool->pixbuf_x2) ? tool->pixbuf_x2 : tool->pixbuf;
++  if (scale_factor == 2 && ! tool->pixbuf_x2)
++    scale_factor = 1;
++
++  pixbuf = gdk_pixbuf_copy (src);
++
++  if (mod)
++    {
++      GdkPixbuf *m      = (scale_factor == 2 && mod->pixbuf_x2) ? mod->pixbuf_x2 : mod->pixbuf;
++      gint       width  = gdk_pixbuf_get_width  (pixbuf);
++      gint       height = gdk_pixbuf_get_height (pixbuf);
++      gint       off    = 0;
++
++      /*  zoom: « + » / « − » inside the lens, like Photoshop  */
++      if (tool_cursor == GIMP_TOOL_CURSOR_ZOOM &&
++          (modifier == GIMP_CURSOR_MODIFIER_PLUS ||
++           modifier == GIMP_CURSOR_MODIFIER_MINUS))
++        {
++          off = 14 * scale_factor;
++        }
++
++      /*  only where the moved symbol image exists (composite would
++       *  stretch its edges over the rest)
++       */
++      if (gdk_pixbuf_get_width (m) == width)
++        gdk_pixbuf_composite (m, pixbuf, 0, 0, width - off, height - off,
++                              -off, -off, 1.0, 1.0, GDK_INTERP_NEAREST, 255);
++    }
++
++  hot_x = tool->hot_x * scale_factor;
++  hot_y = tool->hot_y * scale_factor;
++
++  if (scale_factor > 1)
++    {
++      /*  surface cursors take the hot spot in surface coordinates  */
++      hot_x /= scale_factor;
++      hot_y /= scale_factor;
++    }
++
++  if (cursor_handedness == GIMP_HANDEDNESS_LEFT)
++    {
++      GdkPixbuf *flipped = gdk_pixbuf_flip (pixbuf, TRUE);
++
++      g_object_unref (pixbuf);
++      pixbuf = flipped;
++      hot_x  = (gdk_pixbuf_get_width (pixbuf) / scale_factor - 1) - hot_x;
++    }
++
++  cursor = chopgimp_cursor_from_pixbuf (gdk_window_get_display (window), pixbuf,
++                                        hot_x, hot_y, scale_factor);
++  g_object_unref (pixbuf);
++
++  return cursor;
++}
++
+ GdkCursor *
+ gimp_cursor_new (GdkWindow          *window,
+                  GimpHandedness      cursor_handedness,
+@@ -322,6 +522,33 @@ gimp_cursor_new (GdkWindow          *window,
+ 
+   g_return_val_if_fail (cursor_type >= GIMP_CURSOR_NONE, NULL);
+ 
++  /*  ChopGimp: the whole tool cursor, unless a resize / « bad » / plain
++   *  crosshair cursor is asked for
++   */
++  {
++    GimpToolCursorType tool = tool_cursor;
++
++    if (tool == GIMP_TOOL_CURSOR_NONE && cursor_type == GIMP_CURSOR_ZOOM)
++      tool = GIMP_TOOL_CURSOR_ZOOM;
++    else if (tool == GIMP_TOOL_CURSOR_NONE && cursor_type == GIMP_CURSOR_COLOR_PICKER)
++      tool = GIMP_TOOL_CURSOR_COLOR_PICKER;
++
++    if (tool > GIMP_TOOL_CURSOR_NONE && tool < GIMP_TOOL_CURSOR_LAST &&
++        cursor_type != GIMP_CURSOR_NONE       &&
++        cursor_type != GIMP_CURSOR_BAD        &&
++        cursor_type != GIMP_CURSOR_CROSSHAIR  &&
++        cursor_type != GIMP_CURSOR_SINGLE_DOT &&
++        (cursor_type < GIMP_CURSOR_CORNER_TOP ||
++         cursor_type > GIMP_CURSOR_SIDE_TOP_LEFT))
++      {
++        GdkCursor *cursor = chopgimp_cursor_new (window, cursor_handedness,
++                                                 tool, modifier);
++
++        if (cursor)
++          return cursor;
++      }
++  }
++
+   /*  disallow the small tool cursor with some cursors
+    */
+   if (cursor_type <= GIMP_CURSOR_NONE         ||
+diff --git a/app/widgets/gimpprefsbox.c b/app/widgets/gimpprefsbox.c
+index 883f8f5..9c49404 100644
+--- a/app/widgets/gimpprefsbox.c
++++ b/app/widgets/gimpprefsbox.c
+@@ -516,3 +516,43 @@ gimp_prefs_box_get_stack (GimpPrefsBox *box)
+ 
+   return GET_PRIVATE (box)->stack;
+ }
++
++/*  ChopGimp: open the preferences on a given page  */
++static gboolean
++prefs_box_select_help_id (GtkTreeModel *model,
++                          GtkTreePath  *path,
++                          GtkTreeIter  *iter,
++                          gpointer      data)
++{
++  GimpPrefsBox *box     = data;
++  gchar        *help_id = NULL;
++  gboolean      found;
++
++  gtk_tree_model_get (model, iter, COLUMN_PAGE_HELP_ID, &help_id, -1);
++
++  found = ! g_strcmp0 (help_id, g_object_get_data (G_OBJECT (box), "chopgimp-wanted"));
++
++  if (found)
++    {
++      GtkTreeView *view = GTK_TREE_VIEW (GET_PRIVATE (box)->tree_view);
++
++      gtk_tree_view_expand_to_path (view, path);
++      gtk_tree_selection_select_iter (gtk_tree_view_get_selection (view), iter);
++    }
++
++  g_free (help_id);
++
++  return found;
++}
++
++void
++gimp_prefs_box_set_current_help_id (GimpPrefsBox *box,
++                                    const gchar  *help_id)
++{
++  g_return_if_fail (GIMP_IS_PREFS_BOX (box));
++
++  g_object_set_data (G_OBJECT (box), "chopgimp-wanted", (gpointer) help_id);
++  gtk_tree_model_foreach (GTK_TREE_MODEL (GET_PRIVATE (box)->store),
++                          prefs_box_select_help_id, box);
++  g_object_set_data (G_OBJECT (box), "chopgimp-wanted", NULL);
++}
+diff --git a/app/widgets/gimpprefsbox.h b/app/widgets/gimpprefsbox.h
+index 7a0dfbd..4d1cd74 100644
+--- a/app/widgets/gimpprefsbox.h
++++ b/app/widgets/gimpprefsbox.h
+@@ -69,5 +69,7 @@ GtkWidget   * gimp_prefs_box_set_page_resettable   (GimpPrefsBox *box,
+                                                     GtkWidget    *page,
+                                                     const gchar  *label);
+ 
++void          gimp_prefs_box_set_current_help_id (GimpPrefsBox *box,
++                                                  const gchar  *help_id);
+ GtkWidget   * gimp_prefs_box_get_tree_view         (GimpPrefsBox *box);
+ GtkWidget   * gimp_prefs_box_get_stack             (GimpPrefsBox *box);
+diff --git a/libgimpwidgets/gimppropwidgets.c b/libgimpwidgets/gimppropwidgets.c
+index ca03cb7..1c6eea7 100644
+--- a/libgimpwidgets/gimppropwidgets.c
++++ b/libgimpwidgets/gimppropwidgets.c
+@@ -1581,6 +1581,25 @@ gimp_prop_spin_scale_new (GObject     *config,
+       gimp_spin_scale_set_gamma (GIMP_SPIN_SCALE (spinscale), gspec->ui_gamma);
+     }
+ 
++  /*  ChopGimp: unit drawn after the value field of the slider  */
++  {
++    const gchar *unit   = gegl_param_spec_get_property_key (param_spec, "unit");
++    const gchar *suffix = NULL;
++
++    if (! g_strcmp0 (unit, "degree"))
++      suffix = "°";
++    else if (! g_strcmp0 (unit, "pixel-distance") ||
++             ! g_strcmp0 (unit, "pixel-coordinate"))
++      suffix = "px";
++    else if (! g_strcmp0 (unit, "kelvin"))
++      suffix = "K";
++    else if (! g_strcmp0 (unit, "percent"))
++      suffix = "%";
++
++    if (suffix)
++      g_object_set (spinscale, "unit-suffix", suffix, NULL);
++  }
++
+   tooltip = g_param_spec_get_blurb (param_spec);
+   gimp_help_set_help_data (spinscale, tooltip, NULL);
+ 
+@@ -1702,6 +1721,21 @@ gimp_prop_widget_set_factor (GtkWidget *widget,
+ 
+   gtk_spin_button_set_digits (GTK_SPIN_BUTTON (widget), digits);
+ 
++  /*  ChopGimp: a 0..1 property shown × 100 is a percentage  */
++  if (GIMP_IS_SPIN_SCALE (widget))
++    {
++      gchar *suffix = NULL;
++
++      g_object_get (widget, "unit-suffix", &suffix, NULL);
++
++      if (factor == 100.0 && ! suffix)
++        g_object_set (widget, "unit-suffix", "%", NULL);
++      else if (factor != 100.0 && ! g_strcmp0 (suffix, "%"))
++        g_object_set (widget, "unit-suffix", NULL, NULL);
++
++      g_free (suffix);
++    }
++
+   /* Finally create a new binding. */
+   if (factor != 1.0)
+     {
+diff --git a/libgimpwidgets/gimpspinscale.c b/libgimpwidgets/gimpspinscale.c
+index c06acf3..783a907 100644
+--- a/libgimpwidgets/gimpspinscale.c
++++ b/libgimpwidgets/gimpspinscale.c
+@@ -21,6 +21,8 @@
+ 
+ #include "config.h"
+ 
++#include <string.h>
++
+ #include <gegl.h>
+ #include <gtk/gtk.h>
+ #include <gdk/gdkkeysyms.h>
+@@ -37,11 +39,49 @@
+ 
+ #define RELATIVE_CHANGE_SPEED 0.1
+ 
++/*  ChopGimp: Photoshop-like slider layout (unless the environment
++ *  variable CHOPGIMP_CLASSIC_SPIN_SCALE is set to a non-empty value
++ *  other than "0", which restores GIMP's filled bar):
++ *
++ *    Label     ────────●──────────  [ 50 ] %
++ *
++ *  - the label is drawn on the left, ellipsized, in the normal text color;
++ *  - a thin track with a round knob: click / drag = absolute value;
++ *  - the GtkEntry text (right-aligned) is framed as a small value field,
++ *    clicking it edits the text; the optional "unit-suffix" is drawn
++ *    after the field;
++ *  - dragging the label scrubs the value (relative), Shift+drag or the
++ *    right button anywhere on the label / track = fine relative drag;
++ *  - the -/+ buttons of GtkSpinButton are given no width and no input.
++ *
++ *  Colors and sizes come from the theme, through style classes added
++ *  to the GimpSpinScale node while rendering each part:
++ *    .chopgimp-slider-track  (min-height = track thickness)
++ *    .chopgimp-slider-fill
++ *    .chopgimp-slider-knob   (min-width  = knob diameter)
++ *    .chopgimp-slider-field
++ *    .chopgimp-slider-unit   (color)
++ *  every part also has .chopgimp-slider-part; the widget itself has
++ *  .chopgimp-slider.  Neutral defaults are installed with a low priority
++ *  for themes that know nothing about these classes.
++ */
++#define SLIDER_GAP           8    /* label ↔ track ↔ field              */
++#define FIELD_PAD            5    /* inner horizontal padding of field  */
++#define UNIT_GAP             3    /* field ↔ unit suffix                */
++#define TRACK_MIN           40    /* below: compact layout              */
++#define TRACK_NATURAL      100
++#define LABEL_MIN_CHARS      3
++#define LABEL_COL_FRACTION 0.30   /* label column, so tracks line up    */
++#define LABEL_COL_MAX      110
++#define COMPACT_KNOB         7
++#define COMPACT_TRACK        2
++
+ 
+ enum
+ {
+   PROP_0,
+-  PROP_LABEL
++  PROP_LABEL,
++  PROP_UNIT_SUFFIX
+ };
+ 
+ typedef enum
+@@ -50,9 +90,39 @@ typedef enum
+   TARGET_NUMBER,
+   TARGET_GRAB,
+   TARGET_GRABBING,
+-  TARGET_RELATIVE
++  TARGET_RELATIVE,
++  TARGET_SCRUB
+ } SpinScaleTarget;
+ 
++typedef enum
++{
++  ZONE_LABEL,
++  ZONE_TRACK,
++  ZONE_FIELD
++} SliderZone;
++
++/*  all x coordinates are left-to-right ones (mirrored for RTL),
++ *  relative to the widget allocation
++ */
++typedef struct
++{
++  gint     width;
++  gint     height;
++  gboolean field_only;   /* too narrow: only the value field          */
++  gboolean compact;      /* narrow: label over a track at the bottom  */
++  gint     label_x;
++  gint     label_w;
++  gdouble  label_y;      /* vertical centre of the label              */
++  gdouble  track_x0;     /* knob centre range                         */
++  gdouble  track_x1;
++  gdouble  track_y;      /* vertical centre of the track              */
++  gdouble  track_h;
++  gdouble  knob_d;
++  gint     field_x;
++  gint     field_w;
++  gint     unit_x;
++} SliderGeometry;
++
+ 
+ struct _GimpSpinScale
+ {
+@@ -85,6 +155,23 @@ struct _GimpSpinScale
+   gboolean         pointer_warp;
+   gint             pointer_warp_x;
+   gint             pointer_warp_start_x;
++
++  /*  ChopGimp slider  */
++  gboolean         classic;
++  gdouble          relative_speed;
++  gchar           *unit_suffix;
++  PangoLayout     *unit_layout;
++  PangoLayout     *measure_layout;
++  GtkCssProvider  *unit_provider;
++  gchar           *unit_css;
++  gint             char_px;
++  gint             track_h_px;    /* 0 = to look up in the CSS */
++  gint             knob_d_px;
++  gint             bounds_width;
++  gdouble          bounds_lower;
++  gdouble          bounds_upper;
++  gint             bounds_digits;
++  GdkWindow       *text_window;
+ };
+ 
+ 
+@@ -106,6 +193,10 @@ static void       gimp_spin_scale_get_preferred_height (GtkWidget        *widget
+                                                         gint             *minimum_width,
+                                                         gint             *natural_width);
+ static void       gimp_spin_scale_style_updated        (GtkWidget        *widget);
++static void       gimp_spin_scale_size_allocate        (GtkWidget        *widget,
++                                                        GtkAllocation    *allocation);
++static void       gimp_spin_scale_map                  (GtkWidget        *widget);
++static void       gimp_spin_scale_unrealize            (GtkWidget        *widget);
+ static gboolean   gimp_spin_scale_draw                 (GtkWidget        *widget,
+                                                         cairo_t          *cr);
+ static gboolean   gimp_spin_scale_button_press         (GtkWidget        *widget,
+@@ -134,6 +225,17 @@ static void       gimp_spin_scale_setup_mnemonic       (GimpSpinScale    *scale,
+ static gdouble    odd_pow                              (gdouble           x,
+                                                         gdouble           y);
+ 
++static void       gimp_spin_scale_install_css          (void);
++static void       gimp_spin_scale_update_unit_css      (GimpSpinScale    *scale);
++static void       gimp_spin_scale_get_geometry         (GimpSpinScale    *scale,
++                                                        SliderGeometry   *geo);
++static gboolean   gimp_spin_scale_draw_slider          (GtkWidget        *widget,
++                                                        cairo_t          *cr);
++static void       gimp_spin_scale_hide_spin_panels     (GimpSpinScale    *scale);
++
++
++static gboolean spin_scale_classic = FALSE;
++
+ 
+ G_DEFINE_TYPE (GimpSpinScale, gimp_spin_scale, GIMP_TYPE_SPIN_BUTTON)
+ 
+@@ -155,6 +257,9 @@ gimp_spin_scale_class_init (GimpSpinScaleClass *klass)
+   widget_class->get_preferred_width  = gimp_spin_scale_get_preferred_width;
+   widget_class->get_preferred_height = gimp_spin_scale_get_preferred_height;
+   widget_class->style_updated        = gimp_spin_scale_style_updated;
++  widget_class->size_allocate        = gimp_spin_scale_size_allocate;
++  widget_class->map                  = gimp_spin_scale_map;
++  widget_class->unrealize            = gimp_spin_scale_unrealize;
+   widget_class->draw                 = gimp_spin_scale_draw;
+   widget_class->button_press_event   = gimp_spin_scale_button_press;
+   widget_class->button_release_event = gimp_spin_scale_button_release;
+@@ -170,7 +275,24 @@ gimp_spin_scale_class_init (GimpSpinScaleClass *klass)
+                                                         NULL,
+                                                         GIMP_PARAM_READWRITE));
+ 
++  /**
++   * GimpSpinScale:unit-suffix:
++   *
++   * A short unit ("%", "px", "°"…) drawn after the value field.  Only
++   * used by the ChopGimp slider layout.
++   */
++  g_object_class_install_property (object_class, PROP_UNIT_SUFFIX,
++                                   g_param_spec_string ("unit-suffix", NULL, NULL,
++                                                        NULL,
++                                                        GIMP_PARAM_READWRITE));
++
+   gtk_widget_class_set_css_name (widget_class, "GimpSpinScale");
++
++  {
++    const gchar *env = g_getenv ("CHOPGIMP_CLASSIC_SPIN_SCALE");
++
++    spin_scale_classic = (env && *env && strcmp (env, "0") != 0);
++  }
+ }
+ 
+ static void
+@@ -188,6 +310,17 @@ gimp_spin_scale_init (GimpSpinScale *scale)
+ 
+   scale->mnemonic_keyval = GDK_KEY_VoidSymbol;
+   scale->gamma           = 1.0;
++  scale->classic         = spin_scale_classic;
++  scale->relative_speed  = RELATIVE_CHANGE_SPEED;
++  scale->bounds_width    = -1;
++
++  if (! scale->classic)
++    {
++      gimp_spin_scale_install_css ();
++
++      gtk_style_context_add_class (gtk_widget_get_style_context (GTK_WIDGET (scale)),
++                                   "chopgimp-slider");
++    }
+ }
+ 
+ static void
+@@ -202,6 +335,15 @@ gimp_spin_scale_dispose (GObject *object)
+   gimp_spin_scale_setup_mnemonic (GIMP_SPIN_SCALE (object), keyval);
+ 
+   g_clear_object (&scale->layout);
++  g_clear_object (&scale->unit_layout);
++  g_clear_object (&scale->measure_layout);
++
++  if (scale->unit_provider)
++    {
++      gtk_style_context_remove_provider (gtk_widget_get_style_context (GTK_WIDGET (scale)),
++                                         GTK_STYLE_PROVIDER (scale->unit_provider));
++      g_clear_object (&scale->unit_provider);
++    }
+ 
+   G_OBJECT_CLASS (parent_class)->dispose (object);
+ }
+@@ -214,6 +356,8 @@ gimp_spin_scale_finalize (GObject *object)
+   g_clear_pointer (&scale->label,         g_free);
+   g_clear_pointer (&scale->label_text,    g_free);
+   g_clear_pointer (&scale->label_pattern, g_free);
++  g_clear_pointer (&scale->unit_suffix,   g_free);
++  g_clear_pointer (&scale->unit_css,      g_free);
+ 
+   G_OBJECT_CLASS (parent_class)->finalize (object);
+ }
+@@ -232,6 +376,18 @@ gimp_spin_scale_set_property (GObject      *object,
+       gimp_spin_scale_set_label (scale, g_value_get_string (value));
+       break;
+ 
++    case PROP_UNIT_SUFFIX:
++      if (g_strcmp0 (scale->unit_suffix, g_value_get_string (value)))
++        {
++          g_free (scale->unit_suffix);
++          scale->unit_suffix = g_value_dup_string (value);
++
++          g_clear_object (&scale->unit_layout);
++          gimp_spin_scale_update_unit_css (scale);
++          gtk_widget_queue_resize (GTK_WIDGET (scale));
++        }
++      break;
++
+     default:
+       G_OBJECT_WARN_INVALID_PROPERTY_ID (object, property_id, pspec);
+       break;
+@@ -252,6 +408,10 @@ gimp_spin_scale_get_property (GObject    *object,
+       g_value_set_string (value, gimp_spin_scale_get_label (scale));
+       break;
+ 
++    case PROP_UNIT_SUFFIX:
++      g_value_set_string (value, scale->unit_suffix);
++      break;
++
+     default:
+       G_OBJECT_WARN_INVALID_PROPERTY_ID (object, property_id, pspec);
+       break;
+@@ -275,6 +435,44 @@ gimp_spin_scale_get_preferred_width (GtkWidget *widget,
+                                        pango_context_get_font_description (context),
+                                        pango_context_get_language (context));
+ 
++  if (! scale->classic)
++    {
++      gint char_pixels;
++      gint knob = COMPACT_KNOB + 2;
++
++      char_pixels = PANGO_PIXELS (MAX (pango_font_metrics_get_approximate_char_width (metrics),
++                                       pango_font_metrics_get_approximate_digit_width (metrics)));
++
++      /*  the parent size is the value field (the -/+ buttons have
++       *  no width), the unit padding being part of the entry CSS
++       */
++      if (scale->label)
++        {
++          PangoLayout *layout;
++          gint         label_width;
++
++          layout = gtk_widget_create_pango_layout (widget, scale->label_text);
++          pango_layout_get_pixel_size (layout, &label_width, NULL);
++          g_object_unref (layout);
++
++          *minimum_width += SLIDER_GAP + char_pixels * LABEL_MIN_CHARS;
++          *natural_width += SLIDER_GAP + label_width +
++                            SLIDER_GAP + TRACK_NATURAL;
++        }
++      else
++        {
++          *minimum_width += SLIDER_GAP + 2 * knob;
++          *natural_width += SLIDER_GAP + TRACK_NATURAL;
++        }
++
++      if (*minimum_width > *natural_width)
++        *natural_width = *minimum_width;
++
++      pango_font_metrics_unref (metrics);
++
++      return;
++    }
++
+   if (scale->label)
+     {
+       gint char_width;
+@@ -313,6 +511,113 @@ gimp_spin_scale_style_updated (GtkWidget *widget)
+   GTK_WIDGET_CLASS (parent_class)->style_updated (widget);
+ 
+   g_clear_object (&scale->layout);
++  g_clear_object (&scale->unit_layout);
++  g_clear_object (&scale->measure_layout);
++  scale->char_px      = 0;
++  scale->track_h_px   = 0;
++  scale->knob_d_px    = 0;
++  scale->bounds_width = -1;
++
++  gimp_spin_scale_update_unit_css (scale);
++}
++
++static void
++gimp_spin_scale_size_allocate (GtkWidget     *widget,
++                               GtkAllocation *allocation)
++{
++  GTK_WIDGET_CLASS (parent_class)->size_allocate (widget, allocation);
++
++  gimp_spin_scale_hide_spin_panels (GIMP_SPIN_SCALE (widget));
++}
++
++static void
++gimp_spin_scale_map (GtkWidget *widget)
++{
++  GTK_WIDGET_CLASS (parent_class)->map (widget);
++
++  gimp_spin_scale_hide_spin_panels (GIMP_SPIN_SCALE (widget));
++}
++
++static void
++gimp_spin_scale_unrealize (GtkWidget *widget)
++{
++  GIMP_SPIN_SCALE (widget)->text_window = NULL;
++
++  GTK_WIDGET_CLASS (parent_class)->unrealize (widget);
++}
++
++/*  GtkSpinButton keeps an input-only window over each of its -/+
++ *  buttons.  The slider layout gives the buttons no width (CSS), but
++ *  their windows would still catch the clicks on the value: hide them.
++ *  The entry's own text window is the child window matching the text
++ *  area; if none matches (unexpected GTK internals), nothing is hidden
++ *  and clicks on foreign windows only focus the field.
++ */
++static void
++gimp_spin_scale_hide_spin_panels (GimpSpinScale *scale)
++{
++  GtkWidget     *widget = GTK_WIDGET (scale);
++  GdkWindow     *window;
++  GtkAllocation  allocation;
++  GdkRectangle   text_area;
++  GList         *children;
++  GList         *list;
++  GdkWindow     *text_window = NULL;
++
++  scale->text_window = NULL;
++
++  if (scale->classic || ! gtk_widget_get_realized (widget))
++    return;
++
++  window = gtk_widget_get_window (widget);
++  if (! window)
++    return;
++
++  gtk_widget_get_allocation (widget, &allocation);
++  gtk_entry_get_text_area (GTK_ENTRY (widget), &text_area);
++
++  children = gdk_window_peek_children (window);
++
++  for (list = children; list; list = g_list_next (list))
++    {
++      GdkWindow *child     = list->data;
++      gpointer   user_data = NULL;
++      gint       x, y, w, h;
++
++      gdk_window_get_user_data (child, &user_data);
++      if (user_data != widget)
++        continue;
++
++      gdk_window_get_geometry (child, &x, &y, &w, &h);
++
++      if (x - allocation.x == text_area.x &&
++          y - allocation.y == text_area.y &&
++          w == text_area.width            &&
++          h == text_area.height)
++        {
++          text_window = child;
++          break;
++        }
++    }
++
++  if (! text_window)
++    return;
++
++  scale->text_window = text_window;
++
++  for (list = children; list; list = g_list_next (list))
++    {
++      GdkWindow *child     = list->data;
++      gpointer   user_data = NULL;
++
++      gdk_window_get_user_data (child, &user_data);
++
++      if (user_data == widget && child != text_window &&
++          gdk_window_is_visible (child))
++        {
++          gdk_window_hide (child);
++        }
++    }
+ }
+ 
+ static PangoAttrList *
+@@ -360,6 +665,9 @@ gimp_spin_scale_draw (GtkWidget *widget,
+ {
+   GimpSpinScale *scale = GIMP_SPIN_SCALE (widget);
+ 
++  if (! scale->classic)
++    return gimp_spin_scale_draw_slider (widget, cr);
++
+   cairo_save (cr);
+   GTK_WIDGET_CLASS (parent_class)->draw (widget, cr);
+   cairo_restore (cr);
+@@ -555,6 +863,91 @@ gimp_spin_scale_event_to_widget_coords (GtkWidget *widget,
+   *widget_y = event_y - text_area.y;
+ }
+ 
++/*  x, y: relative to the text area (as given by
++ *  gimp_spin_scale_event_to_widget_coords())
++ */
++static SliderZone
++gimp_spin_scale_get_zone (GimpSpinScale  *scale,
++                          gdouble         x,
++                          gdouble         y,
++                          gboolean       *inside)
++{
++  GtkWidget      *widget = GTK_WIDGET (scale);
++  GdkRectangle    text_area;
++  SliderGeometry  geo;
++  gdouble         lx;
++
++  gtk_entry_get_text_area (GTK_ENTRY (widget), &text_area);
++  gimp_spin_scale_get_geometry (scale, &geo);
++
++  x += text_area.x;
++  y += text_area.y;
++
++  *inside = (x >= 0 && x < geo.width && y >= 0 && y < geo.height);
++
++  lx = (gtk_widget_get_direction (widget) == GTK_TEXT_DIR_RTL) ?
++       geo.width - x : x;
++
++  if (geo.field_only || lx >= geo.field_x - SLIDER_GAP / 2)
++    return ZONE_FIELD;
++
++  if (geo.compact || ! scale->label ||
++      lx >= geo.track_x0 - geo.knob_d / 2.0 - SLIDER_GAP / 2)
++    return ZONE_TRACK;
++
++  return ZONE_LABEL;
++}
++
++static SpinScaleTarget
++gimp_spin_scale_get_slider_target (GtkWidget *widget,
++                                   gdouble    x,
++                                   gdouble    y,
++                                   GdkEvent  *event)
++{
++  SliderZone zone;
++  gboolean   inside;
++
++  zone = gimp_spin_scale_get_zone (GIMP_SPIN_SCALE (widget), x, y, &inside);
++
++  if (! inside)
++    return TARGET_NONE;
++
++  if (event && event->type != GDK_MOTION_NOTIFY)
++    {
++      GdkEventButton *event_button = (GdkEventButton *) event;
++
++      switch (event_button->button)
++        {
++        case 1:
++          if (zone == ZONE_FIELD)
++            return TARGET_NUMBER;
++          else if (event_button->state & GDK_SHIFT_MASK)
++            return TARGET_RELATIVE;
++          else if (zone == ZONE_TRACK)
++            return TARGET_GRABBING;
++          else
++            return TARGET_SCRUB;
++
++        case 3:
++          return (zone == ZONE_FIELD) ? TARGET_NUMBER : TARGET_RELATIVE;
++
++        case 2:
++          return (zone == ZONE_FIELD) ? TARGET_NUMBER : TARGET_NONE;
++
++        default:
++          return TARGET_NONE;
++        }
++    }
++
++  if (zone == ZONE_FIELD)
++    return TARGET_NUMBER;
++
++  if (event && (((GdkEventMotion *) event)->state & GDK_SHIFT_MASK))
++    return TARGET_RELATIVE;
++
++  return (zone == ZONE_TRACK) ? TARGET_GRAB : TARGET_SCRUB;
++}
++
+ static SpinScaleTarget
+ gimp_spin_scale_get_target (GtkWidget *widget,
+                             gdouble    x,
+@@ -563,6 +956,9 @@ gimp_spin_scale_get_target (GtkWidget *widget,
+ {
+   GdkRectangle text_area;
+ 
++  if (! GIMP_SPIN_SCALE (widget)->classic)
++    return gimp_spin_scale_get_slider_target (widget, x, y, event);
++
+   gtk_entry_get_text_area (GTK_ENTRY (widget), &text_area);
+ 
+   if (x >= 0 && x < text_area.width &&
+@@ -654,6 +1050,12 @@ gimp_spin_scale_update_cursor (GtkWidget *widget,
+       cursor = gdk_cursor_new_from_name (display, "col-resize");
+       break;
+ 
++    case TARGET_SCRUB:
++      cursor = gdk_cursor_new_from_name (display, "ew-resize");
++      if (! cursor)
++        cursor = gdk_cursor_new_from_name (display, "col-resize");
++      break;
++
+     default:
+       break;
+     }
+@@ -736,47 +1138,101 @@ gimp_spin_scale_change_value (GtkWidget *widget,
+ 
+   gimp_spin_scale_get_limits (GIMP_SPIN_SCALE (widget), &lower, &upper);
+ 
+-  if (gtk_widget_get_direction (widget) == GTK_TEXT_DIR_RTL)
+-    x = text_area.width - x;
+-
+-  if (scale->relative_change)
++  if (! scale->classic)
+     {
+-      gdouble step;
++      SliderGeometry geo;
++      gboolean       rtl = (gtk_widget_get_direction (widget) == GTK_TEXT_DIR_RTL);
++      gdouble        span;
+ 
+-      step = (upper - lower) / text_area.width * RELATIVE_CHANGE_SPEED;
++      gimp_spin_scale_get_geometry (scale, &geo);
+ 
+-      if (gtk_widget_get_direction (widget) == GTK_TEXT_DIR_RTL)
+-        step *= x - (text_area.width - scale->start_x);
++      span = geo.track_x1 - geo.track_x0;
++      if (geo.field_only || span < 1.0)
++        span = 200.0;
++
++      if (scale->relative_change)
++        {
++          gdouble dx = x - scale->start_x;
++
++          if (rtl)
++            dx = -dx;
++
++          value = scale->start_value +
++                  (upper - lower) / span * scale->relative_speed * dx;
++        }
+       else
+-        step *= x - scale->start_x;
++        {
++          gdouble lx = x + text_area.x;
++          gdouble x0, x1;
++          gdouble fraction;
++
++          if (rtl)
++            lx = geo.width - lx;
++
++          fraction = CLAMP ((lx - geo.track_x0) / span, 0.0, 1.0);
++
++          x0 = odd_pow (lower, 1.0 / scale->gamma);
++          x1 = odd_pow (upper, 1.0 / scale->gamma);
++
++          value = fraction * (x1 - x0) + x0;
++          value = odd_pow (value, scale->gamma);
++        }
+ 
+       if (state & GDK_CONTROL_MASK)
+         {
+           gdouble page_inc = gtk_adjustment_get_page_increment (adjustment);
+ 
+-          step = RINT (step / page_inc) * page_inc;
++          if (scale->relative_change)
++            value = scale->start_value +
++                    RINT ((value - scale->start_value) / page_inc) * page_inc;
++          else
++            value = RINT (value / page_inc) * page_inc;
+         }
+-
+-      value = scale->start_value + step;
+     }
+   else
+     {
+-      gdouble x0, x1;
+-      gdouble fraction;
++      if (gtk_widget_get_direction (widget) == GTK_TEXT_DIR_RTL)
++        x = text_area.width - x;
++
++      if (scale->relative_change)
++        {
++          gdouble step;
++
++          step = (upper - lower) / text_area.width * RELATIVE_CHANGE_SPEED;
+ 
+-      x0 = odd_pow (lower, 1.0 / scale->gamma);
+-      x1 = odd_pow (upper, 1.0 / scale->gamma);
++          if (gtk_widget_get_direction (widget) == GTK_TEXT_DIR_RTL)
++            step *= x - (text_area.width - scale->start_x);
++          else
++            step *= x - scale->start_x;
+ 
+-      fraction = x / (gdouble) text_area.width;
++          if (state & GDK_CONTROL_MASK)
++            {
++              gdouble page_inc = gtk_adjustment_get_page_increment (adjustment);
+ 
+-      value = fraction * (x1 - x0) + x0;
+-      value = odd_pow (value, scale->gamma);
++              step = RINT (step / page_inc) * page_inc;
++            }
+ 
+-      if (state & GDK_CONTROL_MASK)
++          value = scale->start_value + step;
++        }
++      else
+         {
+-          gdouble page_inc = gtk_adjustment_get_page_increment (adjustment);
++          gdouble x0, x1;
++          gdouble fraction;
++
++          x0 = odd_pow (lower, 1.0 / scale->gamma);
++          x1 = odd_pow (upper, 1.0 / scale->gamma);
++
++          fraction = x / (gdouble) text_area.width;
++
++          value = fraction * (x1 - x0) + x0;
++          value = odd_pow (value, scale->gamma);
++
++          if (state & GDK_CONTROL_MASK)
++            {
++              gdouble page_inc = gtk_adjustment_get_page_increment (adjustment);
+ 
+-          value = RINT (value / page_inc) * page_inc;
++              value = RINT (value / page_inc) * page_inc;
++            }
+         }
+     }
+ 
+@@ -808,6 +1264,7 @@ gimp_spin_scale_button_press (GtkWidget      *widget,
+   scale->changing_value  = FALSE;
+   scale->relative_change = FALSE;
+   scale->pointer_warp    = FALSE;
++  scale->relative_speed  = RELATIVE_CHANGE_SPEED;
+ 
+   gimp_spin_scale_event_to_widget_coords (widget, event->window,
+                                           event->x, event->y,
+@@ -815,6 +1272,76 @@ gimp_spin_scale_button_press (GtkWidget      *widget,
+ 
+   gimp_spin_scale_update_target (widget, event->window, x, y, (GdkEvent *) event);
+ 
++  if (! scale->classic)
++    {
++      switch (scale->target)
++        {
++        case TARGET_GRAB:
++        case TARGET_GRABBING:
++          scale->changing_value = TRUE;
++
++          if (! gtk_widget_has_focus (widget))
++            {
++              gtk_widget_grab_focus (widget);
++              /* no selected text in the field after a slider drag */
++              gtk_editable_select_region (GTK_EDITABLE (widget), -1, -1);
++            }
++
++          gimp_spin_scale_change_value (widget, x, event->state);
++
++          gimp_spin_scale_update_cursor (widget, event->window);
++
++          return TRUE;
++
++        case TARGET_RELATIVE:
++        case TARGET_SCRUB:
++          scale->changing_value  = TRUE;
++          scale->relative_change = TRUE;
++          scale->relative_speed  =
++            (scale->target == TARGET_SCRUB) ? 1.0 : RELATIVE_CHANGE_SPEED;
++
++          if (! gtk_widget_has_focus (widget))
++            {
++              gtk_widget_grab_focus (widget);
++              gtk_editable_select_region (GTK_EDITABLE (widget), -1, -1);
++            }
++
++          scale->start_x     = x;
++          scale->start_value = gtk_adjustment_get_value (gtk_spin_button_get_adjustment (GTK_SPIN_BUTTON (widget)));
++
++          scale->start_pointer_x = floor (event->x_root);
++          scale->start_pointer_y = floor (event->y_root);
++
++          gimp_spin_scale_update_cursor (widget, event->window);
++
++          return TRUE;
++
++        case TARGET_NUMBER:
++          if (! gtk_widget_has_focus (widget) &&
++              event->type   == GDK_BUTTON_PRESS &&
++              event->button == 1)
++            {
++              /* first click in the field: select the whole value */
++              gtk_widget_grab_focus (widget);
++              gtk_editable_select_region (GTK_EDITABLE (widget), 0, -1);
++
++              return TRUE;
++            }
++
++          gtk_widget_grab_focus (widget);
++
++          if (scale->text_window && event->window != scale->text_window)
++            return TRUE;
++
++          /* GtkEntry places the cursor, selects words... */
++          return GTK_WIDGET_CLASS (parent_class)->button_press_event (widget, event);
++
++        default:
++          /* nothing to do on the label / track with other buttons */
++          return TRUE;
++        }
++    }
++
+   switch (scale->target)
+     {
+     case TARGET_GRAB:
+@@ -892,8 +1419,12 @@ gimp_spin_scale_button_release (GtkWidget      *widget,
+ 
+       if (scale->hover)
+         {
+-          gimp_spin_scale_update_target (widget, event->window,
+-                                         0.0, 0.0, NULL);
++          if (scale->classic)
++            gimp_spin_scale_update_target (widget, event->window,
++                                           0.0, 0.0, NULL);
++          else
++            gimp_spin_scale_update_target (widget, event->window,
++                                           x, y, NULL);
+         }
+       else
+         {
+@@ -1124,6 +1655,14 @@ gimp_spin_scale_value_changed (GtkSpinButton *spin_button)
+   x1 = odd_pow (upper, 1.0 / scale->gamma);
+   x  = odd_pow (value, 1.0 / scale->gamma);
+ 
++  if (! scale->classic)
++    {
++      /* the slider is drawn from the adjustment value */
++      gtk_widget_queue_draw (GTK_WIDGET (spin_button));
++
++      return;
++    }
++
+   gtk_entry_set_progress_fraction (GTK_ENTRY (spin_button),
+                                    (x - x0) / (x1 - x0));
+ }
+@@ -1221,6 +1760,519 @@ odd_pow (gdouble x,
+ }
+ 
+ 
++/*  ChopGimp slider: CSS, geometry and drawing  */
++
++/*  Structural rules, above the themes (which use
++ *  GTK_STYLE_PROVIDER_PRIORITY_APPLICATION + 1): the widget node and
++ *  its entry draw nothing themselves, the -/+ buttons get no width
++ *  (their 16 px icon is cancelled by a negative margin) and are
++ *  invisible.
++ */
++static const gchar slider_structure_css[] =
++  "GimpSpinScale.chopgimp-slider:not(.chopgimp-slider-part) {"
++  "  background: none; border-style: none; box-shadow: none;"
++  "}"
++  "GimpSpinScale.chopgimp-slider entry {"
++  "  background: none; border-style: none; box-shadow: none;"
++  "  margin: 0; padding-left: 5px; padding-right: 5px;"
++  "}"
++  "GimpSpinScale.chopgimp-slider entry progress {"
++  "  background: none; border-style: none; box-shadow: none;"
++  "}"
++  "GimpSpinScale.chopgimp-slider button,"
++  "GimpSpinScale.chopgimp-slider button:hover,"
++  "GimpSpinScale.chopgimp-slider button:active,"
++  "GimpSpinScale.chopgimp-slider button:disabled {"
++  "  background: none; border-style: none; box-shadow: none;"
++  "  color: transparent; -gtk-icon-shadow: none; opacity: 0;"
++  "  min-width: 0; min-height: 0; padding: 0;"
++  "  margin: 0 0 0 -16px;"
++  "}"
++  "GimpSpinScale.chopgimp-slider-part {"
++  "  background-image: none; box-shadow: none;"
++  "}";
++
++/*  Neutral defaults below the themes, for themes which do not style
++ *  the slider parts (ChopGimp themes do, in ps-overrides.css).
++ */
++static const gchar slider_default_css[] =
++  "GimpSpinScale.chopgimp-slider-track {"
++  "  background-color: alpha(currentColor, 0.25);"
++  "  border-style: none; border-radius: 2px; min-height: 3px;"
++  "}"
++  "GimpSpinScale.chopgimp-slider-fill {"
++  "  background-color: alpha(currentColor, 0.75);"
++  "  border-style: none; border-radius: 2px;"
++  "}"
++  "GimpSpinScale.chopgimp-slider-knob {"
++  "  background-color: currentColor;"
++  "  border-style: none; border-radius: 50%;"
++  "  min-width: 11px; min-height: 11px;"
++  "}"
++  "GimpSpinScale.chopgimp-slider-field {"
++  "  background-color: alpha(currentColor, 0.06);"
++  "  border: 1px solid alpha(currentColor, 0.25); border-radius: 2px;"
++  "}";
++
++static void
++gimp_spin_scale_install_css (void)
++{
++  static gboolean  installed = FALSE;
++  GdkScreen       *screen;
++  GtkCssProvider  *provider;
++
++  if (installed)
++    return;
++
++  screen = gdk_screen_get_default ();
++  if (! screen)
++    return;
++
++  installed = TRUE;
++
++  provider = gtk_css_provider_new ();
++  gtk_css_provider_load_from_data (provider, slider_structure_css, -1, NULL);
++  gtk_style_context_add_provider_for_screen (screen,
++                                             GTK_STYLE_PROVIDER (provider),
++                                             GTK_STYLE_PROVIDER_PRIORITY_USER);
++  g_object_unref (provider);
++
++  provider = gtk_css_provider_new ();
++  gtk_css_provider_load_from_data (provider, slider_default_css, -1, NULL);
++  gtk_style_context_add_provider_for_screen (screen,
++                                             GTK_STYLE_PROVIDER (provider),
++                                             GTK_STYLE_PROVIDER_PRIORITY_APPLICATION);
++  g_object_unref (provider);
++}
++
++/*  The unit suffix is drawn after the value field: keep room for it
++ *  on the outer side of the entry text, with a per-widget provider.
++ */
++static void
++gimp_spin_scale_update_unit_css (GimpSpinScale *scale)
++{
++  GtkWidget *widget = GTK_WIDGET (scale);
++  gchar     *css;
++
++  if (scale->classic)
++    return;
++
++  if (scale->unit_suffix && *scale->unit_suffix)
++    {
++      gint width;
++
++      if (! scale->unit_layout)
++        scale->unit_layout = gtk_widget_create_pango_layout (widget,
++                                                             scale->unit_suffix);
++
++      pango_layout_get_pixel_size (scale->unit_layout, &width, NULL);
++
++      css = g_strdup_printf ("entry { padding-%s: %dpx; }",
++                             gtk_widget_get_direction (widget) == GTK_TEXT_DIR_RTL ?
++                             "left" : "right",
++                             FIELD_PAD + UNIT_GAP + width);
++    }
++  else
++    {
++      css = g_strdup ("");
++    }
++
++  if (! scale->unit_provider && ! *css)
++    {
++      g_free (css);
++      return;
++    }
++
++  if (g_strcmp0 (css, scale->unit_css))
++    {
++      if (! scale->unit_provider)
++        {
++          scale->unit_provider = gtk_css_provider_new ();
++
++          gtk_style_context_add_provider (gtk_widget_get_style_context (widget),
++                                          GTK_STYLE_PROVIDER (scale->unit_provider),
++                                          GTK_STYLE_PROVIDER_PRIORITY_USER + 1);
++        }
++
++      g_free (scale->unit_css);
++      scale->unit_css = css;
++
++      gtk_css_provider_load_from_data (scale->unit_provider, css, -1, NULL);
++    }
++  else
++    {
++      g_free (css);
++    }
++}
++
++static void
++gimp_spin_scale_render_part (GtkStyleContext *style,
++                             cairo_t         *cr,
++                             const gchar     *part,
++                             gdouble          x,
++                             gdouble          y,
++                             gdouble          width,
++                             gdouble          height)
++{
++  if (width <= 0.0 || height <= 0.0)
++    return;
++
++  gtk_style_context_save (style);
++  gtk_style_context_add_class (style, "chopgimp-slider-part");
++  gtk_style_context_add_class (style, part);
++
++  gtk_render_background (style, cr, x, y, width, height);
++  gtk_render_frame      (style, cr, x, y, width, height);
++
++  gtk_style_context_restore (style);
++}
++
++static gint
++gimp_spin_scale_get_part_size (GtkWidget   *widget,
++                               const gchar *part,
++                               const gchar *property,
++                               gint         fallback)
++{
++  GtkStyleContext *style = gtk_widget_get_style_context (widget);
++  gint             size  = 0;
++
++  gtk_style_context_save (style);
++  gtk_style_context_add_class (style, "chopgimp-slider-part");
++  gtk_style_context_add_class (style, part);
++
++  gtk_style_context_get (style, gtk_style_context_get_state (style),
++                         property, &size,
++                         NULL);
++
++  gtk_style_context_restore (style);
++
++  return (size > 0) ? size : fallback;
++}
++
++static gint
++gimp_spin_scale_measure (GimpSpinScale *scale,
++                         const gchar   *text)
++{
++  gint width;
++
++  if (! scale->measure_layout)
++    scale->measure_layout = gtk_widget_create_pango_layout (GTK_WIDGET (scale),
++                                                            NULL);
++
++  pango_layout_set_text (scale->measure_layout, text, -1);
++  pango_layout_get_pixel_size (scale->measure_layout, &width, NULL);
++
++  return width;
++}
++
++/*  width of the value text inside the field: wide enough for the
++ *  adjustment bounds (between "000" and "0000000"), and for what is
++ *  currently typed
++ */
++static gint
++gimp_spin_scale_get_field_text_width (GimpSpinScale *scale)
++{
++  GtkSpinButton  *spin_button = GTK_SPIN_BUTTON (scale);
++  GtkAdjustment  *adjustment  = gtk_spin_button_get_adjustment (spin_button);
++  gdouble         lower       = gtk_adjustment_get_lower (adjustment);
++  gdouble         upper       = gtk_adjustment_get_upper (adjustment);
++  gint            digits      = gtk_spin_button_get_digits (spin_button);
++  PangoRectangle  logical;
++  gint            width;
++
++  if (scale->bounds_width < 0       ||
++      scale->bounds_lower  != lower ||
++      scale->bounds_upper  != upper ||
++      scale->bounds_digits != digits)
++    {
++      gchar *text;
++      gint   min_w = gimp_spin_scale_measure (scale, "000");
++      gint   max_w = gimp_spin_scale_measure (scale, "0000000");
++
++      text  = g_strdup_printf ("%.*f", digits, lower);
++      width = gimp_spin_scale_measure (scale, text);
++      g_free (text);
++
++      text  = g_strdup_printf ("%.*f", digits, upper);
++      width = MAX (width, gimp_spin_scale_measure (scale, text));
++      g_free (text);
++
++      scale->bounds_width  = CLAMP (width, min_w, max_w);
++      scale->bounds_lower  = lower;
++      scale->bounds_upper  = upper;
++      scale->bounds_digits = digits;
++    }
++
++  pango_layout_get_pixel_extents (gtk_entry_get_layout (GTK_ENTRY (scale)),
++                                  NULL, &logical);
++
++  return MAX (scale->bounds_width, logical.width);
++}
++
++static PangoLayout *
++gimp_spin_scale_ensure_label_layout (GimpSpinScale *scale)
++{
++  if (! scale->layout)
++    {
++      scale->layout = gtk_widget_create_pango_layout (GTK_WIDGET (scale),
++                                                      scale->label_text);
++      pango_layout_set_ellipsize (scale->layout, PANGO_ELLIPSIZE_END);
++      pango_layout_set_auto_dir (scale->layout, FALSE);
++
++      if (scale->mnemonics_visible)
++        {
++          PangoAttrList *attrs;
++
++          attrs = pattern_to_attrs (scale->label_text,
++                                    scale->label_pattern);
++          if (attrs)
++            {
++              pango_layout_set_attributes (scale->layout, attrs);
++              pango_attr_list_unref (attrs);
++            }
++        }
++    }
++
++  return scale->layout;
++}
++
++static void
++gimp_spin_scale_get_geometry (GimpSpinScale  *scale,
++                              SliderGeometry *geo)
++{
++  GtkWidget     *widget = GTK_WIDGET (scale);
++  GtkAllocation  allocation;
++  GdkRectangle   text_area;
++  gint           text_edge;
++  gint           avail;
++  gint           label_width = 0;
++  gdouble        knob_r;
++
++  memset (geo, 0, sizeof (SliderGeometry));
++
++  gtk_widget_get_allocation (widget, &allocation);
++  gtk_entry_get_text_area (GTK_ENTRY (widget), &text_area);
++
++  geo->width   = allocation.width;
++  geo->height  = allocation.height;
++  if (! scale->track_h_px)
++    scale->track_h_px = gimp_spin_scale_get_part_size (widget,
++                                                       "chopgimp-slider-track",
++                                                       "min-height", 3);
++  if (! scale->knob_d_px)
++    scale->knob_d_px = gimp_spin_scale_get_part_size (widget,
++                                                      "chopgimp-slider-knob",
++                                                      "min-width", 11);
++
++  geo->track_h = scale->track_h_px;
++  geo->knob_d  = scale->knob_d_px;
++
++  /*  the inner edge of the text area: the value is right-aligned
++   *  (left-aligned in RTL) against it
++   */
++  if (gtk_widget_get_direction (widget) == GTK_TEXT_DIR_RTL)
++    text_edge = geo->width - text_area.x;
++  else
++    text_edge = text_area.x + text_area.width;
++
++  geo->field_w = gimp_spin_scale_get_field_text_width (scale) + 2 * FIELD_PAD;
++  geo->field_x = text_edge + FIELD_PAD - geo->field_w;
++  geo->unit_x  = text_edge + FIELD_PAD + UNIT_GAP;
++
++  geo->label_y = geo->height / 2.0;
++  geo->track_y = geo->height / 2.0;
++
++  avail = geo->field_x - SLIDER_GAP;
++
++  if (scale->label)
++    {
++      PangoLayout *layout = gimp_spin_scale_ensure_label_layout (scale);
++
++      pango_layout_set_width (layout, -1);
++      pango_layout_get_pixel_size (layout, &label_width, NULL);
++    }
++
++  if (! scale->char_px)
++    {
++      PangoContext     *context = gtk_widget_get_pango_context (widget);
++      PangoFontMetrics *metrics;
++
++      metrics = pango_context_get_metrics (context,
++                                           pango_context_get_font_description (context),
++                                           pango_context_get_language (context));
++      scale->char_px =
++        PANGO_PIXELS (MAX (pango_font_metrics_get_approximate_char_width (metrics),
++                           pango_font_metrics_get_approximate_digit_width (metrics)));
++      pango_font_metrics_unref (metrics);
++    }
++
++  knob_r = geo->knob_d / 2.0;
++
++  if (! scale->label)
++    {
++      geo->track_x0 = knob_r;
++      geo->track_x1 = avail - knob_r;
++    }
++  else if (avail >= (scale->char_px * LABEL_MIN_CHARS + SLIDER_GAP +
++                     TRACK_MIN + geo->knob_d))
++    {
++      gint column;
++
++      /*  a label column proportional to the width, so that the tracks
++       *  of a column of sliders line up; longer labels push the track
++       */
++      column = MIN (geo->width * LABEL_COL_FRACTION, LABEL_COL_MAX);
++      column = MAX (column, label_width);
++      column = MIN (column, avail - SLIDER_GAP - TRACK_MIN - (gint) geo->knob_d);
++
++      geo->label_x  = 0;
++      geo->label_w  = column;
++      geo->track_x0 = column + SLIDER_GAP + knob_r;
++      geo->track_x1 = avail - knob_r;
++    }
++  else
++    {
++      /*  compact: the label over a thinner track along the bottom  */
++      geo->compact  = TRUE;
++      geo->knob_d   = MIN (geo->knob_d, COMPACT_KNOB);
++      geo->track_h  = MIN (geo->track_h, COMPACT_TRACK);
++      knob_r        = geo->knob_d / 2.0;
++
++      geo->label_x  = 0;
++      geo->label_w  = avail;
++      geo->label_y  = (geo->height - geo->knob_d) / 2.0;
++      geo->track_y  = geo->height - knob_r - 1.0;
++      geo->track_x0 = knob_r;
++      geo->track_x1 = avail - knob_r;
++    }
++
++  if (geo->track_x1 - geo->track_x0 < 8.0)
++    {
++      geo->field_only = TRUE;
++      geo->compact    = FALSE;
++      geo->label_w    = 0;
++    }
++}
++
++static gdouble
++gimp_spin_scale_get_fraction (GimpSpinScale *scale)
++{
++  GtkAdjustment *adjustment;
++  gdouble        lower, upper, value;
++  gdouble        x0, x1, x;
++
++  adjustment = gtk_spin_button_get_adjustment (GTK_SPIN_BUTTON (scale));
++
++  gimp_spin_scale_get_limits (scale, &lower, &upper);
++
++  value = CLAMP (gtk_adjustment_get_value (adjustment), lower, upper);
++
++  x0 = odd_pow (lower, 1.0 / scale->gamma);
++  x1 = odd_pow (upper, 1.0 / scale->gamma);
++  x  = odd_pow (value, 1.0 / scale->gamma);
++
++  if (x1 == x0)
++    return 0.0;
++
++  return CLAMP ((x - x0) / (x1 - x0), 0.0, 1.0);
++}
++
++static gboolean
++gimp_spin_scale_draw_slider (GtkWidget *widget,
++                             cairo_t   *cr)
++{
++  GimpSpinScale   *scale = GIMP_SPIN_SCALE (widget);
++  GtkStyleContext *style = gtk_widget_get_style_context (widget);
++  GtkStateFlags    state = gtk_widget_get_state_flags (widget);
++  gboolean         rtl   = (gtk_widget_get_direction (widget) == GTK_TEXT_DIR_RTL);
++  SliderGeometry   geo;
++  GdkRGBA          text_color;
++
++  gimp_spin_scale_get_geometry (scale, &geo);
++
++#define MIRROR(x, w) (rtl ? geo.width - (x) - (w) : (x))
++
++  gtk_style_context_get_color (style, state, &text_color);
++
++  /*  the value field, the entry draws its text over it  */
++  gimp_spin_scale_render_part (style, cr, "chopgimp-slider-field",
++                               MIRROR (geo.field_x, geo.field_w), 0,
++                               geo.field_w, geo.height);
++
++  /*  the unit suffix  */
++  if (scale->unit_suffix && *scale->unit_suffix)
++    {
++      GdkRGBA unit_color;
++      gint    width, height;
++
++      if (! scale->unit_layout)
++        scale->unit_layout = gtk_widget_create_pango_layout (widget,
++                                                             scale->unit_suffix);
++
++      pango_layout_get_pixel_size (scale->unit_layout, &width, &height);
++
++      gtk_style_context_save (style);
++      gtk_style_context_add_class (style, "chopgimp-slider-part");
++      gtk_style_context_add_class (style, "chopgimp-slider-unit");
++      gtk_style_context_get_color (style, state, &unit_color);
++      gtk_style_context_restore (style);
++
++      cairo_move_to (cr,
++                     MIRROR (geo.unit_x, width),
++                     (geo.height - height) / 2.0);
++      gdk_cairo_set_source_rgba (cr, &unit_color);
++      pango_cairo_show_layout (cr, scale->unit_layout);
++    }
++
++  /*  the label  */
++  if (scale->label && geo.label_w > 0)
++    {
++      PangoLayout    *layout = gimp_spin_scale_ensure_label_layout (scale);
++      PangoRectangle  logical;
++
++      pango_layout_set_width (layout, PANGO_SCALE * geo.label_w);
++      pango_layout_get_pixel_extents (layout, NULL, &logical);
++
++      cairo_move_to (cr,
++                     MIRROR (geo.label_x, MIN (logical.width, geo.label_w)) - logical.x,
++                     geo.label_y - logical.height / 2.0);
++      gdk_cairo_set_source_rgba (cr, &text_color);
++      pango_cairo_show_layout (cr, layout);
++    }
++
++  /*  the track, its filled part and the knob  */
++  if (! geo.field_only)
++    {
++      gdouble span   = geo.track_x1 - geo.track_x0;
++      gdouble knob_x = geo.track_x0 + gimp_spin_scale_get_fraction (scale) * span;
++      gdouble ty     = geo.track_y - geo.track_h / 2.0;
++      gdouble kr     = geo.knob_d / 2.0;
++
++      gimp_spin_scale_render_part (style, cr, "chopgimp-slider-track",
++                                   MIRROR (geo.track_x0, span), ty,
++                                   span, geo.track_h);
++
++      gimp_spin_scale_render_part (style, cr, "chopgimp-slider-fill",
++                                   MIRROR (geo.track_x0, knob_x - geo.track_x0), ty,
++                                   knob_x - geo.track_x0, geo.track_h);
++
++      gimp_spin_scale_render_part (style, cr, "chopgimp-slider-knob",
++                                   MIRROR (knob_x - kr, geo.knob_d),
++                                   geo.track_y - kr,
++                                   geo.knob_d, geo.knob_d);
++    }
++
++#undef MIRROR
++
++  /*  the entry: its text (and cursor, selection) in the field  */
++  cairo_save (cr);
++  GTK_WIDGET_CLASS (parent_class)->draw (widget, cr);
++  cairo_restore (cr);
++
++  return FALSE;
++}
++
++
+ /*  public functions  */
+ 
+ GtkWidget *

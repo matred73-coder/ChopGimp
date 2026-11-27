@@ -1,7 +1,7 @@
 # ═══════════════════════════════════════════════════════════════
 # ChopGimp (ex-PhotoGIMP Pro v3) — GIMP recompilé façon Photoshop (Flatpak)
 #
-#   make patches   exporte les nouveaux patchs depuis build/gimp-src (branche photogimp)
+#   make patches   exporte la série thématique depuis build/gimp-src (branche photogimp-v2)
 #   make build     compile le Flatpak (GIMP 3.2.8 + patchs + données)
 #   make bundle    produit dist/ChopGimp-<version>.flatpak (installable hors ligne)
 #   make install   installe le paquet pour l'utilisateur courant
@@ -33,20 +33,30 @@ FB        := flatpak-builder --user --ccache --disable-rofiles-fuse --force-clea
 
 .PHONY: patches manifest build bundle install run repo vanilla clean
 
-# N'exporte que les NOUVEAUX commits de build/gimp-src (ceux qui suivent les
-# patchs déjà présents) : un patch existant n'est jamais réécrit. Certains ne
-# peuvent pas être régénérés depuis gimp-src (0045 : icône Windows dans le
-# sous-module gimp-data) et une régénération complète les abîmait.
+# 4.2.1 : série regroupée par thèmes (docs/dev/PATCHS.md), un commit par thème
+# sur la branche $(GIMP_BRANCH) de build/gimp-src ; la série entière est
+# réexportée (un correctif = un « fixup » du thème, puis rebase --autosquash).
+# Le patch de l'icône Windows (ancien 0045) ne se régénère pas depuis gimp-src
+# (il touche le sous-module gimp-data) : il est gardé tel quel. L'ancienne
+# série (un patch par commit) reste dans la branche photogimp-legacy et dans
+# les étiquettes v4.2.0 et antérieures du projet.
+GIMP_BRANCH  ?= photogimp-v2
+ICON_SUBJECT := Windows identity of the executables
+EXPORT_DIR   := build/patches-export
+
 patches:
-	@n=$$(ls patches/gimp-3.2.8/*.patch 2>/dev/null | wc -l); \
-	 c=$$(git -C build/gimp-src rev-list --count GIMP_3_2_8..photogimp); \
-	 if [ $$c -lt $$n ]; then \
-	   echo "ERREUR : $$n patchs mais $$c commits dans build/gimp-src (dépôt en avance ?)"; exit 1; \
-	 elif [ $$c -gt $$n ]; then \
-	   git -C build/gimp-src format-patch -q --start-number $$((n + 1)) \
-	     -o $(CURDIR)/patches/gimp-3.2.8 photogimp~$$((c - n))..photogimp; \
-	 fi; \
-	 echo "$$((c - n)) nouveau(x) patch(s), $$c au total"
+	@set -e; d=patches/gimp-3.2.8; mkdir -p $(EXPORT_DIR); \
+	 rm -f $(EXPORT_DIR)/*.patch $(EXPORT_DIR)/icon.keep; \
+	 icon=$$(grep -l "^Subject: .*$(ICON_SUBJECT)" $$d/*.patch | head -1); \
+	 if [ -z "$$icon" ]; then echo "ERREUR : patch de l'icône Windows introuvable"; exit 1; fi; \
+	 cp "$$icon" $(EXPORT_DIR)/icon.keep; \
+	 git -C build/gimp-src format-patch -q --zero-commit --no-signature \
+	   -o $(CURDIR)/$(EXPORT_DIR) GIMP_3_2_8..$(GIMP_BRANCH); \
+	 new=$$(grep -l "^Subject: .*$(ICON_SUBJECT)" $(EXPORT_DIR)/0*.patch | head -1); \
+	 if [ -z "$$new" ]; then echo "ERREUR : commit de l'icône Windows absent de $(GIMP_BRANCH)"; exit 1; fi; \
+	 cp $(EXPORT_DIR)/icon.keep "$$new"; \
+	 rm -f $$d/*.patch; mv $(EXPORT_DIR)/0*.patch $$d/; rm -f $(EXPORT_DIR)/icon.keep; \
+	 echo "$$(ls $$d/*.patch | wc -l) patchs exportés depuis $(GIMP_BRANCH)"
 
 manifest:
 	CHOPGIMP_LTO=$(LTO) CHOPGIMP_PGO=$(PGO) CHOPGIMP_GIMP_O=$(GIMP_O) python3 tools/make_manifest.py

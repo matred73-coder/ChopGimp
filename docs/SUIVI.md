@@ -1668,3 +1668,40 @@ Patchs 0170 à 0173 (nouveaux commits, aucun patch réécrit).
   pas de profil PDF/X libre) — à faire vérifier par l'imprimeur ; le collage d'objets se fait
   en place (pas au centre de la vue) et ne lit pas le SVG d'une autre application ; la barre
   d'état du Lasso direct parle encore de « cadre ».
+
+## 4.2.1 — Coller un SVG d'Inkscape / Illustrator ; rapport de plantage ; patchs regroupés en 23 thèmes
+
+- **Coller un SVG** (Ctrl+V) copié depuis Inkscape ou Illustrator : presse-papiers
+  `image/svg+xml`, ou texte qui contient un `<svg>`. Le SVG passe par l'import SVG existant
+  (`vobjects.SvgImport`, nouvelle procédure `plug-in-chopgimp-svg-to-vobjects` de
+  `chopgimp_pdf.py`) : un objet par forme, calques et groupes SVG gardés en groupes. Les
+  objets vont dans le calque vectoriel actif, sinon dans un nouveau calque « SVG collé », et
+  deviennent la sélection. Ctrl+V les centre sur la vue, Ctrl+Maj+V (Coller sur place) les
+  garde à leur position SVG. Une seule annulation, « Coller le SVG ». Les copies de GIMP
+  lui-même et le collage d'objets interne de la 4.2.0 ne changent pas. Le greffon tourne
+  dans une copie du contexte : un greffon change les couleurs du contexte qu'il reçoit, et la
+  nouvelle couleur de premier plan recolorait les objets sélectionnés (vu au banc).
+- **Lasso direct** : la barre d'état a son propre texte (« entourer des nœuds à main levée ;
+  au relâchement, leurs objets sont sélectionnés… »), plus de « cadre ».
+- **Rapport de plantage simplifié** : la fenêtre de plantage de GIMP (« données de
+  débogage ») enregistre aussitôt son rapport dans `<dossier GIMP>/crash-reports/
+  chopgimp-crash-AAAAMMJJ-HHMMSS.txt` et l'indique ; boutons « Copier le rapport » et
+  « Ouvrir le dossier ». Au démarrage suivant, un message discret dans la barre d'état
+  signale le rapport ; il remplace la fenêtre « ChopGimp s'est arrêté » de la 3.19.1 (le
+  rapport du traceur reste dans `CrashLog/`).
+- **Patchs regroupés** (plan `docs/dev/PLAN-PATCHS-4.1.md`, adapté) : 182 patchs
+  (0001–0181 et le commit 4.2.1) → **23** (22 thèmes + l'icône Windows, ancien 0045, gardé
+  octet pour octet). Un fichier = un thème (`docs/dev/patchs-4.2-fichiers.tsv`, 491
+  fichiers). Branche `photogimp-v2` dans `build/gimp-src`, ancienne branche renommée
+  `photogimp-legacy` ; arbre **identique** (`git diff` vide, même arbre
+  `9b4536bb…`). `make patches` réexporte toute la série ; `tools/dev/regroup_patches.py`
+  refait le regroupement ; organisation décrite dans `docs/dev/PATCHS.md` et le README.
+- **Tests** : 5 nouveaux dans smoke_test.py (SVG de 3 formes sans calque vectoriel actif :
+  nouveau calque, 3 objets sélectionnés ; centrage ; texte contenant le SVG collé sur place
+  dans le calque actif ; texte sans SVG ; procédure présente) — smoke : **305 OK, 0 échec**.
+- **Banc graphique** : presse-papiers `image/svg+xml` (posé par GNOME Shell) puis Ctrl+V :
+  calque « SVG collé », Rectangle / Cercle / Tracé sélectionnés, centrés sur la vue ; texte
+  contenant un SVG collé avec le Lasso direct actif : 3 objets de plus, sélectionnés, les
+  anciens gardent leurs couleurs ; barre d'état du Lasso direct ; plantage provoqué
+  (`CHOPGIMP_CRASH_TEST`) : fenêtre avec « Copier le rapport », « Ouvrir le dossier » et le
+  chemin du rapport (89 lignes, pile comprise) ; au redémarrage, message dans la barre d'état.

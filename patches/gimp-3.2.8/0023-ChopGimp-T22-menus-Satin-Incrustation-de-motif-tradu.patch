@@ -1,0 +1,4294 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: ChopGimp <mathieu.redon@proton.me>
+Date: Fri, 27 Nov 2026 08:34:14 +0100
+Subject: [PATCH 23/23] ChopGimp T22: menus, Satin / Incrustation de motif,
+ traductions
+
+Anciens patchs : 0012, 0027, 0139, 0145, 0164.
+---
+ app/actions/tools-commands.c               |  184 ++
+ app/display/chopgimp-statusbar-info.c      |  389 ++++
+ app/display/chopgimp-statusbar-info.h      |   27 +
+ app/display/gimpstatusbar.c                |   35 +
+ app/display/gimpstatusbar.h                |    3 +
+ app/menus/filters-menu.c                   |    8 +-
+ app/operations/gimpoperationinnereffects.c |  562 +++++
+ app/operations/gimpoperationinnereffects.h |   88 +
+ app/plug-in/plug-in-menu-path.c            |   10 +
+ app/plug-in/plug-in-rc.c                   |   11 +
+ po-libgimp/fr.po                           |   76 +
+ po-plug-ins/fr.po                          |  250 +++
+ po-python/fr.po                            |   17 +
+ po-script-fu/fr.po                         |   32 +
+ po/fr.po                                   | 2193 +++++++++++++++++++-
+ 15 files changed, 3854 insertions(+), 31 deletions(-)
+ create mode 100644 app/display/chopgimp-statusbar-info.c
+ create mode 100644 app/display/chopgimp-statusbar-info.h
+ create mode 100644 app/operations/gimpoperationinnereffects.c
+ create mode 100644 app/operations/gimpoperationinnereffects.h
+
+diff --git a/app/actions/tools-commands.c b/app/actions/tools-commands.c
+index 7a4d19d..b8e533f 100644
+--- a/app/actions/tools-commands.c
++++ b/app/actions/tools-commands.c
+@@ -29,6 +29,10 @@
+ #include "core/gimp.h"
+ #include "core/gimpcontainer.h"
+ #include "core/gimpcontext.h"
++#include "core/gimpimage.h"
++#include "core/gimpimage-undo.h"
++#include "core/gimplayer.h"
++#include "core/gimptoolgroup.h"
+ #include "core/gimptoolinfo.h"
+ 
+ #include "paint/gimpinkoptions.h"
+@@ -46,6 +50,7 @@
+ #include "tools/gimpforegroundselectoptions.h"
+ #include "tools/gimppaintselectoptions.h"
+ #include "tools/gimprectangleoptions.h"
++#include "tools/gimppainttool.h"
+ #include "tools/gimptool.h"
+ #include "tools/gimptoolcontrol.h"
+ #include "tools/gimptransformoptions.h"
+@@ -56,6 +61,8 @@
+ #include "actions.h"
+ #include "tools-commands.h"
+ 
++#include "gimp-intl.h"
++
+ 
+ /*  local function prototypes  */
+ 
+@@ -77,6 +84,100 @@ tools_swap_cmd_callback (GimpAction *action,
+   tool_manager_swap_tools (gimp, FALSE);
+ }
+ 
++/*  ChopGimp 3.32.0: the tool shown by its group in the toolbox when the
++ *  tool's own key (a plain letter, as in Photoshop: L, M, W…) selected
++ *  @tool_info; a tool of the group with a key of its own (another plain
++ *  letter) keeps it. Not for the menus (no key press, or not the action's
++ *  key); CHOPGIMP_NO_GROUP_KEY=1 for GIMP's behavior.
++ */
++static GimpToolInfo *
++tools_select_group_shown (Gimp         *gimp,
++                          GimpAction   *action,
++                          GimpToolInfo *tool_info)
++{
++  GdkEvent      *event;
++  GimpViewable  *parent;
++  GimpToolInfo  *shown;
++  const gchar  **accels;
++  gchar         *pressed = NULL;
++  gchar         *name;
++  GimpAction    *shown_action;
++  gboolean       is_key = FALSE;
++  gint           i;
++
++  if (g_getenv ("CHOPGIMP_NO_GROUP_KEY") || ! tool_info)
++    return tool_info;
++
++  parent = gimp_viewable_get_parent (GIMP_VIEWABLE (tool_info));
++
++  if (! GIMP_IS_TOOL_GROUP (parent))
++    return tool_info;
++
++  shown = gimp_tool_group_get_active_tool_info (GIMP_TOOL_GROUP (parent));
++
++  if (! shown || shown == tool_info ||
++      ! gimp_tool_item_get_visible (GIMP_TOOL_ITEM (shown)))
++    return tool_info;
++
++  event = gtk_get_current_event ();
++
++  if (event)
++    {
++      if (event->type == GDK_KEY_PRESS &&
++          ! (event->key.state & gtk_accelerator_get_default_mod_mask ()))
++        {
++          guint keyval = gdk_keyval_to_lower (event->key.keyval);
++
++          pressed = gtk_accelerator_name (keyval, 0);
++        }
++
++      gdk_event_free (event);
++    }
++
++  if (! pressed)
++    return tool_info;
++
++  /*  the key is the action's own shortcut  */
++  accels = gimp_action_get_accels (action);
++
++  for (i = 0; accels && accels[i]; i++)
++    if (! g_ascii_strcasecmp (accels[i], pressed))
++      is_key = TRUE;
++
++  if (! is_key)
++    {
++      g_free (pressed);
++      return tool_info;
++    }
++
++  /*  the shown tool has a plain key of its own: it keeps it  */
++  name         = gimp_tool_info_get_action_name (shown);
++  shown_action = GIMP_ACTION (g_action_map_lookup_action (G_ACTION_MAP (gimp->app),
++                                                          name));
++  g_free (name);
++
++  accels = shown_action ? gimp_action_get_accels (shown_action) : NULL;
++
++  for (i = 0; accels && accels[i]; i++)
++    {
++      guint           key  = 0;
++      GdkModifierType mods = 0;
++
++      gtk_accelerator_parse (accels[i], &key, &mods);
++
++      if (key && ! (mods & gtk_accelerator_get_default_mod_mask ()) &&
++          g_ascii_strcasecmp (accels[i], pressed))
++        {
++          g_free (pressed);
++          return tool_info;
++        }
++    }
++
++  g_free (pressed);
++
++  return shown;
++}
++
+ void
+ tools_select_cmd_callback (GimpAction *action,
+                            GVariant   *value,
+@@ -110,6 +211,9 @@ tools_select_cmd_callback (GimpAction *action,
+ 
+   tool_info = gimp_get_tool_info (gimp, tool_name);
+ 
++  if (! set_transform_type)
++    tool_info = tools_select_group_shown (gimp, action, tool_info);
++
+   context = gimp_get_user_context (gimp);
+ 
+   /*  always allocate a new tool when selected from the image menu
+@@ -589,6 +693,31 @@ tools_fg_select_brush_size_cmd_callback (GimpAction *action,
+     }
+ }
+ 
++/*  ChopGimp 3.28.3: [ and ] for the « Sélection rapide »  */
++void
++tools_paint_select_size_cmd_callback (GimpAction *action,
++                                      GVariant   *value,
++                                      gpointer    data)
++{
++  GimpContext          *context;
++  GimpToolInfo         *tool_info;
++  GimpActionSelectType  select_type;
++  return_if_no_context (context, data);
++
++  select_type = (GimpActionSelectType) g_variant_get_int32 (value);
++
++  tool_info = gimp_context_get_tool (context);
++
++  if (tool_info && GIMP_IS_PAINT_SELECT_OPTIONS (tool_info->tool_options))
++    {
++      action_select_property (select_type,
++                              action_data_get_display (data),
++                              G_OBJECT (tool_info->tool_options),
++                              "stroke-width",
++                              1.0, 4.0, 16.0, 0.1, FALSE);
++    }
++}
++
+ void
+ tools_transform_preview_opacity_cmd_callback (GimpAction *action,
+                                               GVariant   *value,
+@@ -941,3 +1070,58 @@ tools_activate_enum_action (const gchar *action_desc,
+         }
+     }
+ }
++
++
++/*  PhotoGIMP Pro (Photoshop): number keys set the opacity  */
++void
++tools_ps_opacity_cmd_callback (GimpAction *action,
++                               GVariant   *value,
++                               gpointer    data)
++{
++  GimpContext *context;
++  GimpTool    *tool;
++  const gchar *name;
++  const gchar *dash;
++  gdouble      opacity;
++  return_if_no_context (context, data);
++
++  name = gimp_action_get_name (action);
++  dash = strrchr (name, '-');
++
++  if (! dash)
++    return;
++
++  opacity = CLAMP (g_ascii_strtod (dash + 1, NULL) / 100.0, 0.0, 1.0);
++
++  tool = tool_manager_get_active (context->gimp);
++
++  if (tool && GIMP_IS_PAINT_TOOL (tool))
++    {
++      g_object_set (tool->tool_info->tool_options,
++                    "opacity", opacity,
++                    NULL);
++    }
++  else
++    {
++      GimpImage *image = gimp_context_get_image (context);
++      GList     *layers;
++      GList     *iter;
++
++      if (! image)
++        return;
++
++      layers = gimp_image_get_selected_layers (image);
++
++      if (! layers)
++        return;
++
++      gimp_image_undo_group_start (image, GIMP_UNDO_GROUP_ITEM_PROPERTIES,
++                                   _("Set Layer Opacity"));
++
++      for (iter = layers; iter; iter = iter->next)
++        gimp_layer_set_opacity (iter->data, opacity, TRUE);
++
++      gimp_image_undo_group_end (image);
++      gimp_image_flush (image);
++    }
++}
+diff --git a/app/display/chopgimp-statusbar-info.c b/app/display/chopgimp-statusbar-info.c
+new file mode 100644
+index 0000000..509a3b7
+--- /dev/null
++++ b/app/display/chopgimp-statusbar-info.c
+@@ -0,0 +1,389 @@
++/* GIMP - The GNU Image Manipulation Program
++ * Copyright (C) 1995 Spencer Kimball and Peter Mattis
++ *
++ * chopgimp-statusbar-info.c
++ * ChopGimp 3.32.0 (lot E) : informations du document dans la barre
++ * d'état, comme Photoshop — « Doc : 2,6 Mo / 7,9 Mo » par défaut ; un
++ * clic ouvre le menu du choix (taille du document, dimensions, profil,
++ * résolution, calques, outil actif), retenu dans chopgimprc.
++ *
++ * This program is free software: you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation; either version 3 of the License, or
++ * (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License
++ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
++ */
++
++#include "config.h"
++
++#include <string.h>
++
++#include <gegl.h>
++#include <gtk/gtk.h>
++
++#include "libgimpbase/gimpbase.h"
++#include "libgimpcolor/gimpcolor.h"
++#include "libgimpwidgets/gimpwidgets.h"
++
++#include "display-types.h"
++
++#include "core/gimp.h"
++#include "core/gimpcontext.h"
++#include "core/gimpdrawable.h"
++#include "core/gimpimage.h"
++#include "core/gimplayer.h"
++#include "core/gimplayermask.h"
++#include "core/gimptoolinfo.h"
++
++#include "widgets/chopgimp-rc.h"
++
++#include "chopgimp-statusbar-info.h"
++
++
++#define INFO_KEY  "chopgimp-statusbar-info"
++#define RC_GROUP  "statusbar"
++#define RC_KEY    "info"
++
++
++typedef struct
++{
++  Gimp      *gimp;
++  GimpImage *image;      /*  weak  */
++  GtkWidget *button;
++  GtkWidget *label;
++  guint      idle_id;
++} StatusInfo;
++
++static const struct
++{
++  const gchar *key;
++  const gchar *label;
++} info_modes[] =
++{
++  { "document",   "Taille du document"    },
++  { "dimensions", "Dimensions du document" },
++  { "profile",    "Profil du document"    },
++  { "resolution", "Résolution"            },
++  { "layers",     "Calques"               },
++  { "tool",       "Outil actif"           }
++};
++
++
++static gchar *
++status_info_mode (void)
++{
++  gchar *mode = chopgimp_rc_get_string (RC_GROUP, RC_KEY, "document");
++  gint   i;
++
++  for (i = 0; i < G_N_ELEMENTS (info_modes); i++)
++    if (! strcmp (mode, info_modes[i].key))
++      return mode;
++
++  g_free (mode);
++
++  return g_strdup ("document");
++}
++
++/*  bytes of a drawable's pixels  */
++static guint64
++status_info_drawable_bytes (GimpDrawable *drawable)
++{
++  const Babl *format = gimp_drawable_get_format (drawable);
++
++  return (guint64) gimp_item_get_width  (GIMP_ITEM (drawable)) *
++         (guint64) gimp_item_get_height (GIMP_ITEM (drawable)) *
++         (guint64) babl_format_get_bytes_per_pixel (format);
++}
++
++static gchar *
++status_info_text (StatusInfo *si,
++                  const gchar *mode)
++{
++  GimpImage *image = si->image;
++
++  if (! strcmp (mode, "tool"))
++    {
++      GimpToolInfo *tool = gimp_context_get_tool (gimp_get_user_context (si->gimp));
++
++      return tool ? gimp_strip_uline (tool->label) : g_strdup ("");
++    }
++
++  if (! image)
++    return g_strdup ("");
++
++  if (! strcmp (mode, "dimensions"))
++    {
++      gdouble xres, yres;
++
++      gimp_image_get_resolution (image, &xres, &yres);
++
++      return g_strdup_printf ("%d × %d px (%.0f ppp)",
++                              gimp_image_get_width (image),
++                              gimp_image_get_height (image), xres);
++    }
++
++  if (! strcmp (mode, "resolution"))
++    {
++      gdouble xres, yres;
++
++      gimp_image_get_resolution (image, &xres, &yres);
++
++      return g_strdup_printf ("%.0f ppp", xres);
++    }
++
++  if (! strcmp (mode, "profile"))
++    {
++      GimpColorProfile *profile =
++        gimp_color_managed_get_color_profile (GIMP_COLOR_MANAGED (image));
++
++      return g_strdup (profile ? gimp_color_profile_get_label (profile) :
++                                 "Sans profil");
++    }
++
++  if (! strcmp (mode, "layers"))
++    {
++      GList *layers = gimp_image_get_layer_list (image);
++      gint   n      = g_list_length (layers);
++
++      g_list_free (layers);
++
++      return g_strdup_printf (n > 1 ? "%d calques" : "%d calque", n);
++    }
++
++  /*  « Doc » : the flattened image (no alpha) / the layers, masks and
++   *  channels, as Photoshop's « Document Sizes »
++   */
++  {
++    const Babl *flat   = gimp_image_get_layer_format (image, FALSE);
++    guint64     merged = (guint64) gimp_image_get_width (image) *
++                         (guint64) gimp_image_get_height (image) *
++                         (guint64) babl_format_get_bytes_per_pixel (flat);
++    guint64     total  = 0;
++    GList      *list;
++    GList      *iter;
++    gchar      *a, *b, *text;
++
++    list = gimp_image_get_layer_list (image);
++    for (iter = list; iter; iter = g_list_next (iter))
++      {
++        GimpLayer *layer = iter->data;
++
++        if (gimp_viewable_get_children (GIMP_VIEWABLE (layer)))
++          continue;
++
++        total += status_info_drawable_bytes (GIMP_DRAWABLE (layer));
++
++        if (gimp_layer_get_mask (layer))
++          total += status_info_drawable_bytes (GIMP_DRAWABLE (gimp_layer_get_mask (layer)));
++      }
++    g_list_free (list);
++
++    list = gimp_image_get_channel_list (image);
++    for (iter = list; iter; iter = g_list_next (iter))
++      total += status_info_drawable_bytes (GIMP_DRAWABLE (iter->data));
++    g_list_free (list);
++
++    a    = g_format_size (merged);
++    b    = g_format_size (MAX (total, merged));
++    text = g_strdup_printf ("Doc : %s / %s", a, b);
++
++    g_free (a);
++    g_free (b);
++
++    return text;
++  }
++}
++
++static gboolean
++status_info_update_idle (gpointer data)
++{
++  StatusInfo *si   = data;
++  gchar      *mode = status_info_mode ();
++  gchar      *text = status_info_text (si, mode);
++  gint        i;
++
++  si->idle_id = 0;
++
++  gtk_label_set_text (GTK_LABEL (si->label), text);
++
++  for (i = 0; i < G_N_ELEMENTS (info_modes); i++)
++    if (! strcmp (mode, info_modes[i].key))
++      gimp_help_set_help_data (si->button, info_modes[i].label, NULL);
++
++  g_free (text);
++  g_free (mode);
++
++  return G_SOURCE_REMOVE;
++}
++
++static void
++status_info_queue_update (StatusInfo *si)
++{
++  if (! si->idle_id)
++    si->idle_id = g_idle_add_full (G_PRIORITY_LOW, status_info_update_idle,
++                                   si, NULL);
++}
++
++static void
++status_info_mode_activate (GtkMenuItem *item,
++                           StatusInfo  *si)
++{
++  if (! gtk_check_menu_item_get_active (GTK_CHECK_MENU_ITEM (item)))
++    return;
++
++  chopgimp_rc_set_string (RC_GROUP, RC_KEY,
++                          g_object_get_data (G_OBJECT (item), "mode"));
++  status_info_queue_update (si);
++}
++
++static void
++status_info_clicked (GtkButton  *button,
++                     StatusInfo *si)
++{
++  GtkWidget *menu  = gtk_menu_new ();
++  GSList    *group = NULL;
++  gchar     *mode  = status_info_mode ();
++  gint       i;
++
++  for (i = 0; i < G_N_ELEMENTS (info_modes); i++)
++    {
++      GtkWidget *item = gtk_radio_menu_item_new_with_label (group,
++                                                            info_modes[i].label);
++
++      group = gtk_radio_menu_item_get_group (GTK_RADIO_MENU_ITEM (item));
++      g_object_set_data (G_OBJECT (item), "mode", (gpointer) info_modes[i].key);
++      gtk_check_menu_item_set_active (GTK_CHECK_MENU_ITEM (item),
++                                      ! strcmp (mode, info_modes[i].key));
++      g_signal_connect (item, "toggled",
++                        G_CALLBACK (status_info_mode_activate), si);
++      gtk_menu_shell_append (GTK_MENU_SHELL (menu), item);
++      gtk_widget_set_visible (item, TRUE);
++    }
++
++  g_free (mode);
++
++  gtk_menu_attach_to_widget (GTK_MENU (menu), GTK_WIDGET (button), NULL);
++  g_signal_connect (menu, "deactivate",
++                    G_CALLBACK (gtk_widget_destroy), NULL);
++  gtk_menu_popup_at_widget (GTK_MENU (menu), GTK_WIDGET (button),
++                            GDK_GRAVITY_NORTH_WEST, GDK_GRAVITY_SOUTH_WEST,
++                            NULL);
++}
++
++static void
++status_info_free (StatusInfo *si)
++{
++  if (si->idle_id)
++    g_source_remove (si->idle_id);
++
++  if (si->image)
++    {
++      g_signal_handlers_disconnect_by_data (si->image, si);
++      g_clear_weak_pointer (&si->image);
++    }
++
++  g_slice_free (StatusInfo, si);
++}
++
++
++/*  public functions  */
++
++GtkWidget *
++chopgimp_statusbar_info_new (Gimp *gimp)
++{
++  StatusInfo *si;
++  GtkWidget  *hbox;
++  GtkWidget  *arrow;
++
++  g_return_val_if_fail (GIMP_IS_GIMP (gimp), NULL);
++
++  si = g_slice_new0 (StatusInfo);
++  si->gimp = gimp;
++
++  si->button = gtk_button_new ();
++  gtk_button_set_relief (GTK_BUTTON (si->button), GTK_RELIEF_NONE);
++  gtk_widget_set_can_focus (si->button, FALSE);
++  gtk_widget_set_name (si->button, "chopgimp-statusbar-info");
++
++  hbox = gtk_box_new (GTK_ORIENTATION_HORIZONTAL, 2);
++  gtk_container_add (GTK_CONTAINER (si->button), hbox);
++  gtk_widget_set_visible (hbox, TRUE);
++
++  si->label = gtk_label_new (NULL);
++  gtk_label_set_ellipsize (GTK_LABEL (si->label), PANGO_ELLIPSIZE_END);
++  gtk_label_set_max_width_chars (GTK_LABEL (si->label), 32);
++  gtk_box_pack_start (GTK_BOX (hbox), si->label, FALSE, FALSE, 0);
++  gtk_widget_set_visible (si->label, TRUE);
++
++  arrow = gtk_image_new_from_icon_name ("pan-end-symbolic", GTK_ICON_SIZE_MENU);
++  gtk_box_pack_start (GTK_BOX (hbox), arrow, FALSE, FALSE, 0);
++  gtk_widget_set_visible (arrow, TRUE);
++
++  g_object_set_data_full (G_OBJECT (si->button), INFO_KEY, si,
++                          (GDestroyNotify) status_info_free);
++
++  g_signal_connect (si->button, "clicked",
++                    G_CALLBACK (status_info_clicked), si);
++
++  /*  « Outil actif »; disconnected with the button  */
++  g_signal_connect_object (gimp_get_user_context (gimp), "tool-changed",
++                           G_CALLBACK (chopgimp_statusbar_info_update),
++                           si->button, G_CONNECT_SWAPPED);
++
++  status_info_queue_update (si);
++
++  return si->button;
++}
++
++void
++chopgimp_statusbar_info_set_image (GtkWidget *info,
++                                   GimpImage *image)
++{
++  static const gchar * const signals[] =
++  {
++    "size-changed", "mode-changed", "precision-changed", "resolution-changed",
++    "profile-changed", "dirty", "clean"
++  };
++  StatusInfo *si;
++  gint        i;
++
++  g_return_if_fail (GTK_IS_WIDGET (info));
++  g_return_if_fail (image == NULL || GIMP_IS_IMAGE (image));
++
++  si = g_object_get_data (G_OBJECT (info), INFO_KEY);
++
++  if (! si || si->image == image)
++    return;
++
++  if (si->image)
++    g_signal_handlers_disconnect_by_data (si->image, si);
++
++  g_set_weak_pointer (&si->image, image);
++
++  if (image)
++    for (i = 0; i < G_N_ELEMENTS (signals); i++)
++      g_signal_connect_swapped (image, signals[i],
++                                G_CALLBACK (status_info_queue_update), si);
++
++  status_info_queue_update (si);
++}
++
++void
++chopgimp_statusbar_info_update (GtkWidget *info)
++{
++  StatusInfo *si;
++
++  g_return_if_fail (GTK_IS_WIDGET (info));
++
++  si = g_object_get_data (G_OBJECT (info), INFO_KEY);
++
++  if (si)
++    status_info_queue_update (si);
++}
+diff --git a/app/display/chopgimp-statusbar-info.h b/app/display/chopgimp-statusbar-info.h
+new file mode 100644
+index 0000000..52abbf0
+--- /dev/null
++++ b/app/display/chopgimp-statusbar-info.h
+@@ -0,0 +1,27 @@
++/* GIMP - The GNU Image Manipulation Program
++ * Copyright (C) 1995 Spencer Kimball and Peter Mattis
++ *
++ * chopgimp-statusbar-info.h
++ * ChopGimp 3.32.0 (lot E) : informations du document dans la barre d'état
++ *
++ * This program is free software: you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation; either version 3 of the License, or
++ * (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License
++ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
++ */
++
++#pragma once
++
++
++GtkWidget * chopgimp_statusbar_info_new       (Gimp      *gimp);
++void        chopgimp_statusbar_info_set_image (GtkWidget *info,
++                                               GimpImage *image);
++void        chopgimp_statusbar_info_update    (GtkWidget *info);
+diff --git a/app/display/gimpstatusbar.c b/app/display/gimpstatusbar.c
+index 359f85e..c2edb71 100644
+--- a/app/display/gimpstatusbar.c
++++ b/app/display/gimpstatusbar.c
+@@ -47,6 +47,7 @@
+ #include "gimpimagewindow.h"
+ #include "gimpscalecombobox.h"
+ #include "gimpstatusbar.h"
++#include "chopgimp-statusbar-info.h"
+ 
+ #include "gimp-intl.h"
+ 
+@@ -331,6 +332,13 @@ gimp_statusbar_init (GimpStatusbar *statusbar)
+                     G_CALLBACK (gimp_statusbar_scale_changed),
+                     statusbar);
+ 
++  /*  ChopGimp 3.32.0 (lot E): the zoom first, as in Photoshop (the
++   *  document info follows it, added with the display's Gimp);
++   *  CHOPGIMP_CLASSIC_STATUSBAR=1 for GIMP's bar
++   */
++  if (! g_getenv ("CHOPGIMP_CLASSIC_STATUSBAR"))
++    gtk_box_reorder_child (GTK_BOX (hbox), statusbar->scale_combo, 0);
++
+   g_signal_connect (statusbar->scale_combo, "entry-activated",
+                     G_CALLBACK (gimp_statusbar_scale_activated),
+                     statusbar);
+@@ -1300,6 +1308,21 @@ gimp_statusbar_set_shell (GimpStatusbar    *statusbar,
+                       statusbar);
+ 
+   statusbar->gimp = gimp_display_get_gimp (statusbar->shell->display);
++
++  /*  ChopGimp 3.32.0 (lot E): « Doc : … » after the zoom  */
++  if (statusbar->gimp && ! statusbar->chopgimp_info &&
++      ! g_getenv ("CHOPGIMP_CLASSIC_STATUSBAR"))
++    {
++      GtkWidget *hbox = gtk_widget_get_parent (statusbar->scale_combo);
++
++      statusbar->chopgimp_info = chopgimp_statusbar_info_new (statusbar->gimp);
++      gtk_box_pack_start (GTK_BOX (hbox), statusbar->chopgimp_info,
++                          FALSE, FALSE, 0);
++      gtk_box_reorder_child (GTK_BOX (hbox), statusbar->chopgimp_info, 1);
++      gimp_statusbar_add_size_widget (statusbar, statusbar->chopgimp_info);
++      gtk_widget_set_visible (statusbar->chopgimp_info, TRUE);
++    }
++
+   if (statusbar->gimp)
+     {
+       GimpContext *context;
+@@ -2072,6 +2095,18 @@ gimp_statusbar_shell_set_image (GimpStatusbar *statusbar,
+ 
+   g_set_weak_pointer (&statusbar->image, image);
+ 
++  /*  ChopGimp 3.32.0: the info of the display's own image  */
++  if (statusbar->chopgimp_info)
++    {
++      GimpImage *own = NULL;
++
++      if (statusbar->shell && statusbar->shell->display)
++        own = gimp_display_get_image (statusbar->shell->display);
++
++      chopgimp_statusbar_info_set_image (statusbar->chopgimp_info,
++                                         own ? own : image);
++    }
++
+   if (statusbar->image)
+     {
+       g_signal_connect (statusbar->image, "simulation-profile-changed",
+diff --git a/app/display/gimpstatusbar.h b/app/display/gimpstatusbar.h
+index 225d289..62a3aaa 100644
+--- a/app/display/gimpstatusbar.h
++++ b/app/display/gimpstatusbar.h
+@@ -92,6 +92,9 @@ struct _GimpStatusbar
+   GtkWidget           *out_of_gamut_toggle;
+ 
+   GSList              *size_widgets;
++
++  /*  ChopGimp 3.32.0 (lot E): document info (chopgimp-statusbar-info.c)  */
++  GtkWidget           *chopgimp_info;
+ };
+ 
+ struct _GimpStatusbarClass
+diff --git a/app/menus/filters-menu.c b/app/menus/filters-menu.c
+index 6b3b00e..2d5e2ec 100644
+--- a/app/menus/filters-menu.c
++++ b/app/menus/filters-menu.c
+@@ -28,6 +28,8 @@
+ #include "core/gimp.h"
+ #include "core/gimp-filter-history.h"
+ 
++#include "plug-in/plug-in-menu-path.h"
++
+ #include "widgets/gimpactiongroup.h"
+ #include "widgets/gimpstringaction.h"
+ #include "widgets/gimpuimanager.h"
+@@ -79,7 +81,11 @@ filters_menu_setup (GimpUIManager *manager,
+       if (path == NULL)
+         continue;
+ 
+-      path = g_strdup (path);
++      /*  ChopGimp: GEGL operations follow the same menu path mappings as
++       *  the plug-ins (e.g. gegl:local-threshold « <Image>/Colors » goes
++       *  to Image > Réglages instead of re-creating a « Colors » menu)
++       */
++      path = plug_in_menu_path_map (path, NULL);
+       root = strstr (path, "/");
+ 
+       if (root == NULL || root == path)
+diff --git a/app/operations/gimpoperationinnereffects.c b/app/operations/gimpoperationinnereffects.c
+new file mode 100644
+index 0000000..5d8cbd0
+--- /dev/null
++++ b/app/operations/gimpoperationinnereffects.c
+@@ -0,0 +1,562 @@
++/* GIMP - The GNU Image Manipulation Program
++ * Copyright (C) 1995 Spencer Kimball and Peter Mattis
++ *
++ * gimpoperationinnereffects.c
++ * ChopGimp 3.32.0 : styles de calque « Satin » et « Incrustation de
++ * motif », comme ceux de Photoshop.
++ *
++ * Ce sont des sous-classes du Contour (chopgimp:stroke,
++ * gimpoperationcontour.c) : elles en gardent les remplissages (couleur,
++ * dégradé, motif avec échelle, angle, décalage, « Lier au calque »), le
++ * mode de fusion, l'opacité, le rendu par niveaux de mipmap et le
++ * compositing, mais leur couverture est l'intérieur du calque au lieu
++ * d'un trait sur son bord (GimpOperationContourClass::fill_coverage) ;
++ * l'effet est posé dans le calque, dont l'alpha ne change pas.
++ *
++ *  - chopgimp:satin : l'alpha du calque flouté (taille), décalé de la
++ *    distance dans les deux sens selon l'angle ; la différence des deux
++ *    copies, passée par le contour (courbe de Photoshop) et inversée au
++ *    besoin, donne la couverture de la couleur (Produit par défaut) ;
++ *  - chopgimp:pattern-overlay : le motif couvre tout le calque.
++ *
++ * Ce sont des filtres GEGL ordinaires : modifiables (icône fx, fenêtre
++ * Style de calque), enregistrés dans le XCF, exportés en PSD comme les
++ * effets « ChFX » et « patternFill » de Photoshop (psd-chopgimp.c).
++ *
++ * This program is free software: you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation; either version 3 of the License, or
++ * (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License
++ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
++ */
++
++#include "config.h"
++
++#include <math.h>
++#include <string.h>
++
++#include <gegl.h>
++#include <gdk-pixbuf/gdk-pixbuf.h>
++
++#include "libgimpbase/gimpbase.h"
++
++#include "operations-types.h"
++
++#include "gimpoperationinnereffects.h"
++
++
++enum
++{
++  PROP_0,
++  PROP_ANGLE,
++  PROP_DISTANCE,
++  PROP_SIZE,
++  PROP_INVERT,
++  PROP_CONTOUR
++};
++
++
++/*  ─── contours ─────────────────────────────────────────────────────── */
++
++GType
++gimp_satin_contour_get_type (void)
++{
++  static const GEnumValue values[] =
++  {
++    { GIMP_SATIN_CONTOUR_LINEAR,        "GIMP_SATIN_CONTOUR_LINEAR",        "linear"        },
++    { GIMP_SATIN_CONTOUR_CONE,          "GIMP_SATIN_CONTOUR_CONE",          "cone"          },
++    { GIMP_SATIN_CONTOUR_CONE_INVERTED, "GIMP_SATIN_CONTOUR_CONE_INVERTED", "cone-inverted" },
++    { GIMP_SATIN_CONTOUR_GAUSSIAN,      "GIMP_SATIN_CONTOUR_GAUSSIAN",      "gaussian"      },
++    { GIMP_SATIN_CONTOUR_HALF_ROUND,    "GIMP_SATIN_CONTOUR_HALF_ROUND",    "half-round"    },
++    { GIMP_SATIN_CONTOUR_RING,          "GIMP_SATIN_CONTOUR_RING",          "ring"          },
++    { GIMP_SATIN_CONTOUR_RING_DOUBLE,   "GIMP_SATIN_CONTOUR_RING_DOUBLE",   "ring-double"   },
++    { 0, NULL, NULL }
++  };
++
++  static const GimpEnumDesc descs[] =
++  {
++    { GIMP_SATIN_CONTOUR_LINEAR,        "Linéaire",       NULL },
++    { GIMP_SATIN_CONTOUR_CONE,          "Cône",           NULL },
++    { GIMP_SATIN_CONTOUR_CONE_INVERTED, "Cône inversé",   NULL },
++    { GIMP_SATIN_CONTOUR_GAUSSIAN,      "Gaussienne",     NULL },
++    { GIMP_SATIN_CONTOUR_HALF_ROUND,    "Demi-cercle",    NULL },
++    { GIMP_SATIN_CONTOUR_RING,          "Anneau",         NULL },
++    { GIMP_SATIN_CONTOUR_RING_DOUBLE,   "Double anneau",  NULL },
++    { 0, NULL, NULL }
++  };
++
++  static GType type = 0;
++
++  if (G_UNLIKELY (! type))
++    {
++      type = g_enum_register_static ("GimpSatinContour", values);
++      gimp_enum_set_value_descriptions (type, descs);
++    }
++
++  return type;
++}
++
++/*  the points of Photoshop's named curves (0 – 255), as the PSD export
++ *  writes them (psd-chopgimp.c, d_contour())
++ */
++static const struct
++{
++  gint    n;
++  gdouble pts[5][2];
++} satin_contours[] =
++{
++  { 2, { { 0, 0 }, { 255, 255 } } },
++  { 3, { { 0, 0 }, { 128, 255 }, { 255, 0 } } },
++  { 3, { { 0, 255 }, { 128, 0 }, { 255, 255 } } },
++  { 4, { { 0, 0 }, { 64, 26 }, { 191, 229 }, { 255, 255 } } },
++  { 3, { { 0, 0 }, { 64, 166 }, { 255, 255 } } },
++  { 4, { { 0, 0 }, { 85, 255 }, { 170, 255 }, { 255, 0 } } },
++  { 5, { { 0, 0 }, { 64, 255 }, { 128, 0 }, { 191, 255 }, { 255, 0 } } },
++};
++
++/*  the curve at v (0 – 1), piecewise linear  */
++static gfloat
++satin_contour_map (GimpSatinContour contour,
++                   gfloat           v)
++{
++  gint    k = CLAMP ((gint) contour, 0, (gint) G_N_ELEMENTS (satin_contours) - 1);
++  gdouble x = CLAMP (v, 0.0f, 1.0f) * 255.0;
++  gint    i;
++
++  for (i = 1; i < satin_contours[k].n; i++)
++    {
++      const gdouble *p0 = satin_contours[k].pts[i - 1];
++      const gdouble *p1 = satin_contours[k].pts[i];
++
++      if (x <= p1[0] || i == satin_contours[k].n - 1)
++        {
++          gdouble t = (p1[0] > p0[0]) ? (x - p0[0]) / (p1[0] - p0[0]) : 1.0;
++
++          t = CLAMP (t, 0.0, 1.0);
++
++          return (p0[1] + (p1[1] - p0[1]) * t) / 255.0;
++        }
++    }
++
++  return v;
++}
++
++
++/*  ─── Satin ─────────────────────────────────────────────────────────── */
++
++static void     gimp_operation_satin_get_property (GObject              *object,
++                                                   guint                 property_id,
++                                                   GValue               *value,
++                                                   GParamSpec           *pspec);
++static void     gimp_operation_satin_set_property (GObject              *object,
++                                                   guint                 property_id,
++                                                   const GValue         *value,
++                                                   GParamSpec           *pspec);
++static gboolean gimp_operation_satin_coverage     (GimpOperationContour *contour,
++                                                   GeglBuffer           *input,
++                                                   const GeglRectangle  *in_rect,
++                                                   const GeglRectangle  *roi,
++                                                   gint                  level,
++                                                   guchar               *mask,
++                                                   gint                  mask_stride);
++static gint     gimp_operation_satin_margin       (GimpOperationContour *contour,
++                                                   gdouble               scale);
++
++
++G_DEFINE_TYPE (GimpOperationSatin, gimp_operation_satin,
++               GIMP_TYPE_OPERATION_CONTOUR)
++
++
++static void
++gimp_operation_satin_class_init (GimpOperationSatinClass *klass)
++{
++  GObjectClass              *object_class    = G_OBJECT_CLASS (klass);
++  GeglOperationClass        *operation_class = GEGL_OPERATION_CLASS (klass);
++  GimpOperationContourClass *contour_class   = GIMP_OPERATION_CONTOUR_CLASS (klass);
++  GParamSpec                *pspec;
++
++  object_class->set_property = gimp_operation_satin_set_property;
++  object_class->get_property = gimp_operation_satin_get_property;
++
++  gegl_operation_class_set_keys (operation_class,
++                                 "name",        "chopgimp:satin",
++                                 "title",       "Satin",
++                                 "categories",  "light",
++                                 "description", "Ombrage satiné à l'intérieur "
++                                                "du calque (style de calque)",
++                                 NULL);
++
++  contour_class->fill_coverage = gimp_operation_satin_coverage;
++  contour_class->fill_margin   = gimp_operation_satin_margin;
++
++  pspec = gegl_param_spec_double ("angle",
++                                  "Angle",
++                                  "Direction du décalage, en degrés",
++                                  -180.0, 180.0, 19.0,
++                                  -180.0, 180.0, 1.0,
++                                  G_PARAM_READWRITE |
++                                  G_PARAM_CONSTRUCT);
++  gegl_param_spec_set_property_key (pspec, "unit", "degree");
++  g_object_class_install_property (object_class, PROP_ANGLE, pspec);
++
++  pspec = gegl_param_spec_double ("distance",
++                                  "Distance",
++                                  "Décalage des deux copies du calque, en pixels",
++                                  0.0, 250.0, 11.0,
++                                  0.0, 100.0, 1.5,
++                                  G_PARAM_READWRITE |
++                                  G_PARAM_CONSTRUCT);
++  gegl_param_spec_set_property_key (pspec, "unit", "pixel-distance");
++  g_object_class_install_property (object_class, PROP_DISTANCE, pspec);
++
++  pspec = gegl_param_spec_double ("size",
++                                  "Taille",
++                                  "Flou du satin, en pixels",
++                                  0.0, 250.0, 14.0,
++                                  0.0, 100.0, 1.5,
++                                  G_PARAM_READWRITE |
++                                  G_PARAM_CONSTRUCT);
++  gegl_param_spec_set_property_key (pspec, "unit", "pixel-distance");
++  g_object_class_install_property (object_class, PROP_SIZE, pspec);
++
++  g_object_class_install_property (object_class, PROP_INVERT,
++                                   g_param_spec_boolean ("invert",
++                                                         "Inverser",
++                                                         "Inverser le satin",
++                                                         TRUE,
++                                                         G_PARAM_READWRITE |
++                                                         G_PARAM_CONSTRUCT));
++
++  g_object_class_install_property (object_class, PROP_CONTOUR,
++                                   gegl_param_spec_enum ("contour",
++                                                           "Contour",
++                                                           "Courbe appliquée au satin",
++                                                           GIMP_TYPE_SATIN_CONTOUR,
++                                                           GIMP_SATIN_CONTOUR_GAUSSIAN,
++                                                           G_PARAM_READWRITE |
++                                                           G_PARAM_CONSTRUCT));
++}
++
++static void
++gimp_operation_satin_init (GimpOperationSatin *self)
++{
++}
++
++static void
++gimp_operation_satin_get_property (GObject    *object,
++                                   guint       property_id,
++                                   GValue     *value,
++                                   GParamSpec *pspec)
++{
++  GimpOperationSatin *self = GIMP_OPERATION_SATIN (object);
++
++  switch (property_id)
++    {
++    case PROP_ANGLE:
++      g_value_set_double (value, self->angle);
++      break;
++
++    case PROP_DISTANCE:
++      g_value_set_double (value, self->distance);
++      break;
++
++    case PROP_SIZE:
++      g_value_set_double (value, self->size);
++      break;
++
++    case PROP_INVERT:
++      g_value_set_boolean (value, self->invert);
++      break;
++
++    case PROP_CONTOUR:
++      g_value_set_enum (value, self->contour);
++      break;
++
++    default:
++      G_OBJECT_WARN_INVALID_PROPERTY_ID (object, property_id, pspec);
++      break;
++    }
++}
++
++static void
++gimp_operation_satin_set_property (GObject      *object,
++                                   guint         property_id,
++                                   const GValue *value,
++                                   GParamSpec   *pspec)
++{
++  GimpOperationSatin *self = GIMP_OPERATION_SATIN (object);
++
++  switch (property_id)
++    {
++    case PROP_ANGLE:
++      self->angle = g_value_get_double (value);
++      break;
++
++    case PROP_DISTANCE:
++      self->distance = g_value_get_double (value);
++      break;
++
++    case PROP_SIZE:
++      self->size = g_value_get_double (value);
++      break;
++
++    case PROP_INVERT:
++      self->invert = g_value_get_boolean (value);
++      break;
++
++    case PROP_CONTOUR:
++      self->contour = g_value_get_enum (value);
++      break;
++
++    default:
++      G_OBJECT_WARN_INVALID_PROPERTY_ID (object, property_id, pspec);
++      return;
++    }
++
++  /*  the region read around each pixel may have changed  */
++  gimp_operation_contour_input_changed (GIMP_OPERATION_CONTOUR (self));
++}
++
++/*  the radius of each of the 3 box blurs approximating a gaussian of
++ *  standard deviation size / 2 (Photoshop's size, as for the glows:
++ *  psd-chopgimp.c, size_spread())
++ */
++static gint
++gimp_operation_satin_box_radius (gdouble size)
++{
++  gdouble sigma = size / 2.0;
++  gdouble w     = sqrt (4.0 * sigma * sigma + 1.0);
++
++  return MAX (0, (gint) floor ((w - 1.0) / 2.0 + 0.5));
++}
++
++static gint
++gimp_operation_satin_margin (GimpOperationContour *contour,
++                             gdouble               scale)
++{
++  GimpOperationSatin *self = GIMP_OPERATION_SATIN (contour);
++  gint                r    = gimp_operation_satin_box_radius (self->size * scale);
++
++  return (gint) ceil (self->distance * scale) + 3 * r + 2;
++}
++
++/*  one box blur of radius r along n values (stride apart), zero outside  */
++static void
++satin_box_1d (gfloat *data,
++              gint    n,
++              gint    stride,
++              gint    r,
++              gfloat *tmp)
++{
++  gfloat sum = 0.0f;
++  gfloat inv = 1.0f / (2 * r + 1);
++  gint   i;
++
++  for (i = 0; i < n; i++)
++    tmp[i] = data[(gsize) i * stride];
++
++  for (i = 0; i < MIN (r, n); i++)
++    sum += tmp[i];
++
++  for (i = 0; i < n; i++)
++    {
++      if (i + r < n)
++        sum += tmp[i + r];
++
++      if (i - r - 1 >= 0)
++        sum -= tmp[i - r - 1];
++
++      data[(gsize) i * stride] = MAX (sum, 0.0f) * inv;
++    }
++}
++
++/*  the blurred alpha at x, y (buffer coordinates, pixel centers at
++ *  .5), bilinear, zero outside
++ */
++static gfloat
++satin_sample (const gfloat *buf,
++              gint          w,
++              gint          h,
++              gdouble       x,
++              gdouble       y)
++{
++  gdouble fx = floor (x - 0.5);
++  gdouble fy = floor (y - 0.5);
++  gfloat  tx = (x - 0.5) - fx;
++  gfloat  ty = (y - 0.5) - fy;
++  gint    x0 = (gint) fx;
++  gint    y0 = (gint) fy;
++  gfloat  v[4];
++  gint    k;
++
++  for (k = 0; k < 4; k++)
++    {
++      gint xx = x0 + (k & 1);
++      gint yy = y0 + (k >> 1);
++
++      v[k] = (xx >= 0 && yy >= 0 && xx < w && yy < h) ?
++             buf[(gsize) yy * w + xx] : 0.0f;
++    }
++
++  return (v[0] * (1.0f - tx) + v[1] * tx) * (1.0f - ty) +
++         (v[2] * (1.0f - tx) + v[3] * tx) * ty;
++}
++
++static gboolean
++gimp_operation_satin_coverage (GimpOperationContour *contour,
++                               GeglBuffer           *input,
++                               const GeglRectangle  *in_rect,
++                               const GeglRectangle  *roi,
++                               gint                  level,
++                               guchar               *mask,
++                               gint                  mask_stride)
++{
++  GimpOperationSatin *self  = GIMP_OPERATION_SATIN (contour);
++  gdouble             scale = 1.0 / (1 << MAX (level, 0));
++  gdouble             angle = self->angle * G_PI / 180.0;
++  gdouble             dist  = self->distance * scale;
++  gint                r     = gimp_operation_satin_box_radius (self->size * scale);
++  gint                margin;
++  gdouble             ox, oy;
++  GeglRectangle       area;
++  gfloat             *buf;
++  gfloat             *tmp;
++  gint                x, y, pass;
++
++  /*  the offset of the light angle, as the drop shadow's
++   *  (x = -cos a × d, y = sin a × d)
++   */
++  ox = -cos (angle) * dist;
++  oy =  sin (angle) * dist;
++
++  margin = (gint) ceil (dist) + 3 * r + 2;
++
++  area.x      = roi->x - margin;
++  area.y      = roi->y - margin;
++  area.width  = roi->width  + 2 * margin;
++  area.height = roi->height + 2 * margin;
++
++  if (! gegl_rectangle_intersect (&area, &area, in_rect))
++    return FALSE;
++
++  buf = g_try_new (gfloat, (gsize) area.width * area.height);
++  tmp = g_try_new (gfloat, MAX (area.width, area.height));
++
++  if (! buf || ! tmp)
++    {
++      g_free (buf);
++      g_free (tmp);
++      return FALSE;
++    }
++
++  gegl_buffer_get (input, &area, scale, babl_format ("A float"),
++                   buf, GEGL_AUTO_ROWSTRIDE, GEGL_ABYSS_NONE);
++
++  /*  the blur: 3 box blurs each way (outside the input, alpha is 0)  */
++  if (r > 0)
++    {
++      for (pass = 0; pass < 3; pass++)
++        {
++          for (y = 0; y < area.height; y++)
++            satin_box_1d (buf + (gsize) y * area.width, area.width, 1, r, tmp);
++
++          for (x = 0; x < area.width; x++)
++            satin_box_1d (buf + x, area.height, area.width, r, tmp);
++        }
++    }
++
++  /*  the difference of the two shifted copies, through the contour  */
++  for (y = 0; y < roi->height; y++)
++    {
++      guchar  *m  = mask + (gsize) y * mask_stride;
++      gdouble  py = roi->y + y + 0.5 - area.y;
++
++      for (x = 0; x < roi->width; x++)
++        {
++          gdouble px = roi->x + x + 0.5 - area.x;
++          gfloat  a  = satin_sample (buf, area.width, area.height,
++                                     px + ox, py + oy);
++          gfloat  b  = satin_sample (buf, area.width, area.height,
++                                     px - ox, py - oy);
++          gfloat  v  = satin_contour_map (self->contour, fabsf (a - b));
++
++          if (self->invert)
++            v = 1.0f - v;
++
++          m[x] = (guchar) (CLAMP (v, 0.0f, 1.0f) * 255.0f + 0.5f);
++        }
++    }
++
++  g_free (buf);
++  g_free (tmp);
++
++  return TRUE;
++}
++
++
++/*  ─── Incrustation de motif ─────────────────────────────────────────── */
++
++static gboolean gimp_operation_pattern_overlay_coverage (GimpOperationContour *contour,
++                                                         GeglBuffer           *input,
++                                                         const GeglRectangle  *in_rect,
++                                                         const GeglRectangle  *roi,
++                                                         gint                  level,
++                                                         guchar               *mask,
++                                                         gint                  mask_stride);
++
++
++G_DEFINE_TYPE (GimpOperationPatternOverlay, gimp_operation_pattern_overlay,
++               GIMP_TYPE_OPERATION_CONTOUR)
++
++
++static void
++gimp_operation_pattern_overlay_class_init (GimpOperationPatternOverlayClass *klass)
++{
++  GeglOperationClass        *operation_class = GEGL_OPERATION_CLASS (klass);
++  GimpOperationContourClass *contour_class   = GIMP_OPERATION_CONTOUR_CLASS (klass);
++
++  gegl_operation_class_set_keys (operation_class,
++                                 "name",        "chopgimp:pattern-overlay",
++                                 "title",       "Incrustation de motif",
++                                 "categories",  "light",
++                                 "description", "Recouvre le calque d'un motif "
++                                                "(style de calque)",
++                                 NULL);
++
++  contour_class->fill_coverage = gimp_operation_pattern_overlay_coverage;
++  contour_class->fill_margin   = NULL;
++}
++
++static void
++gimp_operation_pattern_overlay_init (GimpOperationPatternOverlay *self)
++{
++}
++
++static gboolean
++gimp_operation_pattern_overlay_coverage (GimpOperationContour *contour,
++                                         GeglBuffer           *input,
++                                         const GeglRectangle  *in_rect,
++                                         const GeglRectangle  *roi,
++                                         gint                  level,
++                                         guchar               *mask,
++                                         gint                  mask_stride)
++{
++  /*  no pattern chosen yet: nothing (not the stroke's black fallback)  */
++  if (contour->fill_type == GIMP_CONTOUR_FILL_PATTERN &&
++      (! contour->pattern_data || ! *contour->pattern_data))
++    return FALSE;
++
++  if (! gegl_rectangle_intersect (NULL, roi, in_rect))
++    return FALSE;
++
++  memset (mask, 255, (gsize) mask_stride * roi->height);
++
++  return TRUE;
++}
+diff --git a/app/operations/gimpoperationinnereffects.h b/app/operations/gimpoperationinnereffects.h
+new file mode 100644
+index 0000000..0e19ee5
+--- /dev/null
++++ b/app/operations/gimpoperationinnereffects.h
+@@ -0,0 +1,88 @@
++/* GIMP - The GNU Image Manipulation Program
++ * Copyright (C) 1995 Spencer Kimball and Peter Mattis
++ *
++ * gimpoperationinnereffects.h
++ * ChopGimp 3.32.0 : styles de calque « Satin » (chopgimp:satin) et
++ * « Incrustation de motif » (chopgimp:pattern-overlay)
++ *
++ * This program is free software: you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation; either version 3 of the License, or
++ * (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License
++ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
++ */
++
++#pragma once
++
++#include "gimpoperationcontour.h"
++
++
++/*  Photoshop's contours (the same nicks as GEGL's "contour" of
++ *  gegl:dropshadow / gegl:inner-glow, which the PSD export maps to
++ *  Photoshop's named curves)
++ */
++typedef enum
++{
++  GIMP_SATIN_CONTOUR_LINEAR,
++  GIMP_SATIN_CONTOUR_CONE,
++  GIMP_SATIN_CONTOUR_CONE_INVERTED,
++  GIMP_SATIN_CONTOUR_GAUSSIAN,
++  GIMP_SATIN_CONTOUR_HALF_ROUND,
++  GIMP_SATIN_CONTOUR_RING,
++  GIMP_SATIN_CONTOUR_RING_DOUBLE
++} GimpSatinContour;
++
++#define GIMP_TYPE_SATIN_CONTOUR (gimp_satin_contour_get_type ())
++
++GType gimp_satin_contour_get_type (void) G_GNUC_CONST;
++
++
++#define GIMP_TYPE_OPERATION_SATIN            (gimp_operation_satin_get_type ())
++#define GIMP_OPERATION_SATIN(obj)            (G_TYPE_CHECK_INSTANCE_CAST ((obj), GIMP_TYPE_OPERATION_SATIN, GimpOperationSatin))
++#define GIMP_IS_OPERATION_SATIN(obj)         (G_TYPE_CHECK_INSTANCE_TYPE ((obj), GIMP_TYPE_OPERATION_SATIN))
++
++#define GIMP_TYPE_OPERATION_PATTERN_OVERLAY  (gimp_operation_pattern_overlay_get_type ())
++#define GIMP_IS_OPERATION_PATTERN_OVERLAY(obj) (G_TYPE_CHECK_INSTANCE_TYPE ((obj), GIMP_TYPE_OPERATION_PATTERN_OVERLAY))
++
++
++typedef struct _GimpOperationSatin                GimpOperationSatin;
++typedef struct _GimpOperationSatinClass           GimpOperationSatinClass;
++typedef struct _GimpOperationPatternOverlay       GimpOperationPatternOverlay;
++typedef struct _GimpOperationPatternOverlayClass  GimpOperationPatternOverlayClass;
++
++struct _GimpOperationSatin
++{
++  GimpOperationContour  parent_instance;
++
++  gdouble               angle;      /*  degrees, Photoshop's light angle  */
++  gdouble               distance;   /*  pixels                            */
++  gdouble               size;       /*  pixels (blur)                     */
++  gboolean              invert;
++  GimpSatinContour      contour;
++};
++
++struct _GimpOperationSatinClass
++{
++  GimpOperationContourClass  parent_class;
++};
++
++struct _GimpOperationPatternOverlay
++{
++  GimpOperationContour  parent_instance;
++};
++
++struct _GimpOperationPatternOverlayClass
++{
++  GimpOperationContourClass  parent_class;
++};
++
++
++GType   gimp_operation_satin_get_type           (void) G_GNUC_CONST;
++GType   gimp_operation_pattern_overlay_get_type (void) G_GNUC_CONST;
+diff --git a/app/plug-in/plug-in-menu-path.c b/app/plug-in/plug-in-menu-path.c
+index 1b69546..21bf8df 100644
+--- a/app/plug-in/plug-in-menu-path.c
++++ b/app/plug-in/plug-in-menu-path.c
+@@ -45,6 +45,16 @@ static const MenuPathMapping menu_path_mappings[] =
+   { "<Image>/File/Acquire",             NULL, "<Image>/File/Create/Acquire"       },
+   { "<Image>/File/New",                 NULL, "<Image>/File/Create"               },
+   { "<Image>/Image/Mode/Color Profile", NULL, "<Image>/Image/Color Management"    },
++
++  /* ChopGimp: Photoshop menu layout (tools/build_menus.py). The Colors
++   * menu is merged into Image > Réglages, Image > Guides moves to View
++   * and the layer arrangement commands to Layer: plug-ins and scripts
++   * registering at the old places follow them instead of re-creating
++   * the old menus.
++   */
++  { "<Image>/Colors",                   NULL, "<Image>/Image/R\303\251glages"     },
++  { "<Image>/Image/Guides",             NULL, "<Image>/View/Guides"               },
++  { "<Image>/Image/[Arrange]",          NULL, "<Image>/Layer/[Arrange]"           },
+   { NULL, NULL, NULL }
+ };
+ 
+diff --git a/app/plug-in/plug-in-rc.c b/app/plug-in/plug-in-rc.c
+index 6dd59e0..7414970 100644
+--- a/app/plug-in/plug-in-rc.c
++++ b/app/plug-in/plug-in-rc.c
+@@ -35,6 +35,7 @@
+ 
+ #include "gimpplugindef.h"
+ #include "gimppluginprocedure.h"
++#include "plug-in-menu-path.h"
+ #include "plug-in-rc.h"
+ 
+ #include "gimp-intl.h"
+@@ -507,6 +508,16 @@ plug_in_menu_path_deserialize (GScanner            *scanner,
+   if (! gimp_scanner_parse_string (scanner, &menu_path))
+     return G_TOKEN_STRING;
+ 
++  /* ChopGimp: a pluginrc written before a menu path mapping was added
++   * keeps the old paths; map them like newly registered ones.
++   */
++  {
++    gchar *mapped = plug_in_menu_path_map (menu_path, NULL);
++
++    g_free (menu_path);
++    menu_path = mapped;
++  }
++
+   proc->menu_paths = g_list_append (proc->menu_paths, menu_path);
+ 
+   if (! gimp_scanner_parse_token (scanner, G_TOKEN_RIGHT_PAREN))
+diff --git a/po-libgimp/fr.po b/po-libgimp/fr.po
+index ecaac2f..fb8582a 100644
+--- a/po-libgimp/fr.po
++++ b/po-libgimp/fr.po
+@@ -2995,6 +2995,32 @@ msgstr "Cycles de contrastes"
+ msgid "Contrast"
+ msgstr "Contraste"
+ 
++# ChopGimp: entries missing from the GIMP 3.2.8 catalogue
++#: libgimpwidgets/gimpdialog.c:221
++msgid "_Help"
++msgstr "Aid_e"
++
++#: libgimpwidgets/gimpcolorscales.c libgimpwidgets/gimpcolorselect.c
++msgid "Profile: sRGB"
++msgstr "Profil : sRGB"
++
++#: libgimpwidgets/gimpcolorscales.c libgimpwidgets/gimpcolorselect.c
++msgid "Profile: <i>unknown</i>"
++msgstr "Profil : <i>inconnu</i>"
++
++#: libgimpwidgets/gimpcolorselect.c
++msgid "Soft-Proof Profile: sRGB"
++msgstr "Profil d’épreuve sur écran : sRGB"
++
++#: libgimpwidgets/gimpcolorselect.c
++#, c-format
++msgid "Soft-Proof Profile: %s"
++msgstr "Profil d’épreuve sur écran : %s"
++
++#: libgimpwidgets/gimpcolorselect.c
++msgid "Soft-Proof Profile: <i>unknown</i>"
++msgstr "Profil d’épreuve sur écran : <i>inconnu</i>"
++
+ #~ msgid "Rotate %s?"
+ #~ msgstr "Rotation de %s ?"
+ 
+@@ -3038,3 +3064,53 @@ msgstr "Contraste"
+ #~ msgctxt "icon-type"
+ #~ msgid "Inline pixbuf"
+ #~ msgstr "Pixbuf intégré"
++
++#. ChopGimp 4.0.0
++#: ../libgimp/gimpexportprocedure.c
++msgid "Save _Exif"
++msgstr "Enregistrer les données _Exif"
++
++#. ChopGimp 4.0.0
++#: ../libgimp/gimpexportprocedure.c
++msgid "Save Exif (Exchangeable image file format) metadata"
++msgstr "Enregistrer les métadonnées Exif (Exchangeable image file format)"
++
++#. ChopGimp 4.0.0
++#: ../libgimp/gimpexportprocedure.c
++msgid "Save _IPTC"
++msgstr "Enregistrer les données _IPTC"
++
++#. ChopGimp 4.0.0
++#: ../libgimp/gimpexportprocedure.c
++msgid "Save IPTC (International Press Telecommunications Council) metadata"
++msgstr "Enregistrer les métadonnées IPTC (International Press Telecommunications Council)"
++
++#. ChopGimp 4.0.0
++#: ../libgimp/gimpexportprocedure.c
++msgid "Save _XMP"
++msgstr "Enregistrer les données _XMP"
++
++#. ChopGimp 4.0.0
++#: ../libgimp/gimpexportprocedure.c
++msgid "Save XMP (Extensible Metadata Platform) metadata"
++msgstr "Enregistrer les métadonnées XMP (Extensible Metadata Platform)"
++
++#. ChopGimp 4.0.0
++#: ../libgimp/gimpexportprocedure.c
++msgid "Save color _profile"
++msgstr "Enregistrer le _profil de couleur"
++
++#. ChopGimp 4.0.0
++#: ../libgimp/gimpexportprocedure.c
++msgid "Save the ICC color profile as metadata"
++msgstr "Enregistrer le profil de couleur ICC dans les métadonnées"
++
++#. ChopGimp 4.0.0
++#: ../libgimp/gimpexportprocedure.c
++msgid "Save _thumbnail"
++msgstr "Enregistrer la _vignette"
++
++#. ChopGimp 4.0.0
++#: ../libgimp/gimpexportprocedure.c
++msgid "Save a smaller representation of the image as metadata"
++msgstr "Enregistrer une petite représentation de l’image dans les métadonnées"
+diff --git a/po-plug-ins/fr.po b/po-plug-ins/fr.po
+index 0e9f969..6e91904 100644
+--- a/po-plug-ins/fr.po
++++ b/po-plug-ins/fr.po
+@@ -12569,3 +12569,253 @@ msgstr "_Scanneur/Appareil photo…"
+ msgid "Transferring data from scanner/camera"
+ msgstr "Transfert des données depuis le scanneur ou l’appareil photo"
+ 
++
++
++#: plug-ins/common/animation-play.c:336
++msgid "_Playback..."
++msgstr "_Lecture…"
++
++#: plug-ins/common/file-farbfeld.c:137
++msgid "Farbfeld"
++msgstr "Farbfeld"
++
++#: plug-ins/common/file-gif-load.c:247
++msgid "Jeff's Image Format"
++msgstr "Format d’image de Jeff"
++
++#: plug-ins/common/file-heif.c:473
++msgid "JPEG 2000 encapsulated in HEIF"
++msgstr "JPEG 2000 encapsulé dans HEIF"
++
++#: plug-ins/common/file-heif.c:500
++msgid "AVC-encoded image encapsulated in HEIF"
++msgstr "Image encodée en AVC encapsulée dans HEIF"
++
++#: plug-ins/common/file-iff.c:197
++msgid "Amiga IFF"
++msgstr "IFF Amiga"
++
++#: plug-ins/common/file-qoi.c:139
++msgid "Quite OK Image"
++msgstr "Image QOI (Quite OK Image)"
++
++#: plug-ins/common/file-seattle-filmworks.c:159
++msgid "Seattle FilmWorks Image"
++msgstr "Image Seattle FilmWorks"
++
++#: plug-ins/common/file-tim.c:168
++msgid "Playstation TIM image"
++msgstr "Image TIM PlayStation"
++
++#: plug-ins/common/file-wbmp.c:151
++msgid "Nokia Over The Air Bitmap image"
++msgstr "Image bitmap Nokia OTA"
++
++#: plug-ins/file-icns/file-icns.c:133
++msgid "Icns"
++msgstr "Icns"
++
++#: plug-ins/filter-browser/filter-browser.c:851
++msgid "_GEGL Filter Browser"
++msgstr "Navigateur de filtres _GEGL"
++
++#: plug-ins/common/file-heif.c:352
++msgid "HEIF/AVIF"
++msgstr "HEIF/AVIF"
++
++#: plug-ins/common/file-lnk.c:123
++msgid "Windows Shortcut"
++msgstr "Raccourci Windows"
++
++#: plug-ins/common/file-paa.c:151
++msgid "PAA Image"
++msgstr "Image PAA"
++
++#: plug-ins/common/file-pcx.c:245
++msgid "ZSoft DCX image"
++msgstr "Image ZSoft DCX"
++
++#: plug-ins/common/file-png.c:290
++msgid "APNG image"
++msgstr "Image APNG"
++
++#: plug-ins/common/file-pnm.c:529
++msgid "PAM image"
++msgstr "Image PAM"
++
++#: plug-ins/common/file-ps.c:388
++msgid "Encapsulated PostScript"
++msgstr "PostScript encapsulé"
++
++#: plug-ins/common/file-pvr.c:215
++msgid "PVR Image"
++msgstr "Image PVR"
++
++#: plug-ins/common/file-svg.c:322
++msgid "Scalable Vector Graphic"
++msgstr "Graphique vectoriel SVG"
++
++#: plug-ins/common/file-wbmp.c:129
++msgid "Wireless BMP image"
++msgstr "Image BMP sans fil (WBMP)"
++
++#: plug-ins/common/wavelet-decompose.c:117
++msgid "_Wavelet Decompose..."
++msgstr "Décomposer en _ondelettes…"
++
++#: plug-ins/file-icns/file-icns.c:177
++msgid "Apple Icon Image"
++msgstr "Image d’icône Apple"
++
++#: plug-ins/file-ico/ico.c:230
++msgid "Microsoft Windows animated cursor"
++msgstr "Curseur animé Microsoft Windows"
++
++#: plug-ins/file-psd/psd.c:240
++msgid "Photoshop Large image"
++msgstr "Image Photoshop grand format (PSB)"
++
++#: ../plug-ins/common/file-pdf-export.c
++#. ChopGimp 4.0.0
++msgid "O_mit hidden layers and layers with zero opacity"
++msgstr "_Omettre les calques masqués et les calques dont l’opacité est à 0"
++
++#: ../plug-ins/common/file-pdf-export.c
++#. ChopGimp 4.0.0
++msgid "Non-visible layers will not be exported"
++msgstr "Les calques non visibles ne seront pas exportés"
++
++#: ../plug-ins/common/file-pdf-export.c
++#. ChopGimp 4.0.0
++msgid "_Apply layer masks"
++msgstr "_Appliquer les masques de calque"
++
++#: ../plug-ins/common/file-pdf-export.c
++#. ChopGimp 4.0.0
++msgid "Apply layer masks before saving (Keeping the mask will not change the output, only the PDF structure)"
++msgstr "Appliquer les masques de calque avant l’enregistrement (garder le masque ne change pas le rendu, seulement la structure du PDF)"
++
++#: ../plug-ins/common/file-pdf-export.c
++#. ChopGimp 4.0.0
++msgid "Apply layer masks before saving"
++msgstr "Appliquer les masques de calque avant l’enregistrement"
++
++#: ../plug-ins/common/file-pdf-export.c
++#. ChopGimp 4.0.0
++msgid "La_yers as pages"
++msgstr "Ca_lques en tant que pages"
++
++#: ../plug-ins/common/file-pdf-export.c
++#. ChopGimp 4.0.0
++msgid "Layers as pages (bottom layers first)."
++msgstr "Calques en tant que pages (calques du bas en premier)."
++
++#: ../plug-ins/common/file-pdf-export.c
++#. ChopGimp 4.0.0
++msgid "Re_verse order"
++msgstr "Ordre in_versé"
++
++#: ../plug-ins/common/file-pdf-export.c
++#. ChopGimp 4.0.0
++msgid "Reverse the pages order (top layers first)."
++msgstr "Inverser l’ordre des pages (calques du haut en premier)."
++
++#: ../plug-ins/common/file-pdf-export.c
++#. ChopGimp 4.0.0
++msgid "Roo_t layers only"
++msgstr "Calques de premier ni_veau seulement"
++
++#: ../plug-ins/common/file-pdf-export.c
++#. ChopGimp 4.0.0
++msgid "Only the root layers are considered pages"
++msgstr "Seuls les calques de premier niveau deviennent des pages"
++
++#: ../plug-ins/common/file-pdf-export.c
++#. ChopGimp 4.0.0
++msgid "Convert te_xt layers to image"
++msgstr "Convertir les calques te_xte en image"
++
++#: ../plug-ins/common/file-pdf-export.c
++#. ChopGimp 4.0.0
++msgid "Convert text layers to raster graphics"
++msgstr "Convertir les calques texte en pixels"
++
++#: ../plug-ins/common/file-pdf-export.c
++#. ChopGimp 4.0.0
++msgid "_Fill transparent areas with background color"
++msgstr "_Remplir les zones transparentes avec la couleur d’arrière-plan"
++
++#: ../plug-ins/common/file-pdf-export.c
++#. ChopGimp 4.0.0
++msgid "Fill transparent areas with background color if layer has an alpha channel"
++msgstr "Remplir les zones transparentes avec la couleur d’arrière-plan si le calque a une couche alpha"
++
++#. ChopGimp 4.0.0
++#: ../plug-ins/file-psd/psd.c
++msgid "Assign a Clipping _Path"
++msgstr "Attribuer un _tracé de détourage"
++
++#. ChopGimp 4.0.0
++#: ../plug-ins/file-psd/psd.c
++msgid "Clipping Path _Name"
++msgstr "_Nom du tracé de détourage"
++
++#. ChopGimp 4.0.0
++#: ../plug-ins/file-psd/psd.c
++msgid "Path _Flatness"
++msgstr "_Planéité du tracé"
++
++#. ChopGimp 4.0.0
++#: ../plug-ins/file-psd/psd.c
++msgid "Export as _CMYK"
++msgstr "Exporter en _CMJN"
++
++#. ChopGimp 4.0.0
++#: ../plug-ins/file-psd/psd.c
++msgid "Export a CMYK PSD image using the soft-proofing color profile"
++msgstr "Exporter une image PSD en CMJN avec le profil de couleur de l’épreuve écran"
++
++#. ChopGimp 4.0.0
++#: ../plug-ins/file-psd/psd.c
++msgid "No soft-proofing profile"
++msgstr "Aucun profil d’épreuve écran"
++
++#. ChopGimp 4.0.0
++#: ../plug-ins/file-psd/psd.c
++msgid "Compatibility Notice"
++msgstr "Note de compatibilité"
++
++#. ChopGimp 4.0.0
++#: ../plug-ins/file-psd/psd.c
++msgid "Legacy layer modes have better compatibility with Photoshop, but do not support Clip to Backdrop, which is needed for using Photoshop's 'Blend Clipped Layers as Group'. If you encounter display issues, consider switching to those layer modes."
++msgstr "Les modes de calque hérités sont plus compatibles avec Photoshop, mais ne gèrent pas « Écrêter à l’arrière-plan », nécessaire à l’option « Fusionner les calques écrêtés comme groupe » de Photoshop. En cas de problème d’affichage, passez à ces modes de calque."
++
++#. ChopGimp 4.0.0
++#: ../plug-ins/common/file-svg.c
++msgid "_Title"
++msgstr "_Titre"
++
++#. ChopGimp 4.0.0
++#: ../plug-ins/common/file-svg.c
++msgid "Optional <title> for SVG"
++msgstr "<title> facultatif du SVG"
++
++#. ChopGimp 4.0.0
++#: ../plug-ins/common/file-svg.c
++msgid "Em_bed raster layers as"
++msgstr "Incorporer les calques _matriciels en"
++
++#. ChopGimp 4.0.0
++#: ../plug-ins/common/file-svg.c
++msgid "PNG (always)"
++msgstr "PNG (toujours)"
++
++#. ChopGimp 4.0.0
++#: ../plug-ins/common/file-svg.c
++msgid "JPEG (for opaque images, PNG otherwise)"
++msgstr "JPEG (images opaques, PNG sinon)"
++
++#. ChopGimp 4.0.0
++#: ../plug-ins/common/file-svg.c
++msgid "Do not export raster layers"
++msgstr "Ne pas exporter les calques matriciels"
+diff --git a/po-python/fr.po b/po-python/fr.po
+index d2b2309..cfd4c7b 100644
+--- a/po-python/fr.po
++++ b/po-python/fr.po
+@@ -813,3 +813,20 @@ msgstr "Patience : motif en cours de rendu"
+ #: ../plug-ins/python/spyro-plus.py:2301
+ msgid "Spyrogimp..."
+ msgstr "Spyrogimp…"
++
++
++#: plug-ins/python/file-openraster.py:510
++msgid "OpenRaster"
++msgstr "OpenRaster"
++
++#: plug-ins/python/gradients-save-as-css.py:135
++msgid "Save Gradient as CSS..."
++msgstr "Enregistrer le dégradé en CSS…"
++
++#: plug-ins/python/histogram-export.py:217
++msgid "_Export Histogram..."
++msgstr "_Exporter l’histogramme…"
++
++#: plug-ins/python/palette-export-as-kpl.py:171
++msgid "_Krita palette..."
++msgstr "Palette _Krita…"
+diff --git a/po-script-fu/fr.po b/po-script-fu/fr.po
+index b3bef87..954d325 100644
+--- a/po-script-fu/fr.po
++++ b/po-script-fu/fr.po
+@@ -1634,6 +1634,38 @@ msgstr "Décalage X d’ombre portée"
+ msgid "Drop shadow Y offset"
+ msgstr "Décalage Y d’ombre portée"
+ 
++#: plug-ins/script-fu/scripts/gimp-online.scm:150
++msgid "_Table of Contents"
++msgstr "_Table des matières"
++
++#: plug-ins/script-fu/scripts/coffee.scm:132
++msgid "_Stain..."
++msgstr "_Tache…"
++
++#: plug-ins/script-fu/scripts/difference-clouds.scm:82
++msgid "_Difference Clouds"
++msgstr "Nuages par _différence"
++
++#: plug-ins/script-fu/scripts/gimp-online.scm:63
++msgid "_Using Paths"
++msgstr "Utiliser les _chemins"
++
++#: plug-ins/script-fu/scripts/gimp-online.scm:140
++msgid "_Create and Use Selections"
++msgstr "Créer et utiliser les _sélections"
++
++#: plug-ins/script-fu/scripts/gimp-online.scm:206
++msgid "_Roadmaps"
++msgstr "_Feuilles de route"
++
++#: plug-ins/script-fu/scripts/paste-as-brush.scm:65
++msgid "Paste as New _Brush..."
++msgstr "Coller comme nouvelle _brosse…"
++
++#: plug-ins/script-fu/scripts/paste-as-pattern.scm:51
++msgid "Paste as New _Pattern..."
++msgstr "Coller comme nouveau _motif…"
++
+ #~ msgid "_Console"
+ #~ msgstr "_Console"
+ 
+diff --git a/po/fr.po b/po/fr.po
+index 879afcb..25d0be3 100644
+--- a/po/fr.po
++++ b/po/fr.po
+@@ -9412,10 +9412,9 @@ msgid "Vertical, left to right (upright orientation)"
+ msgstr "Vertical, de gauche à droite (orientation debout)"
+ 
+ #: ../app/actions/text-tool-commands.c:188
+-#, fuzzy, c-format
+-#| msgid "Test along path failed: %s"
++#, c-format
+ msgid "Text along path failed: %s"
+-msgstr "Échec de texte le long d’un chemin : %s"
++msgstr "Échec du texte le long du chemin : %s"
+ 
+ #: ../app/actions/tool-options-actions.c:58
+ msgctxt "tool-options-action"
+@@ -21677,7 +21676,7 @@ msgstr "Activer la dynamique"
+ 
+ #: ../app/paint/gimppaintoptions.c:310
+ msgid "Apply dynamics curves to paint settings"
+-msgstr ""
++msgstr "Appliquer les courbes de dynamique aux réglages de peinture"
+ 
+ #: ../app/paint/gimppaintoptions.c:316
+ msgid "Amount"
+@@ -21792,7 +21791,7 @@ msgstr "Définissez d’abord une image source."
+ 
+ #: ../app/paint/gimpsourcecore.c:158
+ msgid "\"Registered\" alignment cannot paint on multiple drawables."
+-msgstr ""
++msgstr "L’alignement « Recalé » ne peut pas peindre sur plusieurs calques."
+ 
+ #: ../app/paint/gimpsourceoptions.c:102 ../app/tools/gimpaligntool.c:123
+ #: ../app/tools/gimpcloneoptions-gui.c:301 ../app/tools/gimphealtool.c:104
+@@ -23669,21 +23668,21 @@ msgstr "Image source pour le calcul du dessin au trait"
+ 
+ #: ../app/tools/gimpbucketfilloptions.c:225
+ msgid "Manual closure in fill layer"
+-msgstr ""
++msgstr "Fermeture manuelle dans le calque de remplissage"
+ 
+ #: ../app/tools/gimpbucketfilloptions.c:226
+ msgid ""
+ "Consider pixels of selected layer and filled with the fill color as line art "
+ "closure"
+-msgstr ""
++msgstr "Considérer les pixels du calque sélectionné remplis de la couleur de remplissage comme fermeture du dessin au trait"
+ 
+ #: ../app/tools/gimpbucketfilloptions.c:253
+ msgid "Stroke borders"
+-msgstr ""
++msgstr "Contourner les bords"
+ 
+ #: ../app/tools/gimpbucketfilloptions.c:254
+ msgid "Stroke fill borders with last stroke options"
+-msgstr ""
++msgstr "Contourner les bords du remplissage avec les dernières options de contour"
+ 
+ #: ../app/tools/gimpbucketfilloptions.c:260
+ msgid "Stroke tool"
+@@ -23691,7 +23690,7 @@ msgstr "Outil de tracé"
+ 
+ #: ../app/tools/gimpbucketfilloptions.c:261
+ msgid "The tool to stroke the fill borders with"
+-msgstr ""
++msgstr "L’outil avec lequel contourner les bords du remplissage"
+ 
+ #: ../app/tools/gimpbucketfilloptions.c:266
+ msgid "Automatic closure"
+@@ -23701,7 +23700,7 @@ msgstr "Fermeture automatique"
+ msgid ""
+ "Geometric analysis of the stroke contours to close line arts by splines/"
+ "segments"
+-msgstr ""
++msgstr "Analyse géométrique des contours des traits pour fermer le dessin au trait par des courbes ou des segments"
+ 
+ #: ../app/tools/gimpbucketfilloptions.c:273
+ msgid "Maximum gap length"
+@@ -23724,15 +23723,15 @@ msgstr "Critère utilisé pour déterminer la similarité des couleurs"
+ #: ../app/tools/gimpbucketfilloptions.c:581
+ msgid ""
+ "Opaque pixels will be considered as line art instead of low luminance pixels"
+-msgstr ""
++msgstr "Les pixels opaques seront considérés comme le dessin au trait au lieu des pixels de faible luminance"
+ 
+ #: ../app/tools/gimpbucketfilloptions.c:633
+ msgid "No valid source drawable selected"
+-msgstr ""
++msgstr "Aucun calque source valide sélectionné"
+ 
+ #: ../app/tools/gimpbucketfilloptions.c:635
+ msgid "The source drawable has no alpha channel"
+-msgstr ""
++msgstr "Le calque source n’a pas de canal alpha"
+ 
+ #. fill type
+ #: ../app/tools/gimpbucketfilloptions.c:677
+@@ -23761,17 +23760,17 @@ msgstr "(calcul…)"
+ 
+ #: ../app/tools/gimpbucketfilloptions.c:773
+ msgid "Detect opacity rather than grayscale"
+-msgstr ""
++msgstr "Détecter l’opacité plutôt que les niveaux de gris"
+ 
+ #. Line Art Closure: frame label
+ #: ../app/tools/gimpbucketfilloptions.c:788
+ msgid "Line Art Closure"
+-msgstr ""
++msgstr "Fermeture du dessin au trait"
+ 
+ #. Line Art Borders: frame label
+ #: ../app/tools/gimpbucketfilloptions.c:819
+ msgid "Fill borders"
+-msgstr ""
++msgstr "Remplir les bords"
+ 
+ #: ../app/tools/gimpbucketfilltool.c:168
+ msgid "Bucket Fill"
+@@ -23793,7 +23792,7 @@ msgstr "Remplissage"
+ 
+ #: ../app/tools/gimpbucketfilltool.c:596
+ msgid "Cannot fill multiple layers. Select only one layer."
+-msgstr ""
++msgstr "Impossible de remplir plusieurs calques. Sélectionnez un seul calque."
+ 
+ #: ../app/tools/gimpbucketfilltool.c:598 ../app/tools/gimpcagetool.c:229
+ #: ../app/tools/gimpcurvestool.c:220 ../app/tools/gimpfiltertool.c:297
+@@ -23803,7 +23802,7 @@ msgstr ""
+ #: ../app/tools/gimpthresholdtool.c:160
+ #: ../app/tools/gimptransformgridtool.c:351
+ msgid "No selected drawables."
+-msgstr ""
++msgstr "Aucun calque sélectionné."
+ 
+ #: ../app/tools/gimpbucketfilltool.c:618
+ #: ../app/tools/gimpforegroundselecttool.c:307
+@@ -23875,7 +23874,7 @@ msgstr "Transformation par ca_ge"
+ 
+ #: ../app/tools/gimpcagetool.c:227
+ msgid "Cannot modify multiple layers. Select only one layer."
+-msgstr ""
++msgstr "Impossible de modifier plusieurs calques. Sélectionnez un seul calque."
+ 
+ #: ../app/tools/gimpcagetool.c:248 ../app/tools/gimppainttool.c:329
+ #: ../app/tools/gimpwarptool.c:804
+@@ -23907,8 +23906,8 @@ msgstr "Aucune source sélectionnée"
+ #, c-format
+ msgid "Source: %d item to itself"
+ msgid_plural "Source: %d items to themselves"
+-msgstr[0] ""
+-msgstr[1] ""
++msgstr[0] "Source : %d élément vers lui-même"
++msgstr[1] "Source : %d éléments vers eux-mêmes"
+ 
+ #: ../app/tools/gimpcloneoptions-gui.c:189
+ msgid "All composited visible layers"
+@@ -24190,7 +24189,7 @@ msgstr "C_ourbes…"
+ #: ../app/tools/gimplevelstool.c:208 ../app/tools/gimpoffsettool.c:187
+ #: ../app/tools/gimpthresholdtool.c:158
+ msgid "Cannot modify multiple drawables. Select only one."
+-msgstr ""
++msgstr "Impossible de modifier plusieurs calques. Sélectionnez-en un seul."
+ 
+ #: ../app/tools/gimpcurvestool.c:411
+ msgid "Click to add a control point"
+@@ -24751,12 +24750,12 @@ msgstr "Cliquez-glissez pour tracer un dégradé"
+ 
+ #: ../app/tools/gimpgradienttool.c:258
+ msgid "Cannot paint on multiple drawables. Select only one."
+-msgstr ""
++msgstr "Impossible de peindre sur plusieurs calques. Sélectionnez-en un seul."
+ 
+ #: ../app/tools/gimpgradienttool.c:260 ../app/tools/gimppaintselecttool.c:349
+ #: ../app/tools/gimpwarptool.c:777
+ msgid "No active drawables."
+-msgstr ""
++msgstr "Aucun calque actif."
+ 
+ #: ../app/tools/gimpgradienttool.c:291 ../app/tools/gimpwarptool.c:818
+ msgid "The selected item is not visible."
+@@ -25470,7 +25469,7 @@ msgstr ""
+ #: ../app/tools/gimppaintselectoptions.c:89
+ #: ../app/tools/gimppaintselectoptions.c:90
+ msgid "Show scribbles"
+-msgstr ""
++msgstr "Afficher les gribouillis"
+ 
+ #: ../app/tools/gimppaintselecttool.c:167
+ msgid "Paint Select"
+@@ -25478,7 +25477,7 @@ msgstr "Sélection par peinture"
+ 
+ #: ../app/tools/gimppaintselecttool.c:168
+ msgid "Paint Select Tool: Select objects by painting roughly"
+-msgstr ""
++msgstr "Sélection par peinture : sélectionner des objets en peignant grossièrement"
+ 
+ #: ../app/tools/gimppaintselecttool.c:169
+ msgid "P_aint Select"
+@@ -25486,7 +25485,7 @@ msgstr "Sélection par pe_inture"
+ 
+ #: ../app/tools/gimppaintselecttool.c:346
+ msgid "Cannot paint select on multiple layers. Select only one layer."
+-msgstr ""
++msgstr "Impossible de faire une sélection par peinture sur plusieurs calques. Sélectionnez un seul calque."
+ 
+ #: ../app/tools/gimppaintselecttool.c:365
+ msgid "Cannot paint select on layer groups."
+@@ -26652,7 +26651,7 @@ msgstr "Tracé de gauchissement"
+ 
+ #: ../app/tools/gimpwarptool.c:774
+ msgid "Cannot warp multiple layers. Select only one layer."
+-msgstr ""
++msgstr "Impossible de déformer plusieurs calques. Sélectionnez un seul calque."
+ 
+ #: ../app/tools/gimpwarptool.c:793
+ msgid "Cannot warp layer groups."
+@@ -27757,7 +27756,7 @@ msgstr ""
+ 
+ #: ../app/widgets/gimpcriticaldialog.c:263
+ msgid "Copy-paste this whole debug data to report to developers"
+-msgstr ""
++msgstr "Copiez-collez toutes ces données de débogage pour les signaler aux développeurs"
+ 
+ #: ../app/widgets/gimpcriticaldialog.c:362
+ msgid "The operating system is out of memory or resources."
+@@ -29790,6 +29789,2140 @@ msgstr "arrondi"
+ msgid "fuzzy"
+ msgstr "flou"
+ 
++#: app/actions/debug-actions.c:40
++msgid "Start _GtkInspector"
++msgstr "Démarrer _GtkInspector"
++
++#: app/actions/debug-actions.c:51
++msgid "Invalidates the entire projection, measures the time it takes to validate (render) the part that is visible in the active display, and print the result to stdout."
++msgstr "Invalide toute la projection, mesure le temps nécessaire pour valider (rendre) la partie visible dans l’affichage actif, et affiche le résultat sur la sortie standard."
++
++#: app/actions/debug-actions.c:69
++msgid "Dump _Attached Data"
++msgstr "Afficher les _données attachées"
++
++#: app/actions/edit-actions.c:211
++msgctxt "edit-action"
++msgid "Paste as _Floating Data"
++msgstr "Coller en tant que données _flottantes"
++
++#: app/actions/filters-actions.c:911
++#, c-format
++msgid "%s..."
++msgstr "%s…"
++
++#: app/actions/layers-actions.c:675
++msgctxt "layers-action"
++msgid "Select the layers above each currently selected layer. Layers will not be selected outside their current group level."
++msgstr "Sélectionne les calques au-dessus de chaque calque sélectionné. Les calques ne sont pas sélectionnés en dehors de leur niveau de groupe."
++
++#: app/actions/layers-actions.c:683
++msgctxt "layers-action"
++msgid "Select the layers below each currently selected layer. Layers will not be selected outside their current group level."
++msgstr "Sélectionne les calques en dessous de chaque calque sélectionné. Les calques ne sont pas sélectionnés en dehors de leur niveau de groupe."
++
++#: app/actions/paths-commands.c:488
++msgid "Cannot delete paths attached to vector layers"
++msgstr "Impossible de supprimer des chemins liés à des calques vectoriels"
++
++#: app/actions/text-tool-actions.c:65
++msgctxt "text-tool-action"
++msgid "Paste un_formatted text"
++msgstr "Coller le texte sans _mise en forme"
++
++#: app/actions/text-tool-actions.c:116
++msgctxt "text-tool-action"
++msgid "Restore On-Canvas Editor Position"
++msgstr "Rétablir la position de l’éditeur sur le canevas"
++
++#: app/actions/window-commands.c:88
++msgid "Experimental multi-display stuff!\nClick OK and have fun crashing GIMP..."
++msgstr "Fonctionnalité expérimentale multi-écran !\nCliquez sur Valider et amusez-vous à faire planter GIMP…"
++
++#: app/actions/window-commands.c:118
++#, c-format
++msgid "Can't open display '%s'. Please try another one:"
++msgstr "Impossible d’ouvrir l’écran « %s ». Essayez-en un autre :"
++
++#: app/display/display-enums.c:624
++msgctxt "modifier-action"
++msgid "Change brush size in canvas pixels"
++msgstr "Modifier la taille de la brosse en pixels du canevas"
++
++#: app/display/display-enums.c:625
++msgctxt "modifier-action"
++msgid "Change brush radius' size in canvas pixels"
++msgstr "Modifier le rayon de la brosse en pixels du canevas"
++
++#: app/display/gimpdisplayshell-dnd.c:408
++#, c-format
++msgid "Link layers must be rasterized (%s)."
++msgstr "Les calques liés doivent être pixellisés (%s)."
++
++#: app/display/gimpdisplayshell-dnd.c:412
++#, c-format
++msgid "Text layers must be rasterized (%s)."
++msgstr "Les calques de texte doivent être pixellisés (%s)."
++
++#: app/display/gimpstatusbar.c:464
++msgid "Toggle soft-proofing view when a soft-proofing profile is set\nRight-click to show the soft-proofing options"
++msgstr "Activer/désactiver l’épreuve écran lorsqu’un profil d’épreuve est défini\nClic droit pour afficher les options d’épreuve écran"
++
++#: app/operations/gimpcurvesconfig.c:104
++msgid "Tone Reproduction Curve"
++msgstr "Courbe de reproduction des tons"
++
++#: app/operations/gimplevelsconfig.c:130
++msgid "Work on linear RGB (this property is ignored; use \"trc\" instead)"
++msgstr "Travailler en RVB linéaire (propriété ignorée ; utilisez « trc » à la place)"
++
++#: app/menus/shortcuts-rc.c:137
++#, c-format
++msgid "Wrong shortcutsrc (%s) file format version: %d (expected: %d). We tried to load shortcuts as well as possible.\n"
++msgstr "Version de format du fichier shortcutsrc (%s) incorrecte : %d (attendue : %d). Les raccourcis ont été chargés au mieux.\n"
++
++#: app/paint/gimpmybrushoptions.c:128
++msgid "Gain"
++msgstr "Gain"
++
++#: app/paint/gimpmybrushoptions.c:129
++msgid "Adjust strength of input pressure"
++msgstr "Ajuster l’intensité de la pression en entrée"
++
++#: app/paint/gimppaintoptions.c:335
++msgid "Amount of expansion"
++msgstr "Quantité d’agrandissement"
++
++#: app/text/gimptext-parasite.c:184
++msgid "Invalid markup format in text parasite"
++msgstr "Format de balisage non valide dans le parasite de texte"
++
++#: app/tools/gimpalignoptions.c:159
++msgid "Selected layers will be aligned or distributed by the tool"
++msgstr "Les calques sélectionnés seront alignés ou répartis par l’outil"
++
++#: app/tools/gimpalignoptions.c:165
++msgid "Selected paths will be aligned or distributed by the tool"
++msgstr "Les chemins sélectionnés seront alignés ou répartis par l’outil"
++
++#: app/tools/gimpalignoptions.c:171
++msgid "Instead of aligning or distributing on layer borders, use its content bounding box"
++msgstr "Au lieu d’aligner ou de répartir selon les bords du calque, utiliser le cadre de son contenu"
++
++#: app/tools/gimpalignoptions.c:428
++#, c-format
++msgid "%s-pick target guides (%s-%s to add more)"
++msgstr "%s-clic pour choisir les guides cibles (%s-%s pour en ajouter)"
++
++#: app/tools/gimpalignoptions.c:487
++msgid "Align anchor points of targets on left edge of reference"
++msgstr "Aligner les points d’ancrage des cibles sur le bord gauche de la référence"
++
++#: app/tools/gimpalignoptions.c:495
++msgid "Align anchor points of targets on right edge of reference"
++msgstr "Aligner les points d’ancrage des cibles sur le bord droit de la référence"
++
++#: app/tools/gimpalignoptions.c:504
++msgid "Align anchor points of targets on top edge of reference"
++msgstr "Aligner les points d’ancrage des cibles sur le bord supérieur de la référence"
++
++#: app/tools/gimpalignoptions.c:508
++msgid "Align anchor points of targets on horizontal middle of reference"
++msgstr "Aligner les points d’ancrage des cibles sur le milieu horizontal de la référence"
++
++#: app/tools/gimpalignoptions.c:512
++msgid "Align anchor points of targets on bottom of reference"
++msgstr "Aligner les points d’ancrage des cibles sur le bas de la référence"
++
++#: app/tools/gimpalignoptions.c:796
++#, c-format
++msgid "1 guide will be aligned or distributed"
++msgid_plural "%d guides will be aligned or distributed"
++msgstr[0] "1 guide sera aligné ou réparti"
++msgstr[1] "%d guides seront alignés ou répartis"
++
++#: app/tools/gimpaligntool.c:580
++msgid "Click on a guide to add it to objects to align, click anywhere else to unselect all guides"
++msgstr "Cliquez sur un guide pour l’ajouter aux objets à aligner, cliquez ailleurs pour désélectionner tous les guides"
++
++#: app/tools/gimpfiltertool.c:460
++msgid "Disabled because filters cannot be merged on vector layers."
++msgstr "Désactivé, car les filtres ne peuvent pas être fusionnés sur les calques vectoriels."
++
++#: app/tools/gimpfiltertool.c:462
++msgid "Disabled because filters cannot be merged on link layers."
++msgstr "Désactivé, car les filtres ne peuvent pas être fusionnés sur les calques liés."
++
++#: app/tools/gimpfiltertool.c:464
++msgid "Disabled because filters cannot be merged on text layers."
++msgstr "Désactivé, car les filtres ne peuvent pas être fusionnés sur les calques de texte."
++
++#: app/tools/gimpfiltertool.c:466
++msgid "Disabled because GEGL Graph is unsafe.\nFor development purpose, set environment variable GIMP_ALLOW_GEGL_GRAPH_LAYER_EFFECT."
++msgstr "Désactivé, car le graphe GEGL n’est pas sûr.\nPour le développement, définissez la variable d’environnement GIMP_ALLOW_GEGL_GRAPH_LAYER_EFFECT."
++
++#: app/tools/gimppathtool.c:1171
++msgid "The vector layer you picked was rasterized. Editing its path will discard any modifications."
++msgstr "Le calque vectoriel choisi a été pixellisé. Modifier son chemin annulera toutes les modifications."
++
++#: app/tools/gimptexttool.c:2352
++msgid "The text layer you picked was rasterized. Editing its text will discard any modifications."
++msgstr "Le calque de texte choisi a été pixellisé. Modifier son texte annulera toutes les modifications."
++
++#: app/tools/gimptool.c:782
++#, c-format
++msgid "Vector layers must be rasterized (%s)."
++msgstr "Les calques vectoriels doivent être pixellisés (%s)."
++
++#: app/widgets/gimpdeviceinfoeditor.c:501
++msgid "Pad Actions are not supported on your platform yet"
++msgstr "Les actions de tablette ne sont pas encore prises en charge sur votre plateforme"
++
++#: app/widgets/gimpdeviceinfoeditor.c:580
++#, c-format
++msgid "Ring %d"
++msgstr "Anneau %d"
++
++#: app/widgets/gimpdrawabletreeview-filters.c:719
++msgid "Cannot reorder a filter that is being edited."
++msgstr "Impossible de réordonner un filtre en cours de modification."
++
++#: app/widgets/gimphistogrameditor.c:242
++msgid "Compute unique colors:"
++msgstr "Calculer les couleurs uniques :"
++
++#: app/widgets/gimpmodifierseditor.c:196
++msgid "Click here to set a button's modifiers"
++msgstr "Cliquez ici pour définir les modificateurs d’un bouton"
++
++#: app/widgets/gimpmodifierseditor.c:208
++msgid "Modifiers cannot be customized on the primary button."
++msgstr "Les modificateurs ne peuvent pas être personnalisés sur le bouton principal."
++
++#: app/widgets/gimpmodifierseditor.c:356
++#, c-format
++msgid "Editing modifiers for button %d of %s"
++msgstr "Modification des modificateurs du bouton %d de %s"
++
++#: app/widgets/gimpmodifierseditor.c:360
++#, c-format
++msgid "Editing modifiers for button %d"
++msgstr "Modification des modificateurs du bouton %d"
++
++#: app/widgets/gimpmodifierseditor.c:664
++#, c-format
++msgid "Editing modifiers for %s button %d"
++msgstr "Modification des modificateurs du bouton %s %d"
++
++#: app/widgets/gimpsearchpopup.c:343
++msgid "menu"
++msgstr "menu"
++
++#: app/widgets/gimptextstyleeditor.c:303
++msgid "Restore On-Canvas Editor Position"
++msgstr "Rétablir la position de l’éditeur sur le canevas"
++
++#: app/widgets/gimptextstyleeditor.c:473
++msgid "Left-to-Right"
++msgstr "De gauche à droite"
++
++#: app/widgets/gimptextstyleeditor.c:485
++msgid "Right-to-Left"
++msgstr "De droite à gauche"
++
++#: menus/image-menu.ui.in.in:853
++msgctxt "filters-action"
++msgid "De_velopment"
++msgstr "_Développement"
++
++#: menus/image-menu.ui.in.in:858
++msgctxt "filters-action"
++msgid "_Python-Fu"
++msgstr "_Python-Fu"
++
++#: app/actions/actions.c:237
++msgid "Tool Path"
++msgstr "Chemin de l’outil"
++
++#: app/actions/channels-actions.c:183
++msgctxt "channels-action"
++msgid "Channels to Sele_ction"
++msgstr "Canaux vers _sélection"
++
++#: app/actions/channels-actions.c:184
++msgctxt "channels-action"
++msgid "Replace the selection with selected channels"
++msgstr "Remplace la sélection par les canaux sélectionnés"
++
++#: app/actions/channels-actions.c:189
++msgctxt "channels-action"
++msgid "_Add Channels to Selection"
++msgstr "_Ajouter les canaux à la sélection"
++
++#: app/actions/channels-actions.c:190
++msgctxt "channels-action"
++msgid "Add selected channels to the current selection"
++msgstr "Ajoute les canaux sélectionnés à la sélection actuelle"
++
++#: app/actions/channels-actions.c:195
++msgctxt "channels-action"
++msgid "_Subtract Channels from Selection"
++msgstr "S_oustraire les canaux de la sélection"
++
++#: app/actions/channels-actions.c:196
++msgctxt "channels-action"
++msgid "Subtract selected channels from the current selection"
++msgstr "Soustrait les canaux sélectionnés de la sélection actuelle"
++
++#: app/actions/channels-actions.c:201
++msgctxt "channels-action"
++msgid "_Intersect Channels with Selection"
++msgstr "_Intersection des canaux avec la sélection"
++
++#: app/actions/channels-actions.c:202
++msgctxt "channels-action"
++msgid "Intersect selected channels with the current selection and each other"
++msgstr "Intersection des canaux sélectionnés avec la sélection actuelle et entre eux"
++
++#: app/actions/channels-commands.c:511
++msgid "Channels to selection"
++msgstr "Canaux vers sélection"
++
++#: app/actions/colormap-actions.c:53
++msgctxt "colormap-action"
++msgid "_Delete Color..."
++msgstr "_Supprimer la couleur…"
++
++#: app/actions/colormap-actions.c:54
++msgctxt "colormap-action"
++msgid "Delete this color"
++msgstr "Supprimer cette couleur"
++
++#: app/actions/debug-actions.c:45
++msgid "_Memory Profile"
++msgstr "Profil _mémoire"
++
++#: app/actions/debug-actions.c:50
++msgid "Benchmark _Projection"
++msgstr "Mesurer la _projection"
++
++#: app/actions/debug-actions.c:58
++msgid "Show Image _Graph"
++msgstr "Afficher le _graphe de l’image"
++
++#: app/actions/debug-actions.c:59
++msgid "Creates a new image showing the GEGL graph of this image"
++msgstr "Crée une nouvelle image montrant le graphe GEGL de cette image"
++
++#: app/actions/debug-actions.c:64
++msgid "Dump _Keyboard Shortcuts"
++msgstr "Afficher les raccourcis _clavier"
++
++#: app/actions/dialogs-actions.c:57
++msgctxt "dialogs-action"
++msgid "Tool _Options Dialog"
++msgstr "_Options de l’outil"
++
++#: app/actions/dialogs-actions.c:65
++msgctxt "dialogs-action"
++msgid "_Device Status Dialog"
++msgstr "État des _périphériques"
++
++#: app/actions/dialogs-actions.c:73
++msgctxt "dialogs-action"
++msgid "_Symmetry Painting Dialog"
++msgstr "Peinture en _symétrie"
++
++#: app/actions/dialogs-actions.c:81
++msgctxt "dialogs-action"
++msgid "_Layers Dialog"
++msgstr "_Calques"
++
++#: app/actions/dialogs-actions.c:89
++msgctxt "dialogs-action"
++msgid "_Channels Dialog"
++msgstr "C_anaux"
++
++#: app/actions/dialogs-actions.c:97
++msgctxt "dialogs-action"
++msgid "_Paths Dialog"
++msgstr "C_hemins"
++
++#: app/actions/dialogs-actions.c:105
++msgctxt "dialogs-action"
++msgid "Color_map Dialog"
++msgstr "_Palette des couleurs indexées"
++
++#: app/actions/dialogs-actions.c:113
++msgctxt "dialogs-action"
++msgid "Histogra_m Dialog"
++msgstr "Histogra_mme"
++
++#: app/actions/dialogs-actions.c:128
++msgctxt "dialogs-action"
++msgid "Na_vigation Dialog"
++msgstr "Na_vigation"
++
++#: app/actions/dialogs-actions.c:136
++msgctxt "dialogs-action"
++msgid "Undo _History Dialog"
++msgstr "_Historique"
++
++#: app/actions/dialogs-actions.c:192
++msgctxt "dialogs-action"
++msgid "_Pointer Dialog"
++msgstr "_Pointeur"
++
++#: app/actions/dialogs-actions.c:200
++msgctxt "dialogs-action"
++msgid "_Sample Points Dialog"
++msgstr "Points d’_échantillonnage"
++
++#: app/actions/dialogs-actions.c:208
++msgctxt "dialogs-action"
++msgid "Colo_rs Dialog"
++msgstr "Coule_urs"
++
++#: app/actions/dialogs-actions.c:216
++msgctxt "dialogs-action"
++msgid "_Brushes Dialog"
++msgstr "_Brosses"
++
++#: app/actions/dialogs-actions.c:231
++msgctxt "dialogs-action"
++msgid "Paint D_ynamics Dialog"
++msgstr "D_ynamique de la brosse"
++
++#: app/actions/dialogs-actions.c:246
++msgctxt "dialogs-action"
++msgid "_MyPaint Brushes Dialog"
++msgstr "Brosses _MyPaint"
++
++#: app/actions/dialogs-actions.c:254
++msgctxt "dialogs-action"
++msgid "P_atterns Dialog"
++msgstr "_Motifs"
++
++#: app/actions/dialogs-actions.c:262
++msgctxt "dialogs-action"
++msgid "_Gradients Dialog"
++msgstr "_Dégradés"
++
++#: app/actions/dialogs-actions.c:277
++msgctxt "dialogs-action"
++msgid "Pal_ettes Dialog"
++msgstr "Pal_ettes"
++
++#: app/actions/dialogs-actions.c:293
++msgctxt "dialogs-action"
++msgid "Tool Pre_sets Dialog"
++msgstr "_Préréglages d’outils"
++
++#: app/actions/dialogs-actions.c:301
++msgctxt "dialogs-action"
++msgid "_Fonts Dialog"
++msgstr "_Polices"
++
++#: app/actions/dialogs-actions.c:309
++msgctxt "dialogs-action"
++msgid "B_uffers Dialog"
++msgstr "Presse-p_apiers"
++
++#: app/actions/dialogs-actions.c:317
++msgctxt "dialogs-action"
++msgid "_Images Dialog"
++msgstr "_Images"
++
++#: app/actions/dialogs-actions.c:325
++msgctxt "dialogs-action"
++msgid "Document Histor_y Dialog"
++msgstr "Histori_que des documents"
++
++#: app/actions/dialogs-actions.c:333
++msgctxt "dialogs-action"
++msgid "_Templates Dialog"
++msgstr "Mod_èles"
++
++#: app/actions/dialogs-actions.c:370
++msgctxt "dialogs-action"
++msgid "_Input Devices Editor"
++msgstr "Périp_hériques d’entrée"
++
++#: app/actions/dialogs-actions.c:378
++msgctxt "dialogs-action"
++msgid "_Keyboard Shortcuts Editor"
++msgstr "Raccourcis cla_vier"
++
++#: app/actions/dialogs-actions.c:386
++msgctxt "dialogs-action"
++msgid "_Modules Dialog"
++msgstr "_Modules"
++
++#: app/actions/documents-actions.c:42
++msgctxt "documents-action"
++msgid "_Open Images"
++msgstr "_Ouvrir les images"
++
++#: app/actions/documents-actions.c:43
++msgctxt "documents-action"
++msgid "Open the selected entries"
++msgstr "Ouvre les éléments sélectionnés"
++
++#: app/actions/documents-actions.c:72
++msgctxt "documents-action"
++msgid "Remove _Entries"
++msgstr "Supprimer les _entrées"
++
++#: app/actions/documents-actions.c:73
++msgctxt "documents-action"
++msgid "Remove the selected entries"
++msgstr "Supprime les éléments sélectionnés"
++
++#: app/actions/drawable-actions.c:60
++msgctxt "drawable-action"
++msgid "Toggle Drawables _Visibility"
++msgstr "Activer/désactiver la _visibilité des calques"
++
++#: app/actions/drawable-actions.c:66
++msgctxt "drawable-action"
++msgid "L_ock Pixels of Drawables"
++msgstr "Verr_ouiller les pixels des calques"
++
++#: app/actions/drawable-actions.c:68
++msgctxt "drawable-action"
++msgid "Keep the pixels on selected drawables from being modified"
++msgstr "Empêche toute modification des pixels des calques sélectionnés"
++
++#: app/actions/drawable-actions.c:74
++msgctxt "drawable-action"
++msgid "L_ock Position of Drawables"
++msgstr "Verrouiller la _position des calques"
++
++#: app/actions/drawable-actions.c:76
++msgctxt "drawable-action"
++msgid "Keep the position on selected drawables from being modified"
++msgstr "Empêche toute modification de la position des calques sélectionnés"
++
++#: app/actions/drawable-commands.c:61
++msgid "Equalize"
++msgstr "Égaliser"
++
++#: app/actions/drawable-commands.c:244
++msgid "Lock/Unlock content"
++msgstr "Verrouiller/déverrouiller le contenu"
++
++#: app/actions/drawable-commands.c:312
++msgid "Lock/Unlock position"
++msgstr "Verrouiller/déverrouiller la position"
++
++#: app/actions/drawable-commands.c:346
++msgid "Flip Drawables"
++msgstr "Retourner les calques"
++
++#: app/actions/drawable-commands.c:400
++msgid "Rotate Drawables"
++msgstr "Faire pivoter les calques"
++
++#: app/actions/edit-actions.c:128
++msgctxt "edit-action"
++msgid "Paste as _New Image"
++msgstr "Coller comme _nouvelle image"
++
++#: app/actions/edit-actions.c:183
++msgctxt "edit-action"
++msgid "_Paste as Single Layer"
++msgstr "_Coller en un seul calque"
++
++#: app/actions/edit-actions.c:184
++msgctxt "edit-action"
++msgid "Paste the content of the clipboard as a single layer"
++msgstr "Colle le contenu du presse-papiers en un seul calque"
++
++#: app/actions/edit-actions.c:189
++msgctxt "edit-action"
++msgid "Paste as Single Layer In P_lace"
++msgstr "Coller en un seul calque sur p_lace"
++
++#: app/actions/edit-actions.c:191
++msgctxt "edit-action"
++msgid "Paste the content of the clipboard at its original position as a single layer"
++msgstr "Colle le contenu du presse-papiers à sa position d’origine, en un seul calque"
++
++#: app/actions/edit-actions.c:196
++msgctxt "edit-action"
++msgid "Paste as Floating Data _Into Selection"
++msgstr "Coller en données flottantes _dans la sélection"
++
++#: app/actions/edit-actions.c:203
++msgctxt "edit-action"
++msgid "Paste as Floating Data Int_o Selection In Place"
++msgstr "Coller en données flottantes dans la sélecti_on, sur place"
++
++#: app/actions/edit-actions.c:212
++msgctxt "edit-action"
++msgid "Paste the content of the clipboard as Floating Data"
++msgstr "Colle le contenu du presse-papiers en tant que données flottantes"
++
++#: app/actions/edit-actions.c:217
++msgctxt "edit-action"
++msgid "Paste as Floa_ting Data In Place"
++msgstr "Coller en données flottan_tes sur place"
++
++#: app/actions/edit-actions.c:218
++msgctxt "edit-action"
++msgid "Paste the content of the clipboard as Floating Data at its original position"
++msgstr "Colle le contenu du presse-papiers en tant que données flottantes, à sa position d’origine"
++
++#: app/actions/edit-commands.c:862
++msgid "Pasted as new layer because the target is not a single layer or layer mask."
++msgstr "Collé dans un nouveau calque, car la cible n’est pas un calque ou un masque de calque unique."
++
++#: app/actions/file-actions.c:87
++msgctxt "file-action"
++msgid "Open an image file as Link layer"
++msgstr "Ouvre un fichier image en tant que calque lié"
++
++#: app/actions/file-actions.c:403
++#, c-format
++msgid "Open \"%s\""
++msgstr "Ouvrir « %s »"
++
++#: app/actions/file-commands.c:165
++msgid "Open Image as Link Layer"
++msgstr "Ouvrir une image en tant que calque lié"
++
++#: app/actions/filters-actions.c:319
++msgctxt "filters-action"
++msgid "_Laplace..."
++msgstr "_Laplace…"
++
++#: app/actions/gradient-editor-actions.c:77
++msgctxt "gradient-editor-action"
++msgid "Flip"
++msgstr "Retourner"
++
++#: app/actions/gradient-editor-actions.c:82
++msgctxt "gradient-editor-action"
++msgid "Replicate"
++msgstr "Dupliquer"
++
++#: app/actions/gradient-editor-actions.c:87
++msgctxt "gradient-editor-action"
++msgid "Split Midpoint"
++msgstr "Couper au point médian"
++
++#: app/actions/gradient-editor-actions.c:92
++msgctxt "gradient-editor-action"
++msgid "Split Uniformly"
++msgstr "Couper uniformément"
++
++#: app/actions/gradient-editor-actions.c:97
++msgctxt "gradient-editor-action"
++msgid "Delete"
++msgstr "Supprimer"
++
++#: app/actions/gradient-editor-actions.c:102
++msgctxt "gradient-editor-action"
++msgid "Recenter"
++msgstr "Recentrer"
++
++#: app/actions/gradient-editor-actions.c:107
++msgctxt "gradient-editor-action"
++msgid "Redistribute"
++msgstr "Redistribuer"
++
++#: app/actions/image-actions.c:85
++msgctxt "image-action"
++msgid "_Soft-proof Profile..."
++msgstr "Profil d’é_preuve écran…"
++
++#: app/actions/image-actions.c:86
++msgctxt "image-action"
++msgid "Set the soft-proofing profile"
++msgstr "Définir le profil d’épreuve écran"
++
++#: app/actions/image-actions.c:175
++msgctxt "image-action"
++msgid "_Black Point Compensation"
++msgstr "Compensation du point _noir"
++
++#: app/actions/image-actions.c:176
++msgctxt "image-action"
++msgid "Use black point compensation for soft-proofing"
++msgstr "Utiliser la compensation du point noir pour l’épreuve écran"
++
++#: app/actions/image-actions.c:203
++msgctxt "image-convert-action"
++msgid "8-bit integer"
++msgstr "Entier 8 bits"
++
++#: app/actions/image-actions.c:205
++msgctxt "image-convert-action"
++msgid "Convert the image to 8-bit integer"
++msgstr "Convertit l’image en entier 8 bits"
++
++#: app/actions/image-actions.c:209
++msgctxt "image-convert-action"
++msgid "16-bit integer"
++msgstr "Entier 16 bits"
++
++#: app/actions/image-actions.c:211
++msgctxt "image-convert-action"
++msgid "Convert the image to 16-bit integer"
++msgstr "Convertit l’image en entier 16 bits"
++
++#: app/actions/image-actions.c:215
++msgctxt "image-convert-action"
++msgid "32-bit integer"
++msgstr "Entier 32 bits"
++
++#: app/actions/image-actions.c:217
++msgctxt "image-convert-action"
++msgid "Convert the image to 32-bit integer"
++msgstr "Convertit l’image en entier 32 bits"
++
++#: app/actions/image-actions.c:221
++msgctxt "image-convert-action"
++msgid "16-bit floating point"
++msgstr "Virgule flottante 16 bits"
++
++#: app/actions/image-actions.c:223
++msgctxt "image-convert-action"
++msgid "Convert the image to 16-bit floating point"
++msgstr "Convertit l’image en virgule flottante 16 bits"
++
++#: app/actions/image-actions.c:227
++msgctxt "image-convert-action"
++msgid "32-bit floating point"
++msgstr "Virgule flottante 32 bits"
++
++#: app/actions/image-actions.c:229
++msgctxt "image-convert-action"
++msgid "Convert the image to 32-bit floating point"
++msgstr "Convertit l’image en virgule flottante 32 bits"
++
++#: app/actions/image-actions.c:233
++msgctxt "image-convert-action"
++msgid "64-bit floating point"
++msgstr "Virgule flottante 64 bits"
++
++#: app/actions/image-actions.c:235
++msgctxt "image-convert-action"
++msgid "Convert the image to 64-bit floating point"
++msgstr "Convertit l’image en virgule flottante 64 bits"
++
++#: app/actions/image-actions.c:299
++msgctxt "image-action"
++msgid "_Perceptual"
++msgstr "_Perceptuel"
++
++#: app/actions/image-actions.c:300
++msgctxt "image-action"
++msgid "Soft-proofing rendering intent is perceptual"
++msgstr "Le mode de rendu de l’épreuve écran est perceptuel"
++
++#: app/actions/image-actions.c:305
++msgctxt "image-action"
++msgid "_Relative Colorimetric"
++msgstr "Colorimétrique _relatif"
++
++#: app/actions/image-actions.c:306
++msgctxt "image-action"
++msgid "Soft-proofing rendering intent is relative colorimetric"
++msgstr "Le mode de rendu de l’épreuve écran est colorimétrique relatif"
++
++#: app/actions/image-actions.c:311
++msgctxt "image-action"
++msgid "_Saturation"
++msgstr "_Saturation"
++
++#: app/actions/image-actions.c:312
++msgctxt "image-action"
++msgid "Soft-proofing rendering intent is saturation"
++msgstr "Le mode de rendu de l’épreuve écran est saturation"
++
++#: app/actions/image-actions.c:317
++msgctxt "image-action"
++msgid "_Absolute Colorimetric"
++msgstr "Colorimétrique _absolu"
++
++#: app/actions/image-actions.c:318
++msgctxt "image-action"
++msgid "Soft-proofing rendering intent is absolute colorimetric"
++msgstr "Le mode de rendu de l’épreuve écran est colorimétrique absolu"
++
++#: app/actions/items-commands.c:276
++msgid "There are no selected items to fill."
++msgstr "Aucun élément sélectionné à remplir."
++
++#: app/actions/layers-actions.c:62
++msgctxt "layers-action"
++msgid "Edit Te_xt on Canvas"
++msgstr "Modifier le te_xte sur le canevas"
++
++#: app/actions/layers-actions.c:68
++msgctxt "layers-action"
++msgid "Edit Vector on Canvas"
++msgstr "Modifier le vecteur sur le canevas"
++
++#: app/actions/layers-actions.c:69
++msgctxt "layers-action"
++msgid "Activate the path tool on this vector layer"
++msgstr "Activer l’outil Chemins sur ce calque vectoriel"
++
++#: app/actions/layers-actions.c:105
++msgctxt "layers-action"
++msgid "D_uplicate Layers"
++msgstr "D_upliquer les calques"
++
++#: app/actions/layers-actions.c:118
++msgctxt "layers-action"
++msgid "_Raise Layers"
++msgstr "_Monter les calques"
++
++#: app/actions/layers-actions.c:119
++msgctxt "layers-action"
++msgid "Raise the selected layers one step in the layer stack"
++msgstr "Monte les calques sélectionnés d’un rang dans la pile des calques"
++
++#: app/actions/layers-actions.c:124
++msgctxt "layers-action"
++msgid "Layers to _Top"
++msgstr "Calques au premier _plan"
++
++#: app/actions/layers-actions.c:125
++msgctxt "layers-action"
++msgid "Move the selected layers to the top of the layer stack"
++msgstr "Place les calques sélectionnés tout en haut de la pile des calques"
++
++#: app/actions/layers-actions.c:130
++msgctxt "layers-action"
++msgid "_Lower Layers"
++msgstr "_Descendre les calques"
++
++#: app/actions/layers-actions.c:131
++msgctxt "layers-action"
++msgid "Lower the selected layers one step in the layer stack"
++msgstr "Descend les calques sélectionnés d’un rang dans la pile des calques"
++
++#: app/actions/layers-actions.c:136
++msgctxt "layers-action"
++msgid "Layers to _Bottom"
++msgstr "Calques à l’arrière-pl_an"
++
++#: app/actions/layers-actions.c:137
++msgctxt "layers-action"
++msgid "Move the selected layers to the bottom of the layer stack"
++msgstr "Place les calques sélectionnés tout en bas de la pile des calques"
++
++#: app/actions/layers-actions.c:142
++msgctxt "layers-action"
++msgid "_Anchor Floating Layer or Mask"
++msgstr "_Ancrer le calque ou le masque flottant"
++
++#: app/actions/layers-actions.c:143
++msgctxt "layers-action"
++msgid "Anchor the floating layer or mask"
++msgstr "Ancre le calque ou le masque flottant"
++
++#: app/actions/layers-actions.c:187
++msgctxt "layers-action"
++msgid "_Rasterize"
++msgstr "_Pixelliser"
++
++#: app/actions/layers-actions.c:188
++msgctxt "layers-action"
++msgid "Turn selected text, link or vector layers into raster layers"
++msgstr "Transforme les calques de texte, liés ou vectoriels sélectionnés en calques de pixels"
++
++#: app/actions/layers-actions.c:193
++msgctxt "layers-action"
++msgid "_Revert Rasterize"
++msgstr "_Annuler la pixellisation"
++
++#: app/actions/layers-actions.c:194
++msgctxt "layers-action"
++msgid "Turn rasterized layers back into text, link or vector layers"
++msgstr "Retransforme les calques pixellisés en calques de texte, liés ou vectoriels"
++
++#: app/actions/layers-actions.c:200
++msgctxt "layers-action"
++msgid "Create paths from text layers"
++msgstr "Crée des chemins à partir des calques de texte"
++
++#: app/actions/layers-actions.c:229
++msgctxt "layers-action"
++msgid "_Resize Layers to Selection"
++msgstr "_Redimensionner les calques à la sélection"
++
++#: app/actions/layers-actions.c:230
++msgctxt "layers-action"
++msgid "Resize the layers to the extents of the selection"
++msgstr "Redimensionne les calques aux limites de la sélection"
++
++#: app/actions/layers-actions.c:235
++msgctxt "layers-action"
++msgid "Crop Layers to C_ontent"
++msgstr "Recadrer les calques selon le c_ontenu"
++
++#: app/actions/layers-actions.c:258
++msgctxt "layers-action"
++msgid "Add La_yer Masks with Last Values"
++msgstr "Ajouter des masques de calque avec les _dernières valeurs"
++
++#: app/actions/layers-actions.c:315
++msgctxt "layers-action"
++msgid "Dismiss the effect of the layer masks"
++msgstr "Annule l’effet des masques de calque"
++
++#: app/actions/layers-actions.c:362
++msgctxt "layers-action"
++msgid "RGB (from color profile)"
++msgstr "RVB (selon le profil colorimétrique)"
++
++#: app/actions/layers-actions.c:363
++msgctxt "layers-action"
++msgid "Layer Blend Space: RGB (from color profile)"
++msgstr "Espace de fusion du calque : RVB (selon le profil colorimétrique)"
++
++#: app/actions/layers-actions.c:390
++msgctxt "layers-action"
++msgid "Layer Composite Space: RGB (from color profile)"
++msgstr "Espace composite du calque : RVB (selon le profil colorimétrique)"
++
++#: app/actions/layers-actions.c:588
++msgctxt "layers-action"
++msgid "Apply Layer _Masks"
++msgstr "Appliquer les _masques de calque"
++
++#: app/actions/layers-actions.c:589
++msgctxt "layers-action"
++msgid "Apply the effect of the layer masks and remove them"
++msgstr "Applique l’effet des masques de calque et les supprime"
++
++#: app/actions/layers-actions.c:594
++msgctxt "layers-action"
++msgid "Delete Layer Mas_ks"
++msgstr "Supprimer les mas_ques de calque"
++
++#: app/actions/layers-actions.c:689
++msgctxt "layers-action"
++msgid "Select Previous Layers (flattened view)"
++msgstr "Sélectionner les calques précédents (vue aplatie)"
++
++#: app/actions/layers-actions.c:690
++msgctxt "layers-action"
++msgid "Select the layers above each currently selected layer"
++msgstr "Sélectionne les calques au-dessus de chaque calque sélectionné"
++
++#: app/actions/layers-actions.c:695
++msgctxt "layers-action"
++msgid "Select Next Layers (flattened view)"
++msgstr "Sélectionner les calques suivants (vue aplatie)"
++
++#: app/actions/layers-actions.c:696
++msgctxt "layers-action"
++msgid "Select the layers below each currently selected layer"
++msgstr "Sélectionne les calques en dessous de chaque calque sélectionné"
++
++#: app/actions/layers-commands.c:1138
++msgid "Cannot merge a pass through layer group."
++msgstr "Impossible de fusionner un groupe de calques en mode Traverser."
++
++#: app/actions/layers-commands.c:1239
++msgid "Rasterize Layers"
++msgstr "Pixelliser les calques"
++
++#: app/actions/layers-commands.c:1262
++msgid "Revert Rasterize"
++msgstr "Annuler la pixellisation"
++
++#: app/actions/layers-commands.c:1286
++msgid "Add Paths"
++msgstr "Ajouter des chemins"
++
++#: app/actions/paths-actions.c:70
++msgctxt "paths-action"
++msgid "D_uplicate Paths"
++msgstr "D_upliquer les chemins"
++
++#: app/actions/paths-actions.c:71
++msgctxt "paths-action"
++msgid "Duplicate these paths"
++msgstr "Duplique ces chemins"
++
++#: app/actions/paths-actions.c:76
++msgctxt "paths-action"
++msgid "_Delete Paths"
++msgstr "_Supprimer les chemins"
++
++#: app/actions/paths-actions.c:77
++msgctxt "paths-action"
++msgid "Delete the selected paths"
++msgstr "Supprime les chemins sélectionnés"
++
++#: app/actions/paths-actions.c:87
++msgctxt "paths-action"
++msgid "_Raise Paths"
++msgstr "_Monter les chemins"
++
++#: app/actions/paths-actions.c:88
++msgctxt "paths-action"
++msgid "Raise the selected paths"
++msgstr "Monte les chemins sélectionnés"
++
++#: app/actions/paths-actions.c:93
++msgctxt "paths-action"
++msgid "Raise Paths to _Top"
++msgstr "Chemins tout en _haut"
++
++#: app/actions/paths-actions.c:94
++msgctxt "paths-action"
++msgid "Raise the selected paths to the top"
++msgstr "Place les chemins sélectionnés tout en haut"
++
++#: app/actions/paths-actions.c:99
++msgctxt "paths-action"
++msgid "_Lower Paths"
++msgstr "_Descendre les chemins"
++
++#: app/actions/paths-actions.c:100
++msgctxt "paths-action"
++msgid "Lower the selected paths"
++msgstr "Descend les chemins sélectionnés"
++
++#: app/actions/paths-actions.c:105
++msgctxt "paths-action"
++msgid "Lower Paths to _Bottom"
++msgstr "Chemins tout en _bas"
++
++#: app/actions/paths-actions.c:106
++msgctxt "paths-action"
++msgid "Lower the selected paths to the bottom"
++msgstr "Place les chemins sélectionnés tout en bas"
++
++#: app/actions/paths-actions.c:111
++msgctxt "paths-action"
++msgid "Fill Pat_hs..."
++msgstr "Remplir les c_hemins…"
++
++#: app/actions/paths-actions.c:112
++msgctxt "paths-action"
++msgid "Fill the paths"
++msgstr "Remplit les chemins"
++
++#: app/actions/paths-actions.c:117
++msgctxt "paths-action"
++msgid "Fill Paths"
++msgstr "Remplir les chemins"
++
++#: app/actions/paths-actions.c:118
++msgctxt "paths-action"
++msgid "Fill the paths with last values"
++msgstr "Remplit les chemins avec les dernières valeurs"
++
++#: app/actions/paths-actions.c:123
++msgctxt "paths-action"
++msgid "Stro_ke Paths..."
++msgstr "_Tracer les chemins…"
++
++#: app/actions/paths-actions.c:124
++msgctxt "paths-action"
++msgid "Paint along the paths"
++msgstr "Peint le long des chemins"
++
++#: app/actions/paths-actions.c:129
++msgctxt "paths-action"
++msgid "Stro_ke Paths"
++msgstr "_Tracer les chemins"
++
++#: app/actions/paths-actions.c:130
++msgctxt "paths-action"
++msgid "Paint along the paths with last values"
++msgstr "Peint le long des chemins avec les dernières valeurs"
++
++#: app/actions/paths-actions.c:135
++msgctxt "paths-action"
++msgid "Co_py Paths"
++msgstr "Co_pier les chemins"
++
++#: app/actions/paths-actions.c:145
++msgctxt "paths-action"
++msgid "E_xport Paths..."
++msgstr "E_xporter les chemins…"
++
++#: app/actions/paths-actions.c:155
++msgctxt "paths-action"
++msgid "Path to Vector Layer"
++msgstr "Chemin vers calque vectoriel"
++
++#: app/actions/paths-actions.c:241
++msgctxt "paths-action"
++msgid "Paths to Sele_ction"
++msgstr "Chemins vers _sélection"
++
++#: app/actions/paths-actions.c:247
++msgctxt "paths-action"
++msgid "Selection Fr_om Paths"
++msgstr "Sélection depuis les ch_emins"
++
++#: app/actions/paths-actions.c:248
++msgctxt "paths-action"
++msgid "Replace selection with paths"
++msgstr "Remplace la sélection par les chemins"
++
++#: app/actions/paths-actions.c:253
++msgctxt "paths-action"
++msgid "_Add Paths to Selection"
++msgstr "_Ajouter les chemins à la sélection"
++
++#: app/actions/paths-actions.c:254
++msgctxt "paths-action"
++msgid "Add paths to selection"
++msgstr "Ajoute les chemins à la sélection"
++
++#: app/actions/paths-actions.c:259
++msgctxt "paths-action"
++msgid "_Subtract Paths from Selection"
++msgstr "S_oustraire les chemins de la sélection"
++
++#: app/actions/paths-actions.c:260
++msgctxt "paths-action"
++msgid "Subtract paths from selection"
++msgstr "Soustrait les chemins de la sélection"
++
++#: app/actions/paths-actions.c:265
++msgctxt "paths-action"
++msgid "_Intersect Paths with Selection"
++msgstr "_Intersection des chemins avec la sélection"
++
++#: app/actions/paths-actions.c:266
++msgctxt "paths-action"
++msgid "Intersect paths with selection"
++msgstr "Intersection des chemins avec la sélection"
++
++#: app/actions/paths-actions.c:309
++msgctxt "paths-action"
++msgid "Select the path below the current path"
++msgstr "Sélectionne le chemin en dessous du chemin actuel"
++
++#: app/actions/paths-commands.c:288
++msgid "Raise Path"
++msgid_plural "Raise Paths"
++msgstr[0] "Monter le chemin"
++msgstr[1] "Monter les chemins"
++
++#: app/actions/paths-commands.c:326
++msgid "Raise Path to Top"
++msgid_plural "Raise Paths to Top"
++msgstr[0] "Chemin tout en haut"
++msgstr[1] "Chemins tout en haut"
++
++#: app/actions/paths-commands.c:373
++msgid "Lower Path"
++msgid_plural "Lower Paths"
++msgstr[0] "Descendre le chemin"
++msgstr[1] "Descendre les chemins"
++
++#: app/actions/paths-commands.c:413
++msgid "Lower Path to Bottom"
++msgid_plural "Lower Paths to Bottom"
++msgstr[0] "Chemin tout en bas"
++msgstr[1] "Chemins tout en bas"
++
++#: app/actions/paths-commands.c:443
++msgid "Duplicate Paths"
++msgstr "Dupliquer les chemins"
++
++#: app/actions/paths-commands.c:499
++msgid "Remove Paths"
++msgstr "Supprimer les chemins"
++
++#: app/actions/paths-commands.c:535
++msgid "Cannot merge paths attached to vector layers"
++msgstr "Impossible de fusionner des chemins liés à des calques vectoriels"
++
++#: app/actions/paths-commands.c:589
++msgid "Paths to selection"
++msgstr "Chemins vers sélection"
++
++#: app/actions/select-actions.c:62
++msgctxt "select-action"
++msgid "Cu_t and Float"
++msgstr "Cou_per et rendre flottant"
++
++#: app/actions/select-actions.c:63
++msgctxt "select-action"
++msgid "Cut the selection directly into a floating selection"
++msgstr "Coupe la sélection directement dans une sélection flottante"
++
++#: app/actions/select-actions.c:68
++msgctxt "select-action"
++msgid "_Copy and Float"
++msgstr "_Copier et rendre flottant"
++
++#: app/actions/select-actions.c:69
++msgctxt "select-action"
++msgid "Copy the selection directly into a floating selection"
++msgstr "Copie la sélection directement dans une sélection flottante"
++
++#: app/actions/text-tool-actions.c:71
++msgctxt "text-tool-action"
++msgid "_Bold"
++msgstr "_Gras"
++
++#: app/actions/text-tool-actions.c:76
++msgctxt "text-tool-action"
++msgid "_Italic"
++msgstr "_Italique"
++
++#: app/actions/text-tool-actions.c:81
++msgctxt "text-tool-action"
++msgid "_Underline"
++msgstr "_Souligné"
++
++#: app/actions/text-tool-actions.c:102
++msgctxt "text-tool-action"
++msgid "Text to _Path"
++msgstr "Texte vers _chemin"
++
++#: app/actions/tool-path-actions.c:45
++msgctxt "tool-path-action"
++msgid "_Delete Anchor"
++msgstr "_Supprimer l’ancre"
++
++#: app/actions/tool-path-actions.c:49
++msgctxt "tool-path-action"
++msgid "Shift S_tart"
++msgstr "Décaler le _départ"
++
++#: app/actions/tool-path-actions.c:54
++msgctxt "tool-path-action"
++msgid "_Insert Anchor"
++msgstr "_Insérer une ancre"
++
++#: app/actions/tool-path-actions.c:58
++msgctxt "tool-path-action"
++msgid "Delete _Segment"
++msgstr "Supprimer le _segment"
++
++#: app/actions/tool-path-actions.c:62
++msgctxt "tool-path-action"
++msgid "_Reverse Stroke"
++msgstr "_Inverser le tracé"
++
++#: app/actions/tools-actions.c:48
++msgctxt "tools-action"
++msgid "Activate _Last Tool"
++msgstr "Activer le _dernier outil"
++
++#: app/actions/tools-actions.c:49
++msgctxt "tools-action"
++msgid "Switch back to the last activated tool"
++msgstr "Revient au dernier outil activé"
++
++#: app/actions/tools-actions.c:900
++#, c-format
++msgid "Activate tool \"%s\""
++msgstr "Activer l’outil « %s »"
++
++#: app/actions/view-actions.c:393
++msgctxt "view-zoom-action"
++msgid "Zoom 16:1 (1600%)"
++msgstr "Zoom 16:1 (1600 %)"
++
++#: app/actions/view-actions.c:401
++msgctxt "view-zoom-action"
++msgid "Zoom 8:1 (800%)"
++msgstr "Zoom 8:1 (800 %)"
++
++#: app/actions/view-actions.c:409
++msgctxt "view-zoom-action"
++msgid "Zoom 4:1 (400%)"
++msgstr "Zoom 4:1 (400 %)"
++
++#: app/actions/view-actions.c:417
++msgctxt "view-zoom-action"
++msgid "Zoom 2:1 (200%)"
++msgstr "Zoom 2:1 (200 %)"
++
++#: app/actions/view-actions.c:425
++msgctxt "view-zoom-action"
++msgid "Zoom 1:1 (100%)"
++msgstr "Zoom 1:1 (100 %)"
++
++#: app/actions/view-actions.c:433
++msgctxt "view-zoom-action"
++msgid "Zoom 1:2 (50%)"
++msgstr "Zoom 1:2 (50 %)"
++
++#: app/actions/view-actions.c:441
++msgctxt "view-zoom-action"
++msgid "Zoom 1:4 (25%)"
++msgstr "Zoom 1:4 (25 %)"
++
++#: app/actions/view-actions.c:449
++msgctxt "view-zoom-action"
++msgid "Zoom 1:8 (12.5%)"
++msgstr "Zoom 1:8 (12,5 %)"
++
++#: app/actions/view-actions.c:457
++msgctxt "view-zoom-action"
++msgid "Zoom 1:16 (6.25%)"
++msgstr "Zoom 1:16 (6,25 %)"
++
++#: app/actions/view-actions.c:493
++msgctxt "view-action"
++msgid "Display Rotation Absolute Angle Set"
++msgstr "Définir l’angle absolu de rotation de l’affichage"
++
++#: app/actions/view-actions.c:1025
++#, c-format
++msgid "_Zoom (%.0f%%)"
++msgstr "_Zoom (%.0f %%)"
++
++#: app/actions/view-actions.c:1027
++#, c-format
++msgid "_Zoom (%.2f%%)"
++msgstr "_Zoom (%.2f %%)"
++
++#: app/actions/window-commands.c:73
++msgid "Open Display"
++msgstr "Ouvrir un écran"
++
++#: app/actions/window-commands.c:92
++msgid "Please enter the name of the new display:"
++msgstr "Saisissez le nom du nouvel écran :"
++
++#: app/actions/windows-actions.c:639
++#, c-format
++msgid "Show \"%s-%d.%d\""
++msgstr "Afficher « %s-%d.%d »"
++
++#: app/actions/windows-actions.c:718
++#, c-format
++msgid "Switch to the first image view: %1$s"
++msgid_plural "Switch to image view %2$d: %1$s"
++msgstr[0] "Basculer vers la première vue de l’image : %1$s"
++msgstr[1] "Basculer vers la vue de l’image %2$d : %1$s"
++
++#: app/core/gimpimage.c:2114
++msgid "Remove filter"
++msgstr "Supprimer le filtre"
++
++#: app/display/display-enums.c:544
++msgctxt "path-mode"
++msgid "Design"
++msgstr "Conception"
++
++#: app/display/display-enums.c:545
++msgctxt "path-mode"
++msgid "Edit"
++msgstr "Édition"
++
++#: app/display/display-enums.c:546
++msgctxt "path-mode"
++msgid "Move"
++msgstr "Déplacement"
++
++#: app/display/display-enums.c:616
++msgctxt "modifier-action"
++msgid "No action"
++msgstr "Aucune action"
++
++#: app/display/display-enums.c:617
++msgctxt "modifier-action"
++msgid "Pan"
++msgstr "Faire défiler"
++
++#: app/display/display-enums.c:618
++msgctxt "modifier-action"
++msgid "Zoom"
++msgstr "Zoom"
++
++#: app/display/display-enums.c:619
++msgctxt "modifier-action"
++msgid "Rotate View"
++msgstr "Faire pivoter la vue"
++
++#: app/display/display-enums.c:620
++msgctxt "modifier-action"
++msgid "Rotate View by 15 degree steps"
++msgstr "Faire pivoter la vue par pas de 15 degrés"
++
++#: app/display/display-enums.c:621
++msgctxt "modifier-action"
++msgid "Pick a layer"
++msgstr "Choisir un calque"
++
++#: app/display/display-enums.c:622
++msgctxt "modifier-action"
++msgid "Display the menu"
++msgstr "Afficher le menu"
++
++#: app/display/display-enums.c:623
++msgctxt "modifier-action"
++msgid "Custom action"
++msgstr "Action personnalisée"
++
++#: app/display/display-enums.c:626
++msgctxt "modifier-action"
++msgid "Change tool opacity"
++msgstr "Modifier l’opacité de l’outil"
++
++#: app/display/gimpdisplayshell-dnd.c:404
++msgid "Layer > Rasterize"
++msgstr "Calque > Pixelliser"
++
++#: app/display/gimpdisplayshell-scale-dialog.c:251
++#, c-format
++msgid "Custom Zoom (%s)..."
++msgstr "Zoom personnalisé (%s)…"
++
++#: app/display/gimpmodifiersmanager.c:232
++#, c-format
++msgid "invalid value '%s' for contextual action"
++msgstr "valeur « %s » non valide pour l’action contextuelle"
++
++#: app/display/gimpstatusbar.c:427
++msgid "Cancel"
++msgstr "Annuler"
++
++#: app/display/gimpstatusbar.c:495
++msgid "_Proof Colors"
++msgstr "Épreuve _écran"
++
++#: app/display/gimpstatusbar.c:508
++msgid "Current Soft-Proofing Profile"
++msgstr "Profil d’épreuve écran actuel"
++
++#: app/display/gimpstatusbar.c:522
++msgid "Soft-Proofing Profile"
++msgstr "Profil d’épreuve écran"
++
++#: app/display/gimpstatusbar.c:531
++msgid "_Soft-proofing Profile: "
++msgstr "_Profil d’épreuve écran : "
++
++#: app/display/gimpstatusbar.c:540
++msgid "Perceptual"
++msgstr "Perceptuel"
++
++#: app/display/gimpstatusbar.c:541
++msgid "Relative Colorimetric"
++msgstr "Colorimétrique relatif"
++
++#: app/display/gimpstatusbar.c:543
++msgid "Absolute Colorimetric"
++msgstr "Colorimétrique absolu"
++
++#: app/display/gimpstatusbar.c:550
++msgid "_Rendering Intent: "
++msgstr "Mode de _rendu : "
++
++#: app/display/gimpstatusbar.c:559
++msgid "Use _Black Point Compensation"
++msgstr "Utiliser la compensation du point _noir"
++
++#: app/display/gimpstatusbar.c:578
++msgid "O_ptimize soft-proofing for: "
++msgstr "O_ptimiser l’épreuve écran pour : "
++
++#: app/display/gimpstatusbar.c:587
++msgid "_Mark Out of Gamut Colors"
++msgstr "_Indiquer les couleurs hors gamme"
++
++#: app/operations/operations-enums.c:29
++msgctxt "layer-color-space"
++msgid "RGB (from color profile)"
++msgstr "RVB (selon le profil colorimétrique)"
++
++#: app/operations/operations-enums.c:292
++msgctxt "layer-mode"
++msgid "Overwrite"
++msgstr "Écraser"
++
++#: app/operations/gimpcurvesconfig.c:105
++msgid "Work on linear or perceptual RGB, or following the image's TRC"
++msgstr "Travailler en RVB linéaire ou perceptuel, ou selon la courbe de reproduction des tons de l’image"
++
++#: app/operations/gimpoperationcolorbalance.c:65
++msgid "Color Balance"
++msgstr "Balance des couleurs"
++
++#: app/operations/gimpoperationcolorize.c:92
++msgid "Colorize"
++msgstr "Colorier"
++
++#: app/operations/gimpoperationdesaturate.c:85
++msgid "Desaturate"
++msgstr "Désaturer"
++
++#: app/operations/gimpoperationhuesaturation.c:65
++msgid "Hue-Saturation"
++msgstr "Teinte-Saturation"
++
++#: app/operations/gimpoperationposterize.c:84
++msgid "Posterize"
++msgstr "Postériser"
++
++#: app/operations/gimpoperationsemiflatten.c:82
++msgid "Semi-Flatten"
++msgstr "Semi-aplatir"
++
++#: app/operations/gimpoperationthresholdalpha.c:78
++msgid "Threshold Alpha"
++msgstr "Seuil alpha"
++
++#: app/paint/gimpmybrushoptions.c:93
++msgid "View Zoom"
++msgstr "Zoom de la vue"
++
++#: app/paint/gimpmybrushoptions.c:100
++msgid "View Rotation"
++msgstr "Rotation de la vue"
++
++#: app/paint/gimppaintoptions.c:327
++msgid "Expand Layers"
++msgstr "Agrandir les calques"
++
++#: app/paint/gimppaintoptions.c:328
++msgid "Expand active layer as you paint"
++msgstr "Agrandit le calque actif pendant que vous peignez"
++
++#: app/paint/gimppaintoptions.c:342
++msgid "Fill layer with"
++msgstr "Remplir le calque avec"
++
++#: app/paint/gimppaintoptions.c:349
++msgid "Fill Mask With"
++msgstr "Remplir le masque avec"
++
++#: app/paint/gimppaintoptions.c:350
++msgid "Fill layer mask with"
++msgstr "Remplir le masque de calque avec"
++
++#: app/path/gimpvectorlayer.c:184
++msgid "Vector Layer"
++msgstr "Calque vectoriel"
++
++#: app/path/gimpvectorlayer.c:197
++msgid "Rename Vector Layer"
++msgstr "Renommer le calque vectoriel"
++
++#: app/path/gimpvectorlayer.c:198
++msgid "Move Vector Layer"
++msgstr "Déplacer le calque vectoriel"
++
++#: app/path/gimpvectorlayer.c:199
++msgid "Scale Vector Layer"
++msgstr "Mettre à l’échelle le calque vectoriel"
++
++#: app/path/gimpvectorlayer.c:200
++msgid "Resize Vector Layer"
++msgstr "Redimensionner le calque vectoriel"
++
++#: app/path/gimpvectorlayer.c:201
++msgid "Flip Vector Layer"
++msgstr "Retourner le calque vectoriel"
++
++#: app/path/gimpvectorlayer.c:202
++msgid "Rotate Vector Layer"
++msgstr "Faire pivoter le calque vectoriel"
++
++#: app/path/gimpvectorlayer.c:203
++msgid "Transform Vector Layer"
++msgstr "Transformer le calque vectoriel"
++
++#: app/path/gimpvectorlayer.c:619
++msgid "Discard Vector Information"
++msgstr "Abandonner les informations vectorielles"
++
++#: app/path/gimpvectorlayer.c:712
++msgid "Change Vector Layer Path"
++msgstr "Modifier le chemin du calque vectoriel"
++
++#: app/path/gimpvectorlayeroptions.c:121
++msgid "Fill Style"
++msgstr "Style de remplissage"
++
++#: app/path/gimpvectorlayeroptions.c:133
++msgid "Stroke Style"
++msgstr "Style de contour"
++
++#: app/propgui/gimppropgui-channel-mixer.c:63
++msgid "Red Channel"
++msgstr "Canal rouge"
++
++#: app/propgui/gimppropgui-channel-mixer.c:84
++msgid "Green Channel"
++msgstr "Canal vert"
++
++#: app/propgui/gimppropgui-channel-mixer.c:105
++msgid "Blue Channel"
++msgstr "Canal bleu"
++
++#: app/text/gimpfontfactory.c:498
++#, c-format
++msgid "Some fonts failed to load:%s"
++msgstr "Certaines polices n’ont pas pu être chargées :%s"
++
++#: app/tools/gimpalignoptions.c:151
++msgid "Reference object targets will be aligned on"
++msgstr "Les cibles seront alignées sur cet objet de référence"
++
++#: app/tools/gimpalignoptions.c:158
++msgid "Selected layers"
++msgstr "Calques sélectionnés"
++
++#: app/tools/gimpalignoptions.c:164
++msgid "Selected paths"
++msgstr "Chemins sélectionnés"
++
++#: app/tools/gimpalignoptions.c:170
++msgid "Use extents of layer contents"
++msgstr "Utiliser les limites du contenu des calques"
++
++#: app/tools/gimpalignoptions.c:387
++msgid "Targets"
++msgstr "Cibles"
++
++#: app/tools/gimpalignoptions.c:409
++msgid "Set anchor point of targets"
++msgstr "Définir le point d’ancrage des cibles"
++
++#: app/tools/gimpalignoptions.c:469
++msgid "Select the reference object"
++msgstr "Sélectionner l’objet de référence"
++
++#: app/tools/gimpalignoptions.c:491
++msgid "Align anchor points of targets on vertical middle of reference"
++msgstr "Aligner les points d’ancrage des cibles sur le milieu vertical de la référence"
++
++#: app/tools/gimpalignoptions.c:530
++msgid "Distribute anchor points of targets evenly in the horizontal"
++msgstr "Répartir uniformément les points d’ancrage des cibles à l’horizontale"
++
++#: app/tools/gimpalignoptions.c:533
++msgid "Distribute horizontally with even horizontal gaps"
++msgstr "Répartir horizontalement avec des espaces égaux"
++
++#: app/tools/gimpalignoptions.c:542
++msgid "Distribute anchor points of targets evenly in the vertical"
++msgstr "Répartir uniformément les points d’ancrage des cibles à la verticale"
++
++#: app/tools/gimpalignoptions.c:545
++msgid "Distribute vertically with even vertical gaps"
++msgstr "Répartir verticalement avec des espaces égaux"
++
++#: app/tools/gimpalignoptions.c:822
++#, c-format
++msgid "Reference layer: %s"
++msgstr "Calque de référence : %s"
++
++#: app/tools/gimpalignoptions.c:825
++#, c-format
++msgid "Reference channel: %s"
++msgstr "Canal de référence : %s"
++
++#: app/tools/gimpalignoptions.c:828
++#, c-format
++msgid "Reference path: %s"
++msgstr "Chemin de référence : %s"
++
++#: app/tools/gimpalignoptions.c:831
++msgid "Reference guide"
++msgstr "Guide de référence"
++
++#: app/tools/gimpaligntool.c:132
++msgid "Align and Distribute"
++msgstr "Aligner et répartir"
++
++#: app/tools/gimpaligntool.c:134
++msgid "_Align and Distribute"
++msgstr "_Aligner et répartir"
++
++#: app/tools/gimpaligntool.c:530
++msgid "Arrange Objects"
++msgstr "Disposer les objets"
++
++#: app/tools/gimpaligntool.c:561
++msgid "Click on a layer, path or guide, or Click-Drag to pick a reference"
++msgstr "Cliquez sur un calque, un chemin ou un guide, ou cliquez-glissez pour choisir une référence"
++
++#: app/tools/gimpaligntool.c:565
++msgid "Click to pick this layer as reference"
++msgstr "Cliquez pour choisir ce calque comme référence"
++
++#: app/tools/gimpaligntool.c:568
++msgid "Click to pick this guide as reference"
++msgstr "Cliquez pour choisir ce guide comme référence"
++
++#: app/tools/gimpaligntool.c:573
++msgid "Click to pick this path as reference"
++msgstr "Cliquez pour choisir ce chemin comme référence"
++
++#: app/tools/gimpaligntool.c:584
++msgid "Click to select this guide for alignment"
++msgstr "Cliquez pour sélectionner ce guide pour l’alignement"
++
++#: app/tools/gimpaligntool.c:589
++msgid "Click to add this guide to the list of objects to align"
++msgstr "Cliquez pour ajouter ce guide à la liste des objets à aligner"
++
++#: app/tools/gimpeditselectiontool.c:1298
++msgid "A selected path's position is locked."
++msgstr "La position d’un chemin sélectionné est verrouillée."
++
++#: app/tools/gimpeditselectiontool.c:1336
++msgid "A selected channel's position is locked."
++msgstr "La position d’un canal sélectionné est verrouillée."
++
++#: app/tools/gimpfiltertool.c:458
++msgid "Disabled because this filter depends on another image."
++msgstr "Désactivé, car ce filtre dépend d’une autre image."
++
++#: app/tools/gimpfiltertool.c:1288
++msgid "Edit filter"
++msgstr "Modifier le filtre"
++
++#: app/tools/gimpfiltertool.c:2247
++#, c-format
++msgid "Editing '%s'..."
++msgstr "Modification de « %s »…"
++
++#: app/tools/gimpforegroundselectoptions.c:132
++msgctxt "measurement"
++msgid "Levels"
++msgstr "Niveaux"
++
++#: app/tools/gimpinkoptions-gui.c:147
++msgid "Fill Layer Mask With"
++msgstr "Remplir le masque de calque avec"
++
++#: app/tools/gimpiscissorstool.c:294
++msgid "_Scissors Select"
++msgstr "_Ciseaux intelligents"
++
++#: app/tools/gimppathoptions.c:138
++msgid "Enable Fill"
++msgstr "Activer le remplissage"
++
++#: app/tools/gimppathoptions.c:144
++msgid "Enable Stroke"
++msgstr "Activer le contour"
++
++#: app/tools/gimppathoptions.c:625
++msgid "Create New Vector Layer"
++msgstr "Créer un nouveau calque vectoriel"
++
++#: app/tools/gimppathtool.c:790
++msgid "Create Vector Layer from Path"
++msgstr "Créer un calque vectoriel à partir du chemin"
++
++#: app/tools/gimppathtool.c:907
++msgid "Add Vector Layer"
++msgstr "Ajouter un calque vectoriel"
++
++#: app/tools/gimppathtool.c:1140
++msgid "Confirm Path Editing"
++msgstr "Confirmer la modification du chemin"
++
++#: app/tools/gimppathtool.c:1149
++msgid "_Edit Anyway"
++msgstr "_Modifier quand même"
++
++#: app/tools/gimptextoptions.c:251
++msgid "Use editor window"
++msgstr "Utiliser la fenêtre d’édition"
++
++#: app/tools/gimptextoptions.c:258
++msgid "Show on-canvas editor"
++msgstr "Afficher l’éditeur sur le canevas"
++
++#: app/tools/gimptextoptions.c:259
++msgid "Show on-canvas text editor"
++msgstr "Afficher l’éditeur de texte sur le canevas"
++
++#: app/tools/gimptextoptions.c:301
++msgid "Outline width"
++msgstr "Épaisseur du contour"
++
++#: app/tools/gimptextoptions.c:302
++msgid "Adjust outline width"
++msgstr "Ajuster l’épaisseur du contour"
++
++#: app/tools/gimptextoptions.c:309
++msgid "Outline width unit"
++msgstr "Unité de l’épaisseur du contour"
++
++#: app/tools/gimptextoptions.c:329
++msgid "Outline miter limit"
++msgstr "Limite de raccord en pointe du contour"
++
++#: app/tools/gimptextoptions.c:874
++msgid "Style:"
++msgstr "Style :"
++
++#: app/tools/gimptextoptions.c:878
++msgid "Outline Options"
++msgstr "Options du contour"
++
++#: app/tools/gimptextoptions.c:895
++msgid "Outline Direction:"
++msgstr "Direction du contour :"
++
++#: app/widgets/gimpactiongroup.c:1200
++#, c-format
++msgid "sRGB+A (%0.3f, %0.3f, %0.3f, %0.3f)"
++msgstr "sRVB+A (%0.3f, %0.3f, %0.3f, %0.3f)"
++
++#: app/widgets/gimpcolorframe.c:882
++msgctxt "Color"
++msgid "Profile:"
++msgstr "Profil :"
++
++#: app/widgets/gimpcolorframe.c:889
++#, c-format
++msgid "%s"
++msgstr "%s"
++
++#: app/widgets/gimpcolorframe.c:917
++msgctxt "Color"
++msgid "No Profile"
++msgstr "Aucun profil"
++
++#: app/widgets/gimpcolormapeditor.c:473
++msgid "The color is used in this indexed image"
++msgstr "La couleur est utilisée dans cette image indexée"
++
++#: app/widgets/gimpcolormapselection.c:249
++msgid "HTML notation (sRGB):"
++msgstr "Notation HTML (sRVB) :"
++
++#: app/widgets/gimpcontrollerinfo.c:110
++msgid "Input Controller"
++msgstr "Contrôleur d’entrée"
++
++#: app/widgets/gimpdeviceinfo.c:261
++msgid "Pad actions"
++msgstr "Actions de la tablette"
++
++#: app/widgets/gimpdeviceinfoeditor.c:307
++msgid "Pressure Curve"
++msgstr "Courbe de pression"
++
++#: app/widgets/gimpdeviceinfoeditor.c:370
++msgid "Pad Actions"
++msgstr "Actions de la tablette"
++
++#: app/widgets/gimpdeviceinfoeditor.c:457
++msgid "Select the next event arriving from the pad"
++msgstr "Sélectionner le prochain évènement provenant de la tablette"
++
++#: app/widgets/gimpdeviceinfoeditor.c:577
++#, c-format
++msgid "Button %d"
++msgstr "Bouton %d"
++
++#: app/widgets/gimpdeviceinfoeditor.c:583
++#, c-format
++msgid "Strip %d"
++msgstr "Bande %d"
++
++#: app/widgets/gimpdeviceinfoeditor.c:829
++msgid "Select Pad Event Action"
++msgstr "Choisir l’action de l’évènement de la tablette"
++
++#: app/widgets/gimpdevicestatus.c:632
++#, c-format
++msgid "Foreground: %d, %d, %d (in color space of \"%s\")"
++msgstr "Premier plan : %d, %d, %d (dans l’espace colorimétrique de « %s »)"
++
++#: app/widgets/gimpdevicestatus.c:636
++#, c-format
++msgid "Foreground: %d, %d, %d (in sRGB)"
++msgstr "Premier plan : %d, %d, %d (en sRVB)"
++
++#: app/widgets/gimpdevicestatus.c:643
++#, c-format
++msgid "Background: %d, %d, %d (in color space of \"%s\")"
++msgstr "Arrière-plan : %d, %d, %d (dans l’espace colorimétrique de « %s »)"
++
++#: app/widgets/gimpdevicestatus.c:647
++#, c-format
++msgid "Background: %d, %d, %d (in sRGB)"
++msgstr "Arrière-plan : %d, %d, %d (en sRVB)"
++
++#: app/widgets/gimpdrawabletreeview.c:651
++msgctxt "singular"
++msgid "New Layer"
++msgstr "Nouveau calque"
++
++#: app/widgets/gimpdrawabletreeview-filters.c:204
++msgid "Toggle the visibility of all filters."
++msgstr "Activer/désactiver la visibilité de tous les filtres."
++
++#: app/widgets/gimpdrawabletreeview-filters.c:220
++msgid "Edit the selected filter."
++msgstr "Modifier le filtre sélectionné."
++
++#: app/widgets/gimpdrawabletreeview-filters.c:236
++msgid "Raise filter one step up in the stack."
++msgstr "Monter le filtre d’un rang dans la pile."
++
++#: app/widgets/gimpdrawabletreeview-filters.c:251
++msgid "Lower filter one step down in the stack."
++msgstr "Descendre le filtre d’un rang dans la pile."
++
++#: app/widgets/gimpdrawabletreeview-filters.c:267
++msgid "Merge all active filters down."
++msgstr "Fusionner tous les filtres actifs dans le calque."
++
++#: app/widgets/gimpdrawabletreeview-filters.c:299
++msgid "Remove the selected filter."
++msgstr "Supprimer le filtre sélectionné."
++
++#: app/widgets/gimpfileprocview.c:219
++msgctxt "File extension"
++msgid "Extensions"
++msgstr "Extensions"
++
++#: app/widgets/gimpfilleditor.c:176
++msgid "Fill BG Color"
++msgstr "Couleur de remplissage AP"
++
++#: app/widgets/gimpgradienteditor.c:952
++#, c-format
++msgid "Zoom factor: %f:1"
++msgstr "Facteur de zoom : %f:1"
++
++#: app/widgets/gimpgradienteditor.c:1336
++#, c-format
++msgid "sRGB (%0.3f, %0.3f, %0.3f)"
++msgstr "sRVB (%0.3f, %0.3f, %0.3f)"
++
++#: app/widgets/gimpgradienteditor.c:1375
++#, c-format
++msgid "sRGB (%d, %d, %d)"
++msgstr "sRVB (%d, %d, %d)"
++
++#: app/widgets/gimphistogrameditor.c:148
++msgid "Mean: "
++msgstr "Moyenne : "
++
++#: app/widgets/gimphistogrameditor.c:149
++msgid "Std dev: "
++msgstr "Écart type : "
++
++#: app/widgets/gimphistogrameditor.c:150
++msgid "Median: "
++msgstr "Médiane : "
++
++#: app/widgets/gimphistogrameditor.c:151
++msgid "Pixels: "
++msgstr "Pixels : "
++
++#: app/widgets/gimphistogrameditor.c:152
++msgid "Count: "
++msgstr "Nombre : "
++
++#: app/widgets/gimphistogrameditor.c:153
++msgid "Percentile: "
++msgstr "Centile : "
++
++#: app/widgets/gimpitemtreeview.c:627
++msgid "Select items by patterns and store item sets"
++msgstr "Sélectionner des éléments par motif et enregistrer des ensembles d’éléments"
++
++#: app/widgets/gimpitemtreeview.c:1745
++#, c-format
++msgid "%d item selected"
++msgid_plural "%d items selected"
++msgstr[0] "%d élément sélectionné"
++msgstr[1] "%d éléments sélectionnés"
++
++#: app/widgets/gimplayertreeview.c:1431
++msgctxt "layers-action"
++msgid "Anchor the floating mask"
++msgstr "Ancrer le masque flottant"
++
++#: app/widgets/gimpmodifierseditor.c:659
++#, c-format
++msgid "Select Action for %s button %d of %s"
++msgstr "Choisir l’action du bouton %s %d de %s"
++
++#: app/widgets/gimpmodifierseditor.c:671
++#, c-format
++msgid "Select Action for button %d of %s"
++msgstr "Choisir l’action du bouton %d de %s"
++
++#: app/widgets/gimprow.c:617
++#, c-format
++msgid "Rename %s"
++msgstr "Renommer %s"
++
++#: app/widgets/gimpsearchpopup.c:321
++msgid "shortcut"
++msgstr "raccourci"
++
++#: app/widgets/gimpsearchpopup.c:325
++#, c-format
++msgid "%s: %s"
++msgstr "%s : %s"
++
++#: app/widgets/gimpshortcutbutton.c:142
++msgid "No shortcut"
++msgstr "Aucun raccourci"
++
++#: app/widgets/gimpshortcutbutton.c:431
++msgid "Set modifier"
++msgstr "Définir le modificateur"
++
++#: app/widgets/gimpshortcutbutton.c:433
++msgid "Set shortcut"
++msgstr "Définir le raccourci"
++
++#: app/widgets/gimpshortcutbutton.c:438
++msgid "No modifier"
++msgstr "Aucun modificateur"
++
++#: app/widgets/gimptemplateeditor.c:453
++msgid "Choose A Soft-Proofing Color Profile"
++msgstr "Choisir un profil colorimétrique d’épreuve écran"
++
++#: app/widgets/gimptemplateeditor.c:457
++msgid "_Soft-proofing color profile:"
++msgstr "Profil colorimétrique d’é_preuve écran :"
++
++#: app/widgets/gimptemplateeditor.c:466
++msgid "_Soft-proofing rendering intent:"
++msgstr "Mode de rendu de l’é_preuve écran :"
++
++#: app/widgets/gimptemplateeditor.c:475
++msgid "_Use Black Point Compensation"
++msgstr "_Utiliser la compensation du point noir"
++
++#: app/widgets/gimptemplateeditor.c:912
++#, c-format
++msgid "Preferred CMYK (%s)"
++msgstr "CMJN préféré (%s)"
++
++#: app/widgets/gimptextstyleeditor.c:259
++msgid "Drag to move the text style editor"
++msgstr "Glisser pour déplacer l’éditeur de style de texte"
++
++#: app/widgets/gimppathtreeview.c:112
++msgid "Lock path"
++msgstr "Verrouiller le chemin"
++
++#: app/widgets/gimppathtreeview.c:118
++msgid "Lock path visibility"
++msgstr "Verrouiller la visibilité du chemin"
++
++#: menus/channels-menu.ui:11
++msgid "Color Tags"
++msgstr "Étiquettes de couleur"
++
++#: menus/dashboard-menu.ui:9
++msgctxt "dashboard-action"
++msgid "Groups"
++msgstr "Groupes"
++
++#: menus/palettes-menu.ui:23
++msgctxt "palettes-action"
++msgid "Export as"
++msgstr "Exporter en tant que"
++
++#: menus/dockable-menu.ui.in.in:6
++msgctxt "file-action"
++msgid "_Add Tab"
++msgstr "_Ajouter un onglet"
++
++#: menus/dockable-menu.ui.in.in:16
++msgctxt "file-action"
++msgid "_Preview Size"
++msgstr "Taille des _aperçus"
++
++#: menus/dockable-menu.ui.in.in:28
++msgctxt "file-action"
++msgid "_Tab Style"
++msgstr "_Style des onglets"
++
++#: menus/dockable-menu.ui.in.in:44
++msgctxt "file-action"
++msgid "Move to Screen"
++msgstr "Déplacer vers l’écran"
++
++#: menus/image-menu.ui.in.in:28
++msgid "_Debug"
++msgstr "_Débogage"
++
++#: menus/image-menu.ui.in.in:159
++msgctxt "view-action"
++msgid "_Float"
++msgstr "_Flottant"
++
++#: menus/image-menu.ui.in.in:358
++msgctxt "image-action"
++msgid "Soft-Proofing Re_ndering Intent"
++msgstr "Mode de re_ndu de l’épreuve écran"
++
++#: menus/image-menu.ui.in.in:689
++msgctxt "filters-action"
++msgid "Recently Used"
++msgstr "Utilisés récemment"
++
++#: menus/image-menu.ui.in.in:855
++msgctxt "filters-action"
++msgid "Plug-In _Examples"
++msgstr "_Exemples de greffons"
++
++#: menus/image-menu.ui.in.in:861
++msgctxt "filters-action"
++msgid "_Script-Fu"
++msgstr "_Script-Fu"
++
++#: menus/image-menu.ui.in.in:909
++msgctxt "help-action"
++msgid "_User Manual"
++msgstr "Manuel de l’_utilisateur"
++
++#: menus/image-menu.ui.in.in:928
++msgctxt "help-action"
++msgid "_GIMP Online"
++msgstr "_GIMP en ligne"
++
++#: app/actions/filters-actions.c:282
++msgctxt "filters-action"
++msgid "Contour..."
++msgstr "Contour…"
++
++#: app/actions/filters-actions.c:290
++msgctxt "filters-action"
++msgid "Lueur externe..."
++msgstr "Lueur externe…"
++
++#: app/actions/filters-actions.c:297
++msgctxt "filters-action"
++msgid "Ombre interne..."
++msgstr "Ombre interne…"
++
++#: app/actions/filters-actions.c:307
++msgctxt "filters-action"
++msgid "Lueur interne..."
++msgstr "Lueur interne…"
++
++#: app/actions/file-actions.c
++msgctxt "file-action"
++msgid "Placer (_incorporé)..."
++msgstr "Placer (_incorporé)…"
++
++#: app/actions/file-actions.c
++msgctxt "file-action"
++msgid "_Placer (lié)..."
++msgstr "_Placer (lié)…"
++
+ #~ msgid "Extra files for GIMP"
+ #~ msgstr "Fichiers en supplément pour GIMP."
+ 

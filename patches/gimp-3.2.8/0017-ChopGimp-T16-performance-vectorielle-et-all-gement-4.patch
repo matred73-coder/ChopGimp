@@ -1,0 +1,408 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: ChopGimp <mathieu.redon@proton.me>
+Date: Fri, 27 Nov 2026 08:34:14 +0100
+Subject: [PATCH 17/23] =?UTF-8?q?ChopGimp=20T16:=20performance=20vectoriel?=
+ =?UTF-8?q?le=20et=20all=C3=A8gement=204.1?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Anciens patchs : 0148, 0150, 0151, 0152, 0159, 0170, 0175, 0176.
+---
+ app/core/gimpitem.c          |   5 +-
+ app/display/gimpcanvaspath.c |  49 ++++++++
+ app/display/gimpcanvaspath.h |   3 +
+ app/path/chopgimp-vutil.c    | 209 +++++++++++++++++++++++++++++++++++
+ app/path/chopgimp-vutil.h    |  59 ++++++++++
+ 5 files changed, 324 insertions(+), 1 deletion(-)
+ create mode 100644 app/path/chopgimp-vutil.c
+ create mode 100644 app/path/chopgimp-vutil.h
+
+diff --git a/app/core/gimpitem.c b/app/core/gimpitem.c
+index eee56de..24a269b 100644
+--- a/app/core/gimpitem.c
++++ b/app/core/gimpitem.c
+@@ -2262,7 +2262,10 @@ gimp_item_parasite_attach (GimpItem           *item,
+       gimp_parasite_attach (private->image->gimp, &copy);
+     }
+ 
+-  if (gimp_item_is_attached (item) &&
++  /*  ChopGimp 4.0.0: the group is closed only when it was opened (an
++   *  undoable parasite attached without undo closed the caller's group)
++   */
++  if (push_undo &&
+       gimp_parasite_is_undoable (&copy))
+     {
+       gimp_image_undo_group_end (private->image);
+diff --git a/app/display/gimpcanvaspath.c b/app/display/gimpcanvaspath.c
+index 4da57ef..cdb3b86 100644
+--- a/app/display/gimpcanvaspath.c
++++ b/app/display/gimpcanvaspath.c
+@@ -56,6 +56,9 @@ struct _GimpCanvasPathPrivate
+   gdouble       y;
+   gboolean      filled;
+   GimpPathStyle path_style;
++  gboolean      has_fill_rgba;  /* 4.0.0: filled in this color instead of
++                                 * the canvas style                     */
++  gdouble       fill_rgba[4];
+ };
+ 
+ #define GET_PRIVATE(path) \
+@@ -77,6 +80,8 @@ static void             gimp_canvas_path_draw         (GimpCanvasItem *item,
+ static cairo_region_t * gimp_canvas_path_get_extents  (GimpCanvasItem *item);
+ static void             gimp_canvas_path_stroke       (GimpCanvasItem *item,
+                                                        cairo_t        *cr);
++static void             gimp_canvas_path_fill         (GimpCanvasItem *item,
++                                                       cairo_t        *cr);
+ 
+ 
+ G_DEFINE_TYPE_WITH_PRIVATE (GimpCanvasPath, gimp_canvas_path,
+@@ -98,6 +103,7 @@ gimp_canvas_path_class_init (GimpCanvasPathClass *klass)
+   item_class->draw           = gimp_canvas_path_draw;
+   item_class->get_extents    = gimp_canvas_path_get_extents;
+   item_class->stroke         = gimp_canvas_path_stroke;
++  item_class->fill           = gimp_canvas_path_fill;
+ 
+   g_object_class_install_property (object_class, PROP_PATH,
+                                    g_param_spec_boxed ("path", NULL, NULL,
+@@ -319,6 +325,49 @@ gimp_canvas_path_stroke (GimpCanvasItem *item,
+     }
+ }
+ 
++static void
++gimp_canvas_path_fill (GimpCanvasItem *item,
++                       cairo_t        *cr)
++{
++  GimpCanvasPathPrivate *private = GET_PRIVATE (item);
++
++  if (private->has_fill_rgba)
++    {
++      cairo_set_source_rgba (cr, private->fill_rgba[0], private->fill_rgba[1],
++                             private->fill_rgba[2], private->fill_rgba[3]);
++      cairo_fill (cr);
++    }
++  else
++    {
++      GIMP_CANVAS_ITEM_CLASS (parent_class)->fill (item, cr);
++    }
++}
++
++/*  4.0.0: a filled path drawn in @color (with @opacity) instead of the
++ *  canvas style (preview of the Blob brush in the color of its result)
++ */
++void
++gimp_canvas_path_set_fill_color (GimpCanvasItem *path,
++                                 GeglColor      *color,
++                                 gdouble         opacity)
++{
++  GimpCanvasPathPrivate *private;
++
++  g_return_if_fail (GIMP_IS_CANVAS_PATH (path));
++
++  private = GET_PRIVATE (path);
++  private->has_fill_rgba = (color != NULL);
++
++  if (color)
++    {
++      gegl_color_get_pixel (color, babl_format ("R'G'B'A double"), private->fill_rgba);
++      private->fill_rgba[3] *= CLAMP (opacity, 0.0, 1.0);
++    }
++
++  gimp_canvas_item_begin_change (path);
++  gimp_canvas_item_end_change (path);
++}
++
+ GimpCanvasItem *
+ gimp_canvas_path_new (GimpDisplayShell     *shell,
+                       const GimpBezierDesc *bezier,
+diff --git a/app/display/gimpcanvaspath.h b/app/display/gimpcanvaspath.h
+index d9bb5ac..7ebfe00 100644
+--- a/app/display/gimpcanvaspath.h
++++ b/app/display/gimpcanvaspath.h
+@@ -56,3 +56,6 @@ GimpCanvasItem * gimp_canvas_path_new      (GimpDisplayShell     *shell,
+ 
+ void             gimp_canvas_path_set      (GimpCanvasItem       *path,
+                                             const GimpBezierDesc *bezier);
++void             gimp_canvas_path_set_fill_color (GimpCanvasItem *path,
++                                                  GeglColor      *color,
++                                                  gdouble         opacity);
+diff --git a/app/path/chopgimp-vutil.c b/app/path/chopgimp-vutil.c
+new file mode 100644
+index 0000000..6ad1b90
+--- /dev/null
++++ b/app/path/chopgimp-vutil.c
+@@ -0,0 +1,209 @@
++/* GIMP - The GNU Image Manipulation Program
++ * chopgimp-vutil.c — ChopGimp 4.1.0: helpers shared by the vector object
++ * modules, see chopgimp-vutil.h.
++ *
++ * This program is free software: you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation; either version 3 of the License, or
++ * (at your option) any later version.
++ */
++
++#include "config.h"
++
++#include <math.h>
++#include <string.h>
++
++#include <cairo.h>
++#include <gdk-pixbuf/gdk-pixbuf.h>
++#include <gegl.h>
++
++#include "libgimpbase/gimpbase.h"
++#include "libgimpmath/gimpmath.h"
++
++#include "path-types.h"
++
++#include "gimpanchor.h"
++#include "gimppath.h"
++#include "gimpstroke.h"
++#include "gimpvectorlayer.h"
++#include "chopgimp-vobject.h"
++#include "chopgimp-vutil.h"
++
++
++gchar *
++chopgimp_spec_word (const gchar *spec,
++                    const gchar *key)
++{
++  gchar **words = g_strsplit (spec ? spec : "", " ", -1);
++  gchar  *value = NULL;
++  gsize   len   = strlen (key);
++
++  for (gint i = 0; words[i] && ! value; i++)
++    if (! strncmp (words[i], key, len) && words[i][len] == '=')
++      value = g_strdup (words[i] + len + 1);
++
++  g_strfreev (words);
++
++  return value;
++}
++
++gdouble
++chopgimp_spec_dbl (const gchar *spec,
++                   const gchar *key,
++                   gdouble      def)
++{
++  gchar   *v = chopgimp_spec_word (spec, key);
++  gdouble  d = v ? g_ascii_strtod (v, NULL) : def;
++
++  g_free (v);
++
++  return isfinite (d) ? d : def;
++}
++
++gchar *
++chopgimp_spec_body (const gchar *spec)
++{
++  gchar  **words = g_strsplit (spec ? spec : "", " ", -1);
++  GString *s     = g_string_new (NULL);
++
++  for (gint i = 0; words[i]; i++)
++    if (strncmp (words[i], "sig=", 4))
++      {
++        if (s->len)
++          g_string_append_c (s, ' ');
++        g_string_append (s, words[i]);
++      }
++
++  g_strfreev (words);
++
++  return g_string_free (s, FALSE);
++}
++
++void
++chopgimp_spec_put_dbl (GString     *s,
++                       const gchar *key,
++                       gdouble      v)
++{
++  gchar buf[G_ASCII_DTOSTR_BUF_SIZE];
++
++  g_string_append_printf (s, " %s=%s", key,
++                          g_ascii_formatd (buf, sizeof (buf), "%.6g", v));
++}
++
++gchar *
++chopgimp_spec_signature (ChopGimpVObject *g,
++                         ChopGimpVObject *src)
++{
++  GList *one  = g_list_prepend (NULL, src);
++  gchar *xml  = chopgimp_vobjects_to_xml (one);
++  gchar *body = chopgimp_spec_body (g->blend);
++  gchar *all  = g_strconcat (body, "\n", xml, NULL);
++  gchar *sig  = g_compute_checksum_for_string (G_CHECKSUM_MD5, all, -1);
++
++  g_free (all);
++  g_free (body);
++  g_free (xml);
++  g_list_free (one);
++
++  return sig;
++}
++
++void
++chopgimp_put_num (GString *s,
++                  gdouble  v)
++{
++  gchar buf[G_ASCII_DTOSTR_BUF_SIZE];
++
++  if (fabs (v) < 1e-12)
++    v = 0.0;
++
++  g_string_append (s, g_ascii_formatd (buf, sizeof (buf), "%.12g", v));
++}
++
++GimpPath *
++chopgimp_vobject_path_in (GimpVectorLayer *layer,
++                          ChopGimpVObject *o,
++                          ChopGimpVObject *g)
++{
++  GimpPath    *wp = chopgimp_vobject_get_world_path (layer, o, TRUE);
++  GimpMatrix3  inv;
++
++  if (! wp)
++    return NULL;
++
++  chopgimp_vobject_get_world_matrix (g, &inv);
++  gimp_matrix3_invert (&inv);
++  chopgimp_vpath_transform (wp, &inv);
++
++  return wp;
++}
++
++GimpCoords
++chopgimp_coords (gdouble x,
++                 gdouble y)
++{
++  GimpCoords c = GIMP_COORDS_DEFAULT_VALUES;
++
++  c.x = x;
++  c.y = y;
++
++  return c;
++}
++
++gboolean
++chopgimp_path_anchor_bbox (GimpPath *path,
++                           gdouble   b[4])
++{
++  GimpStroke *stroke = NULL;
++  gboolean    any    = FALSE;
++
++  while ((stroke = gimp_path_stroke_get_next (path, stroke)))
++    {
++      GArray *anchors = gimp_stroke_control_points_get (stroke, NULL);
++
++      for (guint k = 0; anchors && k < anchors->len; k++)
++        {
++          GimpAnchor *a = &g_array_index (anchors, GimpAnchor, k);
++
++          if (! any)
++            {
++              b[0] = b[2] = a->position.x;
++              b[1] = b[3] = a->position.y;
++              any  = TRUE;
++            }
++          else
++            {
++              b[0] = MIN (b[0], a->position.x);
++              b[1] = MIN (b[1], a->position.y);
++              b[2] = MAX (b[2], a->position.x);
++              b[3] = MAX (b[3], a->position.y);
++            }
++        }
++
++      if (anchors)
++        g_array_unref (anchors);
++    }
++
++  return any;
++}
++
++void
++chopgimp_color_to_srgb (GeglColor *color,
++                        gdouble    rgba[4])
++{
++  rgba[0] = rgba[1] = rgba[2] = 0.0;
++  rgba[3] = 1.0;
++
++  if (color)
++    gegl_color_get_pixel (color, babl_format ("R'G'B'A double"), rgba);
++}
++
++GeglColor *
++chopgimp_srgb_to_color (const gdouble rgba[4])
++{
++  GeglColor *c = gegl_color_new (NULL);
++
++  gegl_color_set_pixel (c, babl_format ("R'G'B'A double"), rgba);
++
++  return c;
++}
+diff --git a/app/path/chopgimp-vutil.h b/app/path/chopgimp-vutil.h
+new file mode 100644
+index 0000000..5fcd32f
+--- /dev/null
++++ b/app/path/chopgimp-vutil.h
+@@ -0,0 +1,59 @@
++/* GIMP - The GNU Image Manipulation Program
++ * chopgimp-vutil.h — ChopGimp 4.1.0: helpers shared by the vector object
++ * modules (formerly copied in chopgimp-vbrush.c, chopgimp-vrepeat.c,
++ * chopgimp-vmaterial.c, chopgimp-vcolors.c and chopgimp-vobject.c).
++ *
++ * A « spec » is the « blend » field of a dynamic group (Transition,
++ * brush, repeat): words « key=value » separated by spaces, the last one
++ * « sig=S » being the signature of what the generated children were made
++ * from.
++ *
++ * This program is free software: you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation; either version 3 of the License, or
++ * (at your option) any later version.
++ */
++
++#pragma once
++
++
++/*  value of « @key=… » in @spec (newly allocated), NULL when absent  */
++gchar    * chopgimp_spec_word      (const gchar     *spec,
++                                    const gchar     *key);
++/*  same, as a number; @def when absent or not finite  */
++gdouble    chopgimp_spec_dbl       (const gchar     *spec,
++                                    const gchar     *key,
++                                    gdouble          def);
++/*  @spec without its « sig=… » word  */
++gchar    * chopgimp_spec_body      (const gchar     *spec);
++/*  appends « @key=@v » (%.6g, C locale) after a space  */
++void       chopgimp_spec_put_dbl   (GString         *s,
++                                    const gchar     *key,
++                                    gdouble          v);
++/*  MD5 of the spec body of @g and of the XML of @src  */
++gchar    * chopgimp_spec_signature (ChopGimpVObject *g,
++                                    ChopGimpVObject *src);
++
++/*  appends @v (%.12g, C locale, -0 and tiny values written 0)  */
++void       chopgimp_put_num        (GString         *s,
++                                    gdouble          v);
++
++/*  the world path of @o in the coordinates of the group @g  */
++GimpPath * chopgimp_vobject_path_in (GimpVectorLayer *layer,
++                                     ChopGimpVObject *o,
++                                     ChopGimpVObject *g);
++
++/*  a point with the default pressure, tilt, etc.  */
++GimpCoords chopgimp_coords          (gdouble          x,
++                                     gdouble          y);
++/*  box of the anchors and handles of @path: @b = x1, y1, x2, y2; FALSE
++ *  when it has none
++ */
++gboolean   chopgimp_path_anchor_bbox (GimpPath       *path,
++                                      gdouble         b[4]);
++
++/*  @color as R'G'B'A double in sRGB (opaque black when NULL)  */
++void        chopgimp_color_to_srgb  (GeglColor       *color,
++                                     gdouble          rgba[4]);
++/*  a new color from R'G'B'A double in sRGB  */
++GeglColor * chopgimp_srgb_to_color  (const gdouble    rgba[4]);
