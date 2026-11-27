@@ -4,6 +4,7 @@ ChopGimp — test de fonctionnement exécuté DANS le paquet Flatpak :
       -b 'exec(open("tools/smoke_test.py").read())'
 Résultats : <SMOKE_OUT> (une ligne « OK|ÉCHEC  test  détail » par test).
 """
+import functools
 import os
 import sys
 import re
@@ -71,6 +72,76 @@ def count_layers(items):
         if it.is_group():
             n += count_layers(it.get_children())
     return n
+
+
+# 4.1.0 : aides communes des tests vectoriels (autrefois recopiées dans
+# chaque section)
+def vxml(layer):
+    """XML des objets d'un calque vectoriel ("" en cas d'échec)."""
+    r = run("chopgimp-vobjects-get-xml", layer=layer)
+    return r.index(1) if r is not None and r.index(0) == Gimp.PDBStatusType.SUCCESS else ""
+
+
+def vcmd(image, c):
+    """Commande d'objets vectoriels ; vrai si elle a réussi et agi."""
+    r = run("chopgimp-vobjects-command", image=image, command=c)
+    return bool(r is not None and r.index(0) == Gimp.PDBStatusType.SUCCESS and r.index(1))
+
+
+def layer_bytes(layer):
+    """Décalage, taille et pixels R'G'B'A u8 d'un calque (comparaison exacte)."""
+    b = layer.get_buffer()
+    e = b.get_extent()
+    return (layer.get_offsets()[1:], e.width, e.height,
+            bytes(b.get(e, 1.0, "R'G'B'A u8", Gegl.AbyssPolicy.NONE)))
+
+
+def rgba_at(l, x, y):
+    """Pixel (0-255) d'un calque en coordonnées de l'image."""
+    x0, y0 = l.get_offsets()[1:]
+    return tuple(round(c * 255) for c in l.get_pixel(x - x0, y - y0).get_rgba_with_space(None))
+
+
+def alpha_at(layer, x, y):
+    """Alpha (0-255) d'un calque en coordonnées de l'image, 0 hors du calque."""
+    ox, oy = layer.get_offsets()[1:]
+    if x < ox or y < oy or x >= ox + layer.get_width() or y >= oy + layer.get_height():
+        return 0
+    b = layer.get_buffer()
+    return bytes(b.get(Gegl.Rectangle.new(x - ox, y - oy, 1, 1), 1.0,
+                       "R'G'B'A u8", Gegl.AbyssPolicy.NONE))[3]
+
+
+def square(x, y, s):
+    return ([(x, y), (x + s, y), (x + s, y + s), (x, y + s)], True)
+
+
+def scene(w, h, shapes, fill=True, stroke=True, sw=2):
+    """Image avec un calque vectoriel fait de @shapes, séparé en objets."""
+    im = Gimp.Image.new(w, h, Gimp.ImageBaseType.RGB)
+    pa = Gimp.Path.new(im, "Formes")
+    im.insert_path(pa, None, 0)
+    for pts, closed in shapes:
+        st = pa.bezier_stroke_new_moveto(*pts[0])
+        for x, y in pts[1:]:
+            pa.bezier_stroke_lineto(st, x, y)
+        if closed:
+            pa.stroke_close(st)
+    vl = Gimp.VectorLayer.new(im, pa)
+    im.insert_layer(vl, None, 0)
+    vl.set_enable_fill(fill); vl.set_enable_stroke(stroke); vl.set_stroke_width(sw)
+    vl.refresh()
+    im.set_selected_layers([vl])
+    c = functools.partial(vcmd, im)
+    c("split-new")
+    return im, vl, c
+
+
+def all_layers(ls):
+    for l in ls:
+        yield l
+        if isinstance(l, Gimp.GroupLayer):
+            yield from all_layers(l.get_children())
 
 
 try:
@@ -551,20 +622,9 @@ try:
         runpy.run_path(os.path.join(repo, "tools", "fixtures", "make_pdf.py"))["write"](
             os.path.join(vdir, "test.pdf"))
 
-        def flat(ls):
-            for l in ls:
-                yield l
-                if isinstance(l, Gimp.GroupLayer):
-                    yield from flat(l.get_children())
-
         def load_v(name):
             im = Gimp.file_load(Gimp.RunMode.NONINTERACTIVE, Gio.File.new_for_path(os.path.join(vdir, name)))
-            return im, list(flat(im.get_layers()))
-
-        def vxml(layer):
-            # 3.27.2 (lot V4) : objets d'un calque vectoriel (XML du modèle)
-            r = run("chopgimp-vobjects-get-xml", layer=layer)
-            return r.index(1) if r is not None and r.index(0) == Gimp.PDBStatusType.SUCCESS else ""
+            return im, list(all_layers(im.get_layers()))
 
         def n_objects(layers):
             return sum(vxml(l).count("<path ") for l in layers if isinstance(l, Gimp.VectorLayer))
@@ -601,7 +661,7 @@ try:
                'inkscape:label="Caché"' in txt and "<text" in txt,
                "SVG : export valide (nombres, calques Inkscape, calque masqué, texte)")
         im2 = Gimp.file_load(Gimp.RunMode.NONINTERACTIVE, Gio.File.new_for_path(out_svg))
-        by2 = {l.get_name(): l for l in flat(im2.get_layers())}
+        by2 = {l.get_name(): l for l in all_layers(im2.get_layers())}
         report("Fond" in by2 and "Caché" in by2 and not by2["Caché"].get_visible() and
                any(isinstance(l, Gimp.TextLayer) for l in by2.values()),
                "SVG : aller-retour (groupes, visibilité, texte)")
@@ -700,11 +760,6 @@ try:
     try:
         im = test_image()
 
-        def all_layers(ls):
-            for l in ls:
-                yield l
-                if isinstance(l, Gimp.GroupLayer):
-                    yield from all_layers(l.get_children())
         n0 = len(list(all_layers(im.get_layers())))
         r1 = run("chopgimp-fill-color", **{"run-mode": Gimp.RunMode.NONINTERACTIVE, "image": im,
                                            "drawables": []})
@@ -858,22 +913,18 @@ try:
             l.merge_filters()
             return im, l
 
-        def px(l, x, y):
-            ok_, x0, y0 = l.get_offsets()
-            return tuple(round(c * 255) for c in l.get_pixel(x - x0, y - y0).get_rgba_with_space(None))
-
         im, l = contour_img({"width": 6.0})
-        out = px(l, 47, 100); inn = px(l, 53, 100); far = px(l, 30, 100)
+        out = rgba_at(l, 47, 100); inn = rgba_at(l, 53, 100); far = rgba_at(l, 30, 100)
         report(out[3] > 200 and out[0] < 60 and inn[0] > 200 and far[3] == 0,
                "Contour : extérieur noir autour de l'objet", "%s %s %s" % (out, inn, far))
         im.delete()
         im, l = contour_img({"width": 6.0, "position": 2})
-        out = px(l, 47, 100); inn = px(l, 53, 100); mid = px(l, 100, 100)
+        out = rgba_at(l, 47, 100); inn = rgba_at(l, 53, 100); mid = rgba_at(l, 100, 100)
         report(out[3] == 0 and inn[0] < 60 and inn[3] > 200 and mid[0] > 200,
                "Contour : intérieur", "%s %s %s" % (out, inn, mid))
         im.delete()
         im, l = contour_img({"width": 4.0, "dash-preset": 2})
-        alphas = [px(l, 47, y)[3] for y in range(55, 145)]
+        alphas = [rgba_at(l, 47, y)[3] for y in range(55, 145)]
         report(min(alphas) < 40 and max(alphas) > 200, "Contour : pointillés", str(alphas[:12]))
         im.delete()
     except Exception as e:
@@ -881,10 +932,6 @@ try:
 
     # 3.27.3 (lot V5, V6 point 4) : Vectoriser, vectorisation dynamique
     try:
-        def trace_xml(layer):
-            r = run("chopgimp-vobjects-get-xml", layer=layer)
-            return r.index(1) if r is not None and r.index(0) == Gimp.PDBStatusType.SUCCESS else ""
-
         def trace(drawable, options, sel=False, live=True):
             r = run("chopgimp-image-trace", drawable=drawable, options=options,
                     **{"selection-only": sel, "live": live})
@@ -908,7 +955,7 @@ try:
         logo.edit_fill(Gimp.FillType.FOREGROUND)
         Gimp.Selection.none(im)
         vl = trace(logo, "bw-logo")
-        x = trace_xml(vl) if vl else ""
+        x = vxml(vl) if vl else ""
         report(vl is not None and isinstance(vl, Gimp.VectorLayer) and x.count("<path ") >= 2 and
                vl.get_parasite("chopgimp-trace") is not None,
                "Vectoriser : logo noir et blanc → calque vectoriel à objets, dynamique",
@@ -923,14 +970,14 @@ try:
             col.edit_fill(Gimp.FillType.FOREGROUND)
         Gimp.Selection.none(im2)
         cl = trace(col, "6-colors;ignore-white=0")
-        cx = trace_xml(cl) if cl else ""
+        cx = vxml(cl) if cl else ""
         report(cl is not None and cx.count("<path ") >= 3 and cx.count("<group ") >= 3,
                "Vectoriser : image en couleurs → objets groupés par couleur",
                "%d objets, %d groupes" % (cx.count("<path "), cx.count("<group ")))
         # sélection seulement : le carré seul
         im.select_rectangle(Gimp.ChannelOps.REPLACE, 170, 40, 110, 110)
         sl = trace(logo, "bw-logo", sel=True, live=False)
-        sx = trace_xml(sl) if sl else ""
+        sx = vxml(sl) if sl else ""
         Gimp.Selection.none(im)
         report(sl is not None and sx.count("<path ") == 1 and sl.get_parasite("chopgimp-trace") is None,
                "Vectoriser : sélection seulement, sans vectorisation dynamique",
@@ -951,7 +998,7 @@ try:
             imx = Gimp.file_load(Gimp.RunMode.NONINTERACTIVE, Gio.File.new_for_path(xcf))
             vx = [l for l in imx.get_layers() if isinstance(l, Gimp.VectorLayer) and
                   l.get_parasite("chopgimp-trace") is not None]
-            okx = len(vx) == 1 and trace_xml(vx[0]).count("<path ") >= 2
+            okx = len(vx) == 1 and vxml(vx[0]).count("<path ") >= 2
             report(okx and trace_cmd(vx[0], "edited") == (True, "0"),
                    "Vectorisation dynamique : aller-retour XCF",
                    "%d calques dynamiques" % len(vx))
@@ -961,10 +1008,10 @@ try:
             report(dup.get_parasite("chopgimp-trace") is not None,
                    "Vectorisation dynamique : gardée par la copie du calque")
             # décomposer : le parasite part, les objets restent
-            n = trace_xml(vl).count("<path ")
+            n = vxml(vl).count("<path ")
             done, _ = trace_cmd(vl, "expand")
             report(done and vl.get_parasite("chopgimp-trace") is None and
-                   trace_xml(vl).count("<path ") == n,
+                   vxml(vl).count("<path ") == n,
                    "Vectorisation dynamique : Décomposer", "%d objets" % n)
             imx.delete()
         im.delete()
@@ -977,7 +1024,7 @@ try:
         import re, math
 
         def coords(layer):
-            x = trace_xml(layer)
+            x = vxml(layer)
             nums = []
             for d in re.findall(r' d="([^"]*)"', x):
                 nums += [float(v) for v in re.findall(r'-?[0-9.]+(?:e-?[0-9]+)?', d)]
@@ -985,7 +1032,7 @@ try:
             return (min(xs), min(ys), max(xs), max(ys)) if xs else (0, 0, 0, 0)
 
         def anchors(layer):
-            return sum(d.count("C") + d.count("M") for d in re.findall(r' d="([^"]*)"', trace_xml(layer)))
+            return sum(d.count("C") + d.count("M") for d in re.findall(r' d="([^"]*)"', vxml(layer)))
 
         def near(a, b, tol=1.5):
             return all(abs(u - v) <= tol for u, v in zip(a, b))
@@ -1033,7 +1080,7 @@ try:
         b = coords(vp) if vp else (0, 0, 0, 0)
         report(vp is not None and b[2] <= 1280.01 and b[3] <= 960.01 and b[2] > 1000,
                "Vectoriser : pixel art agrandi 8× tracé à sa taille d'origine",
-               "%.1f s, %d objets, cadre %s" % (dt, trace_xml(vp).count("<path ") if vp else 0,
+               "%.1f s, %d objets, cadre %s" % (dt, vxml(vp).count("<path ") if vp else 0,
                                                  tuple(round(v) for v in b)))
         # une grande image qui n'est pas du pixel art : refus clair, qui propose potrace
         lp2 = Gimp.Layer.new(imp, "Dégradé", 1280, 960, Gimp.ImageType.RGB_IMAGE, 100, Gimp.LayerMode.NORMAL)
@@ -1144,7 +1191,7 @@ try:
             imx3.delete()
             imc.delete()
             # une vraie modification reste détectée
-            x = trace_xml(vt)
+            x = vxml(vt)
             run("chopgimp-vobjects-set-xml", layer=vt, xml=x.replace('color="0 0 0 1"', 'color="1 0 0 1"', 1))
             report(trace_cmd(vt, "edited")[1] == "1", "Vectorisation dynamique : modification détectée après transformations")
         imt.delete()
@@ -1162,10 +1209,6 @@ try:
             data = buf.get(rect, 1.0, "A u8", Gegl.AbyssPolicy.NONE)
             return sum(data) / 255.0
 
-        def vxml(layer):
-            r = run("chopgimp-vobjects-get-xml", layer=layer)
-            return r.index(1) if r is not None and r.index(0) == Gimp.PDBStatusType.SUCCESS else ""
-
         imw = Gimp.Image.new(400, 300, Gimp.ImageBaseType.RGB)
         bgw = Gimp.Layer.new(imw, "Fond", 400, 300, Gimp.ImageType.RGB_IMAGE, 100, Gimp.LayerMode.NORMAL)
         imw.insert_layer(bgw, None, 0)
@@ -1179,9 +1222,7 @@ try:
         vw.refresh()
         imw.set_selected_layers([vw])
 
-        def ocmd(c):
-            r = run("chopgimp-vobjects-command", image=imw, command=c)
-            return r is not None and r.index(0) == Gimp.PDBStatusType.SUCCESS and r.index(1)
+        ocmd = functools.partial(vcmd, imw)
 
         ocmd("split-new")
         ocmd("select-all")
@@ -1320,14 +1361,6 @@ try:
     try:
         import re
 
-        def vxml2(layer):
-            r = run("chopgimp-vobjects-get-xml", layer=layer)
-            return r.index(1) if r is not None and r.index(0) == Gimp.PDBStatusType.SUCCESS else ""
-
-        def px(l, x, y):
-            ok, x0, y0 = l.get_offsets()
-            return tuple(round(c * 255) for c in l.get_pixel(x - x0, y - y0).get_rgba_with_space(None))
-
         iml = Gimp.Image.new(300, 300, Gimp.ImageBaseType.RGB)
         bgl = Gimp.Layer.new(iml, "Fond", 300, 300, Gimp.ImageType.RGB_IMAGE, 100, Gimp.LayerMode.NORMAL)
         iml.insert_layer(bgl, None, 0)
@@ -1345,26 +1378,24 @@ try:
         vl2.refresh()
         iml.set_selected_layers([vl2])
 
-        def lcmd(c):
-            r = run("chopgimp-vobjects-command", image=iml, command=c)
-            return r is not None and r.index(0) == Gimp.PDBStatusType.SUCCESS and r.index(1)
+        lcmd = functools.partial(vcmd, iml)
 
         lcmd("split-new"); lcmd("select-all")
         ok_mk = lcmd("livepaint-make")
-        x = vxml2(vl2)
+        x = vxml(vl2)
         nf = x.count('livepaint="face"')
         report(ok_mk and 'livepaint="group' in x and nf == 4 and x.count('livepaint="edge') >= 8,
                "Peinture dynamique : 4 zones et les segments d'un rectangle coupé par une croix",
                "%d zones, %d segments" % (nf, x.count('livepaint="edge')))
         ok_f = lcmd("livepaint-fill:100:100:#ff0000")
-        p1 = px(vl2, 100, 100); p2 = px(vl2, 200, 100)
+        p1 = rgba_at(vl2, 100, 100); p2 = rgba_at(vl2, 200, 100)
         report(ok_f and p1[:3] == (255, 0, 0) and p1[3] == 255 and p2[3] == 0,
                "Peinture dynamique : le pot remplit une seule zone", "%s / %s" % (p1, p2))
         ok_s = lcmd("livepaint-stroke:150:100:#0000ff")
-        report(ok_s and 'color="0 0 1 1"' in vxml2(vl2), "Peinture dynamique : peindre un segment")
+        report(ok_s and 'color="0 0 1 1"' in vxml(vl2), "Peinture dynamique : peindre un segment")
 
         # la ligne verticale bouge (-30 px) : les zones suivent, le rouge reste à sa zone
-        x = vxml2(vl2)
+        x = vxml(vl2)
         src = x.index('livepaint="sources"')
         # le sous-chemin vertical x = 150 passe à x = 120 (dans le groupe masqué des tracés)
         def mv(m):
@@ -1373,26 +1404,26 @@ try:
         x2 = x[:src] + re.sub(r' d="[^"]*"', mv, x[src:])
         report(x2 != x, "Peinture dynamique : tracé vertical trouvé pour le déplacer")
         run("chopgimp-vobjects-set-xml", layer=vl2, xml=x2)
-        x3 = vxml2(vl2)
-        q1 = px(vl2, 80, 100); q2 = px(vl2, 135, 100)
+        x3 = vxml(vl2)
+        q1 = rgba_at(vl2, 80, 100); q2 = rgba_at(vl2, 135, 100)
         report(x3.count('livepaint="face"') == 4 and q1[:3] == (255, 0, 0) and q1[3] == 255 and q2[3] == 0,
                "Peinture dynamique : les zones suivent un tracé déplacé", "%s / %s" % (q1, q2))
         lcmd("livepaint-select:80:100")
         ok_g = lcmd("livepaint-gap:5")
-        report(ok_g and "gap=5" in vxml2(vl2), "Peinture dynamique : options d'écarts")
+        report(ok_g and "gap=5" in vxml(vl2), "Peinture dynamique : options d'écarts")
 
         xcf = os.path.join(TMP, "peinture-dynamique.xcf")
         Gimp.file_save(Gimp.RunMode.NONINTERACTIVE, iml, Gio.File.new_for_path(xcf), None)
         imx = Gimp.file_load(Gimp.RunMode.NONINTERACTIVE, Gio.File.new_for_path(xcf))
         vx = [l for l in imx.get_layers() if l.is_vector_layer()]
-        xx = vxml2(vx[0]) if vx else ""
+        xx = vxml(vx[0]) if vx else ""
         report(xx.count('livepaint="face"') == 4 and 'color="1 0 0 1"' in xx,
                "Peinture dynamique : aller-retour XCF")
         imx.delete()
 
         lcmd("livepaint-select:80:100")
         ok_e = lcmd("livepaint-expand")
-        xe = vxml2(vl2)
+        xe = vxml(vl2)
         report(ok_e and "livepaint" not in xe and 'color="1 0 0 1"' in xe,
                "Peinture dynamique : décomposer", "%d objets" % xe.count("<path "))
         iml.delete()
@@ -1411,25 +1442,23 @@ try:
         vs.refresh()
         ims.set_selected_layers([vs])
 
-        def scmd(c):
-            r = run("chopgimp-vobjects-command", image=ims, command=c)
-            return r is not None and r.index(0) == Gimp.PDBStatusType.SUCCESS and r.index(1)
+        scmd = functools.partial(vcmd, ims)
 
         scmd("split-new"); scmd("select-all")
         ok_n = scmd("symbol-new:Fleur")
         par = ims.get_parasite("chopgimp-symbols")
         ptxt = bytes(par.get_data()).decode() if par else ""
-        report(ok_n and 'name="Fleur"' in ptxt and 'symbol="s1"' in vxml2(vs),
+        report(ok_n and 'name="Fleur"' in ptxt and 'symbol="s1"' in vxml(vs),
                "Symboles : nouveau symbole (définition dans l'image, première occurrence)")
         ok_p = scmd("symbol-place:s1")
-        xs = vxml2(vs)
+        xs = vxml(vs)
         report(ok_p and xs.count('symbol="s1"') == 2, "Symboles : placer une occurrence",
                "%d occurrence(s)" % xs.count('symbol="s1"'))
         # modifier une occurrence hors de « Modifier le symbole » : elle seule quitte le symbole
         m = re.search(r'<fill type="color" color="[^"]*"', xs)
         xs_out = xs[:m.start()] + '<fill type="color" color="0 0 1 1"' + xs[m.end():] if m else xs
         run("chopgimp-vobjects-set-xml", layer=vs, xml=xs_out)
-        xo = vxml2(vs)
+        xo = vxml(vs)
         report(xo.count('symbol="s1"') == 1 and xo.count('color="0 0 1 1"') == 1,
                "Symboles : une occurrence modifiée hors du mode « Modifier le symbole » quitte le symbole",
                "%d occurrence(s)" % xo.count('symbol="s1"'))
@@ -1440,7 +1469,7 @@ try:
         p_before = bytes(par.get_data()).decode() if par else ""
         ok_ed = scmd("symbol-edit:s1")
         ok_al = scmd("align-left")
-        xs3 = vxml2(vs)
+        xs3 = vxml(vs)
         par = ims.get_parasite("chopgimp-symbols")
         ptxt = bytes(par.get_data()).decode() if par else ""
         occs = re.findall(r'<group [^>]*symbol="s1"[^>]*>(.*?)</group>', xs3, re.S)
@@ -1453,13 +1482,13 @@ try:
         imx = Gimp.file_load(Gimp.RunMode.NONINTERACTIVE, Gio.File.new_for_path(xcf))
         px2 = imx.get_parasite("chopgimp-symbols")
         vx = [l for l in imx.get_layers() if l.is_vector_layer()]
-        report(px2 is not None and vx and vxml2(vx[0]).count('symbol="s1"') == 2,
+        report(px2 is not None and vx and vxml(vx[0]).count('symbol="s1"') == 2,
                "Symboles : aller-retour XCF")
         imx.delete()
-        run("chopgimp-vobjects-set-xml", layer=vs, xml=vxml2(vs))   # sort de l'occurrence ouverte
+        run("chopgimp-vobjects-set-xml", layer=vs, xml=vxml(vs))   # sort de l'occurrence ouverte
         scmd("select-all")
         ok_b = scmd("symbol-break")
-        report(ok_b and vxml2(vs).count('symbol="s1"') == 0, "Symboles : rompre le lien")
+        report(ok_b and vxml(vs).count('symbol="s1"') == 0, "Symboles : rompre le lien")
         # import SVG : <symbol> / <use> → symbole et occurrences
         svgp = os.path.join(TMP, "symboles.svg")
         open(svgp, "w").write('<svg xmlns="http://www.w3.org/2000/svg" '
@@ -1472,7 +1501,7 @@ try:
         psv = imsv.get_parasite("chopgimp-symbols")
         tsv = bytes(psv.get_data()).decode() if psv else ""
         vsv = [l for l in imsv.get_layers() if l.is_vector_layer()]
-        nsv = sum(vxml2(l).count('symbol="svg-carre"') for l in vsv)
+        nsv = sum(vxml(l).count('symbol="svg-carre"') for l in vsv)
         report('id="svg-carre"' in tsv and nsv == 2, "Symboles : import SVG <symbol> / <use>",
                "%d occurrence(s)" % nsv)
         imsv.delete()
@@ -1490,10 +1519,6 @@ try:
     try:
         import re
 
-        def vx3(layer):
-            r = run("chopgimp-vobjects-get-xml", layer=layer)
-            return r.index(1) if r is not None and r.index(0) == Gimp.PDBStatusType.SUCCESS else ""
-
         im3 = Gimp.Image.new(300, 300, Gimp.ImageBaseType.RGB)
         bg3 = Gimp.Layer.new(im3, "Fond", 300, 300, Gimp.ImageType.RGB_IMAGE, 100, Gimp.LayerMode.NORMAL)
         im3.insert_layer(bg3, None, 0)
@@ -1509,12 +1534,10 @@ try:
         vl3.refresh()
         im3.set_selected_layers([vl3])
 
-        def c3(c):
-            r = run("chopgimp-vobjects-command", image=im3, command=c)
-            return r is not None and r.index(0) == Gimp.PDBStatusType.SUCCESS and r.index(1)
+        c3 = functools.partial(vcmd, im3)
 
         c3("split-new"); c3("select-all")
-        ws = lambda: [float(v) for v in re.findall(r'<stroke[^>]*?\swidth="([0-9.]+)"', vx3(vl3))]
+        ws = lambda: [float(v) for v in re.findall(r'<stroke[^>]*?\swidth="([0-9.]+)"', vxml(vl3))]
         w0 = ws()
         c3("scale-strokes:0"); ok_sc = c3("scale-objects:2")
         w1 = ws()
@@ -1540,20 +1563,20 @@ try:
         c3("select-all")
         ok_w = c3("distort-warp:arc:50")
         ok_m = c3("distort-to-mesh")
-        xm = vx3(vl3)
+        xm = vxml(vl3)
         report(ok_w and ok_m and "mode=mesh" in xm and "mode=warp" not in xm,
                "Convertir la déformation en maille")
 
         # Décomposer : la distorsion seulement, les autres effets restent
         c3("distort-release")
         o_lpe = run("chopgimp-vobjects-command", image=im3, command="distort-warp:flag:40")
-        xs = vx3(vl3)
+        xs = vxml(vl3)
         # un effet vivant ajouté à la main (zigzag) sous la distorsion
         xs2 = xs.replace("<lpe>", "<lpe>[9]\ntype=roughen\nsize=2\nseed=1\n", 1)
         ok_set = run("chopgimp-vobjects-set-xml", layer=vl3, xml=xs2) if xs2 != xs else None
         c3("select-all")
         ok_e = c3("distort-expand")
-        xe = vx3(vl3)
+        xe = vxml(vl3)
         report(ok_e and "distort" not in xe and ("roughen" in xe or xs2 == xs),
                "Décomposer : seulement la distorsion",
                "effet restant : %s" % ("roughen" in xe))
@@ -1628,10 +1651,6 @@ try:
     try:
         import re
 
-        def vx9(layer):
-            r = run("chopgimp-vobjects-get-xml", layer=layer)
-            return r.index(1) if r is not None and r.index(0) == Gimp.PDBStatusType.SUCCESS else ""
-
         im9 = Gimp.Image.new(320, 320, Gimp.ImageBaseType.RGB)
         b9 = Gimp.Layer.new(im9, "Fond", 320, 320, Gimp.ImageType.RGB_IMAGE, 100, Gimp.LayerMode.NORMAL)
         im9.insert_layer(b9, None, 0)
@@ -1652,19 +1671,17 @@ try:
         vl9.refresh()
         im9.set_selected_layers([vl9])
 
-        def c9(c):
-            r = run("chopgimp-vobjects-command", image=im9, command=c)
-            return bool(r is not None and r.index(0) == Gimp.PDBStatusType.SUCCESS and r.index(1))
+        c9 = functools.partial(vcmd, im9)
 
-        n9 = lambda: vx9(vl9).count("<path ")
+        n9 = lambda: vxml(vl9).count("<path ")
         c9("split-new")
         n0 = n9()
 
         c9("select-all")
         ok_c = c9("corners:8:round")
-        x_c = vx9(vl9)
+        x_c = vxml(vl9)
         ok_c0 = c9("corners:0")
-        report(ok_c and "type=corners" in x_c and "type=corners" not in vx9(vl9),
+        report(ok_c and "type=corners" in x_c and "type=corners" not in vxml(vl9),
                "Angles dynamiques : ajoutés puis retirés", "%d objets" % n0)
 
         ok_cut = c9("cut-at:60:250")
@@ -1714,10 +1731,6 @@ try:
     # Transition, filet de dégradé, dégradé libre, dégradé du contour,
     # masque d'opacité, motifs vectoriels
     try:
-        def vx10(layer):
-            r = run("chopgimp-vobjects-get-xml", layer=layer)
-            return r.index(1) if r is not None and r.index(0) == Gimp.PDBStatusType.SUCCESS else ""
-
         im10 = Gimp.Image.new(400, 300, Gimp.ImageBaseType.RGB)
         b10 = Gimp.Layer.new(im10, "Fond", 400, 300, Gimp.ImageType.RGB_IMAGE, 100, Gimp.LayerMode.NORMAL)
         im10.insert_layer(b10, None, 0)
@@ -1737,27 +1750,25 @@ try:
         vl10.refresh()
         im10.set_selected_layers([vl10])
 
-        def c10(c):
-            r = run("chopgimp-vobjects-command", image=im10, command=c)
-            return bool(r is not None and r.index(0) == Gimp.PDBStatusType.SUCCESS and r.index(1))
+        c10 = functools.partial(vcmd, im10)
 
         c10("split-new")
 
         # Transition entre les quatre carrés (objets clés, dans l'ordre)
         ok_s = c10("select-at:50:50")
         c10("select-all")
-        n_all = vx10(vl10).count("<path ")
+        n_all = vxml(vl10).count("<path ")
         ok_b = c10("blend-make")
-        x_b = vx10(vl10)
+        x_b = vxml(vl10)
         ok_st = c10("blend-steps:5")
-        x_s = vx10(vl10)
+        x_s = vxml(vl10)
         report(ok_s and ok_b and 'blend="blend' in x_b and ok_st and
                x_s.count('blend="step"') == 5 * (n_all - 1),
                "Transition : étapes générées puis 5 étapes par paire",
                "%d objets clés, %d étapes" % (n_all, x_s.count('blend="step"')))
         ok_rv = c10("blend-reverse")
         ok_ex = c10("blend-expand")
-        x_e = vx10(vl10)
+        x_e = vxml(vl10)
         report(ok_rv and ok_ex and "blend=" not in x_e and x_e.count("<path ") == n_all + 5 * (n_all - 1),
                "Transition : inverser puis décomposer", "%d objets" % x_e.count("<path "))
         im10.delete()
@@ -1782,23 +1793,21 @@ try:
         vl11.refresh()
         im11.set_selected_layers([vl11])
 
-        def c11(c):
-            r = run("chopgimp-vobjects-command", image=im11, command=c)
-            return bool(r is not None and r.index(0) == Gimp.PDBStatusType.SUCCESS and r.index(1))
+        c11 = functools.partial(vcmd, im11)
 
         c11("split-new")
 
         ok_sel = c11("select-at:300:80")
         ok_m = c11("mesh-make:2:3:1:0.8")
         ok_mi = c11("mesh-insert:0.5:0.5:#ff0000")
-        x_m = vx10(vl11)
+        x_m = vxml(vl11)
         report(ok_sel and ok_m and 'type="mesh"' in x_m and ok_mi and 'material="3 4;' in x_m,
                "Filet de dégradé : créé (2 × 3) puis une rangée et une colonne ajoutées")
 
         c11("select-at:275:225")
         ok_f = c11("freeform-make")
         ok_g = c11("stroke-gradient:1")
-        x_f = vx10(vl11)
+        x_f = vxml(vl11)
         report(ok_f and 'type="freeform"' in x_f and ok_g and 'stroke-gradient="1"' in x_f,
                "Dégradé libre et dégradé le long du contour")
 
@@ -1806,12 +1815,12 @@ try:
         c11("select-none")
         c11("select-all")
         ok_om = c11("opmask-make")
-        x_o = vx10(vl11)
+        x_o = vxml(vl11)
         ok_ot = c11("opmask-toggle:4")
-        x_o2 = vx10(vl11)
+        x_o2 = vxml(vl11)
         ok_or = c11("opmask-release")
         report(ok_om and 'opmask="3"' in x_o and ok_ot and 'opmask="7"' in x_o2 and ok_or and
-               "opmask=" not in vx10(vl11),
+               "opmask=" not in vxml(vl11),
                "Masque d'opacité : créé (découpe), inversé, libéré")
 
         # motif : le petit carré devient un motif, appliqué au grand
@@ -1820,7 +1829,7 @@ try:
         c11("select-at:300:80")
         ok_pa = c11("pattern-apply:Damier")
         ok_pt = c11("pattern-type:hex")
-        x_p = vx10(vl11)
+        x_p = vxml(vl11)
         report(ok_pm and ok_pa and 'type="vpattern"' in x_p and ok_pt and "type=hex" in x_p,
                "Motif vectoriel : créé, appliqué, pavage hexagonal")
 
@@ -1851,15 +1860,13 @@ try:
         vl12.refresh()
         im12.set_selected_layers([vl12])
 
-        def c12(c):
-            r = run("chopgimp-vobjects-command", image=im12, command=c)
-            return bool(r is not None and r.index(0) == Gimp.PDBStatusType.SUCCESS and r.index(1))
+        c12 = functools.partial(vcmd, im12)
 
         c12("split-new")
         ok12 = c12("select-at:25:105") and c12("select-add-at:355:105") and c12("blend-make")
         c12("blend-steps:3")
         ok12s = c12("select-at:25:105") and c12("select-add-at:190:20") and c12("blend-spine")
-        x12 = vx10(vl12)
+        x12 = vxml(vl12)
         ys12 = []
         for blk in re12.findall(r'blend="step"[^>]*d="([^"]*)"', x12):
             nums = [float(t) for t in re12.findall(r'-?[0-9.]+', blk)]
@@ -1884,7 +1891,7 @@ try:
         run("chopgimp-vobjects-command", image=im13, command="split-new")
         run("chopgimp-vobjects-command", image=im13, command="select-all")
         r13 = run("chopgimp-vobjects-command", image=im13, command="knife:150:50:150:250")
-        x13 = vx10(vl13)
+        x13 = vxml(vl13)
         report(r13 is not None and r13.index(0) == Gimp.PDBStatusType.SUCCESS and
                x13.count("<path ") == 2,
                "Cutter : un tracé ouvert tranché en deux", "%d objets" % x13.count("<path "))
@@ -1904,20 +1911,6 @@ try:
     try:
         import random as _r
 
-        def px(layer):
-            b = layer.get_buffer()
-            e = b.get_extent()
-            return (layer.get_offsets()[1:], e.width, e.height,
-                    bytes(b.get(e, 1.0, "R'G'B'A u8", Gegl.AbyssPolicy.NONE)))
-
-        def vx2(layer):
-            r = run("chopgimp-vobjects-get-xml", layer=layer)
-            return r.index(1) if r is not None and r.index(0) == Gimp.PDBStatusType.SUCCESS else ""
-
-        def vc2(image, c):
-            r = run("chopgimp-vobjects-command", image=image, command=c)
-            return r is not None and r.index(0) == Gimp.PDBStatusType.SUCCESS and r.index(1)
-
         imf = Gimp.Image.new(400, 400, Gimp.ImageBaseType.RGB)
         pf = Gimp.Path.new(imf, "Formes")
         imf.insert_path(pf, None, 0)
@@ -1932,21 +1925,21 @@ try:
         imf.insert_layer(vf, None, 0)
         vf.refresh()
         imf.set_selected_layers([vf])
-        vc2(imf, "split-new")
-        p0 = px(vf)
-        vc2(imf, "select-all")
-        moved = vc2(imf, "drag-sim:1.3:0.7:30")
-        p1 = px(vf)
-        x1 = vx2(vf)
-        u = vc2(imf, "bench-undo")
-        p2 = px(vf)
+        vcmd(imf, "split-new")
+        p0 = layer_bytes(vf)
+        vcmd(imf, "select-all")
+        moved = vcmd(imf, "drag-sim:1.3:0.7:30")
+        p1 = layer_bytes(vf)
+        x1 = vxml(vf)
+        u = vcmd(imf, "bench-undo")
+        p2 = layer_bytes(vf)
         report(u and p2 == p0, "3.29.2 annuler (copie de l'arbre) : pixels d'origine",
                "annulé=%s" % u)
-        rr = vc2(imf, "bench-redo")
-        p3 = px(vf)
+        rr = vcmd(imf, "bench-redo")
+        p3 = layer_bytes(vf)
         report(rr and p3 == p1, "3.29.2 rétablir : pixels après le glisser", "rétabli=%s" % rr)
         run("chopgimp-vobjects-set-xml", layer=vf, xml=x1)
-        p1b = px(vf)
+        p1b = layer_bytes(vf)
         report(moved and p1 == p1b and p1 != p0,
                "3.29.2 glisser par caches : rendu final identique à un rendu complet",
                "déplacé=%s identique=%s" % (moved, p1 == p1b))
@@ -1955,7 +1948,7 @@ try:
         Gimp.file_save(Gimp.RunMode.NONINTERACTIVE, imf, Gio.File.new_for_path(pathf), None)
         imf2 = Gimp.file_load(Gimp.RunMode.NONINTERACTIVE, Gio.File.new_for_path(pathf))
         lf2 = [l for l in imf2.get_layers() if l.get_name() == vf.get_name()]
-        report(bool(lf2) and px(lf2[0]) == p3 and vx2(lf2[0]).count("<path") == x1.count("<path"),
+        report(bool(lf2) and layer_bytes(lf2[0]) == p3 and vxml(lf2[0]).count("<path") == x1.count("<path"),
                "3.29.2 XCF rouvert sans rendu de l'ancien tracé : mêmes pixels, mêmes objets")
         imf2.delete()
         imf.delete()
@@ -1981,13 +1974,9 @@ try:
         im14.set_selected_layers([vl14])
         run("chopgimp-vobjects-command", image=im14, command="split-new")
 
-        def vx14():
-            r = run("chopgimp-vobjects-get-xml", layer=vl14)
-            return r.index(1) if r is not None and r.index(0) == Gimp.PDBStatusType.SUCCESS else ""
-
-        n0 = vx14().count("<path ")
+        n0 = vxml(vl14).count("<path ")
         r = run("chopgimp-vobjects-command", image=im14, command="delete-smaller:100")
-        n1 = vx14().count("<path ")
+        n1 = vxml(vl14).count("<path ")
         report(r is not None and r.index(0) == Gimp.PDBStatusType.SUCCESS and n0 == 4 and n1 == 3,
                "Supprimer les petits objets (côté < 10 px)", "%d → %d objets" % (n0, n1))
         run("chopgimp-vobjects-command", image=im14, command="select-at:60:60")
@@ -1999,25 +1988,25 @@ try:
                "Objet suivant dessus (Ctrl+Alt+])")
         r = run("chopgimp-vobjects-command", image=im14, command="simplify:1.5")
         report(r is not None and r.index(0) == Gimp.PDBStatusType.SUCCESS and
-               vx14().count("<path ") == 3, "Simplifier (sans perte d'objet)")
+               vxml(vl14).count("<path ") == 3, "Simplifier (sans perte d'objet)")
         r = run("chopgimp-vobjects-command", image=im14, command="fill-holes:100")
         report(r is not None and r.index(0) == Gimp.PDBStatusType.SUCCESS,
                "Remplir les petits trous")
         # 3.29.3 (suite) : aperçu de Simplifier annulé, Couleurs du dessin
         import re
-        x_before = vx14()
+        x_before = vxml(vl14)
         r = run("chopgimp-vobjects-command", image=im14, command="simplify-preview:30")
-        report(r is not None and r.index(0) == Gimp.PDBStatusType.SUCCESS and vx14() == x_before,
+        report(r is not None and r.index(0) == Gimp.PDBStatusType.SUCCESS and vxml(vl14) == x_before,
                "Simplifier : aperçu en direct puis Annuler (tracés d'origine rendus)")
-        xr = re.sub(r'<fill type="color" color="[^"]*"', '<fill type="color" color="1 0 0 1"', vx14())
+        xr = re.sub(r'<fill type="color" color="[^"]*"', '<fill type="color" color="1 0 0 1"', vxml(vl14))
         run("chopgimp-vobjects-set-xml", layer=vl14, xml=xr)
         r = run("chopgimp-vobjects-command", image=im14, command="replace-color:ff0000ff:00ff00")
-        xr2 = vx14()
+        xr2 = vxml(vl14)
         report(r is not None and r.index(0) == Gimp.PDBStatusType.SUCCESS and r.index(1) and
                'color="0 1 0 1"' in xr2 and 'color="1 0 0 1"' not in xr2,
                "Couleurs du dessin : une couleur remplacée partout")
         r = run("chopgimp-vobjects-command", image=im14, command="merge-same-color")
-        n2 = vx14().count("<path ")
+        n2 = vxml(vl14).count("<path ")
         report(r is not None and r.index(0) == Gimp.PDBStatusType.SUCCESS and n2 == 1,
                "Fusionner les formes de même couleur", "%d objet(s)" % n2)
         im14.delete()
@@ -2040,9 +2029,7 @@ try:
         vl15.refresh()
         im15.set_selected_layers([vl15])
 
-        def c15(c):
-            r = run("chopgimp-vobjects-command", image=im15, command=c)
-            return bool(r is not None and r.index(0) == Gimp.PDBStatusType.SUCCESS and r.index(1))
+        c15 = functools.partial(vcmd, im15)
 
         def px15():
             b = vl15.get_buffer()
@@ -2093,66 +2080,30 @@ try:
     try:
         import re as re16
 
-        def vx16(layer):
-            r = run("chopgimp-vobjects-get-xml", layer=layer)
-            return r.index(1) if r is not None and r.index(0) == Gimp.PDBStatusType.SUCCESS else ""
-
-        def scene16(w, h, shapes, fill=True, stroke=True, sw=2):
-            im = Gimp.Image.new(w, h, Gimp.ImageBaseType.RGB)
-            pa = Gimp.Path.new(im, "Formes")
-            im.insert_path(pa, None, 0)
-            for pts, closed in shapes:
-                st = pa.bezier_stroke_new_moveto(*pts[0])
-                for x, y in pts[1:]:
-                    pa.bezier_stroke_lineto(st, x, y)
-                if closed:
-                    pa.stroke_close(st)
-            vl = Gimp.VectorLayer.new(im, pa)
-            im.insert_layer(vl, None, 0)
-            vl.set_enable_fill(fill); vl.set_enable_stroke(stroke); vl.set_stroke_width(sw)
-            vl.refresh()
-            im.set_selected_layers([vl])
-            def c(cmd):
-                r = run("chopgimp-vobjects-command", image=im, command=cmd)
-                return bool(r is not None and r.index(0) == Gimp.PDBStatusType.SUCCESS and r.index(1))
-            c("split-new")
-            return im, vl, c
-
-        def sq(x, y, s):
-            return ([(x, y), (x + s, y), (x + s, y + s), (x, y + s)], True)
-
-        def alpha16(layer, x, y):
-            ox, oy = layer.get_offsets()[1:]
-            if x < ox or y < oy or x >= ox + layer.get_width() or y >= oy + layer.get_height():
-                return 0
-            b = layer.get_buffer()
-            return bytes(b.get(Gegl.Rectangle.new(x - ox, y - oy, 1, 1), 1.0,
-                               "R'G'B'A u8", Gegl.AbyssPolicy.NONE))[3]
-
         def pixels16(layer):
             b = layer.get_buffer()
             return bytes(b.get(b.get_extent(), 1.0, "R'G'B'A u8", Gegl.AbyssPolicy.NONE))
 
         # objet clé automatique : « Aligner sur : l'objet clé » sans objet
         # clé = l'objet du dessus (ici le second carré, à x = 100)
-        im, vl, c = scene16(300, 200, [sq(20, 20, 40), sq(100, 100, 60)])
+        im, vl, c = scene(300, 200, [square(20, 20, 40), square(100, 100, 60)])
         c("select-all"); c("key-none"); c("align-to:key")
         ok_al = c("align-left")
         c("align-to:selection")
-        report(ok_al and alpha16(vl, 30, 40) == 0 and alpha16(vl, 110, 40) > 0,
+        report(ok_al and alpha_at(vl, 30, 40) == 0 and alpha_at(vl, 110, 40) > 0,
                "Aligner sur l'objet clé sans objet clé : l'objet du dessus sert de clé",
-               "alpha (30,40)=%d (110,40)=%d" % (alpha16(vl, 30, 40), alpha16(vl, 110, 40)))
+               "alpha (30,40)=%d (110,40)=%d" % (alpha_at(vl, 30, 40), alpha_at(vl, 110, 40)))
         im.delete()
 
         # transition entre deux groupes (2 formes chacun) : étapes = groupes
-        im, vl, c = scene16(400, 300, [sq(20, 20, 30), sq(60, 20, 30),
-                                       sq(300, 200, 30), sq(340, 200, 30)])
+        im, vl, c = scene(400, 300, [square(20, 20, 30), square(60, 20, 30),
+                                       square(300, 200, 30), square(340, 200, 30)])
         c("select-at:35:35"); c("select-add-at:75:35"); c("group")
         c("select-at:315:215"); c("select-add-at:355:215"); c("group")
         c("select-at:35:35"); c("select-add-at:315:215")
         ok_bm = c("blend-make")
         ok_bs = c("blend-steps:3")
-        x = vx16(vl)
+        x = vxml(vl)
         steps = re16.findall(r'<group [^>]*blend="step"', x)
         report(ok_bm and ok_bs and len(steps) == 3 and x.count("<path ") == 4 + 3 * 2,
                "Transition : un groupe sert d'objet clé (étapes = groupes interpolés)",
@@ -2161,20 +2112,20 @@ try:
 
         # tracé de base : les objets clés vont sur le tracé ; orienter le
         # long du tracé fait tourner les étapes
-        im, vl, c = scene16(400, 300, [sq(20, 100, 40), sq(320, 100, 40),
+        im, vl, c = scene(400, 300, [square(20, 100, 40), square(320, 100, 40),
                                        ([(100, 250), (200, 60), (300, 250)], False)])
         c("select-at:25:105"); c("select-add-at:355:105"); c("blend-make")
         c("blend-steps:3")
         c("select-at:25:105"); c("select-add-at:200:60")
         ok_sp = c("blend-spine")
-        a_old, a_new = alpha16(vl, 40, 120), alpha16(vl, 100, 250)
+        a_old, a_new = alpha_at(vl, 40, 120), alpha_at(vl, 100, 250)
         report(ok_sp and a_old == 0 and a_new > 0,
                "Transition : le tracé de base déplace les objets clés",
                "alpha ancien centre %d, début du tracé %d" % (a_old, a_new))
         c("select-at:100:250")
-        x0 = vx16(vl)
+        x0 = vxml(vl)
         ok_or = c("blend-steps:3:1")
-        x1 = vx16(vl)
+        x1 = vxml(vl)
         d0 = re16.findall(r'blend="step"[^>]*d="([^"]*)"', x0)
         d1 = re16.findall(r'blend="step"[^>]*d="([^"]*)"', x1)
         report(ok_or and "orient=path" in x1 and len(d1) == 3 and d0 != d1,
@@ -2182,9 +2133,9 @@ try:
         im.delete()
 
         # dégradé libre : mode Lignes (couleurs le long de la ligne)
-        im, vl, c = scene16(200, 200, [sq(20, 20, 160)], stroke=False)
+        im, vl, c = scene(200, 200, [square(20, 20, 160)], stroke=False)
         c("select-all"); c("freeform-make")
-        x = vx16(vl)
+        x = vxml(vl)
         pts = "points;0.1,0.5,#ff0000ff;0.9,0.5,#0000ffff;0.5,0.15,#00ff00ff"
         xa = re16.sub(r'material="points[^"]*"', 'material="%s"' % pts, x)
         run("chopgimp-vobjects-set-xml", layer=vl, xml=xa)
@@ -2192,14 +2143,14 @@ try:
         xb = re16.sub(r'material="points[^"]*"', 'material="%s"' % pts.replace("#0000ffff", "#0000ffff,l"), x)
         run("chopgimp-vobjects-set-xml", layer=vl, xml=xb)
         qb = pixels16(vl)
-        report("#0000ffff,l" in vx16(vl) and qa != qb,
+        report("#0000ffff,l" in vxml(vl) and qa != qb,
                "Dégradé libre : mode Lignes (gardé dans le XML, rendu différent)")
         im.delete()
 
         # dégradé en travers d'un contour à profil : épaisseur locale
-        im, vl, c = scene16(300, 120, [([(20, 60), (280, 60)], False)], fill=False, sw=40)
+        im, vl, c = scene(300, 120, [([(20, 60), (280, 60)], False)], fill=False, sw=40)
         c("select-all"); c("stroke-gradient:2"); c("width-profile:taper-end")
-        x = vx16(vl)
+        x = vxml(vl)
         m = re16.search(r'<stroke ([^>]*?)/>', x)
         ok_x = False
         if m:
@@ -2226,12 +2177,12 @@ try:
         # leur forme), couleurs gardées, plus rapide
         lines = [([(10 + 12 * i, 5), (10 + 12 * i, 395)], False) for i in range(30)] + \
                 [([(5, 10 + 12 * i), (395, 10 + 12 * i)], False) for i in range(30)]
-        im, vl, c = scene16(400, 400, lines, fill=False, sw=1)
+        im, vl, c = scene(400, 400, lines, fill=False, sw=1)
         c("select-all")
         t0 = time.time(); ok_lm = c("livepaint-make"); t_full = time.time() - t0
         c("livepaint-fill:16:16:#ff0000")
         t0 = time.time(); c("livepaint-gap:0.5"); t_inc = time.time() - t0
-        x_inc = vx16(vl)
+        x_inc = vxml(vl)
         # le gain se mesure en relançant ChopGimp avec CHOPGIMP_LP_NO_INCREMENTAL=1
         # (variable lue par le cœur, pas par ce greffon) : 0,25 s au lieu de
         # 0,38 s en 3.99.0 ; ici, couleur gardée et temps raisonnable
@@ -2246,16 +2197,6 @@ try:
     # rastérisation parallèle étendue, annulation partielle)
     try:
         import random as _r
-
-        def vx17(layer):
-            r = run("chopgimp-vobjects-get-xml", layer=layer)
-            return r.index(1) if r is not None and r.index(0) == Gimp.PDBStatusType.SUCCESS else ""
-
-        def px17(layer):
-            b = layer.get_buffer()
-            e = b.get_extent()
-            return (layer.get_offsets()[1:], e.width, e.height,
-                    bytes(b.get(e, 1.0, "R'G'B'A u8", Gegl.AbyssPolicy.NONE)))
 
         def scene17(w, h, n, precision=None, closed=True, seed=5):
             if precision is None:
@@ -2277,18 +2218,16 @@ try:
             vl.set_enable_fill(closed); vl.set_enable_stroke(True); vl.set_stroke_width(3)
             vl.refresh()
             im.set_selected_layers([vl])
-            def c(cmd):
-                r = run("chopgimp-vobjects-command", image=im, command=cmd)
-                return bool(r is not None and r.index(0) == Gimp.PDBStatusType.SUCCESS and r.index(1))
+            c = functools.partial(vcmd, im)
             c("split-new")
             return im, vl, c
 
         # calque 16 bits : même rendu (à 1 près en 8 bits) que le calque 8 bits
         im8, v8, c8 = scene17(300, 300, 30)
-        x8 = vx17(v8)
+        x8 = vxml(v8)
         im16, v16, c16 = scene17(300, 300, 30, Gimp.Precision.U16_NON_LINEAR)
         run("chopgimp-vobjects-set-xml", layer=v16, xml=x8)
-        a, b = px17(v8), px17(v16)
+        a, b = layer_bytes(v8), layer_bytes(v16)
         dmax = max((abs(p - q) for p, q in zip(a[3], b[3])), default=999) if a[:3] == b[:3] else 999
         report(dmax <= 1 and any(a[3][3::4]),
                "3.29.6 calque 16 bits (conversion en flottant) : même rendu que 8 bits",
@@ -2296,7 +2235,7 @@ try:
         im16.delete()
         im32, v32, c32 = scene17(300, 300, 30, Gimp.Precision.FLOAT_LINEAR)
         run("chopgimp-vobjects-set-xml", layer=v32, xml=x8)
-        b = px17(v32)
+        b = layer_bytes(v32)
         dmax = max((abs(p - q) for p, q in zip(a[3], b[3])), default=999) if a[:3] == b[:3] else 999
         report(dmax <= 1, "3.29.6 calque 32 bits linéaire : même rendu que 8 bits",
                "écart max %d" % dmax)
@@ -2307,21 +2246,21 @@ try:
         # sur 30 objets ; deux rendus complets identiques, rien de vide
         im, vl, c = scene17(400, 400, 30, closed=False)
         c("select-all"); c("width-profile:taper-end")
-        x = vx17(vl)
+        x = vxml(vl)
         xa = x.replace("<stroke ", '<stroke arrow-end="triangle" ') if 'arrow-end=' not in x else x
         run("chopgimp-vobjects-set-xml", layer=vl, xml=xa)
-        q1 = px17(vl)
+        q1 = layer_bytes(vl)
         run("chopgimp-vobjects-set-xml", layer=vl, xml=xa)
-        q2 = px17(vl)
+        q2 = layer_bytes(vl)
         report(q1 == q2 and any(q1[3][3::4]),
                "3.29.6 rastérisation parallèle (profils, flèches) : rendu stable",
                "%d x %d" % (q1[1], q1[2]))
         im.delete()
         im, vl, c = scene17(400, 400, 20)
         c("select-all"); ok_ff = c("freeform-make")
-        q1 = px17(vl)
-        run("chopgimp-vobjects-set-xml", layer=vl, xml=vx17(vl))
-        q2 = px17(vl)
+        q1 = layer_bytes(vl)
+        run("chopgimp-vobjects-set-xml", layer=vl, xml=vxml(vl))
+        q2 = layer_bytes(vl)
         report(ok_ff and q1 == q2,
                "3.29.6 rastérisation parallèle (dégradés libres) : identique à un rendu complet")
         im.delete()
@@ -2329,15 +2268,15 @@ try:
         # annulation partielle : deux changements, annuler / rétablir ;
         # objets et pixels exacts à chaque étape
         im, vl, c = scene17(400, 400, 40)
-        x0, p0 = vx17(vl), px17(vl)
+        x0, p0 = vxml(vl), layer_bytes(vl)
         c("select-all"); c("drag-sim:5:3:4")
-        x1, p1 = vx17(vl), px17(vl)
+        x1, p1 = vxml(vl), layer_bytes(vl)
         c("select-all"); c("hide")
-        x2, p2 = vx17(vl), px17(vl)
-        u1 = c("bench-undo"); xu1, pu1 = vx17(vl), px17(vl)
-        u2 = c("bench-undo"); xu2, pu2 = vx17(vl), px17(vl)
-        r1 = c("bench-redo"); xr1, pr1 = vx17(vl), px17(vl)
-        r2 = c("bench-redo"); xr2, pr2 = vx17(vl), px17(vl)
+        x2, p2 = vxml(vl), layer_bytes(vl)
+        u1 = c("bench-undo"); xu1, pu1 = vxml(vl), layer_bytes(vl)
+        u2 = c("bench-undo"); xu2, pu2 = vxml(vl), layer_bytes(vl)
+        r1 = c("bench-redo"); xr1, pr1 = vxml(vl), layer_bytes(vl)
+        r2 = c("bench-redo"); xr2, pr2 = vxml(vl), layer_bytes(vl)
         ok = (u1 and u2 and r1 and r2 and x0 != x1 != x2 and
               xu1 == x1 and pu1 == p1 and xu2 == x0 and pu2 == p0 and
               xr1 == x1 and pr1 == p1 and xr2 == x2 and pr2 == p2)
@@ -2346,9 +2285,9 @@ try:
         # un nouveau changement après une annulation, puis annuler
         c("bench-undo"); c("bench-undo")
         c("select-all"); c("drag-sim:-7:2:3")
-        x3 = vx17(vl)
+        x3 = vxml(vl)
         u3 = c("bench-undo")
-        report(u3 and vx17(vl) == x0 and px17(vl) == p0 and x3 != x0,
+        report(u3 and vxml(vl) == x0 and layer_bytes(vl) == p0 and x3 != x0,
                "3.29.6 annulation partielle : nouveau changement après annuler")
         im.delete()
     except Exception:
@@ -2359,70 +2298,34 @@ try:
     try:
         import re as re18
 
-        def vx18(layer):
-            r = run("chopgimp-vobjects-get-xml", layer=layer)
-            return r.index(1) if r is not None and r.index(0) == Gimp.PDBStatusType.SUCCESS else ""
-
-        def a18(layer, x, y):
-            ox, oy = layer.get_offsets()[1:]
-            if x < ox or y < oy or x >= ox + layer.get_width() or y >= oy + layer.get_height():
-                return 0
-            b = layer.get_buffer()
-            return bytes(b.get(Gegl.Rectangle.new(x - ox, y - oy, 1, 1), 1.0,
-                               "R'G'B'A u8", Gegl.AbyssPolicy.NONE))[3]
-
-        def scene18(w, h, shapes, fill=True, stroke=False, sw=4):
-            im = Gimp.Image.new(w, h, Gimp.ImageBaseType.RGB)
-            pa = Gimp.Path.new(im, "Formes")
-            im.insert_path(pa, None, 0)
-            for pts, closed in shapes:
-                st = pa.bezier_stroke_new_moveto(*pts[0])
-                for x, y in pts[1:]:
-                    pa.bezier_stroke_lineto(st, x, y)
-                if closed:
-                    pa.stroke_close(st)
-            vl = Gimp.VectorLayer.new(im, pa)
-            im.insert_layer(vl, None, 0)
-            vl.set_enable_fill(fill); vl.set_enable_stroke(stroke); vl.set_stroke_width(sw)
-            vl.refresh()
-            im.set_selected_layers([vl])
-            def c(cmd):
-                r = run("chopgimp-vobjects-command", image=im, command=cmd)
-                return bool(r is not None and r.index(0) == Gimp.PDBStatusType.SUCCESS and r.index(1))
-            c("split-new")
-            return im, vl, c
-
-        def sq18(x, y, s):
-            return ([(x, y), (x + s, y), (x + s, y + s), (x, y + s)], True)
-
         # répétition radiale : 6 exemplaires autour d'un centre, puis grille,
         # miroir (la même répétition, modifiée), décomposer
-        im, vl, c = scene18(400, 400, [sq18(180, 40, 40)])
+        im, vl, c = scene(400, 400, [square(180, 40, 40)])
         c("select-all")
         ok_r = c("repeat-radial:6")
-        x = vx18(vl)
+        x = vxml(vl)
         n_r = x.count('blend="rinst"')
-        report(ok_r and 'blend="repeat type=radial' in x and n_r == 5 and a18(vl, 200, 180) > 0,
+        report(ok_r and 'blend="repeat type=radial' in x and n_r == 5 and alpha_at(vl, 200, 180) > 0,
                "3.30.0 Répétition radiale (6 exemplaires, l'opposé dessiné)",
-               "%d instances, alpha (200,180)=%d" % (n_r, a18(vl, 200, 180)))
+               "%d instances, alpha (200,180)=%d" % (n_r, alpha_at(vl, 200, 180)))
         # la source change (couleur) : les instances suivent
         xr = re18.sub(r'(<fill type="color" color=")[^"]*"', r'\g<1>1 0 0 1"', x, count=1)
         run("chopgimp-vobjects-set-xml", layer=vl, xml=xr)
-        x = vx18(vl)
+        x = vxml(vl)
         report(x.count('color="1 0 0 1"') >= 6,
                "3.30.0 Répétition modifiable : les instances suivent la source",
                "%d fonds rouges" % x.count('color="1 0 0 1"'))
         c("select-all")
         ok_g = c("repeat-grid:2:3")
-        x = vx18(vl)
+        x = vxml(vl)
         ok_g = ok_g and 'type=grid' in x and x.count('blend="rinst"') == 5
         c("select-all")
         ok_m = c("repeat-mirror")
-        x = vx18(vl)
+        x = vxml(vl)
         ok_m = ok_m and 'type=mirror' in x and x.count('blend="rinst"') == 1
         c("select-all")
         ok_e = c("repeat-expand")
-        x = vx18(vl)
+        x = vxml(vl)
         report(ok_g and ok_m and ok_e and "repeat " not in x and "rinst" not in x and
                x.count("<path ") == 2,
                "3.30.0 Répétition en grille, miroir, décomposer",
@@ -2430,59 +2333,59 @@ try:
         im.delete()
 
         # libérer : la source seule reprend sa place
-        im, vl, c = scene18(400, 400, [sq18(180, 40, 40)])
+        im, vl, c = scene(400, 400, [square(180, 40, 40)])
         c("select-all"); c("repeat-radial:4"); c("select-all")
         ok_l = c("repeat-release")
-        x = vx18(vl)
+        x = vxml(vl)
         report(ok_l and "repeat" not in x and "rinst" not in x and x.count("<path ") == 1,
                "3.30.0 Répétition : libérer")
         im.delete()
 
         # formes de pinceau : calligraphique (plume ronde de 20 px)
-        im, vl, c = scene18(400, 200, [([(50, 100), (350, 100)], False)], fill=False, stroke=True)
+        im, vl, c = scene(400, 200, [([(50, 100), (350, 100)], False)], fill=False, stroke=True)
         c("select-all")
         ok_c = c("brush-callig:0:100:20")
-        x = vx18(vl)
+        x = vxml(vl)
         report(ok_c and 'blend="brush type=calligraphic' in x and 'blend="bpart"' in x and
-               a18(vl, 200, 108) > 0 and a18(vl, 200, 116) == 0,
+               alpha_at(vl, 200, 108) > 0 and alpha_at(vl, 200, 116) == 0,
                "3.30.0 Forme calligraphique (plume ronde de 20 px)",
-               "alpha (200,108)=%d (200,116)=%d" % (a18(vl, 200, 108), a18(vl, 200, 116)))
+               "alpha (200,108)=%d (200,116)=%d" % (alpha_at(vl, 200, 108), alpha_at(vl, 200, 116)))
         # le contour du tracé change de couleur : la forme suit
         xr = re18.sub(r'(<stroke type="color" color=")[^"]*"', r'\g<1>1 0 0 1"', x, count=1)
         run("chopgimp-vobjects-set-xml", layer=vl, xml=xr)
-        x = vx18(vl)
+        x = vxml(vl)
         report(x.count('color="1 0 0 1"') >= 2,
                "3.30.0 Forme de pinceau modifiable : suit la couleur du contour")
         oks = []
         for cmd, t in (("brush-art", "art"), ("brush-pattern", "pattern"), ("brush-scatter:150", "scatter")):
             c("select-all")
             ok = c(cmd)
-            x = vx18(vl)
+            x = vxml(vl)
             oks.append(ok and ('type=%s' % t) in x and x.count('blend="bpart"') == 1 and
-                       a18(vl, 200, 100) + a18(vl, 120, 100) + a18(vl, 280, 100) > 0)
+                       alpha_at(vl, 200, 100) + alpha_at(vl, 120, 100) + alpha_at(vl, 280, 100) > 0)
         report(all(oks), "3.30.0 Formes Art, Motif et Dispersion", "%s" % oks)
         c("select-all")
         ok_rel = c("brush-release")
-        x = vx18(vl)
+        x = vxml(vl)
         report(ok_rel and "brush" not in x and "bpart" not in x and x.count("<path ") == 1 and
-               a18(vl, 200, 100) > 0,
+               alpha_at(vl, 200, 100) > 0,
                "3.30.0 Retirer la forme : le contour ordinaire revient")
         c("select-all"); c("brush-callig:45:30:12"); c("select-all")
         ok_ex = c("brush-expand")
-        x = vx18(vl)
+        x = vxml(vl)
         report(ok_ex and "brush" not in x and "bpart" not in x and x.count("<path ") == 1,
                "3.30.0 Décomposer l'aspect (forme calligraphique)")
         im.delete()
 
         # illustration définie : un triangle sert de forme Art
-        im, vl, c = scene18(400, 300, [([(50, 200), (350, 200)], False),
+        im, vl, c = scene(400, 300, [([(50, 200), (350, 200)], False),
                                        ([(20, 20), (60, 20), (40, 40)], True)],
                             fill=True, stroke=True)
         c("select-at:40:25")
         ok_d = c("brush-define")
         c("select-at:200:200")
         ok_a = c("brush-art")
-        x = vx18(vl)
+        x = vxml(vl)
         report(ok_d and ok_a and " art=" in x and 'type=art' in x,
                "3.30.0 Définir l'illustration d'une forme Art")
         # export SVG : la spec du groupe dynamique est gardée
@@ -2495,67 +2398,67 @@ try:
 
         # Pinceau goutte : fusion avec la forme de même couleur, pas avec
         # une forme éloignée
-        im, vl, c = scene18(400, 400, [sq18(100, 100, 60), sq18(20, 360, 10)])
-        x = vx18(vl)
+        im, vl, c = scene(400, 400, [square(100, 100, 60), square(20, 360, 10)])
+        x = vxml(vl)
         m = re18.search(r'<fill type="color" color="([^"]+)"', x)
         rgb = [float(v) for v in m.group(1).split()[:3]] if m else [0, 0, 0]
         hexc = "#%02x%02x%02x" % tuple(int(round(v * 255)) for v in rgb)
         ok_b1 = c("blob:20:120,130;220,130:%s" % hexc)
-        x1 = vx18(vl)
+        x1 = vxml(vl)
         ok_b2 = c("blob:10:320,320;340,330:%s" % hexc)
-        x2 = vx18(vl)
+        x2 = vxml(vl)
         report(ok_b1 and ok_b2 and x1.count("<path ") == 2 and x2.count("<path ") == 3 and
-               a18(vl, 215, 130) > 0,
+               alpha_at(vl, 215, 130) > 0,
                "3.30.0 Pinceau goutte : fusionne avec la forme touchée, pas avec l'autre",
                "%d puis %d objets" % (x1.count("<path "), x2.count("<path ")))
         im.delete()
 
         # 4.0.0 : calque d'un seul objet jamais modifié : clic de sélection
         # et Pinceau goutte acceptés par la PDB, comme par les outils
-        im, vl, c = scene18(400, 400, [sq18(100, 100, 60)])
-        x = vx18(vl)
+        im, vl, c = scene(400, 400, [square(100, 100, 60)])
+        x = vxml(vl)
         m = re18.search(r'<fill type="color" color="([^"]+)"', x)
         rgb = [float(v) for v in m.group(1).split()[:3]] if m else [0, 0, 0]
         hexc = "#%02x%02x%02x" % tuple(int(round(v * 255)) for v in rgb)
         ok_s = c("select-at:100:100")
         ok_b = c("blob:20:120,130;220,130:%s" % hexc)
-        x1 = vx18(vl)
-        report(ok_s and ok_b and x1.count("<path ") == 1 and a18(vl, 215, 130) > 0,
+        x1 = vxml(vl)
+        report(ok_s and ok_b and x1.count("<path ") == 1 and alpha_at(vl, 215, 130) > 0,
                "4.0.0 Calque d'un seul objet jamais modifié : sélection au clic et Pinceau goutte",
                "sélection %s, goutte %s, %d objet(s)" % (ok_s, ok_b, x1.count("<path ")))
         im.delete()
 
         # répétitions : poignées (espacement de grille, nombre d'instances)
-        im, vl, c = scene18(400, 400, [sq18(20, 20, 40)])
+        im, vl, c = scene(400, 400, [square(20, 20, 40)])
         c("select-all"); c("repeat-grid:2:1")
         ok_h = c("repeat-handle:3:160:40")
-        report(ok_h and a18(vl, 180, 40) > 0 and a18(vl, 90, 40) == 0,
+        report(ok_h and alpha_at(vl, 180, 40) > 0 and alpha_at(vl, 90, 40) == 0,
                "3.30.0 Répétition : poignée d'espacement de la grille",
-               "alpha (180,40)=%d (90,40)=%d" % (a18(vl, 180, 40), a18(vl, 90, 40)))
+               "alpha (180,40)=%d (90,40)=%d" % (alpha_at(vl, 180, 40), alpha_at(vl, 90, 40)))
         im.delete()
-        im, vl, c = scene18(400, 400, [sq18(180, 40, 40)])
+        im, vl, c = scene(400, 400, [square(180, 40, 40)])
         c("select-all"); c("repeat-radial")
         ok_n = c("repeat-handle:2:260:120")
-        x = vx18(vl)
+        x = vxml(vl)
         report(ok_n and x.count('blend="rinst"') == 3,
                "3.30.0 Répétition radiale : poignée du nombre d'instances (8 → 4)",
                "%d instances" % x.count('blend="rinst"'))
         im.delete()
 
         # calligraphique : variation aléatoire de l'angle et du diamètre
-        im, vl, c = scene18(400, 200, [([(50, 100), (350, 100)], False)], fill=False, stroke=True)
+        im, vl, c = scene(400, 200, [([(50, 100), (350, 100)], False)], fill=False, stroke=True)
         c("select-all")
         ok_cr = c("brush-callig-random:30:6")
-        x = vx18(vl)
-        report(ok_cr and "am=1" in x and "dm=1" in x and a18(vl, 200, 100) > 0,
+        x = vxml(vl)
+        report(ok_cr and "am=1" in x and "dm=1" in x and alpha_at(vl, 200, 100) > 0,
                "3.30.0 Forme calligraphique : variation aléatoire")
         im.delete()
 
         # panneau Formes : motif avec tuiles d'angle, de début et de fin ;
         # bibliothèque persistante (fichier) et gardée dans l'image ;
         # modifier la forme : les tracés suivent
-        im, vl, c = scene18(400, 400, [([(50, 300), (300, 300), (300, 80)], False),
-                                       sq18(20, 20, 10),
+        im, vl, c = scene(400, 400, [([(50, 300), (300, 300), (300, 80)], False),
+                                       square(20, 20, 10),
                                        ([(60, 20), (70, 25), (60, 30)], True)],
                             fill=True, stroke=True)
         c("select-at:25:25")
@@ -2564,13 +2467,13 @@ try:
         ok_t = all(c("brush-lib-tile:%d" % t) for t in (1, 2, 3, 4))
         c("select-at:150:300")
         ok_ap = c("brush-lib-apply")
-        x = vx18(vl)
+        x = vxml(vl)
         report(ok_la and ok_t and ok_ap and "art-outer=" in x and "art-end=" in x and
                " def=" in x and x.count("<path ") == 7,
                "3.30.0 Motif : tuiles de côté, d'angle, de début et de fin",
                "%d tracés" % x.count("<path "))
         ok_sz = c("brush-lib-size:200")
-        x = vx18(vl)
+        x = vxml(vl)
         report(ok_sz and "size=200" in x, "3.30.0 Formes : modifier la forme, les tracés suivent")
         par = im.get_parasite("chopgimp-brushes")
         report(par is not None and
@@ -2867,10 +2770,6 @@ try:
             nm = name.encode() + b"\x00"
             head = struct.pack(">5I", 24 + len(nm), 1, w, h, 4) + b"GPAT" + nm
             return base64.b64encode(zlib.compress(head + rgba)).decode("ascii")
-
-        def rgba_at(l, x, y):
-            x0, y0 = l.get_offsets()[1:]
-            return tuple(round(c * 255) for c in l.get_pixel(x - x0, y - y0).get_rgba_with_space(None))
 
         def styled(im, op, name, props, mode=None):
             l = Gimp.Layer.new(im, name, 200, 200, Gimp.ImageType.RGBA_IMAGE, 100, Gimp.LayerMode.NORMAL)
