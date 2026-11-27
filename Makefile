@@ -59,6 +59,7 @@ patches:
 	 echo "$$(ls $$d/*.patch | wc -l) patchs exportés depuis $(GIMP_BRANCH)"
 
 manifest:
+	python3 tools/make_branding.py
 	CHOPGIMP_LTO=$(LTO) CHOPGIMP_PGO=$(PGO) CHOPGIMP_GIMP_O=$(GIMP_O) python3 tools/make_manifest.py
 
 build: manifest

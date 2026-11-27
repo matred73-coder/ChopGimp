@@ -1,17 +1,23 @@
 #!/usr/bin/env python3
 """
-ChopGimp — génère l'identité visuelle (création originale, monogramme « Cg ») :
+ChopGimp — génère l'identité visuelle (tête de loup, 4.2.4 ; source :
+branding/source/loup.png, loup brun détouré de blanc sur fond transparent) :
 
   branding/chopgimp.svg                 icône de l'application (texte vectorisé)
   branding/png/chopgimp-<taille>.png    icône aux tailles hicolor
   branding/chopgimp-symbolic.svg        version monochrome (thème d'icônes)
   branding/logo-128.png                 logo de la fenêtre « À propos »
-  branding/splash.png                   écran de démarrage (1591×1080)
+  branding/splash.png                   écran de démarrage (1591×1080), avec
+                                        le numéro de VERSION
+
+Lancé par « make manifest » : l'écran de démarrage suit chaque version.
 
 Usage : make_branding.py   (nécessite pycairo + PyGObject Pango/PangoCairo)
 """
+import io
 import math
 import os
+import random
 
 import cairo
 import gi
@@ -21,11 +27,13 @@ from gi.repository import Pango, PangoCairo
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 OUT = os.path.join(ROOT, "branding")
+WOLF = os.path.join(OUT, "source", "loup.png")
+VERSION = open(os.path.join(ROOT, "VERSION")).read().strip()
+# Yeux du loup dans loup.png (606×782), pour la lueur rouge de l'écran
+EYES = ((333, 343, 30), (477, 357, 20))
+RED = (0.99, 0.0, 0.01)
 os.makedirs(os.path.join(OUT, "png"), exist_ok=True)
 
-NAVY = (0.08, 0.15, 0.38)       # #142661
-BLUE = (0.15, 0.38, 0.86)       # #2661DB
-CYAN = (0.13, 0.83, 0.93)       # #22D3EE
 FONT = "Noto Sans Bold"
 
 
@@ -38,95 +46,144 @@ def text_layout(cr, text, size, font=FONT):
     return layout
 
 
-def draw_badge(cr, cx, cy, r, mono=False):
-    """Pastille ronde à dégradé + « Cg » blanc (en tracés)."""
-    cr.save()
-    cr.arc(cx, cy, r, 0, 2 * math.pi)
-    if mono:
-        cr.set_source_rgb(0.745, 0.745, 0.745)
-    else:
-        g = cairo.LinearGradient(cx - r, cy + r, cx + r, cy - r)
-        g.add_color_stop_rgb(0.0, *NAVY)
-        g.add_color_stop_rgb(0.55, *BLUE)
-        g.add_color_stop_rgb(1.0, *CYAN)
-        cr.set_source(g)
-    cr.fill()
-    if not mono:
-        # léger reflet en haut
-        hl = cairo.RadialGradient(cx - r * 0.35, cy - r * 0.55, 0, cx - r * 0.35, cy - r * 0.55, r * 1.1)
-        hl.add_color_stop_rgba(0, 1, 1, 1, 0.22)
-        hl.add_color_stop_rgba(1, 1, 1, 1, 0.0)
-        cr.arc(cx, cy, r, 0, 2 * math.pi)
-        cr.set_source(hl)
-        cr.fill()
-    # « Cg » vectorisé
-    layout = text_layout(cr, "Cg", r * 1.05)
-    ink, logical = layout.get_pixel_extents()
-    cr.move_to(cx - ink.x - ink.width / 2.0, cy - ink.y - ink.height / 2.0 - r * 0.02)
-    PangoCairo.layout_path(cr, layout)
-    if mono:
-        # lettres « percées » dans la pastille (rendu symbolique)
-        cr.set_operator(cairo.OPERATOR_CLEAR)
-    else:
-        cr.set_source_rgb(1, 1, 1)
-    cr.fill()
-    cr.restore()
+def wolf_surface(height):
+    """Loup redimensionné (PIL, Lanczos) en surface cairo ARGB."""
+    from PIL import Image
+    im = Image.open(WOLF).convert("RGBA")
+    im = im.crop(im.getbbox())
+    w = max(1, round(im.width * height / im.height))
+    im = im.resize((w, height), Image.LANCZOS)
+    buf = io.BytesIO()
+    im.save(buf, "PNG")
+    buf.seek(0)
+    return cairo.ImageSurface.create_from_png(buf), im
+
+
+def draw_wolf_square(cr, size, pad=0.02):
+    """Loup centré dans un carré, proportions gardées."""
+    from PIL import Image
+    src = Image.open(WOLF).convert("RGBA")
+    src = src.crop(src.getbbox())
+    inner = size * (1 - 2 * pad)
+    scale = min(inner / src.width, inner / src.height)
+    h = max(1, round(src.height * scale))
+    surf, im = wolf_surface(h)
+    cr.set_source_surface(surf, (size - im.width) / 2.0, (size - im.height) / 2.0)
+    cr.paint()
 
 
 def icon_svg(path, size=256, mono=False):
     surf = cairo.SVGSurface(path, size, size)
     cr = cairo.Context(surf)
     if mono:
-        # symbolique : anneau + lettres pleines (GTK force la couleur de remplissage)
-        r = size * 0.47
-        cr.arc(size / 2, size / 2, r, 0, 2 * math.pi)
-        cr.arc_negative(size / 2, size / 2, r - size * 0.07, 2 * math.pi, 0)
+        # symbolique : silhouette du loup en rectangles pleins (GTK recolore
+        # le remplissage), tirée de la couche alpha sur une grille 32×32
+        from PIL import Image
+        im = Image.open(WOLF).convert("RGBA")
+        im = im.crop(im.getbbox())
+        n = 32
+        sc = min(n / im.width, n / im.height)
+        gw, gh = max(1, round(im.width * sc)), max(1, round(im.height * sc))
+        a = im.split()[3].resize((gw, gh), Image.LANCZOS)
+        cell = size / float(n)
+        ox, oy = (n - gw) / 2.0, (n - gh) / 2.0
+        for y in range(gh):
+            x = 0
+            while x < gw:
+                if a.getpixel((x, y)) >= 128:
+                    x0 = x
+                    while x < gw and a.getpixel((x, y)) >= 128:
+                        x += 1
+                    cr.rectangle((ox + x0) * cell, (oy + y) * cell,
+                                 (x - x0) * cell, cell)
+                else:
+                    x += 1
         cr.set_source_rgb(0.745, 0.745, 0.745)
         cr.fill()
-        layout = text_layout(cr, "Cg", size * 0.5)
-        ink, _ = layout.get_pixel_extents()
-        cr.move_to(size / 2 - ink.x - ink.width / 2.0, size / 2 - ink.y - ink.height / 2.0)
-        PangoCairo.layout_path(cr, layout)
-        cr.fill()
     else:
-        draw_badge(cr, size / 2, size / 2, size * 0.47)
+        draw_wolf_square(cr, size)
     surf.finish()
 
 
 def icon_png(path, size):
     surf = cairo.ImageSurface(cairo.FORMAT_ARGB32, size, size)
     cr = cairo.Context(surf)
-    draw_badge(cr, size / 2, size / 2, size * 0.47)
+    draw_wolf_square(cr, size)
     surf.write_to_png(path)
 
 
 def splash(path, w=1591, h=1080):
+    """Fond noir-brun à grain, loup en grand à gauche aux yeux lumineux,
+    titre, sous-titre et version à droite ; le bas reste libre pour le
+    texte de progression de GIMP."""
     surf = cairo.ImageSurface(cairo.FORMAT_ARGB32, w, h)
     cr = cairo.Context(surf)
-    bg = cairo.LinearGradient(0, 0, w, h)
-    bg.add_color_stop_rgb(0, 0.09, 0.09, 0.10)
-    bg.add_color_stop_rgb(1, 0.15, 0.16, 0.20)
+    bg = cairo.RadialGradient(w * 0.30, h * 0.45, 0, w * 0.30, h * 0.45, w * 0.85)
+    bg.add_color_stop_rgb(0.0, 0.17, 0.09, 0.04)
+    bg.add_color_stop_rgb(0.5, 0.08, 0.05, 0.035)
+    bg.add_color_stop_rgb(1.0, 0.035, 0.03, 0.03)
     cr.set_source(bg)
     cr.paint()
-    # halo
-    halo = cairo.RadialGradient(w * 0.32, h * 0.45, 0, w * 0.32, h * 0.45, h * 0.55)
-    halo.add_color_stop_rgba(0, *BLUE, 0.35)
-    halo.add_color_stop_rgba(1, *BLUE, 0.0)
-    cr.set_source(halo)
+    # grain : petits points clairs et sombres, déterministe
+    rnd = random.Random(73)
+    for _ in range(26000):
+        x, y = rnd.random() * w, rnd.random() * h
+        v = rnd.random()
+        cr.set_source_rgba(1, 0.9, 0.8, 0.035) if v > 0.5 else cr.set_source_rgba(0, 0, 0, 0.12)
+        cr.rectangle(x, y, 1.4, 1.4)
+        cr.fill()
+    # loup
+    wh = int(h * 0.80)
+    wsurf, wim = wolf_surface(wh)
+    from PIL import Image
+    src = Image.open(WOLF).convert("RGBA")
+    bx0, by0, bx1, by1 = src.getbbox()
+    k = wh / float(by1 - by0)
+    wx = w * 0.28 - wim.width / 2.0
+    wy = h * 0.055
+    # ombre portée douce sous le loup
+    cr.save()
+    cr.set_source_rgba(0, 0, 0, 0.55)
+    cr.translate(wx + 14, wy + 18)
+    cr.mask_surface(wsurf, 0, 0)
+    cr.restore()
+    cr.set_source_surface(wsurf, wx, wy)
     cr.paint()
-    draw_badge(cr, w * 0.32, h * 0.45, h * 0.20)
+    # lueur rouge des yeux
+    cr.save()
+    cr.set_operator(cairo.OPERATOR_ADD)
+    for ex, ey, r in EYES:
+        cx, cy = wx + (ex - bx0) * k, wy + (ey - by0) * k
+        g = cairo.RadialGradient(cx, cy, 0, cx, cy, r * k * 2.6)
+        g.add_color_stop_rgba(0.0, 1.0, 0.15, 0.05, 0.55)
+        g.add_color_stop_rgba(0.35, 0.8, 0.05, 0.0, 0.22)
+        g.add_color_stop_rgba(1.0, 0.5, 0.0, 0.0, 0.0)
+        cr.set_source(g)
+        cr.arc(cx, cy, r * k * 2.6, 0, 2 * math.pi)
+        cr.fill()
+    cr.restore()
     # titre
-    cr.set_source_rgb(1, 1, 1)
-    lay = text_layout(cr, "ChopGimp", h * 0.11)
-    cr.move_to(w * 0.47, h * 0.33)
+    tx = w * 0.53
+    cr.set_source_rgb(0.98, 0.95, 0.90)
+    lay = text_layout(cr, "ChopGimp", h * 0.12)
+    cr.move_to(tx, h * 0.30)
     PangoCairo.show_layout(cr, lay)
-    cr.set_source_rgba(1, 1, 1, 0.75)
-    lay = text_layout(cr, "Retouche d'images professionnelle", h * 0.035, "Noto Sans")
-    cr.move_to(w * 0.475, h * 0.48)
+    ink, logical = lay.get_pixel_extents()
+    # filet rouge sous le titre
+    cr.set_source_rgb(*RED)
+    cr.rectangle(tx + ink.x + 4, h * 0.30 + ink.y + ink.height + h * 0.025, h * 0.16, h * 0.007)
+    cr.fill()
+    cr.set_source_rgba(0.98, 0.95, 0.90, 0.80)
+    lay = text_layout(cr, "Retouche d'images professionnelle", h * 0.036, "Noto Sans")
+    cr.move_to(tx + 4, h * 0.505)
     PangoCairo.show_layout(cr, lay)
-    cr.set_source_rgba(1, 1, 1, 0.45)
+    cr.set_source_rgb(0.93, 0.20, 0.15)
+    lay = text_layout(cr, "Version " + VERSION, h * 0.030, FONT)
+    cr.move_to(tx + 5, h * 0.575)
+    PangoCairo.show_layout(cr, lay)
+    cr.set_source_rgba(0.98, 0.95, 0.90, 0.45)
     lay = text_layout(cr, "Basé sur GIMP 3.2.8 — logiciel libre (GPLv3)", h * 0.022, "Noto Sans")
-    cr.move_to(w * 0.477, h * 0.545)
+    cr.move_to(tx + 5, h * 0.635)
     PangoCairo.show_layout(cr, lay)
     surf.write_to_png(path)
 
