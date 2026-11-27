@@ -1551,3 +1551,22 @@ Patchs 0170 à 0173 (nouveaux commits, aucun patch réécrit).
   vignettes et le thème) ; le panneau ne descend plus en dessous.
   Reproduit et vérifié au banc graphique (SVG importé en calque vectoriel,
   panneau réduit). Patch 0174.
+
+## 4.1.0 — Allègement du code (branche `next-4.1`, non compilée)
+
+- **Interrupteurs retirés** avec l'ancien code qu'ils gardaient (fonctions livrées jusqu'à
+  la 3.29.4) : `CHOPGIMP_NO_FAST_LOAD`, `NO_FAST_DRAG`, `NO_DRAG_SPRITE`, `NO_FAST_UNDO`,
+  `NO_FAST_BABL`, `NO_PAR_RENDER`, `NO_FG_RECOLOR`, `NO_HOVER_TIP`, `NO_FUSED_STYLES`,
+  `NO_BEHIND_MODES`, `NO_BEHIND_LAYERS`, `NO_XCF_FX_CACHE` (reste `[xcf] fx-cache=false`
+  dans chopgimprc), `NO_DRAFT` (reste la préférence d'aperçu rapide), `LP_NO_THROTTLE`.
+  Gardés : ceux des lots 1 à 5 (3.29.5 et suivantes), ceux qui rendent le code de GIMP
+  (`CLASSIC_*`, `NO_VOBJECTS`, `NO_PDF_VECTOR`, `PSD_PLAIN`), `NO_THREADED_RENDER`
+  (rendu en arrière-plan encore expérimental), diagnostic et système.
+- **Code mort** : 8 fonctions exportées jamais appelées.
+- **Doublons** : `app/path/chopgimp-vutil.c` (lecture / écriture des specs, signature,
+  nombres, tracé d'un objet dans un groupe, coordonnées, boîte des ancres, couleurs sRGB),
+  autrefois copiés dans vbrush, vrepeat, vmaterial, vcolors, vobject, vlivepaint, vrecolor
+  et les outils Forme et Plume.
+- **smoke_test.py** : 8 aides communes au lieu de ~30 copies par section (mêmes tests).
+- **Patchs** : proposition de regroupement en 21 thèmes, `docs/dev/PLAN-PATCHS-4.1.md`.
+- Syntaxe vérifiée (`gcc -fsyntax-only`, SDK GNOME 51) ; à rebaser sur la 4.0.2 et compiler.
