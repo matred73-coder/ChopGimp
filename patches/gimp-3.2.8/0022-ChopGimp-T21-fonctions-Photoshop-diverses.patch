@@ -5,30 +5,32 @@ Subject: [PATCH 22/23] ChopGimp T21: fonctions Photoshop diverses
 
 Anciens patchs : 0077, 0078, 0082, 0083, 0084, 0085, 0088, 0089, 0093, 0136.
 ---
- app/actions/edit-actions.c        |  17 +-
- app/actions/edit-commands.c       | 209 ++++++++++
- app/actions/edit-commands.h       |   6 +
- app/app.c                         |   6 +
- app/config/gimpguiconfig.c        |   2 +-
- app/core/chopgimp-layer-grow.c    | 140 +++++++
- app/core/chopgimp-layer-grow.h    |  28 ++
- app/dialogs/welcome-dialog.c      | 546 +++++++++++++++++---------
- app/file/file-save.c              |  60 +++
- app/gui/chopgimp-autosave.c       | 629 ++++++++++++++++++++++++++++++
- app/gui/chopgimp-autosave.h       |   8 +
- app/gui/chopgimp-timelapse.c      | 135 +++++++
- app/gui/chopgimp-timelapse.h      |   6 +
- app/gui/meson.build               |   2 +
- app/paint/gimpbrushcore.c         | 133 ++++++-
- app/plug-in/gimpplugin.c          |   7 +
- app/tools/gimpbucketfilltool.c    |  56 +++
- app/tools/gimptransformgridtool.h |   6 +
- app/tools/tool_manager.c          |   7 +-
- app/widgets/gimpaction-history.c  |  72 ++++
- app/widgets/gimpaction-history.h  |   5 +
- app/widgets/gimpaction.c          |   4 +
- libgimp/gimpui.c                  |  41 ++
- 23 files changed, 1920 insertions(+), 205 deletions(-)
+ app/actions/edit-actions.c           |  17 +-
+ app/actions/edit-commands.c          | 209 +++++++++
+ app/actions/edit-commands.h          |   6 +
+ app/app.c                            |   6 +
+ app/config/gimpguiconfig.c           |   2 +-
+ app/core/chopgimp-layer-grow.c       | 140 ++++++
+ app/core/chopgimp-layer-grow.h       |  28 ++
+ app/dialogs/quit-dialog.c            | 133 ++++--
+ app/dialogs/welcome-dialog.c         | 546 ++++++++++++++---------
+ app/display/gimpdisplayshell-close.c |   5 +-
+ app/file/file-save.c                 |  60 +++
+ app/gui/chopgimp-autosave.c          | 629 +++++++++++++++++++++++++++
+ app/gui/chopgimp-autosave.h          |   8 +
+ app/gui/chopgimp-timelapse.c         | 135 ++++++
+ app/gui/chopgimp-timelapse.h         |   6 +
+ app/gui/meson.build                  |   2 +
+ app/paint/gimpbrushcore.c            | 133 +++++-
+ app/plug-in/gimpplugin.c             |   7 +
+ app/tools/gimpbucketfilltool.c       |  56 +++
+ app/tools/gimptransformgridtool.h    |   6 +
+ app/tools/tool_manager.c             |   7 +-
+ app/widgets/gimpaction-history.c     |  72 +++
+ app/widgets/gimpaction-history.h     |   5 +
+ app/widgets/gimpaction.c             |   4 +
+ libgimp/gimpui.c                     |  41 ++
+ 25 files changed, 2024 insertions(+), 239 deletions(-)
  create mode 100644 app/core/chopgimp-layer-grow.c
  create mode 100644 app/core/chopgimp-layer-grow.h
  create mode 100644 app/gui/chopgimp-autosave.c
@@ -585,6 +587,222 @@ index 0000000..5ee0e7c
 + *  layer and session.
 + */
 +gchar    * chopgimp_layer_paint_warning   (GimpDrawable *drawable);
+diff --git a/app/dialogs/quit-dialog.c b/app/dialogs/quit-dialog.c
+index 7ca54b9..be2ea01 100644
+--- a/app/dialogs/quit-dialog.c
++++ b/app/dialogs/quit-dialog.c
+@@ -57,6 +57,9 @@
+ #include "gimp-intl.h"
+ 
+ 
++/*  ChopGimp 4.2.3: « Enregistrer » in the Quit / Close All dialog  */
++#define RESPONSE_SAVE 1
++
+ typedef struct _QuitDialog QuitDialog;
+ 
+ struct _QuitDialog
+@@ -71,6 +74,9 @@ struct _QuitDialog
+   GimpContainerTreeView *tree_view;
+   GtkTreeViewColumn     *save_column;
+   GtkWidget             *ok_button;
++  GtkWidget             *save_button;
++  gboolean               saving_all;
++  guint                  save_idle_id;
+   GimpMessageBox        *box;
+   GtkWidget             *lost_label;
+   GtkWidget             *hint_label;
+@@ -113,6 +119,10 @@ static gboolean    quit_close_all_dialog_query_tooltip     (GtkWidget         *w
+                                                             GtkTooltip        *tooltip,
+                                                             QuitDialog        *private);
+ static gboolean    quit_close_all_idle                     (QuitDialog        *private);
++static void        quit_close_all_dialog_save_image        (QuitDialog        *private,
++                                                            GimpImage         *image,
++                                                            gboolean           save_as);
++static gboolean    quit_close_all_dialog_save_next         (QuitDialog        *private);
+ 
+ static void        quit_style_updated                      (GimpGuiConfig     *config,
+                                                             GParamSpec        *pspec,
+@@ -184,8 +194,11 @@ quit_close_all_dialog_new (Gimp     *gimp,
+ 
+   private->ok_button = gtk_dialog_add_button (GTK_DIALOG (private->dialog),
+                                               "", GTK_RESPONSE_OK);
++  private->save_button = gtk_dialog_add_button (GTK_DIALOG (private->dialog),
++                                                _("_Save"), RESPONSE_SAVE);
+ 
+   gimp_dialog_set_alternative_button_order (GTK_DIALOG (private->dialog),
++                                            RESPONSE_SAVE,
+                                             GTK_RESPONSE_OK,
+                                             GTK_RESPONSE_CANCEL,
+                                             -1);
+@@ -333,6 +346,18 @@ quit_close_all_dialog_response (GtkWidget  *dialog,
+   Gimp     *gimp    = private->gimp;
+   gboolean  do_quit = private->do_quit;
+ 
++  /*  ChopGimp 4.2.3: « Enregistrer » saves the images one after the
++   *  other (untitled or imported ones open « Enregistrer sous »); the
++   *  dialog stays open and quits / closes by itself once nothing is
++   *  left to save (see container_changed).
++   */
++  if (response_id == RESPONSE_SAVE)
++    {
++      private->saving_all = TRUE;
++      quit_close_all_dialog_save_next (private);
++      return;
++    }
++
+   gtk_widget_destroy (dialog);
+ 
+   if (response_id == GTK_RESPONSE_OK)
+@@ -400,6 +425,7 @@ quit_close_all_dialog_container_changed (GimpContainer *images,
+                     "use-stock", TRUE,
+                     "image",     NULL,
+                     NULL);
++      gtk_widget_set_visible (private->save_button, FALSE);
+ 
+       gtk_widget_grab_default (private->ok_button);
+ 
+@@ -434,15 +460,21 @@ quit_close_all_dialog_container_changed (GimpContainer *images,
+ #warning GTK4 removed the GtkButton use-stock property: g_object_set() will skip it and every property after it at runtime
+ #endif
+       g_object_set (private->ok_button,
+-                    "label",     _("_Discard Changes"),
++                    "label",     _("Do_n't Save"),
+                     "use-stock", FALSE,
+                     "image",     icon,
+                     NULL);
+       gtk_style_context_add_class (gtk_widget_get_style_context (private->ok_button),
+                                    "text-button");
+ 
++      /*  ChopGimp 4.2.3: Photoshop order, Entrée = Enregistrer  */
++      gtk_widget_set_visible (private->save_button, TRUE);
+       gtk_dialog_set_default_response (GTK_DIALOG (private->dialog),
+-                                       GTK_RESPONSE_CANCEL);
++                                       RESPONSE_SAVE);
++
++      if (private->saving_all && ! private->save_idle_id)
++        private->save_idle_id =
++          g_idle_add ((GSourceFunc) quit_close_all_dialog_save_next, private);
+     }
+ 
+   markup = g_strdup_printf ("<i><small>%s</small></i>", hint);
+@@ -558,7 +590,6 @@ quit_close_all_dialog_save_clicked (GtkCellRenderer *cell,
+     {
+       GimpViewRenderer *renderer;
+       GimpImage        *image;
+-      GList            *list;
+ 
+       gtk_tree_model_get (private->tree_view->model, &iter,
+                           GIMP_CONTAINER_TREE_STORE_COLUMN_RENDERER, &renderer,
+@@ -567,42 +598,80 @@ quit_close_all_dialog_save_clicked (GtkCellRenderer *cell,
+       image = GIMP_IMAGE (renderer->viewable);
+       g_object_unref (renderer);
+ 
+-      for (list = gimp_get_display_iter (private->gimp);
+-           list;
+-           list = g_list_next (list))
++      /* A single save stops a running « Enregistrer » chain. */
++      private->saving_all = FALSE;
++
++      quit_close_all_dialog_save_image (private, image,
++                                        (state & GDK_SHIFT_MASK) != 0);
++    }
++
++  gtk_tree_path_free (path);
++}
++
++static void
++quit_close_all_dialog_save_image (QuitDialog *private,
++                                  GimpImage  *image,
++                                  gboolean    save_as)
++{
++  GList *list;
++
++  for (list = gimp_get_display_iter (private->gimp);
++       list;
++       list = g_list_next (list))
++    {
++      GimpDisplay *display = list->data;
++
++      if (gimp_display_get_image (display) == image)
+         {
+-          GimpDisplay *display = list->data;
++          GimpDisplayShell *shell  = gimp_display_get_shell (display);
++          GimpImageWindow  *window = gimp_display_shell_get_window (shell);
+ 
+-          if (gimp_display_get_image (display) == image)
++          if (window)
+             {
+-              GimpDisplayShell *shell  = gimp_display_get_shell (display);
+-              GimpImageWindow  *window = gimp_display_shell_get_window (shell);
+-
+-              if (window)
+-                {
+-                  GAction *action;
+-
+-                  gimp_display_shell_present (shell);
+-                  /* Make sure the quit dialog kept keyboard focus when
+-                   * the save dialog will exit. */
+-                  gtk_window_present (GTK_WINDOW (private->dialog));
+-
+-                  if (state & GDK_SHIFT_MASK)
+-                    action = g_action_map_lookup_action (G_ACTION_MAP (private->gimp->app),
+-                                                         "file-save-as");
+-                  else
+-                    action = g_action_map_lookup_action (G_ACTION_MAP (private->gimp->app),
+-                                                         "file-save");
+-                  g_return_if_fail (GIMP_IS_ACTION (action));
+-                  gimp_action_activate (GIMP_ACTION (action));
+-                }
+-
+-              break;
++              GAction *action;
++
++              gimp_display_shell_present (shell);
++              /* Make sure the quit dialog kept keyboard focus when
++               * the save dialog will exit. */
++              gtk_window_present (GTK_WINDOW (private->dialog));
++
++              action = g_action_map_lookup_action (G_ACTION_MAP (private->gimp->app),
++                                                   save_as ?
++                                                   "file-save-as" : "file-save");
++              g_return_if_fail (GIMP_IS_ACTION (action));
++              gimp_action_activate (GIMP_ACTION (action));
+             }
++
++          break;
+         }
+     }
++}
+ 
+-  gtk_tree_path_free (path);
++/*  Save the first image still dirty.  Saving it removes it from the
++ *  list, which calls container_changed, which queues the next one.  If
++ *  the user cancels an « Enregistrer sous » the image stays in the list:
++ *  the chain stops there, and « Enregistrer » resumes it.
++ */
++static gboolean
++quit_close_all_dialog_save_next (QuitDialog *private)
++{
++  GimpImage *image;
++
++  private->save_idle_id = 0;
++
++  if (! private->saving_all)
++    return G_SOURCE_REMOVE;
++
++  image = GIMP_IMAGE (gimp_container_get_first_child (private->images));
++
++  if (image)
++    {
++      gimp_container_view_set_1_selected (GIMP_CONTAINER_VIEW (private->tree_view),
++                                          GIMP_VIEWABLE (image));
++      quit_close_all_dialog_save_image (private, image, FALSE);
++    }
++
++  return G_SOURCE_REMOVE;
+ }
+ 
+ static gboolean
 diff --git a/app/dialogs/welcome-dialog.c b/app/dialogs/welcome-dialog.c
 index 98ad1ef..8d7a6d5 100644
 --- a/app/dialogs/welcome-dialog.c
@@ -1466,6 +1684,26 @@ index 98ad1ef..8d7a6d5 100644
  }
  
  static void
+diff --git a/app/display/gimpdisplayshell-close.c b/app/display/gimpdisplayshell-close.c
+index 8dffaaf..d2f8d9f 100644
+--- a/app/display/gimpdisplayshell-close.c
++++ b/app/display/gimpdisplayshell-close.c
+@@ -179,12 +179,13 @@ gimp_display_shell_close_dialog (GimpDisplayShell *shell,
+                                       _("_Save") :
+                                       _("Save _As"),         RESPONSE_SAVE,
+                                       _("_Cancel"),          GTK_RESPONSE_CANCEL,
+-                                      _("_Discard Changes"), GTK_RESPONSE_CLOSE,
++                                      _("Do_n't Save"),      GTK_RESPONSE_CLOSE,
+                                       NULL);
+ 
+   g_free (title);
+ 
+-  gtk_dialog_set_default_response (GTK_DIALOG (dialog), GTK_RESPONSE_CANCEL);
++  /*  ChopGimp 4.2.3: Photoshop labels, Entrée = Enregistrer  */
++  gtk_dialog_set_default_response (GTK_DIALOG (dialog), RESPONSE_SAVE);
+   gimp_dialog_set_alternative_button_order (GTK_DIALOG (dialog),
+                                            RESPONSE_SAVE,
+                                            GTK_RESPONSE_CLOSE,
 diff --git a/app/file/file-save.c b/app/file/file-save.c
 index 239fc91..647b507 100644
 --- a/app/file/file-save.c

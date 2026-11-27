@@ -20,8 +20,8 @@ Anciens patchs : 0012, 0027, 0139, 0145, 0164.
  po-plug-ins/fr.po                          |  250 +++
  po-python/fr.po                            |   17 +
  po-script-fu/fr.po                         |   32 +
- po/fr.po                                   | 2193 +++++++++++++++++++-
- 15 files changed, 3854 insertions(+), 31 deletions(-)
+ po/fr.po                                   | 2197 +++++++++++++++++++-
+ 15 files changed, 3858 insertions(+), 31 deletions(-)
  create mode 100644 app/display/chopgimp-statusbar-info.c
  create mode 100644 app/display/chopgimp-statusbar-info.h
  create mode 100644 app/operations/gimpoperationinnereffects.c
@@ -1926,7 +1926,7 @@ index b3bef87..954d325 100644
  #~ msgstr "_Console"
  
 diff --git a/po/fr.po b/po/fr.po
-index 879afcb..25d0be3 100644
+index 879afcb..599a71b 100644
 --- a/po/fr.po
 +++ b/po/fr.po
 @@ -9412,10 +9412,9 @@ msgid "Vertical, left to right (upright orientation)"
@@ -1942,7 +1942,18 @@ index 879afcb..25d0be3 100644
  
  #: ../app/actions/tool-options-actions.c:58
  msgctxt "tool-options-action"
-@@ -21677,7 +21676,7 @@ msgstr "Activer la dynamique"
+@@ -19194,6 +19193,10 @@ msgstr ""
+ msgid "_Discard Changes"
+ msgstr "A_bandonner les modifications"
+ 
++#: ../app/dialogs/quit-dialog.c ../app/display/gimpdisplayshell-close.c
++msgid "Do_n't Save"
++msgstr "_Ne pas enregistrer"
++
+ #: ../app/dialogs/quit-dialog.c:497
+ #, c-format
+ msgid "Exported to %s"
+@@ -21677,7 +21680,7 @@ msgstr "Activer la dynamique"
  
  #: ../app/paint/gimppaintoptions.c:310
  msgid "Apply dynamics curves to paint settings"
@@ -1951,7 +1962,7 @@ index 879afcb..25d0be3 100644
  
  #: ../app/paint/gimppaintoptions.c:316
  msgid "Amount"
-@@ -21792,7 +21791,7 @@ msgstr "Définissez d’abord une image source."
+@@ -21792,7 +21795,7 @@ msgstr "Définissez d’abord une image source."
  
  #: ../app/paint/gimpsourcecore.c:158
  msgid "\"Registered\" alignment cannot paint on multiple drawables."
@@ -1960,7 +1971,7 @@ index 879afcb..25d0be3 100644
  
  #: ../app/paint/gimpsourceoptions.c:102 ../app/tools/gimpaligntool.c:123
  #: ../app/tools/gimpcloneoptions-gui.c:301 ../app/tools/gimphealtool.c:104
-@@ -23669,21 +23668,21 @@ msgstr "Image source pour le calcul du dessin au trait"
+@@ -23669,21 +23672,21 @@ msgstr "Image source pour le calcul du dessin au trait"
  
  #: ../app/tools/gimpbucketfilloptions.c:225
  msgid "Manual closure in fill layer"
@@ -1986,7 +1997,7 @@ index 879afcb..25d0be3 100644
  
  #: ../app/tools/gimpbucketfilloptions.c:260
  msgid "Stroke tool"
-@@ -23691,7 +23690,7 @@ msgstr "Outil de tracé"
+@@ -23691,7 +23694,7 @@ msgstr "Outil de tracé"
  
  #: ../app/tools/gimpbucketfilloptions.c:261
  msgid "The tool to stroke the fill borders with"
@@ -1995,7 +2006,7 @@ index 879afcb..25d0be3 100644
  
  #: ../app/tools/gimpbucketfilloptions.c:266
  msgid "Automatic closure"
-@@ -23701,7 +23700,7 @@ msgstr "Fermeture automatique"
+@@ -23701,7 +23704,7 @@ msgstr "Fermeture automatique"
  msgid ""
  "Geometric analysis of the stroke contours to close line arts by splines/"
  "segments"
@@ -2004,7 +2015,7 @@ index 879afcb..25d0be3 100644
  
  #: ../app/tools/gimpbucketfilloptions.c:273
  msgid "Maximum gap length"
-@@ -23724,15 +23723,15 @@ msgstr "Critère utilisé pour déterminer la similarité des couleurs"
+@@ -23724,15 +23727,15 @@ msgstr "Critère utilisé pour déterminer la similarité des couleurs"
  #: ../app/tools/gimpbucketfilloptions.c:581
  msgid ""
  "Opaque pixels will be considered as line art instead of low luminance pixels"
@@ -2023,7 +2034,7 @@ index 879afcb..25d0be3 100644
  
  #. fill type
  #: ../app/tools/gimpbucketfilloptions.c:677
-@@ -23761,17 +23760,17 @@ msgstr "(calcul…)"
+@@ -23761,17 +23764,17 @@ msgstr "(calcul…)"
  
  #: ../app/tools/gimpbucketfilloptions.c:773
  msgid "Detect opacity rather than grayscale"
@@ -2044,7 +2055,7 @@ index 879afcb..25d0be3 100644
  
  #: ../app/tools/gimpbucketfilltool.c:168
  msgid "Bucket Fill"
-@@ -23793,7 +23792,7 @@ msgstr "Remplissage"
+@@ -23793,7 +23796,7 @@ msgstr "Remplissage"
  
  #: ../app/tools/gimpbucketfilltool.c:596
  msgid "Cannot fill multiple layers. Select only one layer."
@@ -2053,7 +2064,7 @@ index 879afcb..25d0be3 100644
  
  #: ../app/tools/gimpbucketfilltool.c:598 ../app/tools/gimpcagetool.c:229
  #: ../app/tools/gimpcurvestool.c:220 ../app/tools/gimpfiltertool.c:297
-@@ -23803,7 +23802,7 @@ msgstr ""
+@@ -23803,7 +23806,7 @@ msgstr ""
  #: ../app/tools/gimpthresholdtool.c:160
  #: ../app/tools/gimptransformgridtool.c:351
  msgid "No selected drawables."
@@ -2062,7 +2073,7 @@ index 879afcb..25d0be3 100644
  
  #: ../app/tools/gimpbucketfilltool.c:618
  #: ../app/tools/gimpforegroundselecttool.c:307
-@@ -23875,7 +23874,7 @@ msgstr "Transformation par ca_ge"
+@@ -23875,7 +23878,7 @@ msgstr "Transformation par ca_ge"
  
  #: ../app/tools/gimpcagetool.c:227
  msgid "Cannot modify multiple layers. Select only one layer."
@@ -2071,7 +2082,7 @@ index 879afcb..25d0be3 100644
  
  #: ../app/tools/gimpcagetool.c:248 ../app/tools/gimppainttool.c:329
  #: ../app/tools/gimpwarptool.c:804
-@@ -23907,8 +23906,8 @@ msgstr "Aucune source sélectionnée"
+@@ -23907,8 +23910,8 @@ msgstr "Aucune source sélectionnée"
  #, c-format
  msgid "Source: %d item to itself"
  msgid_plural "Source: %d items to themselves"
@@ -2082,7 +2093,7 @@ index 879afcb..25d0be3 100644
  
  #: ../app/tools/gimpcloneoptions-gui.c:189
  msgid "All composited visible layers"
-@@ -24190,7 +24189,7 @@ msgstr "C_ourbes…"
+@@ -24190,7 +24193,7 @@ msgstr "C_ourbes…"
  #: ../app/tools/gimplevelstool.c:208 ../app/tools/gimpoffsettool.c:187
  #: ../app/tools/gimpthresholdtool.c:158
  msgid "Cannot modify multiple drawables. Select only one."
@@ -2091,7 +2102,7 @@ index 879afcb..25d0be3 100644
  
  #: ../app/tools/gimpcurvestool.c:411
  msgid "Click to add a control point"
-@@ -24751,12 +24750,12 @@ msgstr "Cliquez-glissez pour tracer un dégradé"
+@@ -24751,12 +24754,12 @@ msgstr "Cliquez-glissez pour tracer un dégradé"
  
  #: ../app/tools/gimpgradienttool.c:258
  msgid "Cannot paint on multiple drawables. Select only one."
@@ -2106,7 +2117,7 @@ index 879afcb..25d0be3 100644
  
  #: ../app/tools/gimpgradienttool.c:291 ../app/tools/gimpwarptool.c:818
  msgid "The selected item is not visible."
-@@ -25470,7 +25469,7 @@ msgstr ""
+@@ -25470,7 +25473,7 @@ msgstr ""
  #: ../app/tools/gimppaintselectoptions.c:89
  #: ../app/tools/gimppaintselectoptions.c:90
  msgid "Show scribbles"
@@ -2115,7 +2126,7 @@ index 879afcb..25d0be3 100644
  
  #: ../app/tools/gimppaintselecttool.c:167
  msgid "Paint Select"
-@@ -25478,7 +25477,7 @@ msgstr "Sélection par peinture"
+@@ -25478,7 +25481,7 @@ msgstr "Sélection par peinture"
  
  #: ../app/tools/gimppaintselecttool.c:168
  msgid "Paint Select Tool: Select objects by painting roughly"
@@ -2124,7 +2135,7 @@ index 879afcb..25d0be3 100644
  
  #: ../app/tools/gimppaintselecttool.c:169
  msgid "P_aint Select"
-@@ -25486,7 +25485,7 @@ msgstr "Sélection par pe_inture"
+@@ -25486,7 +25489,7 @@ msgstr "Sélection par pe_inture"
  
  #: ../app/tools/gimppaintselecttool.c:346
  msgid "Cannot paint select on multiple layers. Select only one layer."
@@ -2133,7 +2144,7 @@ index 879afcb..25d0be3 100644
  
  #: ../app/tools/gimppaintselecttool.c:365
  msgid "Cannot paint select on layer groups."
-@@ -26652,7 +26651,7 @@ msgstr "Tracé de gauchissement"
+@@ -26652,7 +26655,7 @@ msgstr "Tracé de gauchissement"
  
  #: ../app/tools/gimpwarptool.c:774
  msgid "Cannot warp multiple layers. Select only one layer."
@@ -2142,7 +2153,7 @@ index 879afcb..25d0be3 100644
  
  #: ../app/tools/gimpwarptool.c:793
  msgid "Cannot warp layer groups."
-@@ -27757,7 +27756,7 @@ msgstr ""
+@@ -27757,7 +27760,7 @@ msgstr ""
  
  #: ../app/widgets/gimpcriticaldialog.c:263
  msgid "Copy-paste this whole debug data to report to developers"
@@ -2151,7 +2162,7 @@ index 879afcb..25d0be3 100644
  
  #: ../app/widgets/gimpcriticaldialog.c:362
  msgid "The operating system is out of memory or resources."
-@@ -29790,6 +29789,2140 @@ msgstr "arrondi"
+@@ -29790,6 +29793,2140 @@ msgstr "arrondi"
  msgid "fuzzy"
  msgstr "flou"
  

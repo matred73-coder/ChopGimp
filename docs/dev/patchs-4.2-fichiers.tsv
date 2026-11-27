@@ -118,6 +118,7 @@ app/dialogs/color-profile-import-dialog.c	T20
 app/dialogs/dialogs.c	T09
 app/dialogs/meson.build	T15
 app/dialogs/preferences-dialog.c	T08
+app/dialogs/quit-dialog.c	T21
 app/dialogs/welcome-dialog.c	T21
 app/display/chopgimp-canvasartboards.c	T18
 app/display/chopgimp-canvasartboards.h	T18
@@ -138,6 +139,7 @@ app/display/gimpcanvaspath.h	T16
 app/display/gimpdisplayshell-appearance.c	T13
 app/display/gimpdisplayshell-appearance.h	T13
 app/display/gimpdisplayshell-callbacks.c	T01
+app/display/gimpdisplayshell-close.c	T21
 app/display/gimpdisplayshell-cursor.c	T03
 app/display/gimpdisplayshell-cursor.h	T03
 app/display/gimpdisplayshell-dnd.c	T15

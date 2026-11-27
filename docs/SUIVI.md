@@ -1715,3 +1715,8 @@ Patchs 0170 à 0173 (nouveaux commits, aucun patch réécrit).
   - glisser de plus de 4 px en gardant le bouton enfoncé : la liste s'ouvre aussitôt ;
   - inchangé : clic sur un groupe déjà actif ou clic droit = ouverture immédiate.
 
+## 4.2.3 — Enregistrer en quittant
+
+- **Quitter / Fermer tout** (`quit-dialog.c`, thème T21) : nouveau bouton **Enregistrer**. Il enregistre les images une à une ; une image sans fichier XCF (nouvelle ou importée) ouvre « Enregistrer sous ». Quand il ne reste rien à enregistrer, ChopGimp quitte (ou ferme tout) de lui-même, comme avant. Annuler un « Enregistrer sous » arrête la chaîne ; un nouveau clic la reprend. La disquette par image reste.
+- **Libellés façon Photoshop**, ici et à la fermeture d'une image (`gimpdisplayshell-close.c`, T21) : **Enregistrer**, **Ne pas enregistrer** (au lieu de « Abandonner les modifications »), **Annuler** ; **Entrée = Enregistrer** (avant : Annuler). Ctrl+D garde « Ne pas enregistrer ». Traduction dans `po/fr.po` (T22).
+
