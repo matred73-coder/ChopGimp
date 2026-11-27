@@ -1726,3 +1726,8 @@ Patchs 0170 à 0173 (nouveaux commits, aucun patch réécrit).
 - **Écran de démarrage** : fond noir-brun à grain, loup en grand à gauche, yeux rouges lumineux, titre, filet rouge, sous-titre, **« Version x.y.z »** et la base GIMP. Le bas reste libre pour le texte de progression.
 - `tools/make_branding.py` est lancé par `make manifest` : l'écran suit le fichier `VERSION` à chaque livraison.
 
+## 4.2.5 — « Sélecteur de couleur… » réparé
+
+- **Barre d'options**, menu déroulant Fond / Contour / couleur de texte : le bouton « Sélecteur de couleur… » n'ouvrait rien. Le bouton couleur caché qu'il déclenche (`GimpColorPanel`) n'avait pas de contexte, et `gimp_color_dialog_new` refusait de créer la fenêtre (avertissement critique seulement). Il reçoit maintenant le contexte utilisateur (`gimpoptionsbar.c`, T04).
+- **Grille de perspective** : même défaut sur les trois boutons de couleur des plans, corrigé avec le contexte des options d'outil (`chopgimp-pgridtools.c`, T18).
+

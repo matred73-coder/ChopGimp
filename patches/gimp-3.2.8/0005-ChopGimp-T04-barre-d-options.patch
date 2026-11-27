@@ -5,14 +5,14 @@ Subject: [PATCH 05/23] ChopGimp T04: barre d'options
 
 Anciens patchs : 0009, 0018, 0019, 0021, 0022, 0023, 0025, 0031, 0032, 0108, 0109, 0114, 0173.
 ---
- app/display/gimpoptionsbar.c       | 2806 ++++++++++++++++++++++++++++
+ app/display/gimpoptionsbar.c       | 2814 ++++++++++++++++++++++++++++
  app/display/gimpoptionsbar.h       |   45 +
  app/display/meson.build            |    7 +
  app/tools/gimppathoptions.c        |  103 +-
  app/tools/gimppathoptions.h        |    3 +
  app/widgets/chopgimp-value-field.c |  975 ++++++++++
  app/widgets/chopgimp-value-field.h |   39 +
- 7 files changed, 3947 insertions(+), 31 deletions(-)
+ 7 files changed, 3955 insertions(+), 31 deletions(-)
  create mode 100644 app/display/gimpoptionsbar.c
  create mode 100644 app/display/gimpoptionsbar.h
  create mode 100644 app/widgets/chopgimp-value-field.c
@@ -20,10 +20,10 @@ Anciens patchs : 0009, 0018, 0019, 0021, 0022, 0023, 0025, 0031, 0032, 0108, 010
 
 diff --git a/app/display/gimpoptionsbar.c b/app/display/gimpoptionsbar.c
 new file mode 100644
-index 0000000..3ec6cc3
+index 0000000..e630bd2
 --- /dev/null
 +++ b/app/display/gimpoptionsbar.c
-@@ -0,0 +1,2806 @@
+@@ -0,0 +1,2814 @@
 +/* GIMP - The GNU Image Manipulation Program
 + * Copyright (C) 1995 Spencer Kimball and Peter Mattis
 + *
@@ -94,6 +94,7 @@ index 0000000..3ec6cc3
 +
 +#include "widgets/gimplayermodebox.h"
 +#include "widgets/gimpview.h"
++#include "widgets/gimpcolorpanel.h"
 +#include "widgets/gimppropwidgets.h"
 +#include "widgets/gimpuimanager.h"
 +#include "widgets/gimpviewablebox.h"
@@ -1300,9 +1301,6 @@ index 0000000..3ec6cc3
 +  GtkWidget *menu = gtk_menu_button_new ();
 +  GtkWidget *area;
 +
-+  /*  lot V2: also the object mode of the bar (not a context)  */
-+  cp->gimp    = GIMP_IS_CONTEXT (options) ? GIMP_CONTEXT (options)->gimp
-+                                          : g_object_get_data (options, "gimp");
 +  cp->options = options;
 +  cp->prop    = g_strdup (prop);
 +  if (! strcmp (prop, "fill-foreground"))
@@ -1318,9 +1316,19 @@ index 0000000..3ec6cc3
 +      cp->pattern_prop = "stroke-pattern";
 +    }
 +
++  /*  lot V2: also the object mode of the bar (not a context)  */
++  cp->gimp    = GIMP_IS_CONTEXT (options) ? GIMP_CONTEXT (options)->gimp
++                                          : g_object_get_data (options, "gimp");
++
 +  /*  hidden swatch button: opens GIMP's full color dialog  */
 +  cp->dialog_button = gimp_prop_color_button_new (options, prop, title, TRUE,
 +                                                  20, 20, GIMP_COLOR_AREA_SMALL_CHECKS);
++  /*  ChopGimp 4.2.5: GimpColorDialog needs a context, else « Sélecteur
++   *  de couleur… » silently opened nothing (object mode of the bar).
++   */
++  if (cp->gimp)
++    gimp_color_panel_set_context (GIMP_COLOR_PANEL (cp->dialog_button),
++                                  gimp_get_user_context (cp->gimp));
 +  gtk_box_pack_end (GTK_BOX (hbox), cp->dialog_button, FALSE, FALSE, 0);
 +  gtk_widget_set_no_show_all (cp->dialog_button, TRUE);
 +  gtk_widget_set_visible (cp->dialog_button, FALSE);

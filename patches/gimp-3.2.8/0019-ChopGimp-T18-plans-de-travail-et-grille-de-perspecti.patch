@@ -31,10 +31,10 @@ Anciens patchs : 0162, 0166, 0167, 0169.
  app/file/meson.build                       |    1 +
  app/tools/chopgimp-artboardtool.c          | 1378 +++++++++++++++
  app/tools/chopgimp-artboardtool.h          |   14 +
- app/tools/chopgimp-pgridtools.c            | 1778 ++++++++++++++++++++
+ app/tools/chopgimp-pgridtools.c            | 1782 ++++++++++++++++++++
  app/tools/chopgimp-pgridtools.h            |   16 +
  plug-ins/common/chopgimp-artboards-parse.h |  124 ++
- 29 files changed, 7698 insertions(+), 6 deletions(-)
+ 29 files changed, 7702 insertions(+), 6 deletions(-)
  create mode 100644 app/core/chopgimp-artboards.c
  create mode 100644 app/core/chopgimp-artboards.h
  create mode 100644 app/core/chopgimp-pgrid.c
@@ -6282,10 +6282,10 @@ index 0000000..873d920
 +                                      gpointer                  data);
 diff --git a/app/tools/chopgimp-pgridtools.c b/app/tools/chopgimp-pgridtools.c
 new file mode 100644
-index 0000000..61e1e2f
+index 0000000..9fc856c
 --- /dev/null
 +++ b/app/tools/chopgimp-pgridtools.c
-@@ -0,0 +1,1778 @@
+@@ -0,0 +1,1782 @@
 +/* GIMP - The GNU Image Manipulation Program
 + * Copyright (C) 1995 Spencer Kimball and Peter Mattis
 + *
@@ -6356,6 +6356,7 @@ index 0000000..61e1e2f
 +
 +#include "widgets/gimpaction.h"
 +#include "widgets/gimphelp-ids.h"
++#include "widgets/gimpcolorpanel.h"
 +#include "widgets/gimppropwidgets.h"
 +#include "widgets/gimpwidgets-utils.h"
 +
@@ -6705,12 +6706,15 @@ index 0000000..61e1e2f
 +  gtk_box_pack_start (GTK_BOX (hbox), gtk_label_new (_("Couleurs :")), FALSE, FALSE, 0);
 +  w = gimp_prop_color_button_new (config, "pgrid-color-left", _("Plan gauche"),
 +                                  FALSE, 24, 16, GIMP_COLOR_AREA_FLAT);
++  gimp_color_panel_set_context (GIMP_COLOR_PANEL (w), GIMP_CONTEXT (tool_options));
 +  gtk_box_pack_start (GTK_BOX (hbox), w, FALSE, FALSE, 0);
 +  w = gimp_prop_color_button_new (config, "pgrid-color-floor", _("Plan horizontal"),
 +                                  FALSE, 24, 16, GIMP_COLOR_AREA_FLAT);
++  gimp_color_panel_set_context (GIMP_COLOR_PANEL (w), GIMP_CONTEXT (tool_options));
 +  gtk_box_pack_start (GTK_BOX (hbox), w, FALSE, FALSE, 0);
 +  w = gimp_prop_color_button_new (config, "pgrid-color-right", _("Plan droit"),
 +                                  FALSE, 24, 16, GIMP_COLOR_AREA_FLAT);
++  gimp_color_panel_set_context (GIMP_COLOR_PANEL (w), GIMP_CONTEXT (tool_options));
 +  gtk_box_pack_start (GTK_BOX (hbox), w, FALSE, FALSE, 0);
 +  gtk_box_pack_start (GTK_BOX (vbox), hbox, FALSE, FALSE, 0);
 +
