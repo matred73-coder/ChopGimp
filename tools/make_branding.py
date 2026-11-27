@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """
 ChopGimp — génère l'identité visuelle (tête de loup, 4.2.4 ; source :
-branding/source/loup.png, loup brun détouré de blanc sur fond transparent) :
+branding/source/loup.png, loup brun détouré de blanc devant la lune,
+fond transparent) :
 
   branding/chopgimp.svg                 icône de l'application (texte vectorisé)
   branding/png/chopgimp-<taille>.png    icône aux tailles hicolor
@@ -29,8 +30,9 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 OUT = os.path.join(ROOT, "branding")
 WOLF = os.path.join(OUT, "source", "loup.png")
 VERSION = open(os.path.join(ROOT, "VERSION")).read().strip()
-# Yeux du loup dans loup.png (606×782), pour la lueur rouge de l'écran
-EYES = ((333, 343, 30), (477, 357, 20))
+# Yeux du loup dans loup.png (838×764, loup devant la lune), pour la
+# lueur rouge de l'écran
+EYES = ((435, 332, 24), (579, 349, 18))
 RED = (0.99, 0.0, 0.01)
 os.makedirs(os.path.join(OUT, "png"), exist_ok=True)
 
@@ -46,11 +48,16 @@ def text_layout(cr, text, size, font=FONT):
     return layout
 
 
+def wolf_bbox(im):
+    """Cadre du dessin, sans les pixels presque transparents (halo)."""
+    return im.split()[3].point(lambda v: 255 if v >= 20 else 0).getbbox()
+
+
 def wolf_surface(height):
     """Loup redimensionné (PIL, Lanczos) en surface cairo ARGB."""
     from PIL import Image
     im = Image.open(WOLF).convert("RGBA")
-    im = im.crop(im.getbbox())
+    im = im.crop(wolf_bbox(im))
     w = max(1, round(im.width * height / im.height))
     im = im.resize((w, height), Image.LANCZOS)
     buf = io.BytesIO()
@@ -63,7 +70,7 @@ def draw_wolf_square(cr, size, pad=0.02):
     """Loup centré dans un carré, proportions gardées."""
     from PIL import Image
     src = Image.open(WOLF).convert("RGBA")
-    src = src.crop(src.getbbox())
+    src = src.crop(wolf_bbox(src))
     inner = size * (1 - 2 * pad)
     scale = min(inner / src.width, inner / src.height)
     h = max(1, round(src.height * scale))
@@ -80,7 +87,7 @@ def icon_svg(path, size=256, mono=False):
         # le remplissage), tirée de la couche alpha sur une grille 32×32
         from PIL import Image
         im = Image.open(WOLF).convert("RGBA")
-        im = im.crop(im.getbbox())
+        im = im.crop(wolf_bbox(im))
         n = 32
         sc = min(n / im.width, n / im.height)
         gw, gh = max(1, round(im.width * sc)), max(1, round(im.height * sc))
@@ -137,7 +144,7 @@ def splash(path, w=1591, h=1080):
     wsurf, wim = wolf_surface(wh)
     from PIL import Image
     src = Image.open(WOLF).convert("RGBA")
-    bx0, by0, bx1, by1 = src.getbbox()
+    bx0, by0, bx1, by1 = wolf_bbox(src)
     k = wh / float(by1 - by0)
     wx = w * 0.28 - wim.width / 2.0
     wy = h * 0.055

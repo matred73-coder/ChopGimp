@@ -27,14 +27,14 @@ Anciens patchs : 0096, 0097, 0102, 0103, 0104, 0105, 0106, 0107, 0110, 0111.
  app/core/gimpdrawablefilter.h                 |    5 +
  app/core/gimpfilterstack.c                    |  353 +-
  app/core/gimpgrouplayer.c                     |   54 +-
- app/core/gimpprojection.c                     | 1796 +++++++++-
+ app/core/gimpprojection.c                     | 1816 +++++++++-
  app/core/gimpprojection.h                     |    9 +
  app/core/meson.build                          |   12 +
  app/display/gimpcanvasboundary.c              |   65 +-
  app/display/gimpdisplayshell-selection.c      |  296 +-
  app/display/gimpdisplayshell.c                |   12 +
- app/gegl/gimp-gegl-graph-lock.c               |  743 ++++
- app/gegl/gimp-gegl-graph-lock.h               |   59 +
+ app/gegl/gimp-gegl-graph-lock.c               |  781 +++++
+ app/gegl/gimp-gegl-graph-lock.h               |   60 +
  app/gegl/gimptilehandlervalidate.c            |   51 +
  app/gegl/gimptilehandlervalidate.h            |    6 +
  app/gegl/meson.build                          |    1 +
@@ -63,7 +63,7 @@ Anciens patchs : 0096, 0097, 0102, 0103, 0104, 0105, 0106, 0107, 0110, 0111.
  app/xcf/xcf-load.c                            |   66 +
  app/xcf/xcf-private.h                         |   12 +
  app/xcf/xcf-save.c                            |   61 +
- 58 files changed, 15737 insertions(+), 283 deletions(-)
+ 58 files changed, 15796 insertions(+), 283 deletions(-)
  create mode 100644 app/core/chopgimp-alpha-bounds.c
  create mode 100644 app/core/chopgimp-alpha-bounds.h
  create mode 100644 app/core/chopgimp-fx-cache.c
@@ -6089,7 +6089,7 @@ index 5858cda..c6f47c3 100644
      }
  }
 diff --git a/app/core/gimpprojection.c b/app/core/gimpprojection.c
-index 48ab93e..3252a3c 100644
+index 48ab93e..5d6056f 100644
 --- a/app/core/gimpprojection.c
 +++ b/app/core/gimpprojection.c
 @@ -30,8 +30,10 @@
@@ -6195,7 +6195,7 @@ index 48ab93e..3252a3c 100644
  struct _GimpProjectionPrivate
  {
    GimpProjectable           *projectable;
-@@ -80,6 +160,33 @@ struct _GimpProjectionPrivate
+@@ -80,6 +160,34 @@ struct _GimpProjectionPrivate
    guint                      idle_id;
  
    gboolean                   invalidate_preview;
@@ -6225,11 +6225,12 @@ index 48ab93e..3252a3c 100644
 +  guint                      threadable_serial;
 +  gint64                     threadable_time;
 +  gboolean                   draftable;
++  gboolean                   draft_exact;
 +  gint64                     draftable_time;
  };
  
  
-@@ -130,6 +237,33 @@ static void        gimp_projection_chunk_render_stop     (GimpProjection  *proj,
+@@ -130,6 +238,33 @@ static void        gimp_projection_chunk_render_stop     (GimpProjection  *proj,
                                                            gboolean         merge);
  static gboolean    gimp_projection_chunk_render_callback (GimpProjection  *proj);
  static gboolean    gimp_projection_chunk_render_iteration(GimpProjection  *proj);
@@ -6263,7 +6264,7 @@ index 48ab93e..3252a3c 100644
  static void        gimp_projection_paint_area            (GimpProjection  *proj,
                                                            gboolean         now,
                                                            gint             x,
-@@ -479,7 +613,140 @@ gimp_projection_set_priority_rect (GimpProjection *proj,
+@@ -479,7 +614,140 @@ gimp_projection_set_priority_rect (GimpProjection *proj,
  
    proj->priv->priority_rect = *GEGL_RECTANGLE (x, y, w, h);
  
@@ -6405,7 +6406,7 @@ index 48ab93e..3252a3c 100644
  }
  
  void
-@@ -502,15 +769,23 @@ gimp_projection_stop_rendering (GimpProjection *proj)
+@@ -502,15 +770,23 @@ gimp_projection_stop_rendering (GimpProjection *proj)
  void
  gimp_projection_flush (GimpProjection *proj)
  {
@@ -6436,7 +6437,7 @@ index 48ab93e..3252a3c 100644
  }
  
  /**
-@@ -527,6 +802,22 @@ gimp_projection_flush_now (GimpProjection *proj,
+@@ -527,6 +803,22 @@ gimp_projection_flush_now (GimpProjection *proj,
  {
    g_return_if_fail (GIMP_IS_PROJECTION (proj));
  
@@ -6459,7 +6460,7 @@ index 48ab93e..3252a3c 100644
    /* Construct NOW - synchronously */
    if (proj->priv->update_region)
      {
-@@ -561,13 +852,24 @@ gimp_projection_finish_draw (GimpProjection *proj)
+@@ -561,13 +853,24 @@ gimp_projection_finish_draw (GimpProjection *proj)
  {
    g_return_if_fail (GIMP_IS_PROJECTION (proj));
  
@@ -6485,7 +6486,7 @@ index 48ab93e..3252a3c 100644
  
        gimp_tile_handler_validate_end_validate (proj->priv->validate_handler);
  
-@@ -597,9 +899,21 @@ gimp_projection_allocate_buffer (GimpProjection *proj)
+@@ -597,9 +900,21 @@ gimp_projection_allocate_buffer (GimpProjection *proj)
      GIMP_TILE_HANDLER_VALIDATE (
        gimp_tile_handler_projectable_new (proj->priv->projectable));
  
@@ -6507,7 +6508,7 @@ index 48ab93e..3252a3c 100644
    g_object_notify (G_OBJECT (proj), "buffer");
  }
  
-@@ -610,6 +924,10 @@ gimp_projection_free_buffer (GimpProjection  *proj)
+@@ -610,6 +925,10 @@ gimp_projection_free_buffer (GimpProjection  *proj)
  
    g_clear_pointer (&proj->priv->update_region, cairo_region_destroy);
  
@@ -6518,7 +6519,7 @@ index 48ab93e..3252a3c 100644
    if (proj->priv->buffer)
      {
        gimp_tile_handler_validate_unassign (proj->priv->validate_handler,
-@@ -652,34 +970,221 @@ gimp_projection_add_update_area (GimpProjection *proj,
+@@ -652,34 +971,221 @@ gimp_projection_add_update_area (GimpProjection *proj,
          cairo_region_union_rectangle (proj->priv->update_region, &rect);
        else
          proj->priv->update_region = cairo_region_create_rectangle (&rect);
@@ -6753,7 +6754,7 @@ index 48ab93e..3252a3c 100644
  }
  
  static gboolean
-@@ -694,58 +1199,34 @@ gimp_projection_chunk_render_start (GWeakRef *proj_ref)
+@@ -694,58 +1200,34 @@ gimp_projection_chunk_render_start (GWeakRef *proj_ref)
    if (proj == NULL)
      return G_SOURCE_REMOVE;
  
@@ -6822,7 +6823,7 @@ index 48ab93e..3252a3c 100644
              {
                /* invalidate the preview here since it is constructed from
                 * the projection
-@@ -756,7 +1237,11 @@ gimp_projection_chunk_render_start (GWeakRef *proj_ref)
+@@ -756,7 +1238,11 @@ gimp_projection_chunk_render_start (GWeakRef *proj_ref)
              }
          }
      }
@@ -6835,7 +6836,7 @@ index 48ab93e..3252a3c 100644
      {
        /* invalidate the preview here since it is constructed from
         * the projection
-@@ -775,24 +1260,16 @@ static void
+@@ -775,24 +1261,16 @@ static void
  gimp_projection_chunk_render_stop (GimpProjection *proj,
                                     gboolean        merge)
  {
@@ -6863,7 +6864,7 @@ index 48ab93e..3252a3c 100644
                cairo_region_destroy (region);
              }
            else
-@@ -802,23 +1279,107 @@ gimp_projection_chunk_render_stop (GimpProjection *proj,
+@@ -802,23 +1280,107 @@ gimp_projection_chunk_render_stop (GimpProjection *proj,
          }
        else
          {
@@ -6984,7 +6985,7 @@ index 48ab93e..3252a3c 100644
  
        return G_SOURCE_REMOVE;
      }
-@@ -826,6 +1387,87 @@ gimp_projection_chunk_render_callback (GimpProjection *proj)
+@@ -826,6 +1388,87 @@ gimp_projection_chunk_render_callback (GimpProjection *proj)
  
  static gboolean
  gimp_projection_chunk_render_iteration (GimpProjection *proj)
@@ -7072,7 +7073,7 @@ index 48ab93e..3252a3c 100644
  {
    if (gimp_chunk_iterator_next (proj->priv->iter))
      {
-@@ -848,7 +1490,8 @@ gimp_projection_chunk_render_iteration (GimpProjection *proj)
+@@ -848,7 +1491,8 @@ gimp_projection_chunk_render_iteration (GimpProjection *proj)
      {
        proj->priv->iter = NULL;
  
@@ -7082,7 +7083,7 @@ index 48ab93e..3252a3c 100644
          {
            /* invalidate the preview here since it is constructed from
             * the projection
-@@ -894,6 +1537,9 @@ gimp_projection_paint_area (GimpProjection *proj,
+@@ -894,6 +1538,9 @@ gimp_projection_paint_area (GimpProjection *proj,
            gimp_tile_handler_validate_invalidate (
              proj->priv->validate_handler,
              &rect);
@@ -7092,7 +7093,7 @@ index 48ab93e..3252a3c 100644
          }
  
        /*  add the projectable's offsets because the list of update areas
-@@ -910,6 +1556,983 @@ gimp_projection_paint_area (GimpProjection *proj,
+@@ -910,6 +1557,1002 @@ gimp_projection_paint_area (GimpProjection *proj,
  }
  
  
@@ -7114,7 +7115,9 @@ index 48ab93e..3252a3c 100644
 + *    full resolution once the image stops changing.  When the display is
 + *    zoomed out, the visible area is first rendered at the displayed
 + *    level, then refined.  Only graphs whose operations scale correctly
-+ *    with the level are drafted (gimp_gegl_graph_is_draftable()).
++ *    with the level are drafted (gimp_gegl_graph_is_draftable()).  At
++ *    100 % zoom, graphs with layer effects or blurs are not drafted
++ *    (4.2.7, see gimp_projection_job_new()).
 + *
 + *  Without either, the projection is rendered by the original code path
 + *  (gimp_projection_chunk_render_step()).
@@ -7262,7 +7265,8 @@ index 48ab93e..3252a3c 100644
 +  if (now - priv->draftable_time > CHOPGIMP_PROJECTION_DRAFTABLE_TIME)
 +    {
 +      priv->draftable =
-+        gimp_gegl_graph_is_draftable (gimp_projectable_get_graph (priv->projectable));
++        gimp_gegl_graph_is_draftable (gimp_projectable_get_graph (priv->projectable),
++                                      &priv->draft_exact);
 +
 +      priv->draftable_time = now;
 +    }
@@ -7621,6 +7625,7 @@ index 48ab93e..3252a3c 100644
 +
 +  if (drafting)
 +    {
++      static gint   draft_effects_100 = -1;
 +      gboolean      drafted = FALSE;
 +      GeglRectangle check;
 +
@@ -7639,9 +7644,24 @@ index 48ab93e..3252a3c 100644
 +                     CAIRO_REGION_OVERLAP_IN);
 +        }
 +
++      /*  4.2.7: at 100 % zoom (display level 0), a draft is rendered at
++       *  level 1 and upscaled: every hard edge not on an even pixel
++       *  becomes a 2 pixel wide blend of its two sides.  With layer
++       *  effects, the draft covers the effects' whole area around the
++       *  brush, edges of shadows and strokes included, so thin straight
++       *  gray lines flashed there until the refinement; and their level
++       *  1 rendering is not cheaper than level 0 (no plane cache there,
++       *  measured), so the draft only doubled the work.  Such graphs are
++       *  rendered at level 0 directly at 100 % zoom
++       *  (CHOPGIMP_DRAFT_EFFECTS_100=1 restores the drafts).
++       */
++      if (draft_effects_100 < 0)
++        draft_effects_100 = (g_getenv ("CHOPGIMP_DRAFT_EFFECTS_100") != NULL);
++
 +      if (! drafted)
 +        {
-+          if (acting)
++          if (acting &&
++              (display_level > 0 || priv->draft_exact || draft_effects_100))
 +            level = MAX (1, display_level);
 +          else if (display_level > 0 && in_view)
 +            level = display_level;
@@ -8076,7 +8096,7 @@ index 48ab93e..3252a3c 100644
  /*  image callbacks  */
  
  static void
-@@ -1069,6 +2692,15 @@ gimp_projection_projectable_bounds_changed (GimpProjectable *projectable,
+@@ -1069,6 +2712,15 @@ gimp_projection_projectable_bounds_changed (GimpProjectable *projectable,
        g_object_unref (old_buffer);
      }
  
@@ -8660,10 +8680,10 @@ index 51f28da..7f0f078 100644
        gimp_projection_set_priority_rect (projection, x, y, width, height);
 diff --git a/app/gegl/gimp-gegl-graph-lock.c b/app/gegl/gimp-gegl-graph-lock.c
 new file mode 100644
-index 0000000..f245b37
+index 0000000..22b253b
 --- /dev/null
 +++ b/app/gegl/gimp-gegl-graph-lock.c
-@@ -0,0 +1,743 @@
+@@ -0,0 +1,781 @@
 +/* GIMP - The GNU Image Manipulation Program
 + * Copyright (C) 1995 Spencer Kimball and Peter Mattis
 + *
@@ -9318,6 +9338,25 @@ index 0000000..f245b37
 + *  operations, and the operations of layer graphs which scale their
 + *  geometry with the level
 + */
++/*  ChopGimp 4.2.7: the level aware operations whose output at a level > 0
++ *  is a close draft, not the downscaled level 0 output: their sizes
++ *  (shadow offset, blur radius, stroke width) are rounded to the level,
++ *  and the layer styles recompute their planes without their cache.  Set
++ *  by gimp_gegl_graph_check_draftable() during a walk (main thread only).
++ */
++static const gchar * const level_approximate[] =
++{
++  "gegl:gblur-1d",
++  "gegl:median-blur",
++  "chopgimp:stroke",
++  "chopgimp:satin",
++  "chopgimp:pattern-overlay",
++  "chopgimp:layer-style-fused",
++  NULL
++};
++
++static gboolean draft_exact = TRUE;
++
 +static gboolean
 +gimp_gegl_graph_check_draftable (GeglNode      *node,
 +                                 GeglOperation *operation)
@@ -9363,7 +9402,12 @@ index 0000000..f245b37
 +    return FALSE;
 +
 +  if (gimp_gegl_graph_name_in (name, level_aware))
-+    return TRUE;
++    {
++      if (gimp_gegl_graph_name_in (name, level_approximate))
++        draft_exact = FALSE;
++
++      return TRUE;
++    }
 +
 +  /*  ChopGimp's other operations don't know about levels  */
 +  if (g_str_has_prefix (name, "chopgimp:"))
@@ -9399,20 +9443,34 @@ index 0000000..f245b37
 + * gimp_gegl_graph_is_draftable:
 + * @graph: a #GeglNode
 + *
++ * @exact: (out) (optional): whether, moreover, the image rendered at a
++ *         level > 0 is the downscaled level 0 image (no layer effect nor
++ *         blur, which only give a close draft there)
++ *
 + * Returns: whether @graph renders correctly (up to the resolution) at a
 + * mipmap level greater than 0.
 + */
 +gboolean
-+gimp_gegl_graph_is_draftable (GeglNode *graph)
++gimp_gegl_graph_is_draftable (GeglNode *graph,
++                              gboolean *exact)
 +{
-+  return gimp_gegl_graph_check (graph, gimp_gegl_graph_check_draftable);
++  gboolean draftable;
++
++  draft_exact = TRUE;
++
++  draftable = gimp_gegl_graph_check (graph, gimp_gegl_graph_check_draftable);
++
++  if (exact)
++    *exact = draftable && draft_exact;
++
++  return draftable;
 +}
 diff --git a/app/gegl/gimp-gegl-graph-lock.h b/app/gegl/gimp-gegl-graph-lock.h
 new file mode 100644
-index 0000000..8d8638e
+index 0000000..b72c046
 --- /dev/null
 +++ b/app/gegl/gimp-gegl-graph-lock.h
-@@ -0,0 +1,59 @@
+@@ -0,0 +1,60 @@
 +/* GIMP - The GNU Image Manipulation Program
 + * Copyright (C) 1995 Spencer Kimball and Peter Mattis
 + *
@@ -9471,7 +9529,8 @@ index 0000000..8d8638e
 +                                                    gpointer     data);
 +
 +gboolean   gimp_gegl_graph_is_threadable           (GeglNode    *graph);
-+gboolean   gimp_gegl_graph_is_draftable            (GeglNode    *graph);
++gboolean   gimp_gegl_graph_is_draftable            (GeglNode    *graph,
++                                                    gboolean    *exact);
 diff --git a/app/gegl/gimptilehandlervalidate.c b/app/gegl/gimptilehandlervalidate.c
 index 2718bd1..f5e7fb3 100644
 --- a/app/gegl/gimptilehandlervalidate.c
