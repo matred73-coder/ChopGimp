@@ -10,6 +10,7 @@ import sys
 import re
 import traceback
 import time
+import zlib
 
 from gi.repository import Gimp, Gegl, Gio
 
@@ -2979,6 +2980,196 @@ try:
         os.unlink(cpath)
     except Exception:
         report(False, "4.1.1 PSD CMJN", traceback.format_exc().replace("\n", " | ")[:400])
+
+    # 4.2.0 : CMJN façon Photoshop
+    def cmyk(image, command):
+        r = run("chopgimp-cmyk-command", image=image, command=command)
+        return (bool(r.index(1)), r.index(2) or "") if r is not None and \
+            r.index(0) == Gimp.PDBStatusType.SUCCESS else (False, "procédure absente")
+
+    try:
+        _ok, listing = cmyk(None, "list")
+        iso = next((p_ for p_ in listing.split("\n") if p_.endswith("ISOcoated_v2_eci.icc")), "")
+        lic = os.path.join(Gimp.data_directory(), "color", "LICENSE-ISOcoated_v2_eci.txt")
+        report(bool(iso) and os.path.exists(iso) and os.path.exists(lic),
+               "4.2.0 Profil ISO Coated v2 (FOGRA39) fourni avec sa licence", iso)
+        okp, pref = cmyk(None, "preferred")
+        report(okp and pref.startswith(("ISO Coated v2", "PSO Coated v3")),
+               "4.2.0 Profil CMJN de travail par défaut (PSO v3 si téléchargé, sinon ISO v2)", pref)
+
+        imk = Gimp.Image.new(120, 80, Gimp.ImageBaseType.RGB)
+        lk = Gimp.Layer.new(imk, "Fond", 120, 80, Gimp.ImageType.RGB_IMAGE, 100, Gimp.LayerMode.NORMAL)
+        imk.insert_layer(lk, None, 0)
+        Gimp.context_set_foreground(color(0.1, 0.6, 0.9))
+        lk.edit_fill(Gimp.FillType.FOREGROUND)
+        ok1, _ = cmyk(imk, "set-cmyk")
+        _o, isk = cmyk(imk, "is-cmyk")
+        _o, sim = cmyk(imk, "simulation")
+        report(ok1 and isk == "1" and sim == pref, "4.2.0 Image > Mode > CMJN : profil de travail en "
+               "simulation, mode enregistré", sim)
+        ok2, _ = cmyk(imk, "set-rgb")
+        _o, isk2 = cmyk(imk, "is-cmyk")
+        report(ok2 and isk2 == "0" and imk.get_simulation_profile() is not None,
+               "4.2.0 Retour en RVB (le profil de simulation reste)")
+
+        # robustesse : profil illisible, profil d'entrée sans B2A, fichier absent
+        junk = os.path.join(TMP, "faux.icc")
+        open(junk, "wb").write(b"pas un profil ICC" * 20)
+        okj, msgj = cmyk(None, "check|" + junk)
+        bad = os.path.join(TMP, "scnr.icc")
+        open(bad, "wb").write(_icc_cmyk_input())
+        okb, msgb = cmyk(None, "check|" + bad)
+        oks, msgs = cmyk(imk, "set-cmyk|" + bad)
+        okm, msgm = cmyk(imk, "convert|/nulle/part.icc")
+        _o, isk3 = cmyk(imk, "is-cmyk")
+        report(not okj and not okb and "convertir" in msgb and not oks and not okm and isk3 == "0",
+               "4.2.0 Profil invalide ou sans table de conversion : message, aucun changement",
+               "%s | %s" % (msgj[:60], msgb[:70]))
+
+        # conversion CMJN → CMJN (mode de rendu, point noir)
+        cmyk(imk, "set-cmyk")
+        before = layer_bytes(lk)
+        okc, msgc = cmyk(imk, "convert|%s|0|1" % iso)
+        report(okc and imk.get_simulation_intent() == Gimp.ColorRenderingIntent.PERCEPTUAL and
+               imk.get_simulation_bpc() and layer_bytes(lk)[1:3] == before[1:3],
+               "4.2.0 Convertir en profil CMJN (perception, compensation du point noir)", msgc)
+
+        # couleurs sRGB → CMJN du profil (export PDF/X-4)
+        okr, txt = cmyk(None, "rgb2cmyk|%s|1|1|0,0,0;1,1,1;1,0,0" % iso)
+        try:
+            vals = [tuple(float(v) for v in t.split(",")) for t in txt.split(";")] if okr else []
+        except ValueError:
+            vals = []
+        report(len(vals) == 3 and max(vals[1]) < 0.01 and vals[0][3] > 0.6 and vals[2][1] > 0.8,
+               "4.2.0 Conversion des couleurs vers le CMJN du profil", txt[:80])
+
+        # PSD CMJN au profil sans B2A : ouvert en mode CMJN, profil de travail à la place
+        cpath = os.path.join(TMP, "cmjn-mauvais-profil.psd")
+        _psd_cmyk(cpath, 32, 20, _icc_cmyk_input())
+        imp = Gimp.file_load(Gimp.RunMode.NONINTERACTIVE, Gio.File.new_for_path(cpath))
+        if imp is not None:     # ce que fait l'ouverture (gimp-file-load ne l'applique pas)
+            run("gimp-image-policy-color-profile", image=imp, interactive=False)
+        _o, ispk = cmyk(imp, "is-cmyk") if imp else (False, "")
+        _o, simp = cmyk(imp, "simulation") if imp else (False, "")
+        report(imp is not None and ispk == "1" and simp == pref,
+               "4.2.0 Fichier CMJN à profil inutilisable : ouvert en CMJN, profil de travail", simp)
+        if imp is not None:
+            imp.delete()
+
+        # Exporter pour l'imprimeur : PDF/X-4 vectoriel, PDF/X-1a, TIFF, plans de travail
+        imx, vx, _c = scene(300, 200, [square(20, 20, 80), square(150, 60, 80)])
+        imx.set_resolution(150.0, 150.0)
+        cmyk(imx, "set-cmyk")
+        bgx = Gimp.Layer.new(imx, "Photo", 300, 200, Gimp.ImageType.RGB_IMAGE, 100, Gimp.LayerMode.NORMAL)
+        imx.insert_layer(bgx, None, 1)
+        Gimp.context_set_foreground(color(0.95, 0.85, 0.2))
+        bgx.edit_fill(Gimp.FillType.FOREGROUND)
+
+        def pexport(name, **kw):
+            path = os.path.join(TMP, name)
+            args = {"run-mode": Gimp.RunMode.NONINTERACTIVE, "image": imx,
+                    "file": Gio.File.new_for_path(path)}
+            args.update(kw)
+            r = run("file-chopgimp-print-export", **args)
+            okx = r is not None and r.index(0) == Gimp.PDBStatusType.SUCCESS
+            return okx, (open(path, "rb").read() if os.path.exists(path) else b""), \
+                ("" if okx or r is None else str(r.index(1)))
+
+        okx4, d4, e4 = pexport("imprimeur-x4.pdf", format="pdf-x4", profile="iso-coated",
+                               bleed=3.0, **{"crop-marks": True, "artboards": "image"})
+        report(okx4 and d4.startswith(b"%PDF-1.6") and b"/GTS_PDFX" in d4 and b"FOGRA39" in d4
+               and b"pdfxid:GTS_PDFXVersion>PDF/X-4" in d4 and b"/TrimBox" in d4 and
+               b"/BleedBox" in d4 and b"/All" in d4,
+               "4.2.0 Export pour l'imprimeur : PDF/X-4, intention de sortie, boîtes, traits de coupe",
+               e4 or "%d octets" % len(d4))
+        st4 = b"".join(zlib.decompress(m_.group(1)) for m_ in
+                       re.finditer(rb"stream\n(x.*?)\nendstream", d4, re.S)
+                       if m_.group(1)[:1] == b"x")
+        report(b" k" in st4 and not re.search(rb"[\d.]+ [\d.]+ [\d.]+ rg\b", st4) and b"/ICCBased" in d4,
+               "4.2.0 PDF/X-4 vectoriel : couleurs des tracés en CMJN, images en RVB balisé")
+        okx1, d1, e1 = pexport("imprimeur-x1a.pdf", format="pdf-x1a", profile="image",
+                               bleed=2.0, **{"crop-marks": False, "artboards": "image"})
+        report(okx1 and d1.startswith(b"%PDF-1.3") and b"/DeviceCMYK" in d1 and
+               b"PDF/X-1a:2001" in d1 and b"/DestOutputProfile" in d1,
+               "4.2.0 Export pour l'imprimeur : PDF/X-1a (image CMJN, profil intégré)",
+               e1 or "%d octets" % len(d1))
+        m1 = re.search(rb"/MediaBox \[0 0 ([\d.]+) ([\d.]+)\]", d1)
+        exp_w = 300 * 72 / 150.0 + 2 * round(2.0 / 25.4 * 150) * 72 / 150.0
+        report(m1 is not None and abs(float(m1.group(1)) - exp_w) < 0.5,
+               "4.2.0 Fond perdu ajouté autour de la page", m1.group(1).decode() if m1 else "")
+        okt, dt, et = pexport("imprimeur.tif", format="tiff", profile="iso-coated", bleed=0.0,
+                              **{"crop-marks": False, "artboards": "image"})
+        imt = Gimp.file_load(Gimp.RunMode.NONINTERACTIVE,
+                             Gio.File.new_for_path(os.path.join(TMP, "imprimeur.tif"))) if okt else None
+        if imt is not None:
+            run("gimp-image-policy-color-profile", image=imt, interactive=False)
+        _o, ist = cmyk(imt, "is-cmyk") if imt else (False, "")
+        report(okt and dt[:2] in (b"II", b"MM") and ist == "1",
+               "4.2.0 Export pour l'imprimeur : TIFF CMJN relu en mode CMJN", et)
+        if imt is not None:
+            imt.delete()
+        run("chopgimp-artboards-command", image=imx, command="add:0:0:150:200:Gauche")
+        run("chopgimp-artboards-command", image=imx, command="add:150:0:150:200:Droite")
+        oka, _da, ea = pexport("plans.pdf", format="pdf-x1a", profile="image", bleed=0.0,
+                               **{"crop-marks": True, "artboards": "files"})
+        fa = [os.path.join(TMP, "plans-0%d-%s.pdf" % (i + 1, n)) for i, n in enumerate(("Gauche", "Droite"))]
+        report(oka and all(os.path.exists(f_) for f_ in fa),
+               "4.2.0 Export pour l'imprimeur : un fichier par plan de travail", ea)
+
+        # copier-coller d'objets ; la vectorisation sélectionne ses objets
+        imx.set_selected_layers([vx])
+        n_ok = vcmd(imx, "select-at:60:60")
+        rc = run("chopgimp-vobjects-command", image=imx, command="copy-objects")
+        pth = Gimp.Path.new(imx, "Cible")
+        imx.insert_path(pth, None, 0)
+        st_ = pth.bezier_stroke_new_moveto(250, 150)
+        pth.bezier_stroke_lineto(st_, 290, 150); pth.bezier_stroke_lineto(st_, 290, 190)
+        pth.stroke_close(st_)
+        vx2 = Gimp.VectorLayer.new(imx, pth)
+        imx.insert_layer(vx2, None, 0)
+        vx2.refresh()
+        imx.set_selected_layers([vx2])
+        vcmd(imx, "split-new")
+        n_before = vxml(vx2).count("<path")
+        rp = run("chopgimp-vobjects-command", image=imx, command="paste-objects")
+        n_after = vxml(vx2).count("<path")
+        report(n_ok and rc is not None and bool(rc.index(1)) and rp is not None and bool(rp.index(1))
+               and n_after == n_before + 1 and rp.index(2) == 1,
+               "4.2.0 Coller des objets dans un calque vectoriel : objets créés et sélectionnés",
+               "%d → %d, %d sélectionné(s)" % (n_before, n_after, rp.index(2) if rp else -1))
+        imx.delete()
+
+        imv = Gimp.Image.new(120, 80, Gimp.ImageBaseType.RGB)
+        lv = Gimp.Layer.new(imv, "Logo", 120, 80, Gimp.ImageType.RGB_IMAGE, 100, Gimp.LayerMode.NORMAL)
+        imv.insert_layer(lv, None, 0)
+        Gimp.context_set_foreground(color(1, 1, 1)); lv.edit_fill(Gimp.FillType.FOREGROUND)
+        imv.select_rectangle(Gimp.ChannelOps.REPLACE, 20, 20, 40, 40)
+        Gimp.context_set_foreground(color(0.8, 0.1, 0.1)); lv.edit_fill(Gimp.FillType.FOREGROUND)
+        imv.select_ellipse(Gimp.ChannelOps.REPLACE, 70, 20, 40, 40)
+        Gimp.context_set_foreground(color(0.1, 0.2, 0.8)); lv.edit_fill(Gimp.FillType.FOREGROUND)
+        Gimp.Selection.none(imv)
+        rt = run("chopgimp-image-trace", drawable=lv, options="3-colors", **{"selection-only": False,
+                                                                            "live": False})
+        tl = rt.index(1) if rt is not None and rt.index(0) == Gimp.PDBStatusType.SUCCESS else None
+        rn = run("chopgimp-vobjects-command", image=imv, command="noop") if tl else None
+        n_leaves = vxml(tl).count("<path") if tl else 0
+        report(tl is not None and rn is not None and rn.index(2) >= 2 and n_leaves >= 2,
+               "4.2.0 Le calque vectorisé sélectionne ses objets",
+               "%s sélectionné(s) / %d" % (rn.index(2) if rn else "?", n_leaves))
+        imv.delete()
+        imk.delete()
+
+        tr = open(os.path.join(Gimp.sysconf_directory(), "toolrc"), encoding="utf-8").read()
+        mn = open(os.path.join(Gimp.data_directory(), "menus", "image-menu.ui"), encoding="utf-8").read()
+        prn = pdb.lookup_procedure("file-chopgimp-print-export")
+        report('"gimp-direct-lasso-tool"' in tr and "app.image-convert-cmyk" in mn and
+               "app.chopgimp-cmyk-convert-profile" in mn and prn is not None and
+               "<Image>/File/Export" in (prn.get_menu_paths() or []) and
+               pdb.lookup_procedure("plug-in-chopgimp-cmyk-download") is not None,
+               "4.2.0 Lasso direct, Image > Mode > CMJN, Convertir en profil CMJN, Exporter pour "
+               "l'imprimeur, téléchargement PSO v3 présents")
+    except Exception:
+        report(False, "4.2.0 CMJN", traceback.format_exc().replace("\n", " | ")[:400])
 
     try:
         menus = os.path.join(Gimp.data_directory(), "menus", "image-menu.ui")

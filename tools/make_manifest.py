@@ -307,6 +307,21 @@ if not vanilla:
     })
     # ── Performances (3.25.0) : options de compilation, PGO, mimalloc
     tune_build(m, gimp)
+    # 4.2.0 : profil CMJN ISO Coated v2 (FOGRA39) de l'ECI, redistribuable avec sa
+    # licence (Heidelberg, data/icc). Les PSO v3 (FOGRA51/52) ne le sont pas
+    # (« may not be distributed ») : téléchargés à la demande (chopgimp_pdf/printer.py).
+    m["modules"].append({
+        "name": "chopgimp-icc",
+        "buildsystem": "simple",
+        "sources": [{"type": "file",
+                     "url": "https://eci.org/lib/exe/eci_offset_2009.zip",
+                     "sha256": "e4537702b825ef14c3eb930f68df0a73550220b832bdda4bd812dcf3fe966306",
+                     "dest-filename": "eci_offset_2009.zip"}],
+        "build-commands": [
+            "python3 -c \"import zipfile; open('ISOcoated_v2_eci.icc', 'wb').write("
+            "zipfile.ZipFile('eci_offset_2009.zip').read('ECI_Offset_2009/ISOcoated_v2_eci.icc'))\"",
+            "install -Dm644 ISOcoated_v2_eci.icc ${FLATPAK_DEST}/share/gimp/3.0/color/ISOcoated_v2_eci.icc"],
+    })
     # Données PhotoGIMP Pro, installées après GIMP (voir tools/install_data.sh)
     m["modules"].append({
         "name": "photogimp-data",

@@ -1,0 +1,1939 @@
+From a257166ecb13c818954ca4abafd03dd520bef379 Mon Sep 17 00:00:00 2001
+From: ChopGimp <mathieu.redon@proton.me>
+Date: Fri, 27 Nov 2026 08:08:30 +0100
+Subject: [PATCH 180/181] ChopGimp 4.2.0: CMYK the Photoshop way (Image > Mode
+ > CMJN, convert to CMYK profile, import mismatch dialog with ignore, CMJN/8
+ title, exports in CMYK, unusable profiles refused)
+
+---
+ app/actions/image-actions.c               |  22 +
+ app/actions/image-commands.c              | 166 +++++++
+ app/actions/image-commands.h              |   6 +
+ app/core/chopgimp-cmyk.c                  | 537 ++++++++++++++++++++++
+ app/core/chopgimp-cmyk.h                  |  71 +++
+ app/core/gimp.c                           |   2 +
+ app/core/gimpimage-color-profile.c        |  81 ++++
+ app/core/meson.build                      |   2 +
+ app/dialogs/color-profile-dialog.c        |  57 ++-
+ app/dialogs/color-profile-dialog.h        |   3 +-
+ app/dialogs/color-profile-import-dialog.c | 210 ++++++++-
+ app/display/gimpdisplayshell-handlers.c   |  42 ++
+ app/display/gimpdisplayshell-title.c      |   5 +
+ app/display/gimpimagewindow.c             |   5 +
+ app/pdb/chopgimp-cmds.c                   | 241 ++++++++++
+ app/pdb/meson.build                       |   4 +-
+ libgimp/gimpprocedureconfig.c             |  16 +
+ menus/image-menu.ui.in.in                 |   2 +
+ plug-ins/common/file-pdf-chopgimp.h       |   6 +-
+ 19 files changed, 1467 insertions(+), 11 deletions(-)
+ create mode 100644 app/core/chopgimp-cmyk.c
+ create mode 100644 app/core/chopgimp-cmyk.h
+
+diff --git a/app/actions/image-actions.c b/app/actions/image-actions.c
+index 8ef6d04..d5805e0 100644
+--- a/app/actions/image-actions.c
++++ b/app/actions/image-actions.c
+@@ -33,6 +33,7 @@
+ #include "core/gimpchannel.h"
+ #include "core/gimpcontext.h"
+ #include "core/gimpimage.h"
++#include "core/chopgimp-cmyk.h"
+ #include "core/gimpimage-color-profile.h"
+ #include "core/gimpitemstack.h"
+ 
+@@ -81,6 +82,13 @@ static const GimpActionEntry image_actions[] =
+     image_color_profile_discard_cmd_callback,
+     GIMP_HELP_IMAGE_COLOR_PROFILE_DISCARD },
+ 
++  { "chopgimp-cmyk-convert-profile", GIMP_ICON_DOCUMENT_PRINT,
++    NC_("image-action", "Convertir en profil _CMJN..."), NULL, { NULL },
++    NC_("image-action", "Convertir les couleurs vers un autre profil CMJN "
++        "(mode de rendu, compensation du point noir)"),
++    image_cmyk_convert_profile_cmd_callback,
++    GIMP_HELP_IMAGE_COLOR_PROFILE_CONVERT },
++
+   { "image-softproof-profile", NULL,
+     NC_("image-action", "_Soft-proof Profile..."), NULL, { NULL },
+     NC_("image-action", "Set the soft-proofing profile"),
+@@ -171,6 +179,14 @@ static const GimpToggleActionEntry image_toggle_actions[] =
+     TRUE,
+     GIMP_HELP_IMAGE_COLOR_PROFILE_USE_SRGB },
+ 
++  { "image-convert-cmyk", GIMP_ICON_DOCUMENT_PRINT,
++    NC_("image-convert-action", "C_MJN (impression)"), NULL, { NULL },
++    NC_("image-convert-action", "Mode CMJN : profil CMJN de travail, épreuvage à l'écran, "
++        "exports en CMJN"),
++    image_convert_cmyk_cmd_callback,
++    FALSE,
++    GIMP_HELP_IMAGE_CONVERT_RGB },
++
+   { "image-softproof-black-point-compensation", NULL,
+     NC_("image-action", "_Black Point Compensation"), NULL, { NULL },
+     NC_("image-action", "Use black point compensation for soft-proofing"),
+@@ -532,6 +548,12 @@ image_actions_update (GimpActionGroup *group,
+     }
+ 
+   SET_SENSITIVE ("image-convert-rgb",       image);
++  /*  ChopGimp 4.2.0  */
++  SET_SENSITIVE ("image-convert-cmyk",      image &&
++                 gimp_image_get_base_type (image) == GIMP_RGB);
++  SET_ACTIVE    ("image-convert-cmyk",      image && chopgimp_image_is_cmyk (image));
++  SET_SENSITIVE ("chopgimp-cmyk-convert-profile", image &&
++                 gimp_image_get_base_type (image) == GIMP_RGB);
+   SET_SENSITIVE ("image-convert-grayscale", image);
+   SET_SENSITIVE ("image-convert-indexed",   image && !groups && is_u8_gamma);
+ 
+diff --git a/app/actions/image-commands.c b/app/actions/image-commands.c
+index 98abdd0..8d5c4f0 100644
+--- a/app/actions/image-commands.c
++++ b/app/actions/image-commands.c
+@@ -72,6 +72,11 @@
+ #include "dialogs/print-size-dialog.h"
+ #include "dialogs/resize-dialog.h"
+ 
++#include "core/chopgimp-cmyk.h"
++#include "pdb/gimppdb.h"
++#include "widgets/chopgimp-rc.h"
++#include "display/gimpdisplayshell-title.h"
++
+ #include "actions.h"
+ #include "image-commands.h"
+ 
+@@ -259,6 +264,14 @@ image_convert_base_type_cmd_callback (GimpAction *action,
+ 
+   base_type = (GimpImageBaseType) g_variant_get_int32 (value);
+ 
++  /*  ChopGimp 4.2.0: RVB from the « CMJN » mode leaves it  */
++  if (base_type == GIMP_RGB && chopgimp_image_is_cmyk (image))
++    {
++      chopgimp_image_set_cmyk (image, FALSE, NULL, NULL);
++      gimp_image_flush (image);
++      return;
++    }
++
+   if (base_type == gimp_image_get_base_type (image))
+     return;
+ 
+@@ -1666,3 +1679,156 @@ image_softproof_bpc_cmd_callback (GimpAction *action,
+       gimp_color_managed_simulation_bpc_changed (GIMP_COLOR_MANAGED (shell));
+     }
+ }
++
++
++/*  ─── ChopGimp 4.2.0: CMYK ─────────────────────────────────────────── */
++
++/*  PSO Coated v3 cannot be shipped (ECI license): offered once, a click
++ *  downloads it from eci.org (plug-in chopgimp_print)
++ */
++static void
++chopgimp_cmyk_offer_download (GimpImage   *image,
++                              GimpContext *context,
++                              GtkWidget   *parent)
++{
++  GtkWidget *dialog;
++  gint       response;
++
++  if (chopgimp_cmyk_have_pso (image->gimp) ||
++      chopgimp_rc_get_boolean ("color", "pso-offered", FALSE) ||
++      ! gimp_pdb_lookup_procedure (image->gimp->pdb, "plug-in-chopgimp-cmyk-download"))
++    return;
++
++  chopgimp_rc_set_boolean ("color", "pso-offered", TRUE);
++
++  dialog = gtk_message_dialog_new (parent ? GTK_WINDOW (gtk_widget_get_toplevel (parent)) : NULL,
++                                   GTK_DIALOG_MODAL | GTK_DIALOG_DESTROY_WITH_PARENT,
++                                   GTK_MESSAGE_QUESTION, GTK_BUTTONS_NONE,
++                                   "%s", _("Télécharger les profils CMJN PSO v3 de l'ECI ?"));
++  gtk_message_dialog_format_secondary_text (GTK_MESSAGE_DIALOG (dialog), "%s",
++    _("PSO Coated v3 (FOGRA51) et PSO Uncoated v3 (FOGRA52) sont les profils "
++      "d'impression offset actuels de l'European Color Initiative. Leur licence "
++      "interdit de les distribuer avec ChopGimp : ils sont téléchargés depuis "
++      "eci.org (3,5 Mo), puis PSO Coated v3 devient le profil CMJN de travail.\n\n"
++      "Sans eux, ChopGimp utilise ISO Coated v2 (FOGRA39), fourni. "
++      "Vous pourrez les télécharger plus tard : Image > Gestion des couleurs."));
++  gtk_dialog_add_buttons (GTK_DIALOG (dialog),
++                          _("Utiliser ISO Coated v2"), GTK_RESPONSE_CANCEL,
++                          _("_Télécharger"),           GTK_RESPONSE_OK,
++                          NULL);
++  gtk_dialog_set_default_response (GTK_DIALOG (dialog), GTK_RESPONSE_OK);
++
++  response = gtk_dialog_run (GTK_DIALOG (dialog));
++  gtk_widget_destroy (dialog);
++
++  if (response == GTK_RESPONSE_OK)
++    {
++      GError         *error = NULL;
++      GimpValueArray *rv;
++
++      rv = gimp_pdb_execute_procedure_by_name (image->gimp->pdb, context, NULL, &error,
++                                               "plug-in-chopgimp-cmyk-download",
++                                               GIMP_TYPE_RUN_MODE, GIMP_RUN_INTERACTIVE,
++                                               G_TYPE_NONE);
++      if (error)
++        {
++          gimp_message_literal (image->gimp, G_OBJECT (parent), GIMP_MESSAGE_WARNING,
++                                error->message);
++          g_clear_error (&error);
++        }
++      if (rv)
++        gimp_value_array_unref (rv);
++    }
++}
++
++void
++image_convert_cmyk_cmd_callback (GimpAction *action,
++                                 GVariant   *value,
++                                 gpointer    data)
++{
++  GimpImage *image;
++  GtkWidget *widget;
++  gboolean   active;
++  GError    *error = NULL;
++  return_if_no_image (image, data);
++  return_if_no_widget (widget, data);
++
++  active = g_variant_get_boolean (value);
++
++  if (active == chopgimp_image_is_cmyk (image))
++    return;
++
++  if (active && ! gimp_image_get_simulation_profile (image))
++    chopgimp_cmyk_offer_download (image, action_data_get_context (data), widget);
++
++  if (! chopgimp_image_set_cmyk (image, active, NULL, &error))
++    {
++      gimp_message_literal (image->gimp, G_OBJECT (widget), GIMP_MESSAGE_WARNING,
++                            error->message);
++      g_clear_error (&error);
++    }
++
++  gimp_image_flush (image);
++}
++
++static void
++chopgimp_cmyk_convert_callback (GtkWidget                *dialog,
++                                GimpImage                *image,
++                                GimpColorProfile         *new_profile,
++                                GFile                    *new_file,
++                                GimpColorRenderingIntent  intent,
++                                gboolean                  bpc,
++                                gpointer                  user_data)
++{
++  GError *error = NULL;
++
++  if (! new_profile ||
++      ! chopgimp_image_convert_cmyk_profile (image, new_profile, intent, bpc,
++                                             NULL, &error))
++    {
++      gimp_message (image->gimp, G_OBJECT (dialog), GIMP_MESSAGE_ERROR,
++                    "%s", error ? error->message : _("Aucun profil choisi."));
++      g_clear_error (&error);
++      return;
++    }
++
++  gimp_image_flush (image);
++  gtk_widget_destroy (dialog);
++}
++
++void
++image_cmyk_convert_profile_cmd_callback (GimpAction *action,
++                                         GVariant   *value,
++                                         gpointer    data)
++{
++  GimpImage        *image;
++  GtkWidget        *widget;
++  GtkWidget        *dialog;
++  GimpColorProfile *current;
++  return_if_no_image (image, data);
++  return_if_no_widget (widget, data);
++
++#define CMYK_CONVERT_DIALOG_KEY "chopgimp-cmyk-convert-dialog"
++
++  dialog = dialogs_get_dialog (G_OBJECT (image), CMYK_CONVERT_DIALOG_KEY);
++
++  if (! dialog)
++    {
++      current = gimp_image_get_simulation_profile (image);
++
++      dialog = color_profile_dialog_new (COLOR_PROFILE_DIALOG_CONVERT_CMYK,
++                                         image,
++                                         action_data_get_context (data),
++                                         widget,
++                                         current,
++                                         NULL,
++                                         GIMP_COLOR_RENDERING_INTENT_RELATIVE_COLORIMETRIC,
++                                         TRUE,
++                                         chopgimp_cmyk_convert_callback,
++                                         NULL);
++
++      dialogs_attach_dialog (G_OBJECT (image), CMYK_CONVERT_DIALOG_KEY, dialog);
++    }
++
++  gtk_window_present (GTK_WINDOW (dialog));
++}
+diff --git a/app/actions/image-commands.h b/app/actions/image-commands.h
+index 3c2debe..ab90809 100644
+--- a/app/actions/image-commands.h
++++ b/app/actions/image-commands.h
+@@ -102,6 +102,12 @@ void   image_softproof_profile_cmd_callback          (GimpAction *action,
+ void   image_softproof_intent_cmd_callback           (GimpAction *action,
+                                                       GVariant   *value,
+                                                       gpointer    data);
++void   image_convert_cmyk_cmd_callback               (GimpAction *action,
++                                                      GVariant   *value,
++                                                      gpointer    data);
++void   image_cmyk_convert_profile_cmd_callback       (GimpAction *action,
++                                                      GVariant   *value,
++                                                      gpointer    data);
+ void   image_softproof_bpc_cmd_callback              (GimpAction *action,
+                                                       GVariant   *value,
+                                                       gpointer    data);
+diff --git a/app/core/chopgimp-cmyk.c b/app/core/chopgimp-cmyk.c
+new file mode 100644
+index 0000000..201eb2a
+--- /dev/null
++++ b/app/core/chopgimp-cmyk.c
+@@ -0,0 +1,537 @@
++/* GIMP - The GNU Image Manipulation Program
++ * Copyright (C) 1995 Spencer Kimball and Peter Mattis
++ *
++ * chopgimp-cmyk.c — ChopGimp 4.2.0: CMYK the Photoshop way
++ * Copyright (C) 2026 ChopGimp
++ *
++ * This program is free software: you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation; either version 3 of the License, or
++ * (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License
++ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
++ */
++
++/*  GIMP keeps its pixels in RGB. ChopGimp's « CMJN » mode reuses what
++ *  GIMP 3 already has: the image's simulation profile is its CMYK profile,
++ *  the display soft-proofs it, the color selectors work in it and the
++ *  exports write CMYK through it. Here: which CMYK profile (the shipped
++ *  ISO Coated v2, the downloaded PSO v3, the preference), the mode itself
++ *  and the CMYK → CMYK conversion. A profile lcms cannot convert with is
++ *  never used (a message, and the next usable one): see babl patch 0003.
++ */
++
++#include "config.h"
++
++#include <string.h>
++
++#include <cairo.h>
++#include <gdk-pixbuf/gdk-pixbuf.h>
++#include <gegl.h>
++
++#include <lcms2.h>
++
++#include "libgimpbase/gimpbase.h"
++#include "libgimpcolor/gimpcolor.h"
++#include "libgimpconfig/gimpconfig.h"
++
++#include "core-types.h"
++
++#include "config/gimpcoreconfig.h"
++
++#include "gimp.h"
++#include "gimpdrawable.h"
++#include "gimpimage.h"
++#include "gimpimage-color-profile.h"
++#include "gimpimage-undo.h"
++#include "gimplayer.h"
++#include "gimpprogress.h"
++
++#include "path/gimpvectorlayer.h"
++#include "text/gimptextlayer.h"
++
++#include "chopgimp-cmyk.h"
++
++#include "gimp-intl.h"
++
++
++static GFile *
++bundled_file (const gchar *name)
++{
++  return gimp_data_directory_file ("color", name, NULL);
++}
++
++static GFile *
++user_file (const gchar *name)
++{
++  return gimp_directory_file ("profiles", name, NULL);
++}
++
++static gboolean
++file_exists (GFile *file)
++{
++  return file && g_file_query_exists (file, NULL);
++}
++
++static GFile *
++config_file (Gimp *gimp)
++{
++  GimpColorConfig *config = gimp->config->color_management;
++  gchar           *path   = NULL;
++  GFile           *file   = NULL;
++
++  g_object_get (config, "cmyk-profile", &path, NULL);
++
++  if (path && *path)
++    file = gimp_file_new_for_config_path (path, NULL);
++
++  g_free (path);
++
++  return file;
++}
++
++gboolean
++chopgimp_cmyk_have_pso (Gimp *gimp)
++{
++  GFile    *file = user_file (CHOPGIMP_CMYK_PSO_COATED_V3);
++  gboolean  have = file_exists (file);
++
++  g_object_unref (file);
++
++  return have;
++}
++
++/*  at startup: no CMYK preference yet (or still the shipped FOGRA39 while
++ *  PSO Coated v3 was downloaded since) → the best profile available, so
++ *  that GIMP's own CMYK code (selectors, exports) uses it too
++ */
++void
++chopgimp_cmyk_init (Gimp *gimp)
++{
++  GFile *current = config_file (gimp);
++  GFile *iso     = bundled_file (CHOPGIMP_CMYK_ISO_COATED_V2);
++  GFile *pso     = user_file (CHOPGIMP_CMYK_PSO_COATED_V3);
++  GFile *best    = file_exists (pso) ? pso : (file_exists (iso) ? iso : NULL);
++
++  if (best && (! current || ! file_exists (current) ||
++               (best == pso && g_file_equal (current, iso))))
++    chopgimp_cmyk_set_preferred (gimp, best, NULL);
++
++  g_clear_object (&current);
++  g_object_unref (iso);
++  g_object_unref (pso);
++}
++
++GList *
++chopgimp_cmyk_list_profiles (Gimp *gimp)
++{
++  static const gchar *const user_names[] = { CHOPGIMP_CMYK_PSO_COATED_V3,
++                                             CHOPGIMP_CMYK_PSO_UNCOATED_V3 };
++  GList *list = NULL;
++  GFile *file;
++
++  for (guint i = 0; i < G_N_ELEMENTS (user_names); i++)
++    {
++      file = user_file (user_names[i]);
++
++      if (file_exists (file))
++        list = g_list_append (list, file);
++      else
++        g_object_unref (file);
++    }
++
++  file = bundled_file (CHOPGIMP_CMYK_ISO_COATED_V2);
++
++  if (file_exists (file))
++    list = g_list_append (list, file);
++  else
++    g_object_unref (file);
++
++  return list;
++}
++
++GimpColorProfile *
++chopgimp_cmyk_check_profile (GimpColorProfile  *profile,
++                             GError           **error)
++{
++  cmsHPROFILE   srgb;
++  cmsHPROFILE   cmyk;
++  cmsHTRANSFORM to_cmyk   = NULL;
++  cmsHTRANSFORM from_cmyk = NULL;
++  gboolean      ok;
++
++  if (! profile)
++    {
++      g_set_error_literal (error, GIMP_CONFIG_ERROR, GIMP_CONFIG_ERROR_PARSE,
++                           _("Aucun profil CMJN."));
++      return NULL;
++    }
++
++  if (! gimp_color_profile_is_cmyk (profile))
++    {
++      g_set_error (error, GIMP_CONFIG_ERROR, GIMP_CONFIG_ERROR_PARSE,
++                   _("« %s » n'est pas un profil CMJN."),
++                   gimp_color_profile_get_label (profile));
++      return NULL;
++    }
++
++  /*  a profile lcms opens but cannot build transforms with (no B2A tag,
++   *  like the scanner profile of « Matslogo copier.psd ») is refused
++   */
++  srgb = cmsCreate_sRGBProfile ();
++  cmyk = gimp_color_profile_get_lcms_profile (profile);
++
++  if (cmyk)
++    {
++      to_cmyk   = cmsCreateTransform (srgb, TYPE_RGB_FLT, cmyk, TYPE_CMYK_FLT,
++                                      INTENT_RELATIVE_COLORIMETRIC, 0);
++      from_cmyk = cmsCreateTransform (cmyk, TYPE_CMYK_FLT, srgb, TYPE_RGB_FLT,
++                                      INTENT_RELATIVE_COLORIMETRIC, 0);
++    }
++
++  ok = (to_cmyk && from_cmyk);
++
++  if (to_cmyk)
++    cmsDeleteTransform (to_cmyk);
++  if (from_cmyk)
++    cmsDeleteTransform (from_cmyk);
++  cmsCloseProfile (srgb);
++
++  if (! ok)
++    {
++      g_set_error (error, GIMP_CONFIG_ERROR, GIMP_CONFIG_ERROR_PARSE,
++                   _("Le profil CMJN « %s » ne permet pas de convertir les couleurs "
++                     "(table de conversion absente ou illisible)."),
++                   gimp_color_profile_get_label (profile));
++      return NULL;
++    }
++
++  return g_object_ref (profile);
++}
++
++static GimpColorProfile *
++profile_from_file (GFile   *file,
++                   GError **error)
++{
++  GimpColorProfile *profile;
++  GimpColorProfile *checked;
++
++  if (! file_exists (file))
++    {
++      g_set_error (error, GIMP_CONFIG_ERROR, GIMP_CONFIG_ERROR_OPEN,
++                   _("Profil introuvable : %s"), gimp_file_get_utf8_name (file));
++      return NULL;
++    }
++
++  profile = gimp_color_profile_new_from_file (file, error);
++
++  if (! profile)
++    return NULL;
++
++  checked = chopgimp_cmyk_check_profile (profile, error);
++  g_object_unref (profile);
++
++  return checked;
++}
++
++GimpColorProfile *
++chopgimp_cmyk_get_preferred (Gimp   *gimp,
++                             gchar **warning)
++{
++  GFile            *candidates[3];
++  GimpColorProfile *profile = NULL;
++  GError           *first   = NULL;
++
++  g_return_val_if_fail (GIMP_IS_GIMP (gimp), NULL);
++
++  candidates[0] = config_file (gimp);
++  candidates[1] = user_file (CHOPGIMP_CMYK_PSO_COATED_V3);
++  candidates[2] = bundled_file (CHOPGIMP_CMYK_ISO_COATED_V2);
++
++  for (gint i = 0; i < 3 && ! profile; i++)
++    {
++      GError *error = NULL;
++
++      if (! candidates[i])
++        continue;
++
++      profile = profile_from_file (candidates[i], &error);
++
++      if (! profile && i == 0)
++        first = error;
++      else
++        g_clear_error (&error);
++    }
++
++  if (first && warning)
++    *warning = g_strdup_printf (_("%s\nProfil CMJN utilisé à la place : %s"),
++                                first->message,
++                                profile ? gimp_color_profile_get_label (profile)
++                                        : _("aucun"));
++  g_clear_error (&first);
++
++  for (gint i = 0; i < 3; i++)
++    g_clear_object (&candidates[i]);
++
++  return profile;
++}
++
++gboolean
++chopgimp_cmyk_set_preferred (Gimp    *gimp,
++                             GFile   *file,
++                             GError **error)
++{
++  GimpColorProfile *profile = profile_from_file (file, error);
++  gchar            *path;
++
++  if (! profile)
++    return FALSE;
++
++  g_object_unref (profile);
++
++  path = gimp_file_get_config_path (file, NULL);
++  g_object_set (gimp->config->color_management, "cmyk-profile", path, NULL);
++  g_free (path);
++
++  return TRUE;
++}
++
++
++/*  ─── the « CMJN » mode ────────────────────────────────────────────── */
++
++gboolean
++chopgimp_image_is_cmyk (GimpImage *image)
++{
++  g_return_val_if_fail (GIMP_IS_IMAGE (image), FALSE);
++
++  return gimp_image_parasite_find (image, CHOPGIMP_CMYK_PARASITE) != NULL;
++}
++
++gboolean
++chopgimp_image_set_cmyk (GimpImage         *image,
++                         gboolean           cmyk,
++                         GimpColorProfile  *profile,
++                         GError           **error)
++{
++  GimpColorProfile *use = NULL;
++
++  g_return_val_if_fail (GIMP_IS_IMAGE (image), FALSE);
++
++  if (cmyk)
++    {
++      if (profile)
++        use = chopgimp_cmyk_check_profile (profile, error);
++      else if (gimp_image_get_simulation_profile (image))
++        use = chopgimp_cmyk_check_profile (gimp_image_get_simulation_profile (image), NULL);
++
++      if (profile && ! use)
++        return FALSE;
++
++      if (! use)
++        {
++          gchar *warning = NULL;
++
++          use = chopgimp_cmyk_get_preferred (image->gimp, &warning);
++
++          if (warning)
++            {
++              gimp_message_literal (image->gimp, NULL, GIMP_MESSAGE_WARNING, warning);
++              g_free (warning);
++            }
++        }
++
++      if (! use)
++        {
++          g_set_error_literal (error, GIMP_CONFIG_ERROR, GIMP_CONFIG_ERROR_OPEN,
++                               _("Aucun profil CMJN utilisable : l'image reste en RVB."));
++          return FALSE;
++        }
++    }
++
++  if (cmyk == chopgimp_image_is_cmyk (image) &&
++      (! use || use == gimp_image_get_simulation_profile (image) ||
++       (gimp_image_get_simulation_profile (image) &&
++        gimp_color_profile_is_equal (use, gimp_image_get_simulation_profile (image)))))
++    {
++      g_clear_object (&use);
++      return TRUE;
++    }
++
++  gimp_image_undo_group_start (image, GIMP_UNDO_GROUP_IMAGE_CONVERT,
++                               cmyk ? _("Mode CMJN") : _("Mode RVB"));
++
++  if (cmyk)
++    {
++      GimpParasite *parasite = gimp_parasite_new (CHOPGIMP_CMYK_PARASITE,
++                                                  GIMP_PARASITE_PERSISTENT |
++                                                  GIMP_PARASITE_UNDOABLE,
++                                                  2, "1");
++
++      if (! gimp_image_get_simulation_profile (image) ||
++          ! gimp_color_profile_is_equal (use, gimp_image_get_simulation_profile (image)))
++        gimp_image_set_simulation_profile (image, use);
++
++      gimp_image_parasite_attach (image, parasite, TRUE);
++      gimp_parasite_free (parasite);
++    }
++  else
++    {
++      gimp_image_parasite_detach (image, CHOPGIMP_CMYK_PARASITE, TRUE);
++    }
++
++  gimp_image_undo_group_end (image);
++
++  g_clear_object (&use);
++
++  return TRUE;
++}
++
++
++/*  ─── Convertir en profil (CMYK → CMYK) ───────────────────────────── */
++
++gboolean
++chopgimp_image_convert_cmyk_profile (GimpImage                *image,
++                                     GimpColorProfile         *dest,
++                                     GimpColorRenderingIntent  intent,
++                                     gboolean                  bpc,
++                                     GimpProgress             *progress,
++                                     GError                  **error)
++{
++  GimpColorProfile *rgb;
++  GimpColorProfile *src     = NULL;
++  GimpColorProfile *dst     = NULL;
++  const Babl       *format;
++  cmsHPROFILE       chain[6];
++  cmsBool           bpcs[6];
++  cmsUInt32Number   intents[6];
++  cmsFloat64Number  adapt[6];
++  cmsHTRANSFORM     transform;
++  GList            *layers;
++  GList            *iter;
++  gint              n, i;
++
++  g_return_val_if_fail (GIMP_IS_IMAGE (image), FALSE);
++
++  if (! (dst = chopgimp_cmyk_check_profile (dest, error)))
++    return FALSE;
++
++  if (gimp_image_get_simulation_profile (image))
++    src = chopgimp_cmyk_check_profile (gimp_image_get_simulation_profile (image), NULL);
++
++  if (! src)
++    {
++      /*  no usable CMYK profile yet: nothing to convert from, @dest is
++       *  simply assigned
++       */
++      gimp_image_undo_group_start (image, GIMP_UNDO_GROUP_IMAGE_CONVERT,
++                                   _("Convertir en profil"));
++      gimp_image_set_simulation_profile (image, dst);
++      gimp_image_set_simulation_intent (image, intent);
++      gimp_image_set_simulation_bpc (image, bpc);
++      gimp_image_undo_group_end (image);
++      g_object_unref (dst);
++      return TRUE;
++    }
++
++  rgb    = gimp_color_managed_get_color_profile (GIMP_COLOR_MANAGED (image));
++  format = gimp_color_profile_get_format (rgb, babl_format ("R'G'B'A float"),
++                                          GIMP_COLOR_RENDERING_INTENT_RELATIVE_COLORIMETRIC,
++                                          NULL);
++
++  /*  image RGB → source CMYK (its values) → destination CMYK (the user's
++   *  intent and black point compensation) → image RGB again: under @dest,
++   *  the new RGB gives the converted CMYK values
++   */
++  chain[0] = gimp_color_profile_get_lcms_profile (rgb);
++  chain[1] = chain[2] = gimp_color_profile_get_lcms_profile (src);
++  chain[3] = chain[4] = gimp_color_profile_get_lcms_profile (dst);
++  chain[5] = chain[0];
++
++  for (i = 0; i < 6; i++)
++    {
++      intents[i] = INTENT_RELATIVE_COLORIMETRIC;
++      bpcs[i]    = FALSE;
++      adapt[i]   = 1.0;
++    }
++
++  intents[2] = intents[3] = (cmsUInt32Number) intent;
++  bpcs[2]    = bpcs[3]    = bpc;
++
++  transform = cmsCreateExtendedTransform (NULL, 6, chain, bpcs, intents, adapt,
++                                          NULL, 0, TYPE_RGBA_FLT, TYPE_RGBA_FLT,
++                                          cmsFLAGS_COPY_ALPHA |
++                                          (bpc ? cmsFLAGS_BLACKPOINTCOMPENSATION : 0));
++
++  if (! transform || ! format)
++    {
++      if (transform)
++        cmsDeleteTransform (transform);
++
++      g_set_error (error, GIMP_CONFIG_ERROR, GIMP_CONFIG_ERROR_PARSE,
++                   _("Conversion impossible de « %s » vers « %s »."),
++                   gimp_color_profile_get_label (src),
++                   gimp_color_profile_get_label (dst));
++      g_object_unref (src);
++      g_object_unref (dst);
++      return FALSE;
++    }
++
++  gimp_image_undo_group_start (image, GIMP_UNDO_GROUP_IMAGE_CONVERT,
++                               _("Convertir en profil"));
++
++  layers = gimp_image_get_layer_list (image);
++  n      = g_list_length (layers);
++
++  for (iter = layers, i = 0; iter; iter = iter->next, i++)
++    {
++      GimpDrawable       *drawable = iter->data;
++      GeglBuffer         *buffer;
++      GeglBufferIterator *it;
++
++      /*  groups follow their children; text and vector layers keep their
++       *  own colors (they would be rendered again)
++       */
++      if (gimp_viewable_get_children (GIMP_VIEWABLE (drawable)) ||
++          gimp_item_is_text_layer (GIMP_ITEM (drawable))         ||
++          GIMP_IS_VECTOR_LAYER (drawable))
++        continue;
++
++      buffer = gimp_drawable_get_buffer (drawable);
++
++      gimp_drawable_push_undo (drawable, _("Convertir en profil"), NULL,
++                               0, 0,
++                               gimp_item_get_width (GIMP_ITEM (drawable)),
++                               gimp_item_get_height (GIMP_ITEM (drawable)));
++
++      it = gegl_buffer_iterator_new (buffer, NULL, 0, format,
++                                     GEGL_ACCESS_READWRITE, GEGL_ABYSS_NONE, 1);
++
++      while (gegl_buffer_iterator_next (it))
++        cmsDoTransform (transform, it->items[0].data, it->items[0].data, it->length);
++
++      gimp_drawable_update (drawable, 0, 0, -1, -1);
++
++      if (progress)
++        gimp_progress_set_value (progress, (gdouble) (i + 1) / MAX (n, 1));
++    }
++
++  g_list_free (layers);
++  cmsDeleteTransform (transform);
++
++  gimp_image_set_simulation_profile (image, dst);
++  gimp_image_set_simulation_intent (image, intent);
++  gimp_image_set_simulation_bpc (image, bpc);
++
++  gimp_image_undo_group_end (image);
++
++  g_object_unref (src);
++  g_object_unref (dst);
++
++  return TRUE;
++}
+diff --git a/app/core/chopgimp-cmyk.h b/app/core/chopgimp-cmyk.h
+new file mode 100644
+index 0000000..5857349
+--- /dev/null
++++ b/app/core/chopgimp-cmyk.h
+@@ -0,0 +1,71 @@
++/* GIMP - The GNU Image Manipulation Program
++ * Copyright (C) 1995 Spencer Kimball and Peter Mattis
++ *
++ * chopgimp-cmyk.h — ChopGimp 4.2.0: CMYK the Photoshop way
++ *
++ * This program is free software: you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation; either version 3 of the License, or
++ * (at your option) any later version.
++ */
++
++#pragma once
++
++
++/*  the image is in « CMJN » mode: a persistent parasite; its CMYK profile
++ *  is the simulation profile, the display soft-proofs it and the exports
++ *  that can write CMYK (TIFF, JPEG, PSD) do it by default
++ */
++#define CHOPGIMP_CMYK_PARASITE "chopgimp-cmyk-mode"
++
++/*  the CMYK profiles shipped (FOGRA39, ECI) or downloaded (PSO v3, ECI)  */
++#define CHOPGIMP_CMYK_ISO_COATED_V2  "ISOcoated_v2_eci.icc"
++#define CHOPGIMP_CMYK_PSO_COATED_V3  "PSOcoated_v3.icc"
++#define CHOPGIMP_CMYK_PSO_UNCOATED_V3 "PSOuncoated_v3_FOGRA52.icc"
++
++
++void               chopgimp_cmyk_init                (Gimp              *gimp);
++
++/*  every CMYK profile file ChopGimp knows: the user's downloaded ones,
++ *  then the shipped ones (GFile *, g_list_free_full g_object_unref)
++ */
++GList            * chopgimp_cmyk_list_profiles       (Gimp              *gimp);
++gboolean           chopgimp_cmyk_have_pso            (Gimp              *gimp);
++
++/*  @profile when it is a CMYK profile lcms can convert to and from (ref),
++ *  else NULL and @error says why: never use a profile that would crash
++ */
++GimpColorProfile * chopgimp_cmyk_check_profile       (GimpColorProfile  *profile,
++                                                      GError           **error);
++/*  the working CMYK profile: the preference, else PSO Coated v3 when
++ *  downloaded, else ISO Coated v2 (shipped); an unusable preference is
++ *  replaced and @warning (may be NULL, g_free) says it.  NULL only when
++ *  no CMYK profile at all can be used.
++ */
++GimpColorProfile * chopgimp_cmyk_get_preferred       (Gimp              *gimp,
++                                                      gchar            **warning);
++/*  makes @file the preferred CMYK profile (checked first)  */
++gboolean           chopgimp_cmyk_set_preferred       (Gimp              *gimp,
++                                                      GFile             *file,
++                                                      GError           **error);
++
++gboolean           chopgimp_image_is_cmyk            (GimpImage         *image);
++/*  Image > Mode > CMJN (@cmyk) or back to RVB: one undo step. @profile
++ *  NULL: the image's simulation profile when it is a usable CMYK one,
++ *  else the working CMYK profile.
++ */
++gboolean           chopgimp_image_set_cmyk           (GimpImage         *image,
++                                                      gboolean           cmyk,
++                                                      GimpColorProfile  *profile,
++                                                      GError           **error);
++/*  « Convertir en profil » CMYK → CMYK: the pixels of the raster layers
++ *  change so that their CMYK values under @dest are the ones of the
++ *  current CMYK profile converted with @intent and @bpc (gamut of both
++ *  profiles); @dest becomes the simulation profile. One undo step.
++ */
++gboolean           chopgimp_image_convert_cmyk_profile (GimpImage       *image,
++                                                      GimpColorProfile  *dest,
++                                                      GimpColorRenderingIntent intent,
++                                                      gboolean           bpc,
++                                                      GimpProgress      *progress,
++                                                      GError           **error);
+diff --git a/app/core/gimp.c b/app/core/gimp.c
+index e9b9b5d..5c5dd24 100644
+--- a/app/core/gimp.c
++++ b/app/core/gimp.c
+@@ -40,6 +40,7 @@
+ #include "pdb/chopgimp-cmds.h"
+ 
+ #include "chopgimp-style-clipboard.h"
++#include "chopgimp-cmyk.h"
+ 
+ #include "plug-in/gimppluginmanager.h"
+ #include "plug-in/gimppluginmanager-restore.h"
+@@ -568,6 +569,7 @@ gimp_real_initialize (Gimp               *gimp,
+   status_callback (NULL, _("Internal Procedures"), 0.2);
+   internal_procs_init (gimp->pdb);
+   register_chopgimp_procs (gimp->pdb);   /* ChopGimp: vector tools */
++  chopgimp_cmyk_init (gimp);             /* ChopGimp 4.2.0: CMYK profile */
+   gimp_pdb_compat_procs_register (gimp->pdb, gimp->pdb_compat_mode);
+ 
+   gimp_plug_in_manager_initialize (gimp->plug_in_manager, status_callback);
+diff --git a/app/core/gimpimage-color-profile.c b/app/core/gimpimage-color-profile.c
+index a2755e7..86c7bfa 100644
+--- a/app/core/gimpimage-color-profile.c
++++ b/app/core/gimpimage-color-profile.c
+@@ -43,6 +43,7 @@
+ #include "gimplayer.h"
+ #include "gimpimage.h"
+ #include "gimpimage-color-profile.h"
++#include "chopgimp-cmyk.h"
+ #include "gimpimage-colormap.h"
+ #include "gimpimage-private.h"
+ #include "gimpimage-undo.h"
+@@ -73,6 +74,10 @@ static void   gimp_image_fix_layer_format_spaces  (GimpImage                *ima
+                                                    GimpProgress             *progress);
+ 
+ static void   gimp_image_create_color_transforms  (GimpImage                *image);
++static void   chopgimp_image_import_cmyk_profile  (GimpImage                *image,
++                                                   GimpContext              *context,
++                                                   GimpProgress             *progress,
++                                                   gboolean                  interactive);
+ 
+ 
+ /*  public functions  */
+@@ -797,9 +802,85 @@ gimp_image_import_color_profile (GimpImage    *image,
+ 
+           g_object_unref (dest_profile);
+         }
++      else if (g_object_get_data (G_OBJECT (image), "chopgimp-profile-ignore"))
++        {
++          /*  ChopGimp 4.2.0 « Ignorer » (Photoshop: discard the embedded
++           *  profile): the pixels are read in the working space
++           */
++          gimp_image_set_color_profile (image, pref_profile, NULL);
++        }
+ 
++      g_object_set_data (G_OBJECT (image), "chopgimp-profile-ignore", NULL);
+       g_clear_object (&pref_profile);
+     }
++
++  chopgimp_image_import_cmyk_profile (image, context, progress, interactive);
++}
++
++/*  ChopGimp 4.2.0: a CMYK file (its CMYK profile is now the simulation
++ *  profile) opens in « CMJN » mode. When its profile is not the working
++ *  CMYK profile: keep it, convert to the working one, or ignore it (the
++ *  working one is assigned), asked like Photoshop. An unusable CMYK
++ *  profile is replaced by the working one, with a message.
++ */
++static void
++chopgimp_image_import_cmyk_profile (GimpImage    *image,
++                                    GimpContext  *context,
++                                    GimpProgress *progress,
++                                    gboolean      interactive)
++{
++  GimpColorProfile *sim = gimp_image_get_simulation_profile (image);
++  GimpColorProfile *checked;
++  GimpColorProfile *pref;
++  GError           *error = NULL;
++
++  if (! sim || ! gimp_color_profile_is_cmyk (sim) ||
++      gimp_image_get_base_type (image) != GIMP_RGB)
++    return;
++
++  checked = chopgimp_cmyk_check_profile (sim, &error);
++  pref    = chopgimp_cmyk_get_preferred (image->gimp, NULL);
++
++  if (! checked)
++    {
++      gimp_message (image->gimp, NULL, GIMP_MESSAGE_WARNING,
++                    _("%s\nProfil CMJN de travail utilisé à la place : %s"),
++                    error->message,
++                    pref ? gimp_color_profile_get_label (pref) : _("aucun"));
++      g_clear_error (&error);
++      gimp_image_set_simulation_profile (image, pref);
++    }
++  else if (pref && ! gimp_color_profile_is_equal (pref, checked) && interactive)
++    {
++      GimpColorProfilePolicy   policy;
++      GimpColorProfile        *dest   = NULL;
++      GimpColorRenderingIntent intent = GIMP_COLOR_RENDERING_INTENT_RELATIVE_COLORIMETRIC;
++      gboolean                 bpc    = TRUE;
++      gboolean                 dont_ask = FALSE;
++
++      g_object_set_data (G_OBJECT (image), "chopgimp-cmyk-import", checked);
++      policy = gimp_query_profile_policy (image->gimp, image, context,
++                                          &dest, &intent, &bpc, &dont_ask);
++      g_object_set_data (G_OBJECT (image), "chopgimp-cmyk-import", NULL);
++
++      if (g_object_get_data (G_OBJECT (image), "chopgimp-profile-ignore"))
++        gimp_image_set_simulation_profile (image, pref);
++      else if (policy == GIMP_COLOR_PROFILE_POLICY_CONVERT_PREFERRED ||
++               policy == GIMP_COLOR_PROFILE_POLICY_CONVERT_BUILTIN)
++        chopgimp_image_convert_cmyk_profile (image, pref, intent, bpc, progress, NULL);
++
++      g_object_set_data (G_OBJECT (image), "chopgimp-profile-ignore", NULL);
++
++      /*  the dialog returns a reference only for a conversion  */
++      if (policy == GIMP_COLOR_PROFILE_POLICY_CONVERT_PREFERRED ||
++          policy == GIMP_COLOR_PROFILE_POLICY_CONVERT_BUILTIN)
++        g_clear_object (&dest);
++    }
++
++  chopgimp_image_set_cmyk (image, TRUE, NULL, NULL);
++
++  g_clear_object (&checked);
++  g_clear_object (&pref);
+ }
+ 
+ GimpColorTransform *
+diff --git a/app/core/meson.build b/app/core/meson.build
+index 21e6867..04ccf7e 100644
+--- a/app/core/meson.build
++++ b/app/core/meson.build
+@@ -223,6 +223,7 @@ libappcore_sources = [
+   'chopgimp-alpha-bounds.c',
+   'chopgimp-artboards.c',
+   'chopgimp-behind-effects.c',
++  'chopgimp-cmyk.c',
+   'chopgimp-fx-cache.c',
+   'chopgimp-layer-grow.c',
+   'chopgimp-pgrid.c',
+@@ -287,6 +288,7 @@ libappcore = static_library('appcore',
+   dependencies: [
+     cairo,
+     gegl,
++    lcms,
+     gdk_pixbuf,
+     libarchive,
+     libmypaint,
+diff --git a/app/dialogs/color-profile-dialog.c b/app/dialogs/color-profile-dialog.c
+index ac85468..c602b47 100644
+--- a/app/dialogs/color-profile-dialog.c
++++ b/app/dialogs/color-profile-dialog.c
+@@ -43,6 +43,8 @@
+ #include "widgets/gimpwidgets-constructors.h"
+ #include "widgets/gimpwidgets-utils.h"
+ 
++#include "core/chopgimp-cmyk.h"
++
+ #include "color-profile-dialog.h"
+ 
+ #include "gimp-intl.h"
+@@ -212,6 +214,25 @@ color_profile_dialog_new (ColorProfileDialogType    dialog_type,
+       dest_label = _("New Color Profile");
+       break;
+ 
++    case COLOR_PROFILE_DIALOG_CONVERT_CMYK:
++      dialog =
++        gimp_viewable_dialog_new (g_list_prepend (NULL, image), context,
++                                  _("Convertir en profil CMJN"),
++                                  "chopgimp-cmyk-convert-profile",
++                                  GIMP_ICON_DOCUMENT_PRINT,
++                                  _("Convertir les couleurs vers un autre profil CMJN "
++                                    "(par exemple FOGRA39 vers PSO Coated v3)"),
++                                  parent,
++                                  gimp_standard_help_func,
++                                  GIMP_HELP_IMAGE_COLOR_PROFILE_CONVERT,
++
++                                  _("_Cancel"),  GTK_RESPONSE_CANCEL,
++                                  _("C_onvert"), GTK_RESPONSE_OK,
++
++                                  NULL);
++      dest_label = _("Profil CMJN de destination");
++      break;
++
+     default:
+       g_return_val_if_reached (NULL);
+     }
+@@ -272,7 +293,8 @@ color_profile_dialog_new (ColorProfileDialogType    dialog_type,
+ 
+   color_profile_dest_changed (private->combo, private);
+ 
+-  if (dialog_type == COLOR_PROFILE_DIALOG_CONVERT_TO_PROFILE)
++  if (dialog_type == COLOR_PROFILE_DIALOG_CONVERT_TO_PROFILE ||
++      dialog_type == COLOR_PROFILE_DIALOG_CONVERT_CMYK)
+     {
+       GtkWidget *vbox;
+       GtkWidget *hbox;
+@@ -337,7 +359,25 @@ color_profile_combo_box_new (ProfileDialog *private)
+   store = gimp_color_profile_store_new (history);
+   g_object_unref (history);
+ 
+-  if (private->default_profile)
++  if (private->dialog_type == COLOR_PROFILE_DIALOG_CONVERT_CMYK)
++    {
++      /*  ChopGimp 4.2.0: the CMYK profiles shipped or downloaded  */
++      GList *files = chopgimp_cmyk_list_profiles (private->image->gimp);
++
++      for (GList *l = files; l; l = l->next)
++        {
++          GimpColorProfile *profile = gimp_color_profile_new_from_file (l->data, NULL);
++
++          if (profile)
++            {
++              gimp_color_profile_store_add_file (GIMP_COLOR_PROFILE_STORE (store), l->data,
++                                                 gimp_color_profile_get_label (profile));
++              g_object_unref (profile);
++            }
++        }
++      g_list_free_full (files, g_object_unref);
++    }
++  else if (private->default_profile)
+     {
+       GimpImageBaseType  base_type;
+       GimpPrecision      precision;
+@@ -395,8 +435,17 @@ color_profile_combo_box_new (ProfileDialog *private)
+                                                        GTK_TREE_MODEL (store));
+   g_object_unref (store);
+ 
+-  gimp_color_profile_combo_box_set_active_file (GIMP_COLOR_PROFILE_COMBO_BOX (combo),
+-                                                NULL, NULL);
++  if (private->dialog_type == COLOR_PROFILE_DIALOG_CONVERT_CMYK)
++    {
++      GList *files = chopgimp_cmyk_list_profiles (private->image->gimp);
++
++      gimp_color_profile_combo_box_set_active_file (GIMP_COLOR_PROFILE_COMBO_BOX (combo),
++                                                    files ? files->data : NULL, NULL);
++      g_list_free_full (files, g_object_unref);
++    }
++  else
++    gimp_color_profile_combo_box_set_active_file (GIMP_COLOR_PROFILE_COMBO_BOX (combo),
++                                                  NULL, NULL);
+ 
+   return combo;
+ }
+diff --git a/app/dialogs/color-profile-dialog.h b/app/dialogs/color-profile-dialog.h
+index 17b8c31..51b2664 100644
+--- a/app/dialogs/color-profile-dialog.h
++++ b/app/dialogs/color-profile-dialog.h
+@@ -27,7 +27,8 @@ typedef enum
+   COLOR_PROFILE_DIALOG_CONVERT_TO_PROFILE,
+   COLOR_PROFILE_DIALOG_CONVERT_TO_RGB,
+   COLOR_PROFILE_DIALOG_CONVERT_TO_GRAY,
+-  COLOR_PROFILE_DIALOG_SELECT_SOFTPROOF_PROFILE
++  COLOR_PROFILE_DIALOG_SELECT_SOFTPROOF_PROFILE,
++  COLOR_PROFILE_DIALOG_CONVERT_CMYK   /* ChopGimp 4.2.0: CMYK → CMYK */
+ } ColorProfileDialogType;
+ 
+ 
+diff --git a/app/dialogs/color-profile-import-dialog.c b/app/dialogs/color-profile-import-dialog.c
+index db24f9c..964b04e 100644
+--- a/app/dialogs/color-profile-import-dialog.c
++++ b/app/dialogs/color-profile-import-dialog.c
+@@ -23,6 +23,8 @@
+ 
+ #include "config.h"
+ 
++#include <string.h>
++
+ #include <gegl.h>
+ #include <gtk/gtk.h>
+ 
+@@ -43,6 +45,9 @@
+ #include "widgets/gimphelp-ids.h"
+ #include "widgets/gimpviewabledialog.h"
+ #include "widgets/gimpwidgets-constructors.h"
++#include "widgets/chopgimp-rc.h"
++
++#include "core/chopgimp-cmyk.h"
+ 
+ #include "color-profile-import-dialog.h"
+ 
+@@ -51,6 +56,166 @@
+ 
+ /*  public functions  */
+ 
++/*  ChopGimp 4.2.0: the « always » choices (chopgimprc [color])  */
++static gboolean
++chopgimp_import_always (GimpImage               *image,
++                        const gchar             *key,
++                        GimpColorProfilePolicy  *policy)
++{
++  gchar *always = chopgimp_rc_get_string ("color", key, NULL);
++
++  if (! always || ! *always)
++    {
++      g_free (always);
++      return FALSE;
++    }
++
++  if (! strcmp (always, "convert"))
++    *policy = GIMP_COLOR_PROFILE_POLICY_CONVERT_PREFERRED;
++  else
++    *policy = GIMP_COLOR_PROFILE_POLICY_KEEP;
++
++  if (! strcmp (always, "ignore"))
++    g_object_set_data (G_OBJECT (image), "chopgimp-profile-ignore", GINT_TO_POINTER (1));
++
++  g_free (always);
++
++  return TRUE;
++}
++
++/*  a CMYK file whose profile is not the working CMYK profile (Photoshop's
++ *  « Embedded Profile Mismatch »): keep, convert, ignore
++ */
++static GimpColorProfilePolicy
++chopgimp_cmyk_import_dialog_run (GimpImage                 *image,
++                                 GimpContext               *context,
++                                 GtkWidget                 *parent,
++                                 GimpColorProfile          *src_profile,
++                                 GimpColorProfile         **dest_profile,
++                                 GimpColorRenderingIntent  *intent,
++                                 gboolean                  *bpc)
++{
++  GimpColorProfile       *pref = chopgimp_cmyk_get_preferred (image->gimp, NULL);
++  GimpColorProfilePolicy  policy = GIMP_COLOR_PROFILE_POLICY_KEEP;
++  GtkWidget              *dialog;
++  GtkWidget              *vbox;
++  GtkWidget              *frame;
++  GtkWidget              *label;
++  GtkWidget              *hbox;
++  GtkWidget              *combo;
++  GtkWidget              *bpc_toggle;
++  GtkWidget              *always;
++  gchar                  *text;
++  gint                    response;
++
++  *dest_profile = NULL;
++
++  if (chopgimp_import_always (image, "cmyk-import", &policy))
++    {
++      if (policy == GIMP_COLOR_PROFILE_POLICY_CONVERT_PREFERRED)
++        *dest_profile = pref;
++      else
++        g_clear_object (&pref);
++      return policy;
++    }
++
++  dialog = gimp_viewable_dialog_new (g_list_prepend (NULL, image), context,
++                                     _("Profil CMJN incorporé différent"),
++                                     "chopgimp-cmyk-profile-import",
++                                     GIMP_ICON_DOCUMENT_PRINT,
++                                     _("Le profil CMJN du document n'est pas le profil de travail"),
++                                     parent,
++                                     gimp_standard_help_func,
++                                     GIMP_HELP_IMAGE_COLOR_PROFILE_IMPORT,
++
++                                     _("_Ignorer"),   GTK_RESPONSE_REJECT,
++                                     _("_Convertir"), GTK_RESPONSE_NO,
++                                     _("_Garder"),    GTK_RESPONSE_YES,
++
++                                     NULL);
++  gtk_dialog_set_default_response (GTK_DIALOG (dialog), GTK_RESPONSE_YES);
++  gtk_window_set_resizable (GTK_WINDOW (dialog), FALSE);
++  if (! parent)
++    gtk_window_set_position (GTK_WINDOW (dialog), GTK_WIN_POS_CENTER);
++
++  vbox = gtk_box_new (GTK_ORIENTATION_VERTICAL, 12);
++  gtk_container_set_border_width (GTK_CONTAINER (vbox), 12);
++  gtk_box_pack_start (GTK_BOX (gtk_dialog_get_content_area (GTK_DIALOG (dialog))),
++                      vbox, TRUE, TRUE, 0);
++
++  text = g_strdup_printf (_("« %s » a un profil CMJN incorporé :"),
++                          gimp_image_get_display_name (image));
++  frame = gimp_frame_new (text);
++  g_free (text);
++  gtk_box_pack_start (GTK_BOX (vbox), frame, FALSE, FALSE, 0);
++  gtk_container_add (GTK_CONTAINER (frame), gimp_color_profile_label_new (src_profile));
++
++  frame = gimp_frame_new (_("Profil CMJN de travail :"));
++  gtk_box_pack_start (GTK_BOX (vbox), frame, FALSE, FALSE, 0);
++  gtk_container_add (GTK_CONTAINER (frame), gimp_color_profile_label_new (pref));
++
++  label = gtk_label_new (_("Garder : le document garde son profil CMJN.\n"
++                           "Convertir : ses couleurs sont converties vers le profil de travail.\n"
++                           "Ignorer : le profil de travail lui est attribué, sans conversion."));
++  gtk_label_set_xalign (GTK_LABEL (label), 0.0);
++  gtk_box_pack_start (GTK_BOX (vbox), label, FALSE, FALSE, 0);
++
++  hbox = gtk_box_new (GTK_ORIENTATION_HORIZONTAL, 6);
++  gtk_box_pack_start (GTK_BOX (vbox), hbox, FALSE, FALSE, 0);
++  label = gtk_label_new_with_mnemonic (_("_Rendering Intent:"));
++  gtk_box_pack_start (GTK_BOX (hbox), label, FALSE, FALSE, 0);
++  combo = gimp_enum_combo_box_new (GIMP_TYPE_COLOR_RENDERING_INTENT);
++  gimp_int_combo_box_set_active (GIMP_INT_COMBO_BOX (combo), *intent);
++  gtk_box_pack_start (GTK_BOX (hbox), combo, TRUE, TRUE, 0);
++  gtk_label_set_mnemonic_widget (GTK_LABEL (label), combo);
++
++  bpc_toggle = gtk_check_button_new_with_mnemonic (_("_Black Point Compensation"));
++  gtk_toggle_button_set_active (GTK_TOGGLE_BUTTON (bpc_toggle), *bpc);
++  gtk_box_pack_start (GTK_BOX (vbox), bpc_toggle, FALSE, FALSE, 0);
++
++  always = gtk_check_button_new_with_mnemonic (_("_Toujours faire ce choix"));
++  gtk_widget_set_tooltip_text (always, _("Le choix est gardé dans chopgimprc ([color] "
++                                         "cmyk-import) ; l'effacer pour être de nouveau "
++                                         "interrogé"));
++  gtk_box_pack_end (GTK_BOX (vbox), always, FALSE, FALSE, 0);
++
++  gtk_widget_show_all (vbox);
++
++  response = gtk_dialog_run (GTK_DIALOG (dialog));
++
++  gimp_int_combo_box_get_active (GIMP_INT_COMBO_BOX (combo), (gint *) intent);
++  *bpc = gtk_toggle_button_get_active (GTK_TOGGLE_BUTTON (bpc_toggle));
++
++  switch (response)
++    {
++    case GTK_RESPONSE_NO:
++      policy        = GIMP_COLOR_PROFILE_POLICY_CONVERT_PREFERRED;
++      *dest_profile = g_steal_pointer (&pref);
++      break;
++
++    case GTK_RESPONSE_REJECT:
++      policy = GIMP_COLOR_PROFILE_POLICY_KEEP;
++      g_object_set_data (G_OBJECT (image), "chopgimp-profile-ignore", GINT_TO_POINTER (1));
++      break;
++
++    default:
++      policy = GIMP_COLOR_PROFILE_POLICY_KEEP;
++      break;
++    }
++
++  if (gtk_toggle_button_get_active (GTK_TOGGLE_BUTTON (always)) &&
++      (response == GTK_RESPONSE_NO || response == GTK_RESPONSE_YES ||
++       response == GTK_RESPONSE_REJECT))
++    chopgimp_rc_set_string ("color", "cmyk-import",
++                            response == GTK_RESPONSE_NO     ? "convert" :
++                            response == GTK_RESPONSE_REJECT ? "ignore"  : "keep");
++
++  gtk_widget_destroy (dialog);
++  g_clear_object (&pref);
++
++  return policy;
++}
++
+ GimpColorProfilePolicy
+ color_profile_import_dialog_run (GimpImage                 *image,
+                                  GimpContext               *context,
+@@ -75,6 +240,7 @@ color_profile_import_dialog_run (GimpImage                 *image,
+   GimpColorProfilePolicy  policy;
+   const gchar            *frame_title;
+   gchar                  *text;
++  gint                    response;
+ 
+   g_return_val_if_fail (GIMP_IS_IMAGE (image), GIMP_COLOR_PROFILE_POLICY_KEEP);
+   g_return_val_if_fail (GIMP_IS_CONTEXT (context), GIMP_COLOR_PROFILE_POLICY_KEEP);
+@@ -82,9 +248,33 @@ color_profile_import_dialog_run (GimpImage                 *image,
+                         GIMP_COLOR_PROFILE_POLICY_KEEP);
+   g_return_val_if_fail (dest_profile != NULL, GIMP_COLOR_PROFILE_POLICY_KEEP);
+ 
++  /*  ChopGimp 4.2.0: a CMYK file, and the « always ignore » choice  */
++  if (g_object_get_data (G_OBJECT (image), "chopgimp-cmyk-import"))
++    {
++      GimpColorRenderingIntent  dummy_intent = GIMP_COLOR_RENDERING_INTENT_RELATIVE_COLORIMETRIC;
++      gboolean                  dummy_bpc    = TRUE;
++
++      if (dont_ask)
++        *dont_ask = FALSE;
++
++      return chopgimp_cmyk_import_dialog_run (image, context, parent,
++                                              g_object_get_data (G_OBJECT (image),
++                                                                 "chopgimp-cmyk-import"),
++                                              dest_profile,
++                                              intent ? intent : &dummy_intent,
++                                              bpc ? bpc : &dummy_bpc);
++    }
++
+   src_profile   = gimp_image_get_color_profile (image);
+   *dest_profile = gimp_image_get_builtin_color_profile (image);
+ 
++  if (chopgimp_import_always (image, "rgb-import", &policy))
++    {
++      if (dont_ask)
++        *dont_ask = FALSE;
++      return policy;
++    }
++
+   if (gimp_image_get_base_type (image) == GIMP_GRAY)
+     {
+       frame_title = _("Convert the image to the built-in grayscale color profile?");
+@@ -112,8 +302,9 @@ color_profile_import_dialog_run (GimpImage                 *image,
+                               gimp_standard_help_func,
+                               GIMP_HELP_IMAGE_COLOR_PROFILE_IMPORT,
+ 
+-                              _("_Keep"),    GTK_RESPONSE_YES,
++                              _("_Ignorer"), GTK_RESPONSE_REJECT,
+                               _("_Convert"), GTK_RESPONSE_NO,
++                              _("_Keep"),    GTK_RESPONSE_YES,
+ 
+                               NULL);
+ 
+@@ -233,8 +424,16 @@ color_profile_import_dialog_run (GimpImage                 *image,
+       gtk_widget_set_visible (dont_ask_toggle, TRUE);
+     }
+ 
+-  switch (gtk_dialog_run (GTK_DIALOG (dialog)))
++  response = gtk_dialog_run (GTK_DIALOG (dialog));
++
++  switch (response)
+     {
++    case GTK_RESPONSE_REJECT:
++      /*  ChopGimp 4.2.0: « Ignorer » (no conversion, working space)  */
++      policy = GIMP_COLOR_PROFILE_POLICY_KEEP;
++      g_object_set_data (G_OBJECT (image), "chopgimp-profile-ignore", GINT_TO_POINTER (1));
++      break;
++
+     case GTK_RESPONSE_NO:
+       if (g_strcmp0 (gtk_stack_get_visible_child_name (GTK_STACK (stack)),
+                      "builtin") == 0)
+@@ -264,6 +463,13 @@ color_profile_import_dialog_run (GimpImage                 *image,
+   if (dont_ask)
+     *dont_ask = gtk_toggle_button_get_active (GTK_TOGGLE_BUTTON (dont_ask_toggle));
+ 
++  /*  « always ignore » is not a GIMP policy: kept by ChopGimp  */
++  if (dont_ask && *dont_ask && response == GTK_RESPONSE_REJECT)
++    {
++      chopgimp_rc_set_string ("color", "rgb-import", "ignore");
++      *dont_ask = FALSE;
++    }
++
+   gtk_widget_destroy (dialog);
+   g_clear_object (&pref_profile);
+ 
+diff --git a/app/display/gimpdisplayshell-handlers.c b/app/display/gimpdisplayshell-handlers.c
+index 691fc85..24dede8 100644
+--- a/app/display/gimpdisplayshell-handlers.c
++++ b/app/display/gimpdisplayshell-handlers.c
+@@ -35,6 +35,7 @@
+ #include "core/gimp-cairo.h"
+ #include "core/gimpguide.h"
+ #include "core/gimpimage.h"
++#include "core/chopgimp-cmyk.h"
+ #include "core/gimpimage-grid.h"
+ #include "core/gimpimage-guides.h"
+ #include "core/gimpimage-quick-mask.h"
+@@ -188,6 +189,39 @@ static void  gimp_display_shell_display_changed_handler     (GimpContext      *c
+ 
+ /*  public functions  */
+ 
++/*  ChopGimp 4.2.0: the « CMJN » mode (also after undo / redo, and when an
++ *  image saved in that mode opens): soft-proofing and the title follow it
++ */
++static void
++chopgimp_cmyk_shell_sync (GimpDisplayShell *shell)
++{
++  GimpImage               *image  = gimp_display_get_image (shell->display);
++  GimpColorConfig         *config = gimp_display_shell_get_color_config (shell);
++  GimpColorManagementMode  mode   = gimp_color_config_get_mode (config);
++  gboolean                 cmyk   = image && chopgimp_image_is_cmyk (image);
++
++  if (cmyk && mode == GIMP_COLOR_MANAGEMENT_DISPLAY)
++    g_object_set (config, "mode", GIMP_COLOR_MANAGEMENT_SOFTPROOF, NULL);
++  else if (! cmyk && mode == GIMP_COLOR_MANAGEMENT_SOFTPROOF &&
++           g_object_get_data (G_OBJECT (shell), "chopgimp-cmyk-proofed"))
++    g_object_set (config, "mode", GIMP_COLOR_MANAGEMENT_DISPLAY, NULL);
++
++  if (cmyk)
++    g_object_set_data (G_OBJECT (shell), "chopgimp-cmyk-proofed", GINT_TO_POINTER (1));
++
++  gimp_display_shell_title_update (shell);
++  g_object_notify (G_OBJECT (shell), "title");
++}
++
++static void
++chopgimp_cmyk_parasite_handler (GimpImage        *image,
++                                const gchar      *name,
++                                GimpDisplayShell *shell)
++{
++  if (! g_strcmp0 (name, CHOPGIMP_CMYK_PARASITE))
++    chopgimp_cmyk_shell_sync (shell);
++}
++
+ void
+ gimp_display_shell_connect (GimpDisplayShell *shell)
+ {
+@@ -292,6 +326,12 @@ gimp_display_shell_connect (GimpDisplayShell *shell)
+   g_signal_connect_swapped (image, "simulation-profile-changed",
+                             G_CALLBACK (gimp_display_shell_profile_update),
+                             shell);
++  g_signal_connect (image, "parasite-attached",
++                    G_CALLBACK (chopgimp_cmyk_parasite_handler), shell);
++  g_signal_connect (image, "parasite-detached",
++                    G_CALLBACK (chopgimp_cmyk_parasite_handler), shell);
++  if (chopgimp_image_is_cmyk (image))
++    chopgimp_cmyk_shell_sync (shell);
+   g_signal_connect_swapped (image, "simulation-intent-changed",
+                             G_CALLBACK (gimp_display_shell_profile_update),
+                             shell);
+@@ -461,6 +501,8 @@ gimp_display_shell_disconnect (GimpDisplayShell *shell)
+ 
+   g_return_if_fail (GIMP_IS_IMAGE (image));
+ 
++  g_signal_handlers_disconnect_by_func (image, chopgimp_cmyk_parasite_handler, shell);
++
+   paths = gimp_image_get_paths (image);
+ 
+   config       = shell->display->config;
+diff --git a/app/display/gimpdisplayshell-title.c b/app/display/gimpdisplayshell-title.c
+index f31e7ba..3732b1a 100644
+--- a/app/display/gimpdisplayshell-title.c
++++ b/app/display/gimpdisplayshell-title.c
+@@ -37,6 +37,7 @@
+ #include "core/gimpcontainer.h"
+ #include "core/gimpdrawable.h"
+ #include "core/gimpimage.h"
++#include "core/chopgimp-cmyk.h"
+ #include "core/gimpimage-color-profile.h"
+ #include "core/gimpitem.h"
+ 
+@@ -130,6 +131,10 @@ gimp_display_shell_title_image_type (GimpImage *image)
+ {
+   const gchar *name = "";
+ 
++  /*  ChopGimp 4.2.0  */
++  if (chopgimp_image_is_cmyk (image))
++    return "CMJN";
++
+   gimp_enum_get_value (GIMP_TYPE_IMAGE_BASE_TYPE,
+                        gimp_image_get_base_type (image), NULL, NULL, &name, NULL);
+ 
+diff --git a/app/display/gimpimagewindow.c b/app/display/gimpimagewindow.c
+index 332c696..d195ac3 100644
+--- a/app/display/gimpimagewindow.c
++++ b/app/display/gimpimagewindow.c
+@@ -56,6 +56,7 @@
+ #include "core/gimp.h"
+ #include "core/gimpcontext.h"
+ #include "core/gimpimage.h"
++#include "core/chopgimp-cmyk.h"
+ #include "core/gimpprogress.h"
+ #include "core/gimpcontainer.h"
+ 
+@@ -3028,6 +3029,10 @@ chopgimp_tab_title_update (GimpDisplayShell *shell,
+     default:           base = "RVB";             break;
+     }
+ 
++  /*  ChopGimp 4.2.0: « CMJN/8 » like Photoshop  */
++  if (chopgimp_image_is_cmyk (image))
++    base = "CMJN";
++
+   switch (gimp_image_get_component_type (image))
+     {
+     case GIMP_COMPONENT_TYPE_U16:
+diff --git a/app/pdb/chopgimp-cmds.c b/app/pdb/chopgimp-cmds.c
+index b887559..4017f85 100644
+--- a/app/pdb/chopgimp-cmds.c
++++ b/app/pdb/chopgimp-cmds.c
+@@ -25,12 +25,16 @@
+ #include <stdlib.h>
+ #include <string.h>
+ 
++#include <cairo.h>
+ #include <gegl.h>
+ 
+ #include <gdk-pixbuf/gdk-pixbuf.h>
+ 
++#include <lcms2.h>
++
+ #include "libgimpbase/gimpbase.h"
+ #include "libgimpmath/gimpmath.h"
++#include "libgimpcolor/gimpcolor.h"
+ 
+ #include "pdb-types.h"
+ 
+@@ -59,6 +63,8 @@
+ #include "path/chopgimp-trace.h"
+ 
+ #include "core/chopgimp-trace-layer.h"
++#include "core/chopgimp-cmyk.h"
++#include "core/gimpimage-color-profile.h"
+ #include "core/chopgimp-artboards.h"
+ #include "core/chopgimp-pgrid.h"
+ #include "core/gimpitem.h"
+@@ -834,6 +840,16 @@ vobjects_command_invoker (GimpProcedure         *procedure,
+       else if (! strcmp (cmd, "select-all") &&
+                chopgimp_vobjects_layer_is_target (layer))
+         done = chopgimp_vobjects_select_all (layer);
++      /*  4.2.0: Ctrl+C / Ctrl+V of objects (tests; the clipboard object is
++       *  Gimp itself here)
++       */
++      else if (! strcmp (cmd, "copy-objects"))
++        {
++          chopgimp_vobjects_clipboard_copy (layer, G_OBJECT (gimp));
++          done = chopgimp_vobjects_n_selected (layer) > 0;
++        }
++      else if (! strcmp (cmd, "paste-objects"))
++        done = chopgimp_vobjects_clipboard_paste (layer, G_OBJECT (gimp));
+       else if (! strcmp (cmd, "select-none") &&
+                chopgimp_vobjects_layer_is_target (layer))
+         {
+@@ -2054,6 +2070,209 @@ perspective_command_invoker (GimpProcedure         *procedure,
+   return return_vals;
+ }
+ 
++/*  ChopGimp 4.2.0: CMYK (core/chopgimp-cmyk.c), one procedure with
++ *  commands; never a PDB error: (done, message)
++ */
++static GimpValueArray *
++cmyk_command_invoker (GimpProcedure         *procedure,
++                      Gimp                  *gimp,
++                      GimpContext           *context,
++                      GimpProgress          *progress,
++                      const GimpValueArray  *args,
++                      GError               **error)
++{
++  GimpImage      *image = ARG_OBJECT (0);
++  const gchar    *cmd   = g_value_get_string (gimp_value_array_index (args, 1));
++  gchar         **part;
++  gchar          *out   = NULL;
++  gboolean        done  = FALSE;
++  GError         *err   = NULL;
++  GimpValueArray *return_vals;
++
++  part = g_strsplit (cmd ? cmd : "", "|", -1);
++
++  if (! part[0])
++    {
++      out = g_strdup ("commande vide");
++    }
++  else if (! strcmp (part[0], "list"))
++    {
++      GList   *files = chopgimp_cmyk_list_profiles (gimp);
++      GString *str   = g_string_new (NULL);
++
++      for (GList *l = files; l; l = l->next)
++        g_string_append_printf (str, "%s%s", str->len ? "\n" : "",
++                                g_file_peek_path (l->data));
++      g_list_free_full (files, g_object_unref);
++      out  = g_string_free (str, FALSE);
++      done = TRUE;
++    }
++  else if (! strcmp (part[0], "preferred"))
++    {
++      GimpColorProfile *profile = chopgimp_cmyk_get_preferred (gimp, &out);
++
++      if (profile)
++        {
++          g_free (out);
++          out  = g_strdup (gimp_color_profile_get_label (profile));
++          done = TRUE;
++          g_object_unref (profile);
++        }
++    }
++  else if (! strcmp (part[0], "set-preferred") && part[1])
++    {
++      GFile *file = g_file_new_for_path (part[1]);
++
++      done = chopgimp_cmyk_set_preferred (gimp, file, &err);
++      g_object_unref (file);
++    }
++  else if (! strcmp (part[0], "check") && part[1])
++    {
++      GFile            *file    = g_file_new_for_path (part[1]);
++      GimpColorProfile *profile = gimp_color_profile_new_from_file (file, &err);
++      GimpColorProfile *checked = profile ? chopgimp_cmyk_check_profile (profile, &err) : NULL;
++
++      if (checked)
++        {
++          out  = g_strdup (gimp_color_profile_get_label (checked));
++          done = TRUE;
++        }
++      g_clear_object (&checked);
++      g_clear_object (&profile);
++      g_object_unref (file);
++    }
++  else if (! strcmp (part[0], "rgb2cmyk") && part[1] && part[2] && part[3] && part[4])
++    {
++      /*  sRGB colors (0..1, « r,g,b;… ») to CMYK values (0..1) of the
++       *  profile @part[1] with intent @part[2] and black point
++       *  compensation @part[3] (PDF export for the printer)
++       */
++      GFile            *file    = g_file_new_for_path (part[1]);
++      GimpColorProfile *profile = gimp_color_profile_new_from_file (file, &err);
++      GimpColorProfile *checked = profile ? chopgimp_cmyk_check_profile (profile, &err) : NULL;
++
++      if (checked)
++        {
++          cmsHPROFILE   srgb = cmsCreate_sRGBProfile ();
++          cmsHTRANSFORM t    = cmsCreateTransform (srgb, TYPE_RGB_16,
++                                                   gimp_color_profile_get_lcms_profile (checked),
++                                                   TYPE_CMYK_16, atoi (part[2]),
++                                                   atoi (part[3]) ? cmsFLAGS_BLACKPOINTCOMPENSATION : 0);
++          if (t)
++            {
++              gchar  **cols = g_strsplit (part[4], ";", -1);
++              GString *str  = g_string_new (NULL);
++
++              for (gint i = 0; cols[i]; i++)
++                {
++                  gchar         **v = g_strsplit (cols[i], ",", -1);
++                  gdouble         r, g, b;
++                  cmsUInt16Number in[3], o[4];
++                  gchar           buf[4][G_ASCII_DTOSTR_BUF_SIZE];
++
++                  /*  C locale numbers (a French locale reads « 1,0 »)  */
++                  if (g_strv_length (v) != 3)
++                    {
++                      g_strfreev (v);
++                      continue;
++                    }
++                  r = g_ascii_strtod (v[0], NULL);
++                  g = g_ascii_strtod (v[1], NULL);
++                  b = g_ascii_strtod (v[2], NULL);
++                  g_strfreev (v);
++
++                  in[0] = CLAMP (r, 0.0, 1.0) * 65535.0 + 0.5;
++                  in[1] = CLAMP (g, 0.0, 1.0) * 65535.0 + 0.5;
++                  in[2] = CLAMP (b, 0.0, 1.0) * 65535.0 + 0.5;
++                  cmsDoTransform (t, in, o, 1);
++                  for (gint k = 0; k < 4; k++)
++                    g_ascii_formatd (buf[k], sizeof (buf[k]), "%.4f", o[k] / 65535.0);
++                  g_string_append_printf (str, "%s%s,%s,%s,%s", str->len ? ";" : "",
++                                          buf[0], buf[1], buf[2], buf[3]);
++                }
++
++              g_strfreev (cols);
++              cmsDeleteTransform (t);
++              out  = g_string_free (str, FALSE);
++              done = TRUE;
++            }
++          else
++            {
++              out = g_strdup ("transformation impossible");
++            }
++
++          cmsCloseProfile (srgb);
++        }
++
++      g_clear_object (&checked);
++      g_clear_object (&profile);
++      g_object_unref (file);
++    }
++  else if (! image)
++    {
++      out = g_strdup ("image requise");
++    }
++  else if (! strcmp (part[0], "is-cmyk"))
++    {
++      out  = g_strdup (chopgimp_image_is_cmyk (image) ? "1" : "0");
++      done = TRUE;
++    }
++  else if (! strcmp (part[0], "simulation"))
++    {
++      GimpColorProfile *sim = gimp_image_get_simulation_profile (image);
++
++      out  = g_strdup (sim ? gimp_color_profile_get_label (sim) : "");
++      done = TRUE;
++    }
++  else if (! strcmp (part[0], "set-cmyk") || ! strcmp (part[0], "set-rgb") ||
++           ! strcmp (part[0], "convert"))
++    {
++      GimpColorProfile *profile = NULL;
++
++      if (part[1] && *part[1])
++        {
++          GFile *file = g_file_new_for_path (part[1]);
++
++          profile = gimp_color_profile_new_from_file (file, &err);
++          g_object_unref (file);
++        }
++
++      if (part[1] && *part[1] && ! profile)
++        ;
++      else if (! strcmp (part[0], "convert"))
++        done = profile &&
++               chopgimp_image_convert_cmyk_profile (image, profile,
++                                                    part[2] ? atoi (part[2]) :
++                                                    GIMP_COLOR_RENDERING_INTENT_RELATIVE_COLORIMETRIC,
++                                                    part[2] && part[3] ? atoi (part[3]) != 0 : TRUE,
++                                                    progress, &err);
++      else
++        done = chopgimp_image_set_cmyk (image, ! strcmp (part[0], "set-cmyk"),
++                                        profile, &err);
++
++      g_clear_object (&profile);
++    }
++  else
++    {
++      out = g_strdup_printf ("commande inconnue : %s", part[0]);
++    }
++
++  if (err)
++    {
++      g_free (out);
++      out = g_strdup (err->message);
++      g_clear_error (&err);
++    }
++
++  g_strfreev (part);
++
++  return_vals = gimp_procedure_get_return_values (procedure, TRUE, NULL);
++  g_value_set_boolean (gimp_value_array_index (return_vals, 1), done);
++  g_value_take_string (gimp_value_array_index (return_vals, 2), out ? out : g_strdup (""));
++
++  return return_vals;
++}
++
+ static GimpProcedure *
+ chopgimp_procedure (GimpPDB          *pdb,
+                     GimpMarshalFunc   invoker,
+@@ -2100,6 +2319,28 @@ register_chopgimp_procs (GimpPDB *pdb)
+ {
+   GimpProcedure *p;
+ 
++  p = chopgimp_procedure (pdb, cmyk_command_invoker, "chopgimp-cmyk-command",
++                          "ChopGimp CMYK. Commands (arguments separated by '|'): "
++                          "« list » (CMYK profiles known, one path per line), "
++                          "« preferred » (label of the working CMYK profile), "
++                          "« set-preferred|path », « check|path » (usable CMYK profile?), "
++                          "« rgb2cmyk|profile|intent|bpc|r,g,b;… » (sRGB 0..1 to CMYK 0..1), "
++                          "and on @image: « is-cmyk », « simulation », « set-cmyk[|path] », "
++                          "« set-rgb », « convert|path[|intent|bpc] » (CMYK to CMYK). "
++                          "Returns (done, result or error message).");
++  gimp_procedure_add_argument (p, gimp_param_spec_image ("image", "image", "The image",
++                                                         TRUE, GIMP_PARAM_READWRITE));
++  gimp_procedure_add_argument (p, gimp_param_spec_string ("command", "command", "The command",
++                                                          FALSE, FALSE, FALSE, NULL,
++                                                          GIMP_PARAM_READWRITE));
++  gimp_procedure_add_return_value (p, g_param_spec_boolean ("done", "done", "Done",
++                                                            FALSE, GIMP_PARAM_READWRITE));
++  gimp_procedure_add_return_value (p, gimp_param_spec_string ("result", "result", "The result",
++                                                              FALSE, TRUE, FALSE, NULL,
++                                                              GIMP_PARAM_READWRITE));
++  gimp_pdb_register_procedure (pdb, p);
++  g_object_unref (p);
++
+   p = chopgimp_procedure (pdb, boolean_invoker, "chopgimp-path-boolean",
+                           "Pathfinder: union (0), first minus the others (1), "
+                           "intersection (2), exclusion (3) of paths. Returns a new path "
+diff --git a/app/pdb/meson.build b/app/pdb/meson.build
+index 96c08dc..5091330 100644
+--- a/app/pdb/meson.build
++++ b/app/pdb/meson.build
+@@ -77,7 +77,7 @@ libapppdb = static_library('apppdb',
+   include_directories: [ rootInclude, rootAppInclude, ],
+   c_args: '-DG_LOG_DOMAIN="Gimp-PDB"',
+   dependencies: [
+-    cairo, gegl, gdk_pixbuf, gexiv2
++    cairo, gegl, gdk_pixbuf, gexiv2, lcms
+   ],
+ )
+ 
+@@ -87,7 +87,7 @@ libappinternalprocs = static_library('appinternalprocs',
+   include_directories: [ rootInclude, rootAppInclude, ],
+   c_args: '-DG_LOG_DOMAIN="Gimp-PDB"',
+   dependencies: [
+-    cairo, gegl, gdk_pixbuf, gexiv2, pangocairo, pango,
++    cairo, gegl, gdk_pixbuf, gexiv2, pangocairo, pango, lcms,
+   ],
+   sources: [
+     pdbgen
+diff --git a/libgimp/gimpprocedureconfig.c b/libgimp/gimpprocedureconfig.c
+index e14dbc7..4ac44fa 100644
+--- a/libgimp/gimpprocedureconfig.c
++++ b/libgimp/gimpprocedureconfig.c
+@@ -951,6 +951,22 @@ _gimp_procedure_config_begin_run (GimpProcedureConfig  *config,
+         }
+     }
+ 
++  /*  ChopGimp 4.2.0: an image in « CMJN » mode exports in CMYK (TIFF, JPEG,
++   *  PSD…) by default, through its simulation profile
++   */
++  if (priv->image && run_mode != GIMP_RUN_NONINTERACTIVE)
++    {
++      GParamSpec   *cmyk_pspec = g_object_class_find_property (G_OBJECT_GET_CLASS (config), "cmyk");
++      GimpParasite *parasite;
++
++      if (cmyk_pspec && G_IS_PARAM_SPEC_BOOLEAN (cmyk_pspec) &&
++          (parasite = gimp_image_get_parasite (priv->image, "chopgimp-cmyk-mode")))
++        {
++          g_object_set (config, "cmyk", TRUE, NULL);
++          gimp_parasite_free (parasite);
++        }
++    }
++
+   /* Always set the run-mode in the end, which should be influenced neither by
+    * the default property value, nor last run's value.
+    */
+diff --git a/menus/image-menu.ui.in.in b/menus/image-menu.ui.in.in
+index 6ab8b50..0cf0850 100644
+--- a/menus/image-menu.ui.in.in
++++ b/menus/image-menu.ui.in.in
+@@ -319,6 +319,7 @@
+         <submenu>
+           <attribute name="label" translatable="yes" context="image-action">_Mode</attribute>
+           <item><attribute name="action">app.image-convert-rgb</attribute></item>
++          <item><attribute name="action">app.image-convert-cmyk</attribute></item>
+           <item><attribute name="action">app.image-convert-grayscale</attribute></item>
+           <item><attribute name="action">app.image-convert-indexed</attribute></item>
+         </submenu>
+@@ -346,6 +347,7 @@
+           <section>
+             <item><attribute name="action">app.image-color-profile-assign</attribute></item>
+             <item><attribute name="action">app.image-color-profile-convert</attribute></item>
++            <item><attribute name="action">app.chopgimp-cmyk-convert-profile</attribute></item>
+             <item><attribute name="action">app.image-color-profile-discard</attribute></item>
+           </section>
+           <section>
+diff --git a/plug-ins/common/file-pdf-chopgimp.h b/plug-ins/common/file-pdf-chopgimp.h
+index 0938661..3bb131b 100644
+--- a/plug-ins/common/file-pdf-chopgimp.h
++++ b/plug-ins/common/file-pdf-chopgimp.h
+@@ -1759,8 +1759,10 @@ chop_pdf_write (ChopPdf         *cp,
+   else
+     {
+       cp->surface = cairo_pdf_surface_create_for_stream (write_func, fp, 1, 1);
+-      /*  the layers' module reads a classic xref (no object streams)  */
+-      if (layered)
++      /*  the layers' module reads a classic xref (no object streams), as
++       *  the « Exporter pour l'imprimeur » post-processing (4.2.0)
++       */
++      if (layered || g_str_has_suffix (path, ".chopgimp-print.pdf"))
+         cairo_pdf_surface_restrict_to_version (cp->surface, CAIRO_PDF_VERSION_1_4);
+     }
+ 
+-- 
+2.53.0
+

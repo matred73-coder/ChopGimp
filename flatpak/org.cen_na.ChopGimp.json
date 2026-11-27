@@ -1227,7 +1227,9 @@
                         "../patches/gimp-3.2.8/0176-ChopGimp-4.1.0-dead-code-and-duplicated-helpers-remo.patch",
                         "../patches/gimp-3.2.8/0177-ChopGimp-4.1.0-sRGB-color-helpers-shared-chopgimp-vu.patch",
                         "../patches/gimp-3.2.8/0178-ChopGimp-4.1.1-one-object-selection-for-every-vector.patch",
-                        "../patches/gimp-3.2.8/0179-ChopGimp-4.1.1-fill-color-stroke-color-object-comman.patch"
+                        "../patches/gimp-3.2.8/0179-ChopGimp-4.1.1-fill-color-stroke-color-object-comman.patch",
+                        "../patches/gimp-3.2.8/0180-ChopGimp-4.2.0-CMYK-the-Photoshop-way-Image-Mode-CMJ.patch",
+                        "../patches/gimp-3.2.8/0181-ChopGimp-4.2.0-mixed-values-in-Aspect-Contour-copy-p.patch"
                     ]
                 }
             ],
@@ -1257,6 +1259,22 @@
                     "tag": "v3.0.1",
                     "commit": "bddb1dfb6bddc2363bf74d79a95a60691bc46279"
                 }
+            ]
+        },
+        {
+            "name": "chopgimp-icc",
+            "buildsystem": "simple",
+            "sources": [
+                {
+                    "type": "file",
+                    "url": "https://eci.org/lib/exe/eci_offset_2009.zip",
+                    "sha256": "e4537702b825ef14c3eb930f68df0a73550220b832bdda4bd812dcf3fe966306",
+                    "dest-filename": "eci_offset_2009.zip"
+                }
+            ],
+            "build-commands": [
+                "python3 -c \"import zipfile; open('ISOcoated_v2_eci.icc', 'wb').write(zipfile.ZipFile('eci_offset_2009.zip').read('ECI_Offset_2009/ISOcoated_v2_eci.icc'))\"",
+                "install -Dm644 ISOcoated_v2_eci.icc ${FLATPAK_DEST}/share/gimp/3.0/color/ISOcoated_v2_eci.icc"
             ]
         },
         {

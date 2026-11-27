@@ -74,6 +74,8 @@ cp "$TMP/menus/"*.ui "$DATA/menus/"
 #    n'a pas ses propres fichiers
 mkdir -p "$ETC/tool-options"
 cat "$SRC/config/gimprc-photogimp" >> "$ETC/gimprc"
+# 4.2.0 : licence du profil CMJN fourni (ISO Coated v2, module chopgimp-icc)
+install -Dm644 "$SRC/data/icc/LICENSE-ISOcoated_v2_eci.txt" "$DATA/color/LICENSE-ISOcoated_v2_eci.txt"
 sed 's/@GEOMETRY@/(position 0 0)\n    (size 1600 900)/' "$SRC/config/sessionrc" > "$ETC/sessionrc"
 # espaces de travail d'usine (Fenêtres > Espace de travail)
 mkdir -p "$ETC/workspaces"

@@ -1613,3 +1613,58 @@ Patchs 0170 à 0173 (nouveaux commits, aucun patch réécrit).
   d'objets (le collage crée un calque) ; « mixte » des panneaux Aspect / Contour non affiché
   (ils montrent le premier objet, mais modifient bien tous les objets) ; le calque issu de
   la Vectorisation ne sélectionne pas ses objets automatiquement.
+
+## 4.2.0 — CMJN façon Photoshop ; finitions vectorielles — patchs 0180, 0181
+
+- **Profils ECI** (licences vérifiées) : *ISO Coated v2 (ECI)* (FOGRA39, licence Heidelberg :
+  redistribution gratuite avec le texte de licence) est fourni (module `chopgimp-icc` de
+  `make_manifest.py`, licence dans `data/icc/`). *PSO Coated v3* et *PSO Uncoated v3* portent
+  « may not be distributed … without written permission of ECI » : non fournis,
+  **téléchargés en un clic** depuis eci.org (somme SHA-256 vérifiée ;
+  Image > Gestion des couleurs > Télécharger les profils CMJN PSO v3, proposé une fois au
+  premier passage en CMJN), puis PSO Coated v3 devient le profil CMJN préféré (au
+  démarrage aussi, s'il est présent). Sans lui : ISO Coated v2.
+- **Image > Mode > CMJN (impression)** (`app/core/chopgimp-cmyk.c`) : parasite
+  `chopgimp-cmyk-mode`, profil de simulation = profil CMJN de travail (ou celui de l'image),
+  épreuvage activé sur les vues (aussi après annulation et à la réouverture du XCF), exports
+  TIFF / JPEG / PSD en CMJN par défaut (`libgimp/gimpprocedureconfig.c`), onglet
+  « CMJN/8 » et `%t` du titre. RVB ou décocher : retour (une étape d'annulation).
+- **Conversion de profil** : *Image > Gestion des couleurs > Convertir en profil CMJN…*
+  (dialogue de GIMP, mode de rendu, compensation du point noir) : chaîne lcms
+  RVB → CMJN source → CMJN cible → RVB sur les calques de pixels (texte et vectoriel gardent
+  leurs couleurs, converties à l'export). **À l'import** : fenêtre façon Photoshop
+  Garder / Convertir / Ignorer + « Toujours » (`chopgimprc [color] cmyk-import`) ; la fenêtre
+  RVB de GIMP gagne « Ignorer » (et « toujours ignorer » : `[color] rgb-import`). **À
+  l'export** : conversion vers le profil cible de l'export pour l'imprimeur.
+- **Fichier > Exporter > Exporter pour l'imprimeur…** (`plug-ins/chopgimp_pdf/printer.py`) :
+  PDF/X-4 vectoriel (export PDF du lot 4b repris : couleurs unies en CMJN du profil cible,
+  noir pur en 100 % K au choix, images et dégradés en RVB balisé sRGB, transparence ; repli
+  en image CMJN si la reprise échoue), PDF/X-1a:2001 (image CMJN par l'export TIFF CMJN de
+  GIMP), TIFF CMJN ; intention de sortie avec profil intégré, fond perdu, traits de coupe en
+  repérage, TrimBox / BleedBox, plans de travail (image, une page ou un fichier par plan).
+- **Robustesse** : `chopgimp_cmyk_check_profile()` refuse tout profil qui n'est pas CMJN ou
+  dont lcms ne sait pas construire les transformations (profil d'entrée sans B2A, fichier
+  illisible) : message et repli sur le profil de travail, jamais de plantage.
+- **Restes de la 4.1.1** : Aspect et Contour affichent « mixte » (épaisseur, opacité,
+  limite, tirets, flèches ; couleur estompée ; boutons et listes vides) ; Ctrl+C / Ctrl+V
+  d'objets vers un calque vectoriel crée des objets (en place) qui deviennent la sélection ;
+  le calque vectorisé sélectionne ses objets ; outil **Lasso direct** (groupe de A, sans
+  raccourci : Q est le masque de Photoshop) : contour à main levée sur les nœuds de tous les
+  objets, leurs objets deviennent la sélection (Maj ajoute, Alt retire).
+- **Tests** : 17 nouveaux dans smoke_test.py (profils, mode, robustesse avec un profil
+  illisible et un profil sans B2A, conversion, couleurs CMJN, PSD CMJN à profil inutilisable,
+  PDF/X-4, PDF/X-1a, fond perdu, TIFF CMJN relu, un fichier par plan, collage d'objets,
+  vectorisation sélectionnée, menus et outil) — smoke : **300 OK, 0 échec**.
+- **Banc graphique** : copie de « Matslogo copier.psd » (CMJN, profil scanner sans B2A) :
+  message puis ouverture en CMJN avec ISO Coated v2, onglet « CMJN/32 » ; Convertir en profil
+  CMJN ; Exporter pour l'imprimeur (PDF/X-4 écrit, TrimBox vérifiée). Vectoriel : 3 formes
+  recolorées une par une avec V (rouge, vert, bleu : chacune seule) ; Ctrl+C / Ctrl+V : un
+  objet de plus, sélectionné ; Lasso direct sur les nœuds du bas de deux formes : leurs objets
+  sélectionnés, fond « mixte » (estompé) dans la barre et dans Aspect ; vectorisation d'une
+  image en couleur (3 couleurs) : objets sélectionnés, fond de l'ellipse bien rouge (#f27d59),
+  pas de défaut (le préréglage noir et blanc donnait 0 tracé car les deux couleurs sont au-dessus
+  du seuil : normal).
+- **Reste** : PDF/X non validé par un contrôleur officiel (Acrobat Preflight / veraPDF n'ont
+  pas de profil PDF/X libre) — à faire vérifier par l'imprimeur ; le collage d'objets se fait
+  en place (pas au centre de la vue) et ne lit pas le SVG d'une autre application ; la barre
+  d'état du Lasso direct parle encore de « cadre ».

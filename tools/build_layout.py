@@ -33,7 +33,7 @@ TOOLBOX = [
     ("clone", "perspective-clone"),                           # S
     # ── Vectoriel / texte ────────────────────────────────────────────
     # 3.29.3 : rangé par intention (ordre d'usage), raccourcis inchangés
-    ("direct-select",),                                       # A (seule, toujours visible)
+    ("direct-select", "direct-lasso"),                        # A / Lasso direct (4.2.0, sans raccourci : Q = masque)
     ("path", "curvature"),                                    # P / Maj+P : tracés précis
     ("vpencil", "vsmooth", "vblob"),                          # N : main levée (3.30.0 : Pinceau goutte)
     ("shape",),                                               # U : formes
@@ -55,6 +55,7 @@ ICON = {"dodge-burn": "gimp-tool-dodge", "convolve": "gimp-tool-blur",
         "rotate-view": "chopgimp-tool-rotate-view", "shape": "chopgimp-tool-shape",
         "spot-heal": "chopgimp-tool-spot-heal",
         "direct-select": "chopgimp-tool-direct-select",
+        "direct-lasso": "chopgimp-tool-direct-lasso",
         "shape-builder": "chopgimp-tool-shape-builder",
         "width": "chopgimp-tool-width", "envelope": "chopgimp-tool-envelope",
         "live-paint-bucket": "chopgimp-tool-live-paint-bucket",

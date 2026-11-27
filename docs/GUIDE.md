@@ -1,4 +1,4 @@
-# ChopGimp 4.0 — guide de l'utilisateur
+# ChopGimp 4.2 — guide de l'utilisateur
 
 Un guide court, rangé par tâche. Il suppose que vous connaissez Photoshop ou
 Illustrator : ChopGimp en reprend les gestes et les raccourcis. Le détail de chaque
@@ -90,13 +90,77 @@ Pour une très grande image (plus d'un million de pixels), utilisez le moteur
 | **SVG** | Exporter sous…, `.svg` | Objets, dégradés, filets, motifs, symboles et répétitions. |
 | **EPS** | Exporter sous…, `.eps` | Vectoriel, une page par plan de travail. |
 | **Un fichier par plan** | Fichier > Exporter > Exporter les plans de travail… | PNG, JPEG, WebP ou TIFF. Pour un PDF ou un EPS, choisissez « Une page par plan de travail » à l’export. |
+| **PDF/X, TIFF CMJN** | Fichier > Exporter > Exporter pour l'imprimeur… | Voir [Imprimer en CMJN](#5-imprimer-en-cmjn). |
 | **XCF** | Fichier > Enregistrer (Ctrl+S) | Le format natif garde tout : objets, effets, plans, grille. Un GIMP standard l'ouvre et y voit les pixels. |
 
-## 5. Raccourcis clés
+## 5. Imprimer en CMJN
+
+ChopGimp travaille en RVB comme GIMP, mais il gère le CMJN comme Photoshop : un
+profil CMJN par image, l'aperçu à l'écran de l'impression et des fichiers CMJN pour
+l'imprimeur.
+
+### Les profils CMJN
+
+- **ISO Coated v2 (FOGRA39)** de l'ECI est fourni (sa licence permet de le
+  redistribuer ; elle est installée à côté du profil).
+- **PSO Coated v3 (FOGRA51)** et **PSO Uncoated v3 (FOGRA52)**, les profils offset
+  actuels de l'ECI, ne peuvent pas être fournis : leur licence l'interdit. Un clic
+  les télécharge depuis eci.org : **Image > Gestion des couleurs > Télécharger les
+  profils CMJN PSO v3 (ECI)…** (proposé aussi au premier passage en CMJN). PSO Coated
+  v3 devient alors le profil CMJN de travail.
+- Le profil CMJN de travail se change dans Préférences > Gestion des couleurs
+  (« Profil CMJN préféré »).
+
+### Passer une image en CMJN
+
+**Image > Mode > CMJN (impression)** : l'image prend le profil CMJN de travail
+(ou garde le sien), l'écran simule l'impression (épreuvage) et les exports TIFF, JPEG
+et PSD proposent le CMJN par défaut. L'onglet du document affiche « CMJN/8 ». Pour
+revenir : décochez CMJN ou choisissez Image > Mode > RVB (une étape d'annulation).
+
+### Convertir vers un autre profil CMJN
+
+**Image > Gestion des couleurs > Convertir en profil CMJN…** : par exemple de FOGRA39
+vers PSO Coated v3, avec le mode de rendu et la compensation du point noir. Les
+calques de pixels sont convertis ; les calques de texte et les calques vectoriels
+gardent leurs couleurs (elles sont converties à l'export).
+
+### Ouvrir un fichier CMJN
+
+Un fichier CMJN (PSD, TIFF, JPEG) s'ouvre en mode CMJN. Si son profil n'est pas
+votre profil de travail, ChopGimp demande, comme Photoshop :
+
+- **Garder** : le document garde son profil ;
+- **Convertir** : ses couleurs passent au profil de travail ;
+- **Ignorer** : le profil de travail lui est attribué, sans conversion.
+
+« Toujours faire ce choix » évite la question (le choix est gardé dans `chopgimprc`,
+section `[color]`). La même fenêtre existe pour un profil RVB, avec un bouton Ignorer.
+Un profil illisible ou inutilisable n'est jamais employé : un message le signale et le
+profil de travail le remplace.
+
+### Exporter pour l'imprimeur
+
+**Fichier > Exporter > Exporter pour l'imprimeur…**
+
+| Réglage | Choix |
+|---|---|
+| Format | **PDF/X-4** (vectoriel : tracés et textes en couleurs CMJN, transparence gardée, images en RVB balisé que l'imprimeur convertit), **PDF/X-1a** (chaque page en image CMJN), **TIFF CMJN** |
+| Profil CMJN cible | celui de l'image, PSO Coated v3, PSO Uncoated v3 ou ISO Coated v2 : les couleurs sont converties s'il diffère, et il est intégré au fichier (intention de sortie) |
+| Mode de rendu, compensation du point noir | comme pour la conversion |
+| Fond perdu | 3 mm par défaut ; ce qui dépasse du plan de travail est gardé, sinon du blanc |
+| Traits de coupe | en couleur de repérage, hors du fond perdu (PDF) |
+| Plans de travail | image entière, une page ou un fichier par plan de travail |
+| Noir pur en 100 % K | les tracés et textes noirs n'utilisent que l'encre noire (PDF/X-4) |
+
+La résolution est celle de l'image (Image > Taille d'impression) : 300 ppp pour
+l'impression offset.
+
+## 6. Raccourcis clés
 
 | Raccourci | Action |
 |---|---|
-| V / A | Sélection (Déplacement) / Sélection directe |
+| V / A | Sélection (Déplacement) / Sélection directe (le Lasso direct est dans son groupe, sans raccourci : Q reste le masque) |
 | P / U / T | Plume / Forme / Texte |
 | B / E / G | Pinceau / Gomme / Dégradé |
 | L / M / W | Lasso (l'outil affiché du groupe) / Rectangle de sélection / Baguette magique |
@@ -116,7 +180,7 @@ Pour une très grande image (plus d'un million de pixels), utilisez le moteur
 L'outil actif se change aussi d'un clic sur son icône : la liste des outils de son
 groupe s'ouvre.
 
-## 6. En cas de problème
+## 7. En cas de problème
 
 - **Plantage** : au redémarrage, ChopGimp propose le rapport (journal de session et
   pile d'appels). Joignez-le à votre signalement.

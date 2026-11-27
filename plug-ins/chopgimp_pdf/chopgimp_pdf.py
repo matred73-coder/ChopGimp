@@ -29,6 +29,8 @@ Le mode « image (comme avant) » appelle l'import PDF de GIMP.
 """
 import math
 import os
+import re
+import shutil
 import sys
 import tempfile
 
@@ -46,9 +48,10 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 import cairoscript  # noqa: E402
 import ocg  # noqa: E402
+import printer  # noqa: E402
 import vobjects  # noqa: E402
-from chopgimp_common import (pdb_run, srgb, set_parasite_text, dialog_box, vbox,  # noqa: E402
-                             spin_scale, form_grid, frame)
+from chopgimp_common import (pdb_run, pdb_call, srgb, set_parasite_text, dialog_box,  # noqa: E402
+                             vbox, spin_scale, form_grid, frame, ok, fail)
 
 PROC = "file-chopgimp-pdf-load"
 PROC_THUMB = "file-chopgimp-pdf-load-thumb"
@@ -58,6 +61,9 @@ PROC_PS_THUMB = "file-chopgimp-eps-load-thumb"
 PROC_SVG_THUMB = "file-chopgimp-svg-load-thumb"
 # 3.31.0 (lot 4b) : calques PDF (OCG) de l'export PDF (file-pdf-export, module ocg)
 PROC_OCG = "chopgimp-pdf-ocg-layers"
+# 4.2.0 : Fichier > Exporter pour l'imprimeur ; profils PSO v3 de l'ECI
+PROC_PRINT = "file-chopgimp-print-export"
+PROC_ECI = "plug-in-chopgimp-cmyk-download"
 MAX_SIDE = 16384          # côté maximal d'un rendu en pixels (la résolution est réduite)
 MAX_OBJECTS = 50000       # au-delà, la page est importée en image
 
@@ -1192,12 +1198,355 @@ def ocg_export_layers(procedure, config, data):
     return procedure.new_return_values(Gimp.PDBStatusType.SUCCESS, GLib.Error())
 
 
+# ─── 4.2.0 : exporter pour l'imprimeur ──────────────────────────────────
+
+def cmyk_command(image, command):
+    """chopgimp-cmyk-command → (fait, résultat)"""
+    res = pdb_run("chopgimp-cmyk-command", image=image, command=command)
+    if res is None or res.index(0) != Gimp.PDBStatusType.SUCCESS:
+        return False, "chopgimp-cmyk-command indisponible"
+    return bool(res.index(1)), res.index(2) or ""
+
+
+PRINT_PROFILES = {"pso-coated": "PSOcoated_v3.icc", "pso-uncoated": "PSOuncoated_v3_FOGRA52.icc",
+                  "iso-coated": "ISOcoated_v2_eci.icc"}
+
+
+def profile_bytes(profile):
+    data = profile.get_icc_profile() if profile else None
+    if data is None:
+        return b""
+    return bytes(data.get_data()) if hasattr(data, "get_data") else bytes(data)
+
+
+def print_target(image, choice, tmp):
+    """(chemin du profil CMJN cible ou None = celui de l'image, octets ICC)"""
+    if choice in PRINT_PROFILES:
+        _ok, listing = cmyk_command(None, "list")
+        for path in listing.split("\n"):
+            if os.path.basename(path) == PRINT_PROFILES[choice]:
+                ok, msg = cmyk_command(None, "check|" + path)
+                if not ok:
+                    raise RuntimeError(msg)
+                return path, open(path, "rb").read()
+        raise RuntimeError("Profil %s absent (Image > Gestion des couleurs > Télécharger les "
+                           "profils CMJN PSO v3)" % PRINT_PROFILES[choice])
+    sim = image.get_simulation_profile()
+    icc = profile_bytes(sim) if sim is not None and sim.is_cmyk() else b""
+    if not icc:
+        return None, b""
+    path = os.path.join(tmp, "cible.icc")
+    with open(path, "wb") as f:
+        f.write(icc)
+    ok, msg = cmyk_command(None, "check|" + path)
+    if not ok:
+        raise RuntimeError(msg)
+    return path, icc
+
+
+def print_prepare(image, rect, bleed, opts):
+    """Copie de l'image recadrée sur la page + fond perdu, au profil cible."""
+    dup = image.duplicate()
+    dup.undo_disable()
+    if opts["profile"]:
+        ok, msg = cmyk_command(dup, "convert|%s|%d|%d" % (opts["profile"], opts["intent"],
+                                                          int(opts["bpc"])))
+    else:
+        ok, msg = cmyk_command(dup, "set-cmyk")
+    if not ok:
+        dup.delete()
+        raise RuntimeError(msg)
+    dup.set_simulation_intent(Gimp.ColorRenderingIntent(opts["intent"]))
+    dup.set_simulation_bpc(opts["bpc"])
+    x, y, w, h = rect
+    dup.resize(w + 2 * bleed, h + 2 * bleed, bleed - x, bleed - y)
+    return dup
+
+
+def print_raster(image, rect, bleed, opts, tmp, tif):
+    dup = print_prepare(image, rect, bleed, opts)
+    try:
+        Gimp.context_push()
+        Gimp.context_set_background(srgb(1, 1, 1))
+        dup.flatten()
+        Gimp.context_pop()
+        res = pdb_run("file-tiff-export", **{"run-mode": Gimp.RunMode.NONINTERACTIVE,
+                                             "image": dup, "file": Gio.File.new_for_path(tif),
+                                             "compression": "none", "cmyk": True,
+                                             "include-color-profile": True,
+                                             "save-transparent-pixels": False})
+        if res is None or res.index(0) != Gimp.PDBStatusType.SUCCESS:
+            raise RuntimeError("export TIFF CMJN impossible")
+        icc = profile_bytes(dup.get_simulation_profile())
+    finally:
+        dup.delete()
+    w, h, data, tiff_icc = printer.read_tiff_cmyk(tif)
+    return w, h, data, icc or tiff_icc
+
+
+def print_vector(image, rect, bleed, opts, tmp, doc, srgb_cs, w_pt, h_pt, bleed_pt):
+    dup = print_prepare(image, rect, bleed, opts)
+    pdf = os.path.join(tmp, "page.chopgimp-print.pdf")
+    try:
+        res = pdb_run("file-pdf-export", **{"run-mode": Gimp.RunMode.NONINTERACTIVE,
+                                            "image": dup, "file": Gio.File.new_for_path(pdf),
+                                            "artboards": "image", "pdf-layers": False})
+        if res is None or res.index(0) != Gimp.PDBStatusType.SUCCESS:
+            raise RuntimeError("export PDF vectoriel impossible")
+        icc_path = os.path.join(tmp, "page.icc")
+        with open(icc_path, "wb") as f:
+            f.write(profile_bytes(dup.get_simulation_profile()))
+    finally:
+        dup.delete()
+
+    def convert(colors):
+        out = []
+        for i in range(0, len(colors), 500):
+            chunk = colors[i:i + 500]
+            ok, txt = cmyk_command(None, "rgb2cmyk|%s|%d|%d|%s" % (
+                icc_path, opts["intent"], int(opts["bpc"]),
+                ";".join("%.5f,%.5f,%.5f" % c for c in chunk)))
+            vals = [tuple(float(v) for v in t.split(",")) for t in txt.split(";")] if ok else []
+            if len(vals) != len(chunk):
+                raise RuntimeError("conversion CMJN des couleurs : %s" % txt)
+            for c, v in zip(chunk, vals):
+                out.append((0.0, 0.0, 0.0, 1.0) if opts["black_k"] and max(c) < 1e-4 else v)
+        return out
+
+    return printer.import_vector_page(doc, open(pdf, "rb").read(), convert, srgb_cs,
+                                      bleed_pt, opts["marks"], w_pt, h_pt)
+
+
+def print_pages(image, mode):
+    """Les pages : (x, y, largeur, hauteur, nom) des plans de travail, sinon l'image."""
+    pages = []
+    if mode != "image":
+        res = pdb_call("chopgimp-artboards-command", image=image, command="list")
+        for line in ((res.index(2) if res else "") or "").splitlines():
+            f = line.split(" ", 4)
+            if len(f) >= 4:
+                pages.append((int(f[0]), int(f[1]), int(f[2]), int(f[3]),
+                              f[4] if len(f) > 4 else "Plan"))
+    if not pages:
+        pages = [(0, 0, image.get_width(), image.get_height(), "")]
+    return pages
+
+
+def export_for_printer(image, path, opts):
+    """→ liste des fichiers écrits"""
+    res = image.get_resolution()           # (réussite, x, y) ou (x, y)
+    xres, yres = res[-2], res[-1]
+    xres = xres or 300.0
+    yres = yres or xres
+    bleed = int(round(opts["bleed_mm"] / 25.4 * xres))
+    bleed_pt = bleed * 72.0 / xres
+    pages = print_pages(image, opts["artboards"])
+    base, ext = os.path.splitext(path)
+    fmt = opts["format"]
+    if not ext:
+        ext = ".tif" if fmt == "tiff" else ".pdf"
+    split = fmt == "tiff" or opts["artboards"] == "files"
+    title = os.path.basename(base)
+    written = []
+    tmp = tempfile.mkdtemp(prefix="chopgimp-print-")
+    try:
+        opts["profile"], target_icc = print_target(image, opts["profile_choice"], tmp)
+        doc = None
+        srgb_cs = None
+        for n, (x, y, w, h, name) in enumerate(pages):
+            target = path if not (split and len(pages) > 1) else \
+                "%s-%02d-%s%s" % (base, n + 1, re.sub(r"[^\w.-]+", "-", name) or "page", ext)
+            w_pt, h_pt = w * 72.0 / xres, h * 72.0 / yres
+            if fmt == "tiff":
+                tif = os.path.join(tmp, "page.tif")
+                print_raster(image, (x, y, w, h), bleed, opts, tmp, tif)
+                shutil.move(tif, target)
+                written.append(target)
+                continue
+            raster = None
+            if fmt == "pdf-x1a":
+                raster = print_raster(image, (x, y, w, h), bleed, opts, tmp,
+                                      os.path.join(tmp, "page.tif"))
+            if doc is None:
+                icc = (raster[3] if raster else b"") or target_icc
+                if not icc:
+                    dup = print_prepare(image, (x, y, w, h), 0, opts)
+                    icc = profile_bytes(dup.get_simulation_profile())
+                    dup.delete()
+                doc = printer.Doc(fmt == "pdf-x4", icc, title)
+                srgb_icc = profile_bytes(Gimp.ColorProfile.new_rgb_srgb())
+                srgb_cs = doc.out.add([printer.Name("ICCBased"),
+                                       doc.out.add({"N": 3, "Filter": printer.Name("FlateDecode")},
+                                                   printer.zlib.compress(srgb_icc, 9))])
+            if raster:
+                pw, ph, data, _ = raster
+                doc.add_raster_page(pw, ph, data, w_pt, h_pt, bleed_pt, opts["marks"])
+            else:
+                try:
+                    print_vector(image, (x, y, w, h), bleed, opts, tmp, doc, srgb_cs,
+                                 w_pt, h_pt, bleed_pt)
+                except Exception as e:  # noqa: BLE001 — repli : la page en image CMJN
+                    Gimp.message("PDF/X-4 vectoriel impossible pour « %s » (%s) : page "
+                                 "exportée en image CMJN." % (name or title, e))
+                    pw, ph, data, _ = print_raster(image, (x, y, w, h), bleed, opts, tmp,
+                                                   os.path.join(tmp, "page.tif"))
+                    doc.add_raster_page(pw, ph, data, w_pt, h_pt, bleed_pt, opts["marks"])
+            if split and len(pages) > 1:
+                doc.save(target)
+                written.append(target)
+                doc = None
+        if doc is not None:
+            doc.save(path)
+            written.append(path)
+    finally:
+        for f in os.listdir(tmp):
+            try:
+                os.unlink(os.path.join(tmp, f))
+            except OSError:
+                pass
+        os.rmdir(tmp)
+    return written
+
+
+def print_export(procedure, run_mode, image, drawables, config, data):
+    if run_mode == Gimp.RunMode.INTERACTIVE:
+        GimpUi.init("chopgimp-print")
+        if config.get_property("file") is None:
+            src = image.get_file() or image.get_imported_file()
+            folder = os.path.dirname(src.get_path()) if src and src.get_path() else GLib.get_home_dir()
+            base = src.get_basename() if src and src.get_basename() else (image.get_name() or "image")
+            name = os.path.splitext(base)[0] + "-imprimeur.pdf"
+            config.set_property("file", Gio.File.new_for_path(os.path.join(folder, name)))
+        dialog = GimpUi.ProcedureDialog.new(procedure, config, "Exporter pour l'imprimeur")
+        dialog.fill(None)
+        if not dialog.run():
+            dialog.destroy()
+            return procedure.new_return_values(Gimp.PDBStatusType.CANCEL, GLib.Error())
+        dialog.destroy()
+    f = config.get_property("file")
+    if f is None or not f.get_path():
+        return fail(procedure, "Aucun fichier choisi")
+    fmt = config.get_property("format")
+    path = f.get_path()
+    want = ".tif" if fmt == "tiff" else ".pdf"
+    if not path.lower().endswith((want, ".tiff") if fmt == "tiff" else want):
+        path = os.path.splitext(path)[0] + want
+    opts = {"format": fmt, "profile_choice": config.get_property("profile"),
+            "bpc": config.get_property("bpc"),
+            "bleed_mm": config.get_property("bleed"), "marks": config.get_property("crop-marks"),
+            "artboards": config.get_property("artboards"),
+            "black_k": config.get_property("black-k")}
+    intent = {"perceptual": 0, "relative": 1, "saturation": 2, "absolute": 3}
+    opts["intent"] = intent.get(str(config.get_property("intent")), 1)
+    Gimp.progress_init("Export pour l'imprimeur")
+    try:
+        files = export_for_printer(image, path, opts)
+    except Exception as e:  # noqa: BLE001 — message clair, jamais de plantage
+        return fail(procedure, "Export pour l'imprimeur : %s" % e)
+    if run_mode == Gimp.RunMode.INTERACTIVE:
+        Gimp.message("Export pour l'imprimeur : %s" % ", ".join(os.path.basename(x) for x in files))
+    return ok(procedure)
+
+
+def eci_download(procedure, config, data):
+    run_mode = config.get_property("run-mode")
+    dest = os.path.join(Gimp.directory(), "profiles")
+    Gimp.progress_init("Téléchargement des profils PSO v3 (eci.org)")
+    try:
+        files = printer.download_eci(dest, lambda f: Gimp.progress_update(f))
+        coated = next(p for p in files if p.endswith("PSOcoated_v3.icc"))
+        done, msg = cmyk_command(None, "set-preferred|" + coated)
+        if not done:
+            raise RuntimeError(msg)
+    except Exception as e:  # noqa: BLE001
+        text = ("Les profils PSO v3 n'ont pas pu être téléchargés (%s). ChopGimp garde "
+                "ISO Coated v2 (FOGRA39). Ils sont aussi disponibles sur eci.org : les copier "
+                "dans %s." % (e, dest))
+        if run_mode == Gimp.RunMode.INTERACTIVE:
+            Gimp.message(text)
+        return fail(procedure, text)
+    if run_mode == Gimp.RunMode.INTERACTIVE:
+        Gimp.message("Profils PSO Coated v3 et PSO Uncoated v3 installés ; PSO Coated v3 "
+                     "est le profil CMJN de travail.")
+    return ok(procedure)
+
+
 class ChopGimpPDF(Gimp.PlugIn):
     def do_query_procedures(self):
         # la vignette d'abord : GIMP refuse un chargeur de vignette pas encore déclaré
-        return [PROC_THUMB, PROC_PS_THUMB, PROC_SVG_THUMB, PROC, PROC_PS, PROC_SVG, PROC_OCG]
+        return [PROC_THUMB, PROC_PS_THUMB, PROC_SVG_THUMB, PROC, PROC_PS, PROC_SVG, PROC_OCG,
+                PROC_PRINT, PROC_ECI]
 
     def do_create_procedure(self, name):
+        if name == PROC_PRINT:
+            p = Gimp.ImageProcedure.new(self, name, Gimp.PDBProcType.PLUGIN, print_export, None)
+            p.set_image_types("RGB*")
+            p.set_sensitivity_mask(Gimp.ProcedureSensitivityMask.DRAWABLE |
+                                   Gimp.ProcedureSensitivityMask.DRAWABLES |
+                                   Gimp.ProcedureSensitivityMask.NO_DRAWABLES)
+            p.set_menu_label("Exporter pour l'_imprimeur...")
+            p.add_menu_path("<Image>/File/Export")
+            p.set_documentation("Exporter pour l'imprimeur (PDF/X ou TIFF CMJN)",
+                                "PDF/X-1a (image CMJN), PDF/X-4 (vectoriel, couleurs CMJN) ou "
+                                "TIFF CMJN ; profil intégré, conversion vers le profil cible, "
+                                "fond perdu, traits de coupe, plans de travail.", name)
+            p.set_attribution("ChopGimp", "ChopGimp", "2026")
+            fmt = Gimp.Choice.new()
+            fmt.add("pdf-x4", 0, "PDF/X-4 (vectoriel, transparence)", "")
+            fmt.add("pdf-x1a", 1, "PDF/X-1a (image CMJN)", "")
+            fmt.add("tiff", 2, "TIFF CMJN", "")
+            p.add_choice_argument("format", "_Format", "Format", fmt, "pdf-x4",
+                                  GObject.ParamFlags.READWRITE)
+            p.add_file_argument("file", "_Fichier", "Fichier à écrire",
+                                Gimp.FileChooserAction.SAVE, True, None,
+                                GObject.ParamFlags.READWRITE)
+            prof = Gimp.Choice.new()
+            prof.add("image", 0, "Profil CMJN de l'image", "")
+            prof.add("pso-coated", 1, "PSO Coated v3 (FOGRA51)", "")
+            prof.add("pso-uncoated", 2, "PSO Uncoated v3 (FOGRA52)", "")
+            prof.add("iso-coated", 3, "ISO Coated v2 (FOGRA39)", "")
+            p.add_choice_argument("profile", "_Profil CMJN cible",
+                                  "Les couleurs sont converties vers ce profil s'il diffère "
+                                  "de celui de l'image", prof, "image",
+                                  GObject.ParamFlags.READWRITE)
+            intent = Gimp.Choice.new()
+            intent.add("perceptual", 0, "Perception", "")
+            intent.add("relative", 1, "Colorimétrie relative", "")
+            intent.add("saturation", 2, "Saturation", "")
+            intent.add("absolute", 3, "Colorimétrie absolue", "")
+            p.add_choice_argument("intent", "_Mode de rendu", "Mode de rendu", intent,
+                                  "relative", GObject.ParamFlags.READWRITE)
+            p.add_boolean_argument("bpc", "Compensation du _point noir",
+                                   "Compensation du point noir", True,
+                                   GObject.ParamFlags.READWRITE)
+            p.add_double_argument("bleed", "Fond _perdu (mm)", "Fond perdu en millimètres",
+                                  0.0, 20.0, 3.0, GObject.ParamFlags.READWRITE)
+            p.add_boolean_argument("crop-marks", "_Traits de coupe",
+                                   "Traits de coupe (PDF), en couleur de repérage", True,
+                                   GObject.ParamFlags.READWRITE)
+            ab = Gimp.Choice.new()
+            ab.add("image", 0, "Image entière", "")
+            ab.add("pages", 1, "Une page par plan de travail", "")
+            ab.add("files", 2, "Un fichier par plan de travail", "")
+            p.add_choice_argument("artboards", "Plans de tra_vail", "Pages", ab, "pages",
+                                  GObject.ParamFlags.READWRITE)
+            p.add_boolean_argument("black-k", "Noir pur en 100 % _K",
+                                   "Les tracés et textes noirs (PDF/X-4) en noir seul",
+                                   True, GObject.ParamFlags.READWRITE)
+            return p
+        if name == PROC_ECI:
+            p = Gimp.Procedure.new(self, name, Gimp.PDBProcType.PLUGIN, eci_download, None)
+            p.set_menu_label("Télécharger les profils CMJN PSO v3 (ECI)...")
+            p.add_menu_path("<Image>/Image/Color Management")
+            p.set_sensitivity_mask(Gimp.ProcedureSensitivityMask.ALWAYS)
+            p.set_documentation("Profils PSO Coated v3 et PSO Uncoated v3 de l'ECI",
+                                "Leur licence interdit de les fournir avec ChopGimp : "
+                                "téléchargés depuis eci.org (somme SHA-256 vérifiée), "
+                                "PSO Coated v3 devient le profil CMJN de travail.", name)
+            p.set_attribution("ChopGimp", "ChopGimp", "2026")
+            p.add_enum_argument("run-mode", "Run mode", "Run mode", Gimp.RunMode,
+                                Gimp.RunMode.INTERACTIVE, GObject.ParamFlags.READWRITE)
+            return p
         if name == PROC_OCG:
             p = Gimp.Procedure.new(self, name, Gimp.PDBProcType.PLUGIN, ocg_export_layers, None)
             p.set_documentation("Calques PDF (OCG) d'un export PDF",
