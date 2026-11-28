@@ -9,21 +9,21 @@ Content-Transfer-Encoding: 8bit
 
 Anciens patchs : 0016, 0017, 0035, 0036, 0040, 0075.
 ---
- app/tools/chopgimp-tools.c        | 609 ++++++++++++++++++++++++++++++
- app/tools/chopgimp-tools.h        |  41 ++
- app/tools/gimpmovetool.c          | 520 +++++++++++++++++++++++--
+ app/tools/chopgimp-tools.c        | 633 ++++++++++++++++++++++++++++++
+ app/tools/chopgimp-tools.h        |  43 ++
+ app/tools/gimpmovetool.c          | 520 ++++++++++++++++++++++--
  app/tools/gimpmovetool.h          |  11 +
  app/tools/gimptransformgridtool.c | 124 +++++-
- 5 files changed, 1270 insertions(+), 35 deletions(-)
+ 5 files changed, 1296 insertions(+), 35 deletions(-)
  create mode 100644 app/tools/chopgimp-tools.c
  create mode 100644 app/tools/chopgimp-tools.h
 
 diff --git a/app/tools/chopgimp-tools.c b/app/tools/chopgimp-tools.c
 new file mode 100644
-index 0000000..b476d4e
+index 0000000..d6cabb2
 --- /dev/null
 +++ b/app/tools/chopgimp-tools.c
-@@ -0,0 +1,609 @@
+@@ -0,0 +1,633 @@
 +/* GIMP - The GNU Image Manipulation Program
 + * Copyright (C) 1995 Spencer Kimball and Peter Mattis
 + *
@@ -75,6 +75,7 @@ index 0000000..b476d4e
 +#include "display/gimpdisplay.h"
 +
 +#include "chopgimp-tools.h"
++#include "chopgimp-materialtools.h"
 +#include "gimpdrawtool.h"
 +#include "gimppathoptions.h"
 +#include "tool_manager.h"
@@ -416,8 +417,17 @@ index 0000000..b476d4e
 +{
 +  GimpVectorLayer *layer;
 +
-+  if (vss.syncing || ! color ||
-+      ! chopgimp_tool_is_vector (gimp_context_get_tool (vss.context)) ||
++  if (vss.syncing || ! color)
++    return;
++
++  /*  4.2.10: with the Filet tool (or the Gradient tool on a freeform
++   *  gradient), the foreground color is the selected points' one: the
++   *  fill of the objects (their mesh) must not become a plain color
++   */
++  if (! stroke && chopgimp_vmaterial_foreground_changed (vss.gimp, color))
++    return;
++
++  if (! chopgimp_tool_is_vector (gimp_context_get_tool (vss.context)) ||
 +      ! (layer = vss_active_layer ()))
 +    return;
 +
@@ -612,6 +622,20 @@ index 0000000..b476d4e
 +  vss_load ();
 +}
 +
++/*  4.2.10: show @color as the foreground (the clicked mesh point's)
++ *  without recoloring the selection
++ */
++void
++chopgimp_vselection_show_foreground (GimpContext *context,
++                                     GeglColor   *color)
++{
++  gboolean was = vss.syncing;
++
++  vss.syncing = TRUE;
++  gimp_context_set_foreground (context, color);
++  vss.syncing = was;
++}
++
 +void
 +chopgimp_vselection_init (Gimp *gimp)
 +{
@@ -635,10 +659,10 @@ index 0000000..b476d4e
 +}
 diff --git a/app/tools/chopgimp-tools.h b/app/tools/chopgimp-tools.h
 new file mode 100644
-index 0000000..7c894de
+index 0000000..713d6e8
 --- /dev/null
 +++ b/app/tools/chopgimp-tools.h
-@@ -0,0 +1,41 @@
+@@ -0,0 +1,43 @@
 +/* GIMP - The GNU Image Manipulation Program
 + * chopgimp-tools.h — ChopGimp: Photoshop-like transform controls helpers
 + *
@@ -679,6 +703,8 @@ index 0000000..7c894de
 + */
 +void     chopgimp_vselection_init        (Gimp             *gimp);
 +void     chopgimp_vselection_sync        (void);
++void     chopgimp_vselection_show_foreground (GimpContext *context,
++                                              GeglColor   *color);
 +gboolean chopgimp_tool_is_vector         (GimpToolInfo     *info);
 diff --git a/app/tools/gimpmovetool.c b/app/tools/gimpmovetool.c
 index 9f8407d..9945cb8 100644

@@ -17,6 +17,9 @@ Anciens patchs : 0015, 0026, 0029, 0041, 0086, 0087, 0142, 0143, 0157.
  app/paint/gimppaintcore.h            |   6 +
  app/paint/gimppaintoptions.c         | 118 ++++++-
  app/paint/gimppaintoptions.h         |  16 +
+ app/paint/gimpsmudge.c               |  39 ++-
+ app/paint/gimpsmudgeoptions.c        |  18 +-
+ app/paint/gimpsmudgeoptions.h        |   3 +
  app/tools/chopgimp-spothealtool.c    | 498 +++++++++++++++++++++++++++
  app/tools/chopgimp-spothealtool.h    |  21 ++
  app/tools/chopgimp-viewtools.c       | 253 ++++++++++++++
@@ -31,7 +34,8 @@ Anciens patchs : 0015, 0026, 0029, 0041, 0086, 0087, 0142, 0143, 0157.
  app/tools/gimppaintselecttool.h      |   5 +
  app/tools/gimppainttool.c            | 288 +++++++++++++++-
  app/tools/gimppainttool.h            |   8 +
- 22 files changed, 2281 insertions(+), 23 deletions(-)
+ app/tools/gimpsmudgetool.c           |   4 +
+ 26 files changed, 2343 insertions(+), 25 deletions(-)
  create mode 100644 app/display/chopgimp-popup-palette.c
  create mode 100644 app/display/chopgimp-popup-palette.h
  create mode 100644 app/tools/chopgimp-spothealtool.c
@@ -583,6 +587,141 @@ index 3b13c03..6640f18 100644
    gdouble                   brush_size;
    gdouble                   brush_angle;
    gdouble                   brush_aspect_ratio;
+diff --git a/app/paint/gimpsmudge.c b/app/paint/gimpsmudge.c
+index 003b70e..878b88e 100644
+--- a/app/paint/gimpsmudge.c
++++ b/app/paint/gimpsmudge.c
+@@ -45,6 +45,20 @@
+ 
+ static void       gimp_smudge_finalize     (GObject          *object);
+ 
++/*  ChopGimp: CHOPGIMP_SMUDGE_LEGACY=1 restores GIMP's per-dab flow and
++ *  ignores « Peinture au doigt »
++ */
++static gboolean
++chopgimp_smudge_legacy (void)
++{
++  static gint legacy = -1;
++
++  if (legacy < 0)
++    legacy = g_strcmp0 (g_getenv ("CHOPGIMP_SMUDGE_LEGACY"), "1") == 0;
++
++  return legacy;
++}
++
+ static void       gimp_smudge_paint        (GimpPaintCore    *paint_core,
+                                             GList            *drawables,
+                                             GimpPaintOptions *paint_options,
+@@ -156,7 +170,7 @@ gimp_smudge_paint (GimpPaintCore    *paint_core,
+          * 1. pure smudging (flow=0)
+          * 2. color is from gradient or pixmap brushes
+          */
+-        if (options->flow > 0.0 &&
++        if ((options->flow > 0.0 || options->finger_painting) &&
+             ! gimp_dynamics_is_output_enabled (dynamics, GIMP_DYNAMICS_OUTPUT_COLOR) &&
+             ! (brush_core->brush && gimp_brush_get_pixmap (brush_core->brush)))
+           gimp_palettes_add_color_history (context->gimp, gimp_context_get_foreground (context));
+@@ -328,6 +342,14 @@ gimp_smudge_start (GimpPaintCore    *paint_core,
+          GEGL_RECTANGLE (paint_buffer_x - x,
+                          paint_buffer_y - y,
+                          0, 0));
++
++      /*  ChopGimp: « Peinture au doigt » (Photoshop's Finger Painting):
++       *  the stroke starts loaded with the foreground color, which the
++       *  smudge then spreads and blends into the canvas
++       */
++      if (options->finger_painting && ! chopgimp_smudge_legacy ())
++        gegl_buffer_set_color (accum_buffer, NULL,
++                               gimp_context_get_foreground (GIMP_CONTEXT (paint_options)));
+     }
+ 
+   smudge->accum_buffers = g_list_reverse (smudge->accum_buffers);
+@@ -429,6 +451,21 @@ gimp_smudge_motion (GimpPaintCore    *paint_core,
+                                           paint_options,
+                                           fade_point));
+ 
++  /*  ChopGimp: progressive flow.  GIMP blends `flow` of the brush color
++   *  at every dab, so with the usual 10 % spacing a few percent already
++   *  floods the stroke with the foreground color.  The slider now means
++   *  « color laid per brush width » on a quadratic curve (10 % ≈ a hint,
++   *  50 % ≈ half mixing, 100 % ≈ painting), converted to a per-dab amount
++   *  so it no longer depends on the spacing.
++   */
++  if (flow > 0.0 && ! chopgimp_smudge_legacy ())
++    {
++      gdouble per_width = MIN (flow * flow, 0.97);
++      gdouble step      = CLAMP (brush_core->spacing, 0.01, 5.0);
++
++      flow = 1.0 - pow (1.0 - per_width, step);
++    }
++
+   grad_point = gimp_dynamics_get_linear_value (dynamics,
+                                                GIMP_DYNAMICS_OUTPUT_COLOR,
+                                                &coords,
+diff --git a/app/paint/gimpsmudgeoptions.c b/app/paint/gimpsmudgeoptions.c
+index c6780ae..258d3bf 100644
+--- a/app/paint/gimpsmudgeoptions.c
++++ b/app/paint/gimpsmudgeoptions.c
+@@ -41,7 +41,8 @@ enum
+   PROP_RATE,
+   PROP_FLOW,
+   PROP_NO_ERASING,
+-  PROP_SAMPLE_MERGED
++  PROP_SAMPLE_MERGED,
++  PROP_FINGER_PAINTING
+ };
+ 
+ 
+@@ -94,6 +95,15 @@ gimp_smudge_options_class_init (GimpSmudgeOptionsClass *klass)
+                             NULL,
+                             FALSE,
+                             GIMP_PARAM_STATIC_STRINGS);
++
++  /*  ChopGimp: start every stroke with the foreground color, then smudge it  */
++  GIMP_CONFIG_PROP_BOOLEAN (object_class, PROP_FINGER_PAINTING,
++                            "finger-painting",
++                            _("Peinture au doigt"),
++                            _("Commencer chaque trait avec la couleur de "
++                              "premier plan, puis l'étaler"),
++                            FALSE,
++                            GIMP_PARAM_STATIC_STRINGS);
+ }
+ 
+ static void
+@@ -123,6 +133,9 @@ gimp_smudge_options_set_property (GObject      *object,
+     case PROP_SAMPLE_MERGED:
+       options->sample_merged = g_value_get_boolean (value);
+       break;
++    case PROP_FINGER_PAINTING:
++      options->finger_painting = g_value_get_boolean (value);
++      break;
+ 
+     default:
+       G_OBJECT_WARN_INVALID_PROPERTY_ID (object, property_id, pspec);
+@@ -152,6 +165,9 @@ gimp_smudge_options_get_property (GObject    *object,
+     case PROP_SAMPLE_MERGED:
+       g_value_set_boolean (value, options->sample_merged);
+       break;
++    case PROP_FINGER_PAINTING:
++      g_value_set_boolean (value, options->finger_painting);
++      break;
+ 
+     default:
+       G_OBJECT_WARN_INVALID_PROPERTY_ID (object, property_id, pspec);
+diff --git a/app/paint/gimpsmudgeoptions.h b/app/paint/gimpsmudgeoptions.h
+index 1a7e5a2..33404e2 100644
+--- a/app/paint/gimpsmudgeoptions.h
++++ b/app/paint/gimpsmudgeoptions.h
+@@ -38,6 +38,9 @@ struct _GimpSmudgeOptions
+   gdouble           flow;
+   gboolean          no_erasing;
+   gboolean          sample_merged;
++
++  /*  ChopGimp: Photoshop « Peinture au doigt »  */
++  gboolean          finger_painting;
+ };
+ 
+ struct _GimpSmudgeOptionsClass
 diff --git a/app/tools/chopgimp-spothealtool.c b/app/tools/chopgimp-spothealtool.c
 new file mode 100644
 index 0000000..53892bd
@@ -3043,3 +3182,18 @@ index b4ffc3a..d539b46 100644
  };
  
  struct _GimpPaintToolClass
+diff --git a/app/tools/gimpsmudgetool.c b/app/tools/gimpsmudgetool.c
+index 59b48a7..d125fc2 100644
+--- a/app/tools/gimpsmudgetool.c
++++ b/app/tools/gimpsmudgetool.c
+@@ -100,6 +100,10 @@ gimp_smudge_options_gui (GimpToolOptions *tool_options)
+   button = gimp_prop_check_button_new (config, "sample-merged", NULL);
+   gtk_box_pack_start (GTK_BOX (vbox), button, FALSE, FALSE, 0);
+ 
++  /*  ChopGimp: Photoshop « Peinture au doigt »  */
++  button = gimp_prop_check_button_new (config, "finger-painting", NULL);
++  gtk_box_pack_start (GTK_BOX (vbox), button, FALSE, FALSE, 0);
++
+   /*  the rate scale  */
+   scale = gimp_prop_spin_scale_new (config, "rate",
+                                     1.0, 10.0, 1);

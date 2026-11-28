@@ -36,8 +36,8 @@ Anciens patchs : 0138, 0140, 0141, 0146, 0147, 0149, 0153, 0154, 0155, 0156.
  app/tools/chopgimp-envelopetool.h            |   15 +
  app/tools/chopgimp-livepainttool.c           |  680 ++++
  app/tools/chopgimp-livepainttool.h           |   15 +
- app/tools/chopgimp-materialtools.c           | 1319 +++++++
- app/tools/chopgimp-materialtools.h           |   54 +
+ app/tools/chopgimp-materialtools.c           | 1839 +++++++++
+ app/tools/chopgimp-materialtools.h           |   67 +
  app/tools/chopgimp-vpentools.c               | 1234 ++++++
  app/tools/chopgimp-vpentools.h               |   25 +
  app/tools/chopgimp-widthtool.c               |  914 +++++
@@ -47,9 +47,9 @@ Anciens patchs : 0138, 0140, 0141, 0146, 0147, 0149, 0153, 0154, 0155, 0156.
  app/tools/gimpcoloroptions.h                 |    1 +
  app/tools/gimpcolorpickertool.c              |   50 +
  app/tools/gimpcolortool.c                    |   33 +
- app/tools/gimpgradientoptions.c              |   32 +-
+ app/tools/gimpgradientoptions.c              |   34 +-
  app/tools/gimpgradientoptions.h              |    3 +
- app/tools/gimpgradienttool.c                 |  139 +-
+ app/tools/gimpgradienttool.c                 |  140 +-
  app/tools/meson.build                        |   16 +
  app/widgets/chopgimp-symbols-editor.c        |  663 ++++
  app/widgets/chopgimp-symbols-editor.h        |   15 +
@@ -57,7 +57,7 @@ Anciens patchs : 0138, 0140, 0141, 0146, 0147, 0149, 0153, 0154, 0155, 0156.
  app/widgets/chopgimp-transform-editor.h      |   16 +
  app/widgets/chopgimp-width-profile-box.c     |  306 ++
  app/widgets/chopgimp-width-profile-box.h     |   19 +
- 48 files changed, 18049 insertions(+), 11 deletions(-)
+ 48 files changed, 18585 insertions(+), 11 deletions(-)
  create mode 100644 app/dialogs/chopgimp-distort-dialog.c
  create mode 100644 app/dialogs/chopgimp-distort-dialog.h
  create mode 100644 app/dialogs/chopgimp-material-dialogs.c
@@ -13054,10 +13054,10 @@ index 0000000..98bd7c2
 +                                             gpointer                  data);
 diff --git a/app/tools/chopgimp-materialtools.c b/app/tools/chopgimp-materialtools.c
 new file mode 100644
-index 0000000..a771ebd
+index 0000000..9176588
 --- /dev/null
 +++ b/app/tools/chopgimp-materialtools.c
-@@ -0,0 +1,1319 @@
+@@ -0,0 +1,1839 @@
 +/* GIMP - The GNU Image Manipulation Program
 + * chopgimp-materialtools.c — ChopGimp 3.29.1: outil Transition and outil
 + * Filet (see chopgimp-materialtools.h)
@@ -13068,14 +13068,17 @@ index 0000000..a771ebd
 + *
 + * Filet (Illustrator U), on the objects of the active vector layer:
 + *  - an object whose fill is a « filet de dégradé »: its nodes are shown;
-+ *    drag a node to move it, Maj+clic on a node gives it the foreground
-+ *    color, a click elsewhere inside the object adds a row and a column
-+ *    there (with the foreground color);
++ *    a click selects a node (drag: moves it), Maj+clic or a rubber band
++ *    drawn outside the object selects several, a click elsewhere inside
++ *    the object adds a row and a column there (with the foreground color);
 + *  - an object filled with a plain color or a gradient: a click turns its
 + *    fill into a 1 × 1 mesh and adds the row and column at the click;
 + *  - an object whose fill is a « dégradé libre »: its points are shown;
-+ *    a click adds a point (foreground color), drag moves one, Maj+clic
-+ *    colors it, Alt+clic removes it.
++ *    a click adds a point (foreground color), selects / drags one,
++ *    Alt+clic removes it.
++ *  4.2.10: a new foreground color (swatch, dialog, Ctrl+clic in the
++ *  image) recolors the selected points, never the whole fill; the
++ *  clicked point's color shows in the foreground.
 + * One undo step per gesture.
 + *
 + * This program is free software: you can redistribute it and/or modify
@@ -13102,6 +13105,8 @@ index 0000000..a771ebd
 +#include "core/gimp.h"
 +#include "core/gimpcontext.h"
 +#include "core/gimpimage.h"
++#include "core/gimpimage-pick-color.h"
++#include "core/gimppickable.h"
 +#include "core/gimptoolinfo.h"
 +#include "core/gimptooloptions.h"
 +#include "core/gimpbezierdesc.h"
@@ -13125,6 +13130,7 @@ index 0000000..a771ebd
 +#include "gimptooloptions-gui.h"
 +#include "chopgimp-tools.h"
 +#include "chopgimp-materialtools.h"
++#include "tool_manager.h"
 +
 +#include "gimp-intl.h"
 +
@@ -13151,6 +13157,16 @@ index 0000000..a771ebd
 +   */
 +  gint             sel;
 +  gint             handle_nb;
++
++  /*  4.2.10: the selected points (mesh nodes / freeform points) of the
++   *  target, recolored by a new foreground color; a rubber band outside
++   *  the object selects several
++   */
++  gint             psel[CHOPGIMP_MAX_PSEL];
++  gint             n_psel;
++  gboolean         marquee;
++  gdouble          mx0, my0, mx1, my1;
++  gboolean         undo_pending;
 +} GimpVMaterialTool;
 +
 +typedef struct
@@ -13177,13 +13193,17 @@ index 0000000..a771ebd
 +{
 +  GtkWidget *vbox  = gimp_tool_options_gui (options);
 +  GtkWidget *label = gtk_label_new (mesh
-+                                    ? _("Filet de dégradé : glisser un point pour le "
-+                                        "déplacer, Maj+clic pour lui donner la couleur de "
-+                                        "premier plan, clic ailleurs dans l'objet pour "
-+                                        "ajouter une rangée et une colonne. Dégradé libre : "
-+                                        "clic pour ajouter un point, Alt+clic pour le "
-+                                        "retirer. Un objet de couleur unie devient un filet "
-+                                        "au premier clic.")
++                                    ? _("Clic sur un point : le sélectionner (sa couleur "
++                                        "s'affiche en premier plan), glisser pour le "
++                                        "déplacer. Maj+clic ou rectangle tracé hors de "
++                                        "l'objet : sélectionner plusieurs points. Changer la "
++                                        "couleur de premier plan (nuancier, sélecteur, "
++                                        "Ctrl+clic dans l'image) colore les points "
++                                        "sélectionnés, pas tout l'objet. Clic ailleurs dans l'objet : ajouter une "
++                                        "rangée et une colonne (dégradé libre : un point), "
++                                        "sélectionnées. Alt+clic : retirer un point libre. "
++                                        "Un objet de couleur unie devient un filet au premier "
++                                        "clic. Échap : désélectionner.")
 +                                    : _("Clic sur un objet, puis sur un autre : une "
 +                                        "transition est créée entre eux. Vecteur > "
 +                                        "Transition > Options pour le nombre d'étapes. "
@@ -13429,6 +13449,194 @@ index 0000000..a771ebd
 +  return best;
 +}
 +
++/*  4.2.10: the point selection (shared by the Filet tool and the
++ *  freeform gradients of the Gradient tool)
++ */
++static gboolean
++psel_has (const gint *psel,
++          gint        n,
++          gint        i)
++{
++  for (gint k = 0; k < n; k++)
++    if (psel[k] == i)
++      return TRUE;
++
++  return FALSE;
++}
++
++static void
++psel_set_one (gint *psel,
++              gint *n,
++              gint  i)
++{
++  *n = 0;
++
++  if (i >= 0)
++    psel[(*n)++] = i;
++}
++
++static void
++psel_add (gint *psel,
++          gint *n,
++          gint  i)
++{
++  if (i >= 0 && ! psel_has (psel, *n, i) && *n < CHOPGIMP_MAX_PSEL)
++    psel[(*n)++] = i;
++}
++
++/*  Maj+clic: TRUE when @i is now selected  */
++static gboolean
++psel_toggle (gint *psel,
++             gint *n,
++             gint  i)
++{
++  for (gint k = 0; k < *n; k++)
++    if (psel[k] == i)
++      {
++        psel[k] = psel[--(*n)];
++        return FALSE;
++      }
++
++  psel_add (psel, n, i);
++
++  return psel_has (psel, *n, i);
++}
++
++/*  the color of point @idx of @o's fill (mesh node or freeform point)  */
++static gboolean
++material_point_color (ChopGimpVObject *o,
++                      gint             idx,
++                      gdouble          rgba[4])
++{
++  ChopGimpVEntry *e  = material_fill (o);
++  gboolean        ok = FALSE;
++
++  if (! e || ! e->paint.material || idx < 0)
++    return FALSE;
++
++  if (e->paint.type == CHOPGIMP_PAINT_MESH)
++    {
++      ChopGimpMesh m;
++
++      if (chopgimp_vmesh_parse (e->paint.material, &m))
++        {
++          if (idx < (m.rows + 1) * (m.cols + 1))
++            {
++              memcpy (rgba, m.nodes[idx].rgba, sizeof (gdouble) * 4);
++              ok = TRUE;
++            }
++          chopgimp_vmesh_clear (&m);
++        }
++    }
++  else if (e->paint.type == CHOPGIMP_PAINT_FREEFORM &&
++           g_str_has_prefix (e->paint.material, "points"))
++    {
++      GArray *a = chopgimp_vfreeform_parse (e->paint.material + 6);
++
++      if (a && idx < (gint) a->len)
++        {
++          memcpy (rgba, g_array_index (a, ChopGimpMeshNode, idx).rgba, sizeof (gdouble) * 4);
++          ok = TRUE;
++        }
++      if (a)
++        g_array_free (a, TRUE);
++    }
++
++  return ok;
++}
++
++/*  the foreground shows the color of the clicked point, without
++ *  recoloring anything (like the selected object's fill)
++ */
++static void
++psel_show_color (GimpContext     *context,
++                 ChopGimpVObject *o,
++                 gint             idx)
++{
++  gdouble rgba[4];
++
++  if (context && material_point_color (o, idx, rgba))
++    {
++      GeglColor *c = gegl_color_new (NULL);
++
++      gegl_color_set_pixel (c, babl_format ("R'G'B'A double"), rgba);
++      chopgimp_vselection_show_foreground (context, c);
++      g_object_unref (c);
++    }
++}
++
++/*  the selected points of @o's fill get @rgba; TRUE when one did  */
++static gboolean
++material_recolor_points (GimpVectorLayer *layer,
++                         ChopGimpVObject *o,
++                         const gint      *psel,
++                         gint             n_psel,
++                         const gdouble    rgba[4])
++{
++  ChopGimpVEntry *e    = material_fill (o);
++  gboolean        done = FALSE;
++  gchar          *spec = NULL;
++
++  if (! e || ! e->paint.material || n_psel <= 0)
++    return FALSE;
++
++  if (e->paint.type == CHOPGIMP_PAINT_MESH)
++    {
++      ChopGimpMesh m;
++
++      if (! chopgimp_vmesh_parse (e->paint.material, &m))
++        return FALSE;
++
++      for (gint k = 0; k < n_psel; k++)
++        if (psel[k] >= 0 && psel[k] < (m.rows + 1) * (m.cols + 1) &&
++            memcmp (m.nodes[psel[k]].rgba, rgba, sizeof (gdouble) * 4))
++          {
++            memcpy (m.nodes[psel[k]].rgba, rgba, sizeof (gdouble) * 4);
++            done = TRUE;
++          }
++
++      if (done)
++        {
++          chopgimp_vobjects_style_undo (layer, _("Couleur des points du filet"));
++          spec = chopgimp_vmesh_to_spec (&m);
++          set_fill_material (layer, o, CHOPGIMP_PAINT_MESH, spec);
++        }
++
++      chopgimp_vmesh_clear (&m);
++    }
++  else if (e->paint.type == CHOPGIMP_PAINT_FREEFORM &&
++           g_str_has_prefix (e->paint.material, "points"))
++    {
++      GArray *a = chopgimp_vfreeform_parse (e->paint.material + 6);
++
++      if (! a)
++        return FALSE;
++
++      for (gint k = 0; k < n_psel; k++)
++        if (psel[k] >= 0 && psel[k] < (gint) a->len &&
++            memcmp (g_array_index (a, ChopGimpMeshNode, psel[k]).rgba, rgba,
++                    sizeof (gdouble) * 4))
++          {
++            memcpy (g_array_index (a, ChopGimpMeshNode, psel[k]).rgba, rgba,
++                    sizeof (gdouble) * 4);
++            done = TRUE;
++          }
++
++      if (done)
++        {
++          chopgimp_vobjects_style_undo (layer, _("Couleur des points du dégradé"));
++          spec = chopgimp_vfreeform_to_spec (a);
++          set_fill_material (layer, o, CHOPGIMP_PAINT_FREEFORM, spec);
++        }
++
++      g_array_free (a, TRUE);
++    }
++
++  g_free (spec);
++
++  return done;
++}
++
 +
 +/*  3.29.3: the tangent handles of node @sel of a mesh: for each
 + *  neighbour (left, right, up, down), the first control point of the
@@ -13473,8 +13681,9 @@ index 0000000..a771ebd
 +/*  3.29.5: a press on the points of the freeform fill of @o (shared by
 + *  the Filet tool and the Gradient tool): @idx the point under the
 + *  pointer (-1: none), (@u, @v) in box units; returns the point to drag
-+ *  (-1: none). Mode @lines: a new point is joined to the selected one
-+ *  (*@sel), which it then becomes.
++ *  (-1: none) and *@sel the clicked / added point (-1 after a removal).
++ *  Mode @lines: a new point is joined to the selected one (*@sel).
++ *  Maj+clic (selection) is handled by the callers.
 + */
 +static gint
 +freeform_press_points (GimpVectorLayer *layer,
@@ -13484,7 +13693,6 @@ index 0000000..a771ebd
 +                       gdouble          u,
 +                       gdouble          v,
 +                       const gdouble    fg[4],
-+                       gboolean         shift,
 +                       gboolean         alt,
 +                       gboolean         lines,
 +                       gint            *sel)
@@ -13510,10 +13718,6 @@ index 0000000..a771ebd
 +      g_array_index (a, ChopGimpMeshNode, 0).link = FALSE;
 +      *sel = -1;
 +    }
-+  else if (idx >= 0 && shift)
-+    {
-+      memcpy (g_array_index (a, ChopGimpMeshNode, idx).rgba, fg, sizeof (gdouble) * 4);
-+    }
 +  else if (idx >= 0)
 +    {
 +      drag = idx;
@@ -13537,7 +13741,7 @@ index 0000000..a771ebd
 +      g_array_insert_val (a, at, nd);
 +
 +      drag = at;
-+      *sel = lines ? at : -1;
++      *sel = at;   /* 4.2.10: the new point is selected (its color can change) */
 +    }
 +
 +  spec = chopgimp_vfreeform_to_spec (a);
@@ -13639,10 +13843,11 @@ index 0000000..a771ebd
 +                              _("Sélectionnez un calque vectoriel"));
 +  else if (mt->mesh)
 +    gimp_tool_replace_status (tool, display,
-+                              o ? _("Clic : ajouter un point du filet (couleur de premier "
-+                                    "plan) — glisser un point : le déplacer — Maj+clic : "
-+                                    "le colorer — Alt+clic : retirer un point libre — poignées d'un "
-+                                    "nœud : courber les lignes du filet")
++                              o ? _("Clic sur un point : le sélectionner (glisser : le "
++                                    "déplacer) — Maj+clic : sélection multiple — changer la "
++                                    "couleur de premier plan : colorer les points sélectionnés — "
++                                    "Ctrl+clic : prendre une couleur dans l'image — clic ailleurs : "
++                                    "ajouter un point — Alt+clic : retirer un point libre")
 +                                : _("Survolez un objet du calque vectoriel"));
 +  else
 +    gimp_tool_replace_status (tool, display,
@@ -13683,6 +13888,56 @@ index 0000000..a771ebd
 +  mt->first = 0;
 +}
 +
++/*  3.29.3: the tangent handle of the selected node under the pointer:
++ *  the neighbour of its edge, or -1
++ */
++static gint
++mesh_hit_handle (GimpVMaterialTool *mt,
++                 ChopGimpVObject   *o,
++                 const gdouble      box[4],
++                 const GimpCoords  *coords,
++                 gdouble            tol)
++{
++  ChopGimpVEntry *e  = material_fill (o);
++  gint            hn = -1;
++  ChopGimpMesh    m;
++
++  if (mt->target != o->id || mt->sel < 0 ||
++      ! e || e->paint.type != CHOPGIMP_PAINT_MESH ||
++      ! chopgimp_vmesh_parse (e->paint.material, &m))
++    return -1;
++
++  {
++    gdouble hx[4], hy[4];
++    gint    nb[4];
++    gint    nh = mesh_handles (o, box, &m, mt->sel, hx, hy, nb);
++    gdouble bd = tol;
++
++    for (gint i = 0; i < nh; i++)
++      if (hypot (hx[i] - coords->x, hy[i] - coords->y) <= bd)
++        {
++          bd = hypot (hx[i] - coords->x, hy[i] - coords->y);
++          hn = nb[i];
++        }
++  }
++
++  chopgimp_vmesh_clear (&m);
++
++  return hn;
++}
++
++/*  4.2.10: the press of the Filet tool.
++ *   - the edited object keeps the press on its points and handles (they
++ *     may be outside its shape) and inside its box; a click on another
++ *     object edits that one; a press on nothing starts a rubber band
++ *   - clic on a point: selects it (its color shows in the foreground)
++ *     and drags it; Maj+clic: adds it to / removes it from the selection
++ *   - clic elsewhere in the object: a row and a column (mesh) or a point
++ *     (freeform) of the foreground color, then selected
++ *   - Alt+clic on a freeform point: removes it
++ *  A new foreground color recolors the selected points
++ *  (chopgimp_vmaterial_foreground_changed).
++ */
 +static void
 +mesh_press (GimpVMaterialTool *mt,
 +            GimpDisplay       *display,
@@ -13695,83 +13950,177 @@ index 0000000..a771ebd
 +  gdouble           tol     = PICK_PX / MAX (1e-6, shell->scale_x);
 +  gboolean          shift   = (state & gimp_get_extend_selection_mask ()) != 0;
 +  gboolean          alt     = (state & GDK_MOD1_MASK) != 0;
++  ChopGimpVObject  *hit;
 +  ChopGimpVObject  *o;
 +  ChopGimpVEntry   *e;
-+  gdouble          *pts;
-+  gint              n, idx;
-+  gboolean          freeform;
++  gdouble          *pts = NULL;
++  gint              n   = 0, idx = -1;
++  gboolean          freeform = FALSE;
 +  gdouble           fg[4] = { 0, 0, 0, 1 };
-+  gdouble           box[4], u, v;
++  gdouble           box[4], u = -1, v = -1;
++
++  hit = pick (mt, display, coords, CHOPGIMP_HIT_LEAF);
++
++  if (! mt->layer)
++    return;
++
++  /*  4.2.10: Ctrl+clic picks the color of the image (all layers) as the
++   *  foreground, which recolors the selected points (the pipette of
++   *  Illustrator's mesh)
++   */
++  if (state & gimp_get_toggle_behavior_mask ())
++    {
++      GeglColor *picked = gegl_color_new (NULL);
++
++      gimp_pickable_flush (GIMP_PICKABLE (image));
++
++      if (gimp_image_pick_color (image, NULL, (gint) floor (coords->x),
++                                 (gint) floor (coords->y), FALSE, TRUE,
++                                 FALSE, 0.0, NULL, NULL, NULL, &picked) &&
++          context)
++        gimp_context_set_foreground (context, picked);
++
++      g_clear_object (&picked);
++      return;
++    }
 +
 +  /*  the object being edited first (its nodes may be outside the shape)  */
 +  o = mt->target ? chopgimp_vlayer_get_object (mt->layer, mt->target) : NULL;
 +
-+  if (! o || ! mt->layer)
-+    o = pick (mt, display, coords, CHOPGIMP_HIT_LEAF);
++  if (o && object_box (o, box))
++    {
++      pts = material_points (o, &n, &freeform);
++      idx = pts ? nearest_point (pts, n, coords->x, coords->y, tol) : -1;
++      image_to_box (o, box, coords->x, coords->y, &u, &v);
 +
-+  if (! o || ! mt->layer || ! object_box (o, box))
++      mt->handle_nb = freeform ? -1 : mesh_hit_handle (mt, o, box, coords, tol);
++
++      if (idx < 0 && mt->handle_nb < 0)
++        {
++          gboolean in_box = (u >= 0 && u <= 1 && v >= 0 && v <= 1);
++
++          if (hit && hit != o)
++            {
++              /*  another object: it is the one edited now  */
++              g_clear_pointer (&pts, g_free);
++              o = NULL;
++            }
++          else if (! hit && ! in_box)
++            {
++              /*  nothing there: a rubber band over the points  */
++              g_free (pts);
++
++              mt->marquee = TRUE;
++              mt->mx0 = mt->mx1 = coords->x;
++              mt->my0 = mt->my1 = coords->y;
++
++              if (! shift)
++                {
++                  mt->n_psel = 0;
++                  mt->sel    = -1;
++                }
++              return;
++            }
++        }
++    }
++  else
++    {
++      o = NULL;
++    }
++
++  if (! o)
++    {
++      mt->handle_nb = -1;
++      mt->n_psel    = 0;
++      mt->sel       = -1;
++
++      o = hit;
++
++      if (! o || ! object_box (o, box))
++        {
++          mt->target = 0;
++          return;
++        }
++
++      g_free (pts);
++      pts = material_points (o, &n, &freeform);
++      idx = pts ? nearest_point (pts, n, coords->x, coords->y, tol) : -1;
++      image_to_box (o, box, coords->x, coords->y, &u, &v);
++    }
++
++  g_clear_pointer (&pts, g_free);
++
++  if (chopgimp_vobject_is_locked (o))
++    return;
++
++  mt->target   = o->id;
++  mt->node     = -1;
++  mt->dragging = FALSE;
++  e            = material_fill (o);
++
++  /*  3.29.3: a tangent handle of the selected node  */
++  if (mt->handle_nb >= 0)
++    {
++      chopgimp_vlayer_push_undo (mt->layer, _("Filet"));
++      mt->node     = mt->sel;
++      mt->dragging = TRUE;
++      return;
++    }
++
++  /*  Maj+clic on a point: the selection only, nothing is edited  */
++  if (idx >= 0 && shift && ! alt)
++    {
++      if (psel_toggle (mt->psel, &mt->n_psel, idx))
++        {
++          mt->sel = idx;
++          psel_show_color (context, o, idx);
++        }
++      else if (mt->sel == idx)
++        {
++          mt->sel = mt->n_psel > 0 ? mt->psel[mt->n_psel - 1] : -1;
++        }
++      return;
++    }
++
++  /*  a click on a point of the selection keeps it (to recolor them
++   *  together), another one becomes the selection
++   */
++  if (idx >= 0 && ! alt)
++    {
++      if (! psel_has (mt->psel, mt->n_psel, idx))
++        psel_set_one (mt->psel, &mt->n_psel, idx);
++
++      mt->sel = idx;
++      psel_show_color (context, o, idx);
++
++      /*  dragged: the undo step comes with the first move  */
++      mt->node         = idx;
++      mt->dragging     = TRUE;
++      mt->undo_pending = TRUE;
++      return;
++    }
++
++  /*  Alt only removes freeform points  */
++  if (idx >= 0 && alt && ! freeform)
 +    return;
 +
 +  if (context && gimp_context_get_foreground (context))
 +    gegl_color_get_pixel (gimp_context_get_foreground (context),
 +                          babl_format ("R'G'B'A double"), fg);
 +
-+  pts = material_points (o, &n, &freeform);
-+  idx = pts ? nearest_point (pts, n, coords->x, coords->y, tol) : -1;
-+  e   = material_fill (o);
-+
-+  image_to_box (o, box, coords->x, coords->y, &u, &v);
-+
-+  if (mt->target != o->id)
-+    mt->sel = -1;
-+
-+  /*  3.29.3: a tangent handle of the selected node  */
-+  mt->handle_nb = -1;
-+  if (! freeform && mt->target == o->id && mt->sel >= 0 &&
-+      e && e->paint.type == CHOPGIMP_PAINT_MESH)
-+    {
-+      ChopGimpMesh m;
-+
-+      if (chopgimp_vmesh_parse (e->paint.material, &m))
-+        {
-+          gdouble hx[4], hy[4];
-+          gint    nb[4];
-+          gint    nh = mesh_handles (o, box, &m, mt->sel, hx, hy, nb);
-+          gdouble bd = tol;
-+
-+          for (gint i = 0; i < nh; i++)
-+            if (hypot (hx[i] - coords->x, hy[i] - coords->y) <= bd)
-+              {
-+                bd            = hypot (hx[i] - coords->x, hy[i] - coords->y);
-+                mt->handle_nb = nb[i];
-+              }
-+
-+          chopgimp_vmesh_clear (&m);
-+        }
-+
-+      if (mt->handle_nb >= 0)
-+        {
-+          chopgimp_vlayer_push_undo (mt->layer, _("Filet"));
-+          mt->node     = mt->sel;
-+          mt->dragging = TRUE;
-+          g_free (pts);
-+          return;
-+        }
-+    }
-+
 +  chopgimp_vlayer_push_undo (mt->layer, _("Filet"));
-+
-+  mt->target   = o->id;
-+  mt->node     = -1;
-+  mt->dragging = FALSE;
 +
 +  if (freeform)
 +    {
-+      gint dummy = -1;
++      gint sel = mt->sel;
 +
 +      mt->node     = freeform_press_points (mt->layer, o, e, idx, u, v, fg,
-+                                            shift, alt, FALSE, &dummy);
++                                            alt, FALSE, &sel);
 +      mt->dragging = (mt->node >= 0);
++      mt->sel      = sel;
++
++      if (idx < 0 || alt)
++        psel_set_one (mt->psel, &mt->n_psel, sel);
 +    }
 +  else
 +    {
@@ -13788,18 +14137,33 @@ index 0000000..a771ebd
 +          chopgimp_vmesh_parse (s0, &m);
 +          g_free (s0);
 +          idx = -1;
++          mt->n_psel = 0;
++          mt->sel    = -1;
 +        }
 +
-+      if (idx >= 0 && shift)
-+        memcpy (m.nodes[idx].rgba, fg, sizeof (fg));
-+      else if (idx >= 0)
++      if (idx < 0 && u >= 0 && u <= 1 && v >= 0 && v <= 1 &&
++               chopgimp_vmesh_insert (&m, u, v, fg))
 +        {
-+          mt->node     = idx;
-+          mt->sel      = idx;
-+          mt->dragging = TRUE;
++          /*  the new node (at the click) is selected; the indices of the
++           *  others changed with the new row and column
++           */
++          gint    best = -1;
++          gdouble bd   = G_MAXDOUBLE;
++
++          for (gint i = 0; i < (m.rows + 1) * (m.cols + 1); i++)
++            {
++              gdouble d = hypot (m.nodes[i].x - u, m.nodes[i].y - v);
++
++              if (d < bd)
++                {
++                  bd   = d;
++                  best = i;
++                }
++            }
++
++          psel_set_one (mt->psel, &mt->n_psel, best);
++          mt->sel = best;
 +        }
-+      else if (u >= 0 && u <= 1 && v >= 0 && v <= 1)
-+        chopgimp_vmesh_insert (&m, u, v, fg);
 +
 +      spec = chopgimp_vmesh_to_spec (&m);
 +      set_fill_material (mt->layer, o, CHOPGIMP_PAINT_MESH, spec);
@@ -13807,7 +14171,6 @@ index 0000000..a771ebd
 +      chopgimp_vmesh_clear (&m);
 +    }
 +
-+  g_free (pts);
 +  gimp_image_flush (image);
 +}
 +
@@ -13831,7 +14194,7 @@ index 0000000..a771ebd
 +  else
 +    blend_press (mt, display, coords);
 +
-+  if (mt->dragging)
++  if (mt->dragging || mt->marquee)
 +    gimp_tool_control_activate (tool->control);
 +
 +  chopgimp_draw_tool_redraw (GIMP_DRAW_TOOL (mt), display);
@@ -13849,12 +14212,27 @@ index 0000000..a771ebd
 +  ChopGimpVEntry    *e;
 +  gdouble            box[4], u, v;
 +
++  if (mt->marquee)
++    {
++      mt->mx1 = coords->x;
++      mt->my1 = coords->y;
++      chopgimp_draw_tool_redraw (GIMP_DRAW_TOOL (mt), display);
++      return;
++    }
++
 +  if (! mt->dragging || mt->node < 0 || ! mt->layer ||
 +      ! (o = chopgimp_vlayer_get_object (mt->layer, mt->target)) ||
 +      ! object_box (o, box) || ! (e = material_fill (o)) || ! e->paint.material)
 +    return;
 +
 +  image_to_box (o, box, coords->x, coords->y, &u, &v);
++
++  if (mt->undo_pending)
++    {
++      chopgimp_vlayer_push_undo (mt->layer, _("Filet"));
++      mt->undo_pending = FALSE;
++      e = material_fill (o);   /* the undo step keeps the style as is */
++    }
 +
 +  if (e->paint.type == CHOPGIMP_PAINT_MESH)
 +    {
@@ -13911,9 +14289,36 @@ index 0000000..a771ebd
 +  if (gimp_tool_control_is_active (tool->control))
 +    gimp_tool_control_halt (tool->control);
 +
-+  mt->dragging  = FALSE;
-+  mt->node      = -1;
-+  mt->handle_nb = -1;
++  /*  4.2.10: the rubber band selects the points of the edited object  */
++  if (mt->marquee && release_type != GIMP_BUTTON_RELEASE_CANCEL && mt->layer)
++    {
++      ChopGimpVObject *o = mt->target ? chopgimp_vlayer_get_object (mt->layer, mt->target)
++                                      : NULL;
++      gboolean         freeform;
++      gint             n   = 0;
++      gdouble         *pts = o ? material_points (o, &n, &freeform) : NULL;
++      gdouble          x0  = MIN (mt->mx0, mt->mx1), x1 = MAX (mt->mx0, mt->mx1);
++      gdouble          y0  = MIN (mt->my0, mt->my1), y1 = MAX (mt->my0, mt->my1);
++
++      for (gint i = 0; pts && i < n; i++)
++        if (pts[2 * i] >= x0 && pts[2 * i] <= x1 &&
++            pts[2 * i + 1] >= y0 && pts[2 * i + 1] <= y1)
++          {
++            psel_add (mt->psel, &mt->n_psel, i);
++            mt->sel = i;
++          }
++
++      if (o && mt->sel >= 0)
++        psel_show_color (gimp_get_user_context (tool->tool_info->gimp), o, mt->sel);
++
++      g_free (pts);
++    }
++
++  mt->marquee      = FALSE;
++  mt->undo_pending = FALSE;
++  mt->dragging     = FALSE;
++  mt->node         = -1;
++  mt->handle_nb    = -1;
 +
 +  chopgimp_draw_tool_redraw (GIMP_DRAW_TOOL (mt), display);
 +}
@@ -13930,6 +14335,7 @@ index 0000000..a771ebd
 +      mt->first  = 0;
 +      mt->target = 0;
 +      mt->sel    = -1;
++      mt->n_psel = 0;
 +      chopgimp_draw_tool_redraw (GIMP_DRAW_TOOL (mt), display);
 +      return TRUE;
 +    }
@@ -14057,16 +14463,27 @@ index 0000000..a771ebd
 +      if (pts && freeform)
 +        freeform_draw_lines (dt, o, pts, n);
 +
++      /*  4.2.10: the selected points are hollow and larger  */
 +      for (gint i = 0; pts && i < n; i++)
-+        gimp_draw_tool_add_handle (dt,
-+                                   freeform ? GIMP_HANDLE_FILLED_CIRCLE
-+                                            : GIMP_HANDLE_FILLED_SQUARE,
-+                                   pts[2 * i], pts[2 * i + 1],
-+                                   HANDLE_PX, HANDLE_PX,
-+                                   GIMP_HANDLE_ANCHOR_CENTER);
++        {
++          gboolean on = (o->id == mt->target && psel_has (mt->psel, mt->n_psel, i));
++
++          gimp_draw_tool_add_handle (dt,
++                                     on ? (freeform ? GIMP_HANDLE_CIRCLE : GIMP_HANDLE_SQUARE)
++                                        : (freeform ? GIMP_HANDLE_FILLED_CIRCLE
++                                                    : GIMP_HANDLE_FILLED_SQUARE),
++                                     pts[2 * i], pts[2 * i + 1],
++                                     HANDLE_PX + 4 * on, HANDLE_PX + 4 * on,
++                                     GIMP_HANDLE_ANCHOR_CENTER);
++        }
 +
 +      g_free (pts);
 +    }
++
++  if (mt->marquee)
++    gimp_draw_tool_add_rectangle (dt, FALSE,
++                                  MIN (mt->mx0, mt->mx1), MIN (mt->my0, mt->my1),
++                                  fabs (mt->mx1 - mt->mx0), fabs (mt->my1 - mt->my0));
 +}
 +
 +static void
@@ -14086,7 +14503,11 @@ index 0000000..a771ebd
 +      mt->first    = 0;
 +      mt->target   = 0;
 +      mt->node     = -1;
++      mt->sel      = -1;
++      mt->n_psel   = 0;
 +      mt->dragging = FALSE;
++      mt->marquee  = FALSE;
++      mt->undo_pending = FALSE;
 +    }
 +
 +  GIMP_TOOL_CLASS (gimp_vblend_tool_parent_class)->control (tool, action, display);
@@ -14159,6 +14580,7 @@ index 0000000..a771ebd
 +  fe->sel      = -1;
 +  fe->dragging = FALSE;
 +  fe->pressed  = FALSE;
++  fe->n_psel   = 0;
 +}
 +
 +static ChopGimpVObject *
@@ -14244,8 +14666,9 @@ index 0000000..a771ebd
 +
 +  if (! o)
 +    {
-+      o       = hit;
-+      fe->sel = -1;
++      o          = hit;
++      fe->sel    = -1;
++      fe->n_psel = 0;
 +
 +      if (o)
 +        {
@@ -14260,6 +14683,25 @@ index 0000000..a771ebd
 +    {
 +      fe->target = 0;
 +      fe->sel    = -1;
++      fe->n_psel = 0;
++      return TRUE;
++    }
++
++  /*  4.2.10: Maj+clic on a point: the selection only (as the Filet tool)  */
++  if (freeform && idx >= 0 && shift && ! alt)
++    {
++      fe->target = o->id;
++
++      if (psel_toggle (fe->psel, &fe->n_psel, idx))
++        {
++          fe->sel = idx;
++          psel_show_color (context, o, idx);
++        }
++      else if (fe->sel == idx)
++        {
++          fe->sel = fe->n_psel > 0 ? fe->psel[fe->n_psel - 1] : -1;
++        }
++
 +      return TRUE;
 +    }
 +
@@ -14300,8 +14742,17 @@ index 0000000..a771ebd
 +
 +  fe->target   = o->id;
 +  fe->node     = freeform_press_points (fe->layer, o, e, idx, u, v, fg,
-+                                        shift, alt, lines, &fe->sel);
++                                        alt, lines, &fe->sel);
 +  fe->dragging = (fe->node >= 0);
++
++  /*  a click on a point of the selection keeps it, another point or a
++   *  new one becomes the selection (its color shows in the foreground)
++   */
++  if (idx < 0 || alt || ! psel_has (fe->psel, fe->n_psel, idx))
++    psel_set_one (fe->psel, &fe->n_psel, fe->sel);
++
++  if (idx >= 0 && ! alt)
++    psel_show_color (context, chopgimp_vlayer_get_object (fe->layer, o->id), idx);
 +
 +  gimp_image_flush (image);
 +
@@ -14364,25 +14815,94 @@ index 0000000..a771ebd
 +        {
 +          freeform_draw_lines (dt, o, pts, n);
 +
++          /*  4.2.10: the selected points hollow and larger, the last
++           *  clicked one (start of the next line) square
++           */
 +          for (gint i = 0; i < n; i++)
-+            gimp_draw_tool_add_handle (dt,
-+                                       (o->id == fe->target && i == fe->sel)
-+                                         ? GIMP_HANDLE_SQUARE : GIMP_HANDLE_FILLED_CIRCLE,
-+                                       pts[2 * i], pts[2 * i + 1],
-+                                       HANDLE_PX + 2 * (o->id == fe->target && i == fe->sel),
-+                                       HANDLE_PX + 2 * (o->id == fe->target && i == fe->sel),
-+                                       GIMP_HANDLE_ANCHOR_CENTER);
++            {
++              gboolean on  = (o->id == fe->target && psel_has (fe->psel, fe->n_psel, i));
++              gboolean cur = (o->id == fe->target && i == fe->sel);
++
++              gimp_draw_tool_add_handle (dt,
++                                         cur ? GIMP_HANDLE_SQUARE
++                                             : on ? GIMP_HANDLE_CIRCLE
++                                                  : GIMP_HANDLE_FILLED_CIRCLE,
++                                         pts[2 * i], pts[2 * i + 1],
++                                         HANDLE_PX + 4 * (on || cur),
++                                         HANDLE_PX + 4 * (on || cur),
++                                         GIMP_HANDLE_ANCHOR_CENTER);
++            }
 +        }
 +
 +      g_free (pts);
 +    }
 +}
++
++
++/*  ─── 4.2.10: a new foreground color → the selected points ──────────── */
++
++gboolean
++chopgimp_vmaterial_foreground_changed (Gimp      *gimp,
++                                       GeglColor *color)
++{
++  GimpTool        *tool = gimp ? tool_manager_get_active (gimp) : NULL;
++  GimpVectorLayer *layer;
++  ChopGimpVObject *o;
++  const gint      *psel;
++  gint             n_psel;
++  guint            target;
++  gdouble          rgba[4];
++
++  if (! tool || ! color)
++    return FALSE;
++
++  if (G_TYPE_CHECK_INSTANCE_TYPE (tool, gimp_vmesh_tool_get_type ()))
++    {
++      GimpVMaterialTool *mt = (GimpVMaterialTool *) tool;
++
++      layer  = mt->layer;
++      target = mt->target;
++      psel   = mt->psel;
++      n_psel = mt->n_psel;
++
++      /*  the Filet tool never recolors whole objects: without selected
++       *  points, a new color is just the color of the next point
++       */
++      if (! layer || ! target || n_psel <= 0)
++        return TRUE;
++    }
++  else
++    {
++      ChopGimpFreeformEdit *fe = g_object_get_data (G_OBJECT (tool),
++                                                    "chopgimp-freeform-edit");
++
++      if (! fe || ! fe->layer || ! fe->target || fe->n_psel <= 0)
++        return FALSE;
++
++      layer  = fe->layer;
++      target = fe->target;
++      psel   = fe->psel;
++      n_psel = fe->n_psel;
++    }
++
++  if (! gimp_item_is_attached (GIMP_ITEM (layer)) ||
++      ! (o = chopgimp_vlayer_get_object (layer, target)) ||
++      chopgimp_vobject_is_locked (o))
++    return TRUE;
++
++  gegl_color_get_pixel (color, babl_format ("R'G'B'A double"), rgba);
++
++  if (material_recolor_points (layer, o, psel, n_psel, rgba))
++    gimp_image_flush (gimp_item_get_image (GIMP_ITEM (layer)));
++
++  return TRUE;
++}
 diff --git a/app/tools/chopgimp-materialtools.h b/app/tools/chopgimp-materialtools.h
 new file mode 100644
-index 0000000..5478a53
+index 0000000..d56fae0
 --- /dev/null
 +++ b/app/tools/chopgimp-materialtools.h
-@@ -0,0 +1,54 @@
+@@ -0,0 +1,67 @@
 +/* GIMP - The GNU Image Manipulation Program
 + * chopgimp-materialtools.h — ChopGimp 3.29.1: outil Transition (blend
 + * between two objects by two clicks) and outil Filet (the nodes of a
@@ -14410,6 +14930,9 @@ index 0000000..5478a53
 + *  colors it, Alt+clic removes it. Mode Lignes: the new point is joined
 + *  to the selected one. CHOPGIMP_NO_GRADIENT_FREEFORM=1 turns it off.
 + */
++/*  4.2.10: the most points selected at once (Filet, freeform gradients)  */
++#define CHOPGIMP_MAX_PSEL 256
++
 +typedef struct
 +{
 +  struct _GimpVectorLayer *layer;
@@ -14419,6 +14942,9 @@ index 0000000..5478a53
 +  gint                     sel;       /* the selected point, -1: none       */
 +  gboolean                 dragging;
 +  gboolean                 pressed;   /* the press was used                 */
++  /*  4.2.10: the selected points, recolored by a new foreground color  */
++  gint                     psel[CHOPGIMP_MAX_PSEL];
++  gint                     n_psel;
 +} ChopGimpFreeformEdit;
 +
 +gboolean chopgimp_freeform_edit_wanted  (GimpImage            *image);
@@ -14437,6 +14963,13 @@ index 0000000..5478a53
 +void     chopgimp_freeform_edit_release (ChopGimpFreeformEdit *fe);
 +void     chopgimp_freeform_edit_draw    (ChopGimpFreeformEdit *fe,
 +                                         GimpDrawTool         *draw_tool);
++
++/*  4.2.10: a new foreground color with the Filet tool, or the Gradient
++ *  tool on a freeform gradient, recolors the selected points; TRUE when
++ *  the color is theirs (the objects' fill must then stay as it is)
++ */
++gboolean chopgimp_vmaterial_foreground_changed (Gimp      *gimp,
++                                                GeglColor *color);
 diff --git a/app/tools/chopgimp-vpentools.c b/app/tools/chopgimp-vpentools.c
 new file mode 100644
 index 0000000..358b2ef
@@ -16967,7 +17500,7 @@ index bf6af6f..cbbbbd7 100644
                                  coords->x, coords->y,
                                  shell->show_all,
 diff --git a/app/tools/gimpgradientoptions.c b/app/tools/gimpgradientoptions.c
-index a1a24fe..04ef0e4 100644
+index a1a24fe..8f0dff6 100644
 --- a/app/tools/gimpgradientoptions.c
 +++ b/app/tools/gimpgradientoptions.c
 @@ -51,7 +51,8 @@ enum
@@ -17017,7 +17550,7 @@ index a1a24fe..04ef0e4 100644
  
      default:
        G_OBJECT_WARN_INVALID_PROPERTY_ID (object, property_id, pspec);
-@@ -349,6 +366,19 @@ gimp_gradient_options_gui (GimpToolOptions *tool_options)
+@@ -349,6 +366,21 @@ gimp_gradient_options_gui (GimpToolOptions *tool_options)
  
    options->instant_toggle = button;
  
@@ -17028,8 +17561,10 @@ index a1a24fe..04ef0e4 100644
 +      gimp_help_set_help_data (button,
 +                               _("Sur un calque vectoriel, l'outil Dégradé modifie le "
 +                                 "dégradé libre des objets : clic = un point (couleur de "
-+                                 "premier plan), glisser = le déplacer, Maj+clic = le "
-+                                 "colorer, Alt+clic = le retirer. Lignes : les points "
++                                 "premier plan) ou sélectionner un point, glisser = le "
++                                 "déplacer, Maj+clic = sélection multiple ; changer la "
++                                 "couleur de premier plan colore les points sélectionnés. "
++                                 "Alt+clic = le retirer. Lignes : les points "
 +                                 "sont reliés, les couleurs suivent la ligne."), NULL);
 +      gtk_box_pack_start (GTK_BOX (vbox), button, FALSE, FALSE, 0);
 +    }
@@ -17052,7 +17587,7 @@ index 37c8d52..32deaf1 100644
    GtkWidget         *instant_toggle;
    GtkWidget         *modify_active_frame;
 diff --git a/app/tools/gimpgradienttool.c b/app/tools/gimpgradienttool.c
-index ad07227a7..e25a5d6 100644
+index ad07227a7..34c22e4 100644
 --- a/app/tools/gimpgradienttool.c
 +++ b/app/tools/gimpgradienttool.c
 @@ -59,12 +59,25 @@
@@ -17182,7 +17717,7 @@ index ad07227a7..e25a5d6 100644
    gimp_tool_pop_status (tool, display);
  
    gimp_tool_control_halt (tool->control);
-@@ -414,12 +486,71 @@ gimp_gradient_tool_motion (GimpTool         *tool,
+@@ -414,12 +486,72 @@ gimp_gradient_tool_motion (GimpTool         *tool,
  {
    GimpGradientTool *gradient_tool = GIMP_GRADIENT_TOOL (tool);
  
@@ -17224,9 +17759,10 @@ index ad07227a7..e25a5d6 100644
 +    {
 +      gimp_tool_replace_status (tool, display,
 +                                fe->hover
-+                                ? _("Dégradé libre : clic = ajouter un point, glisser = "
-+                                    "le déplacer, Maj+clic = le colorer, Alt+clic = le "
-+                                    "retirer (option Lignes : points reliés)")
++                                ? _("Dégradé libre : clic = ajouter / sélectionner un point, "
++                                    "glisser = le déplacer, Maj+clic = sélection multiple, "
++                                    "nouvelle couleur de premier plan = colorer la sélection, "
++                                    "Alt+clic = retirer (option Lignes : points reliés)")
 +                                : _("Survolez un objet du calque vectoriel"));
 +      chopgimp_draw_tool_redraw (GIMP_DRAW_TOOL (tool), display);
 +    }
@@ -17254,7 +17790,7 @@ index ad07227a7..e25a5d6 100644
  static gboolean
  gimp_gradient_tool_key_press (GimpTool    *tool,
                                GdkEventKey *kevent,
-@@ -726,6 +857,10 @@ gimp_gradient_tool_halt (GimpGradientTool *gradient_tool)
+@@ -726,6 +858,10 @@ gimp_gradient_tool_halt (GimpGradientTool *gradient_tool)
  
    gimp_gradient_tool_editor_halt (gradient_tool);
  

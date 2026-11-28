@@ -20,8 +20,8 @@ Anciens patchs : 0012, 0027, 0139, 0145, 0164.
  po-plug-ins/fr.po                          |  250 +++
  po-python/fr.po                            |   17 +
  po-script-fu/fr.po                         |   32 +
- po/fr.po                                   | 2197 +++++++++++++++++++-
- 15 files changed, 3858 insertions(+), 31 deletions(-)
+ po/fr.po                                   | 2201 +++++++++++++++++++-
+ 15 files changed, 3860 insertions(+), 33 deletions(-)
  create mode 100644 app/display/chopgimp-statusbar-info.c
  create mode 100644 app/display/chopgimp-statusbar-info.h
  create mode 100644 app/operations/gimpoperationinnereffects.c
@@ -1926,7 +1926,7 @@ index b3bef87..954d325 100644
  #~ msgstr "_Console"
  
 diff --git a/po/fr.po b/po/fr.po
-index 879afcb..599a71b 100644
+index 879afcb..d09aced 100644
 --- a/po/fr.po
 +++ b/po/fr.po
 @@ -9412,10 +9412,9 @@ msgid "Vertical, left to right (upright orientation)"
@@ -1962,6 +1962,24 @@ index 879afcb..599a71b 100644
  
  #: ../app/paint/gimppaintoptions.c:316
  msgid "Amount"
+@@ -21759,7 +21762,7 @@ msgstr "Barbouillage"
+ #: ../app/paint/gimpsmudgeoptions.c:72
+ msgctxt "smudge-tool"
+ msgid "Rate"
+-msgstr "Taux"
++msgstr "Force"
+ 
+ #: ../app/paint/gimpsmudgeoptions.c:73
+ msgid "The strength of smudging"
+@@ -21768,7 +21771,7 @@ msgstr "Force du barbouillage"
+ #: ../app/paint/gimpsmudgeoptions.c:79
+ msgctxt "smudge-tool"
+ msgid "Flow"
+-msgstr "Débit"
++msgstr "Flux"
+ 
+ #: ../app/paint/gimpsmudgeoptions.c:80
+ msgid "The amount of brush color to blend"
 @@ -21792,7 +21795,7 @@ msgstr "Définissez d’abord une image source."
  
  #: ../app/paint/gimpsourcecore.c:158

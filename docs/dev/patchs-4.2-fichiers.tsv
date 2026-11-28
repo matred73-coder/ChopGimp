@@ -206,6 +206,9 @@ app/paint/gimppaintcore.c	T06
 app/paint/gimppaintcore.h	T06
 app/paint/gimppaintoptions.c	T06
 app/paint/gimppaintoptions.h	T06
+app/paint/gimpsmudge.c	T06
+app/paint/gimpsmudgeoptions.c	T06
+app/paint/gimpsmudgeoptions.h	T06
 app/path/chopgimp-geom.cc	T12
 app/path/chopgimp-geom.h	T12
 app/path/chopgimp-inkscape-pathstroke.cc	T12
@@ -386,6 +389,7 @@ app/tools/gimppathoptions.h	T04
 app/tools/gimppathtool.c	T13
 app/tools/gimppathtool.h	T13
 app/tools/gimpselectiontool.c	T03
+app/tools/gimpsmudgetool.c	T06
 app/tools/gimpsourcetool.c	T03
 app/tools/gimptextoptions.c	T09
 app/tools/gimptexttool-editor.c	T09

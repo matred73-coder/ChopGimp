@@ -5,14 +5,14 @@ Subject: [PATCH 05/23] ChopGimp T04: barre d'options
 
 Anciens patchs : 0009, 0018, 0019, 0021, 0022, 0023, 0025, 0031, 0032, 0108, 0109, 0114, 0173.
 ---
- app/display/gimpoptionsbar.c       | 2814 ++++++++++++++++++++++++++++
+ app/display/gimpoptionsbar.c       | 2829 ++++++++++++++++++++++++++++
  app/display/gimpoptionsbar.h       |   45 +
  app/display/meson.build            |    7 +
  app/tools/gimppathoptions.c        |  103 +-
  app/tools/gimppathoptions.h        |    3 +
  app/widgets/chopgimp-value-field.c |  975 ++++++++++
  app/widgets/chopgimp-value-field.h |   39 +
- 7 files changed, 3955 insertions(+), 31 deletions(-)
+ 7 files changed, 3970 insertions(+), 31 deletions(-)
  create mode 100644 app/display/gimpoptionsbar.c
  create mode 100644 app/display/gimpoptionsbar.h
  create mode 100644 app/widgets/chopgimp-value-field.c
@@ -20,10 +20,10 @@ Anciens patchs : 0009, 0018, 0019, 0021, 0022, 0023, 0025, 0031, 0032, 0108, 010
 
 diff --git a/app/display/gimpoptionsbar.c b/app/display/gimpoptionsbar.c
 new file mode 100644
-index 0000000..e630bd2
+index 0000000..a8baf9a
 --- /dev/null
 +++ b/app/display/gimpoptionsbar.c
-@@ -0,0 +1,2814 @@
+@@ -0,0 +1,2829 @@
 +/* GIMP - The GNU Image Manipulation Program
 + * Copyright (C) 1995 Spencer Kimball and Peter Mattis
 + *
@@ -169,7 +169,7 @@ index 0000000..e630bd2
 +  { "gimp-heal-tool",              { "brush", "brush-size", "brush-hardness", "|", "opacity",
 +                                     "|", "align-mode", "sample-merged", NULL } },
 +  { "gimp-smudge-tool",            { "brush", "brush-size", "brush-hardness", "|", "rate", "flow",
-+                                     "|", "no-erasing", "sample-merged", NULL } },
++                                     "|", "finger-painting", "no-erasing", "sample-merged", NULL } },
 +  { "gimp-convolve-tool",          { "brush", "brush-size", "brush-hardness", "|", "type", "rate",
 +                                     NULL } },
 +  { "gimp-dodge-burn-tool",        { "brush", "brush-size", "brush-hardness", "|", "type", "mode",
@@ -1468,12 +1468,27 @@ index 0000000..e630bd2
 +}
 +
 +/*  ChopGimp: compact value field « Dureté [50 % ▾] » for a numeric option  */
++/*  ChopGimp: the smudge and blur/sharpen « rate » is a strength, not
++ *  Photoshop's « Débit » (airbrush keeps « Débit »)
++ */
++static const gchar *
++gimp_options_bar_label_for (GObject     *options,
++                            const gchar *prop)
++{
++  if (! strcmp (prop, "rate") &&
++      (! strcmp (G_OBJECT_TYPE_NAME (options), "GimpSmudgeOptions") ||
++       ! strcmp (G_OBJECT_TYPE_NAME (options), "GimpConvolveOptions")))
++    return _("Force");
++
++  return gimp_options_bar_label (prop);
++}
++
 +static GtkWidget *
 +gimp_options_bar_value_field (GObject     *options,
 +                              const gchar *prop,
 +                              GParamSpec  *pspec)
 +{
-+  const gchar        *label = gimp_options_bar_label (prop);
++  const gchar        *label = gimp_options_bar_label_for (options, prop);
 +  const gchar        *unit  = gimp_options_bar_unit (options, prop);
 +  const gchar        *nick  = g_param_spec_get_nick (pspec);
 +  ChopGimpValueField *field;
@@ -1570,8 +1585,8 @@ index 0000000..e630bd2
 +    nick = _("Taille de police");
 +  else if (! strcmp (prop, "brush-size"))
 +    nick = _("Taille");
-+  else if (gimp_options_bar_label (prop))
-+    nick = gimp_options_bar_label (prop);
++  else if (gimp_options_bar_label_for (options, prop))
++    nick = gimp_options_bar_label_for (options, prop);
 +
 +  chopgimp_value_field_set_title (field, nick);
 +  if (g_param_spec_get_blurb (pspec))
